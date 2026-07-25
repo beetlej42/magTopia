@@ -31,6 +31,13 @@ import {
   getAssetComparisonContract,
   normalizeAssetComparisonConfig
 } from "./generators/assetComparisonLab.js";
+import {
+  VOXEL_BUILDING_PRESETS,
+  createVoxelBuildingLab,
+  getVoxelBuildingContract,
+  normalizeVoxelBuildingConfig,
+  voxelDaylightStyle
+} from "./generators/voxelBuildingLab.js";
 import { createCityState } from "./city/state.js";
 import { createCityWorkbench } from "./city/workbench.js";
 import { createStarterCityWorkbench } from "./city/scenarios.js";
@@ -144,6 +151,29 @@ const MODES = {
       { key: "depthWireframe", label: "Depth Wireframe", min: 0, max: 1, step: 1, live: true }
     ]
   },
+  voxel: {
+    label: "Procedural Voxel Street",
+    presets: VOXEL_BUILDING_PRESETS,
+    defaultPreset: "connectedTerraceDay",
+    normalize: normalizeVoxelBuildingConfig,
+    randomize: (seed) => normalizeVoxelBuildingConfig({
+      ...VOXEL_BUILDING_PRESETS.connectedTerraceDay,
+      seed,
+      floors: 2 + Math.floor(Math.random() * 3),
+      roofVariant: Math.floor(Math.random() * 3),
+      materialScheme: Math.floor(Math.random() * 3)
+    }),
+    sliders: [
+      { key: "sunTime", label: "Sun Time", min: 0, max: 1, step: 0.01 },
+      { key: "nightLighting", label: "Night Lights", min: 0, max: 1, step: 0.01 },
+      { key: "buildingCount", label: "Connected Buildings", min: 1, max: 3, step: 1 },
+      { key: "floors", label: "Base Floors", min: 2, max: 5, step: 1 },
+      { key: "expansionFloors", label: "Add Floors", min: 0, max: 2, step: 1 },
+      { key: "roofVariant", label: "Roof Set", min: 0, max: 2, step: 1 },
+      { key: "materialScheme", label: "Material Scheme", min: 0, max: 2, step: 1 },
+      { key: "detailDensity", label: "Decoration", min: 0, max: 1, step: 0.01 }
+    ]
+  },
   parcel: {
     label: "Parcel Blueprint",
     presets: PARCEL_BLUEPRINT_PRESETS,
@@ -174,6 +204,9 @@ const presetLabels = {
   herbalistMetricIndoorSmallVsHunyuan: "Herbalist · Metric Indoor Small vs 3D",
   workshopDepthVsHunyuan: "Workshop · Depth vs 3D",
   herbalistDepthVsHunyuan: "Herbalist · Depth vs 3D",
+  connectedTerraceDay: "Voxel Terrace · Day",
+  connectedTerraceNight: "Voxel Terrace · Night",
+  addFloorStudy: "Voxel Terrace · Add Floor",
   cottage: "1 × 1 Cottage",
   shop: "1 × 2 Shop",
   tower: "1 × 3 Tower",
@@ -219,6 +252,7 @@ const configsByMode = {
   asset: normalizeIsometricAssetConfig(ISOMETRIC_ASSET_PRESETS.londonShopDepthAnything),
   vanishing: normalizeVanishingPointConfig(VANISHING_POINT_PRESETS.twoPointCuboid),
   comparison: normalizeAssetComparisonConfig(ASSET_COMPARISON_PRESETS.cottageMetricIndoorSmallVsHunyuan),
+  voxel: normalizeVoxelBuildingConfig(VOXEL_BUILDING_PRESETS.connectedTerraceDay),
   parcel: normalizeParcelBlueprintConfig(PARCEL_BLUEPRINT_PRESETS.shop)
 };
 let currentConfig = configsByMode[currentMode];
@@ -260,7 +294,6 @@ async function rebuildActive(config) {
     citySeed = currentConfig.seed;
   }
   configureCameraForViewport();
-  applyWorldLighting(currentConfig.sunTime);
 
   if (activeObject) {
     scene.remove(activeObject);
@@ -286,11 +319,14 @@ async function rebuildActive(config) {
     activeObject = vanishingObject;
   } else if (currentMode === "comparison") {
     activeObject = createAssetComparisonLab(currentConfig);
+  } else if (currentMode === "voxel") {
+    activeObject = createVoxelBuildingLab(currentConfig);
   } else {
     activeObject = createParcelBlueprint(currentConfig);
   }
 
   scene.add(activeObject);
+  applyWorldLighting(currentConfig.sunTime);
   configureCameraForViewport();
   document.documentElement.dataset.magicTownMode = currentMode;
   document.documentElement.dataset.magicTownConfig = JSON.stringify(currentConfig);
@@ -301,6 +337,9 @@ async function rebuildActive(config) {
   document.documentElement.dataset.magicTownHunyuanModels = currentMode === "map" ? JSON.stringify(activeObject.userData.getModelDiagnostics?.() ?? []) : "[]";
   document.documentElement.dataset.magicTownComparison = currentMode === "comparison"
     ? JSON.stringify(activeObject.userData.getComparisonDiagnostics?.() ?? {})
+    : "{}";
+  document.documentElement.dataset.magicTownVoxel = currentMode === "voxel"
+    ? JSON.stringify(activeObject.userData.getVoxelDiagnostics?.() ?? {})
     : "{}";
   document.documentElement.dataset.magicTownVanishingError = currentMode === "vanishing"
     ? Math.max(activeObject.userData.diagnostics?.leftError ?? 0, activeObject.userData.diagnostics?.rightError ?? 0).toExponential(3)
@@ -347,7 +386,7 @@ function addLights(targetScene) {
 }
 
 function applyWorldLighting(sunTime = 0.52) {
-  const style = getDaylightStyle(sunTime);
+  const style = currentMode === "voxel" ? voxelDaylightStyle(sunTime) : getDaylightStyle(sunTime);
   scene.background.copy(style.skyColor);
   worldLights.ambient.color.copy(style.ambientSky);
   worldLights.ambient.groundColor.copy(style.ambientGround);
@@ -626,6 +665,8 @@ function syncApiPill() {
     apiPill.textContent = "MagicTown.previewVanishingWarp({ leftVanishingDistance, rightVanishingDistance, footprintWidth, footprintDepth })";
   } else if (currentMode === "comparison") {
     apiPill.textContent = "MagicTown.compareAssetRepresentations({ depthStrength, comparisonYaw, showBounds, depthWireframe })";
+  } else if (currentMode === "voxel") {
+    apiPill.textContent = "MagicTown.generateVoxelStreet({ buildingCount, floors, expansionFloors, roofVariant, materialScheme, nightLighting })";
   } else {
     apiPill.textContent = `MagicTown.previewParcel({ footprint: '${currentConfig.footprint}', floors: ${currentConfig.floors}, maxHeight: ${currentConfig.maxHeight} })`;
   }
@@ -639,6 +680,7 @@ function exposeAgentApi() {
       asset: ISOMETRIC_ASSET_PRESETS,
       vanishing: VANISHING_POINT_PRESETS,
       comparison: ASSET_COMPARISON_PRESETS,
+      voxel: VOXEL_BUILDING_PRESETS,
       parcel: PARCEL_BLUEPRINT_PRESETS
     },
     setMode(mode) {
@@ -673,6 +715,10 @@ function exposeAgentApi() {
       setMode("comparison", { ...configsByMode.comparison, ...config });
       return this.getParams();
     },
+    generateVoxelStreet(config = {}) {
+      setMode("voxel", { ...configsByMode.voxel, ...config });
+      return this.getParams();
+    },
     previewParcel(config = {}) {
       setMode("parcel", { ...configsByMode.parcel, ...config });
       return this.getParams();
@@ -687,9 +733,11 @@ function exposeAgentApi() {
           ? "vanishing"
           : MODES.comparison.presets[name]
             ? "comparison"
-            : MODES.parcel.presets[name]
-              ? "parcel"
-              : currentMode;
+            : MODES.voxel.presets[name]
+              ? "voxel"
+              : MODES.parcel.presets[name]
+                ? "parcel"
+                : currentMode;
       const preset = MODES[mode].presets[name] ?? MODES[mode].presets[MODES[mode].defaultPreset];
       setMode(mode, { ...preset, ...overrides });
       return this.getParams();
@@ -730,6 +778,9 @@ function exposeAgentApi() {
     },
     getAssetComparisonContract(config = configsByMode.comparison) {
       return getAssetComparisonContract(config);
+    },
+    getVoxelBuildingContract(config = configsByMode.voxel) {
+      return getVoxelBuildingContract(config);
     },
     getWorldContract(config = configsByMode.map) {
       return getIsometricDevelopmentContract(config);
@@ -870,14 +921,17 @@ function configureCameraForViewport() {
   const isMap = currentMode === "map";
   const isParcel = currentMode === "parcel";
   const isVanishing = currentMode === "vanishing";
+  const isVoxel = currentMode === "voxel";
   const perspective = isMap ? currentConfig?.perspective ?? 0 : 0;
-  if (isParcel || isVanishing || (isMap && perspective <= 0.001)) {
+  if (isParcel || isVanishing || isVoxel || (isMap && perspective <= 0.001)) {
     const aspect = window.innerWidth / window.innerHeight;
     const span = isMap
       ? Math.max(150, (currentConfig?.mapSize ?? 180) * 1.12)
       : isVanishing
         ? 10
-        : Math.max(currentConfig?.columns ?? 1, currentConfig?.rows ?? 2) * 4 + 8;
+        : isVoxel
+          ? Math.max(15, (currentConfig?.buildingCount ?? 3) * 4 + 8)
+          : Math.max(currentConfig?.columns ?? 1, currentConfig?.rows ?? 2) * 4 + 8;
     if (!camera.isOrthographicCamera) {
       controls.dispose();
       camera = new THREE.OrthographicCamera(-span * aspect / 2, span * aspect / 2, span / 2, -span / 2, 0.1, 2200);
@@ -893,6 +947,9 @@ function configureCameraForViewport() {
     if (isVanishing) {
       camera.position.set(-3, 0, 30);
       controls.target.set(-3, 0, 0);
+    } else if (isVoxel) {
+      camera.position.set(18, 14.5, 22);
+      controls.target.set(0, 5.4, 0.4);
     } else {
       camera.position.set(isMap ? 124 : 11, isMap ? groundY + 152 : 22.2, isMap ? 124 : 11);
       controls.target.set(0, groundY, isMap ? -1 : 0);
@@ -1026,6 +1083,7 @@ function createCopyPayload() {
   }
   if (currentMode === "vanishing") return getVanishingPointWarpContract(currentConfig);
   if (currentMode === "comparison") return getAssetComparisonContract(currentConfig);
+  if (currentMode === "voxel") return getVoxelBuildingContract(currentConfig);
   return {
     mode: currentMode,
     config: currentConfig
@@ -1037,6 +1095,7 @@ function inferMode(config) {
   if ("mapId" in config || "developmentColumns" in config || "developmentRows" in config || "cameraMode" in config || "perspective" in config || "showGrid" in config || "trainSpeed" in config) return "map";
   if ("leftVanishingDistance" in config || "rightVanishingDistance" in config || "footprintWidth" in config || "footprintDepth" in config) return "vanishing";
   if ("comparisonYaw" in config || "depthStrength" in config || "depthWireframe" in config || "showBounds" in config) return "comparison";
+  if ("buildingCount" in config || "expansionFloors" in config || "roofVariant" in config || "materialScheme" in config || "detailDensity" in config) return "voxel";
   if ("footprint" in config || "maxHeight" in config) return "parcel";
   if ("parallaxStrength" in config || "reliefStrength" in config || "meshResolution" in config || "colorPath" in config || "depthPath" in config) return "asset";
   return currentMode;

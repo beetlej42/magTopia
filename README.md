@@ -14,6 +14,7 @@ render or pixel-art sprite sheet.
 - Agent network service architecture: [docs/AGENT_CITY_SERVICE.md](docs/AGENT_CITY_SERVICE.md)
 - Visual north star: [docs/VISUAL_TARGET.md](docs/VISUAL_TARGET.md)
 - Art, camera, palette, and asset contract: [docs/ART_DIRECTION.md](docs/ART_DIRECTION.md)
+- Experimental procedural voxel vertical slice: [docs/VOXEL_BUILDING_SPIKE.md](docs/VOXEL_BUILDING_SPIKE.md)
 
 ## Run
 
@@ -91,6 +92,33 @@ The base-tile kit uses road lamps, flush plaza lights, and river-edge lights.
 They emit warm gold only for navigation and civic activity; their visible glow
 and point-light strength rise at dusk or with `nightLighting`, while magic
 colours remain reserved for later interactive places.
+
+## Procedural voxel building spike
+
+The optional `Procedural Voxel Street` mode validates a high-resolution voxel
+building grammar alongside the existing low-poly and depth-relief paths. One
+four-unit parcel is 32 voxels wide (`0.125` world unit per voxel). The demo
+supports one to three automatically joined terrace buildings, two to five base
+floors, vertical expansion, three roof families, material schemes, decoration
+density, and functional day/night emissive lighting.
+
+```js
+MagicTown.generateVoxelStreet({
+  buildingCount: 3,
+  floors: 3,
+  expansionFloors: 1,
+  roofVariant: 1,
+  materialScheme: 1,
+  nightLighting: 0.3
+});
+
+MagicTown.getVoxelBuildingContract();
+```
+
+The deterministic `BuildingSpec + seed` remains the source of truth. Rendered
+voxels are derived and currently batched by material as a visual spike; the
+production target is a chunked greedy surface mesh rather than one draw call
+per voxel.
 
 ## City workbench API
 

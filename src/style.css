@@ -60,14 +60,16 @@ html[data-magic-town-mode="map"] .control-panel {
 }
 
 html[data-magic-town-mode="vanishing"] .control-panel,
-html[data-magic-town-mode="comparison"] .control-panel {
+html[data-magic-town-mode="comparison"] .control-panel,
+html[data-magic-town-mode="voxel"] .control-panel {
   right: 18px;
   left: auto;
 }
 
 html[data-magic-town-mode="map"] .api-pill,
 html[data-magic-town-mode="vanishing"] .api-pill,
-html[data-magic-town-mode="comparison"] .api-pill {
+html[data-magic-town-mode="comparison"] .api-pill,
+html[data-magic-town-mode="voxel"] .api-pill {
   right: auto;
   left: 18px;
 }
