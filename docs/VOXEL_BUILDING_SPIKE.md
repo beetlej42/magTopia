@@ -19,13 +19,16 @@
 ```js
 MagicTown.generateVoxelStreet({
   buildingCount: 3,
-  floors: 3,
-  expansionFloors: 1,
-  archetype: "magic_shop",
+  floors: 2,
+  floorPrograms: [
+    { purpose: "shop" },
+    { purpose: "home", setbackVoxels: 4, balcony: "full" }
+  ],
   style: "violet_alchemist",
   parcelWidth: 36,
   parcelDepth: 40,
-  roofType: "magic_asymmetric",
+  ridgePosition: 0.35,
+  windowRatio: 0.42,
   variation: 0.82,
   nightLighting: 0.3
 });
@@ -35,11 +38,15 @@ MagicTown.getVoxelGrammarCatalog();
 MagicTown.createVoxelBuildingSpec({
   id: "agent-shop-1",
   seed: "agent-shop-seed",
-  archetype: "magic_shop",
   style: "violet_alchemist",
   widthVoxels: 36,
   depthVoxels: 40,
-  baseFloors: 3
+  baseFloors: 2,
+  floorPrograms: [
+    { purpose: "shop" },
+    { purpose: "home", setbackVoxels: 4, balcony: "full" }
+  ],
+  ridgePosition: 0.35
 });
 ```
 
@@ -52,8 +59,8 @@ MagicTown.createVoxelBuildingSpec({
 - `Grammar · Magic Shops`
 - `Grammar · Workshops`
 
-`BuildingSpec v0.1` 的字段、稳定子 seed、Archetype 和 Style Kit 规则见
-[`VOXEL_BUILDING_SPEC_V0.1.md`](VOXEL_BUILDING_SPEC_V0.1.md)。
+`BuildingSpec v0.2` 的楼层栈、稳定子 seed 和连续坡屋顶规则见
+[`VOXEL_BUILDING_SPEC_V0.2.md`](VOXEL_BUILDING_SPEC_V0.2.md)。
 
 ## 分辨率与空间合同
 
@@ -93,15 +100,17 @@ BuildingSpec + seed
 
 ## Agent 控制层级
 
-简单模式只要求：
+简单模式可以直接提交楼层栈：
 
 ```json
 {
-  "archetype": "terrace_magic_shop",
-  "footprint": "1x2",
-  "floors": 3,
-  "style": "willow_magic",
-  "quality": "simple"
+  "floorPrograms": [
+    { "purpose": "shop" },
+    { "purpose": "home", "setbackVoxels": 2, "balcony": "full" }
+  ],
+  "style": "violet_alchemist",
+  "ridgePosition": 0.5,
+  "windowRatio": 0.4
 }
 ```
 
@@ -116,14 +125,15 @@ BuildingSpec + seed
 
 单体素修改只作为确定性程序化生成后的稀疏 decoration patch。持久化的源数据仍然是 `BuildingSpec + seed + patches`，而不是整栋建筑的体素快照。
 
-## v0.1 建筑语法
+## v0.2 建筑语法
 
 当前 `BuildingSpec` 编译器已实现：
 
-- `townhouse`、`magic_shop`、`workshop` 三种 Archetype；
+- `shop`、`home`、`workshop`、`storage` 四种原子楼层用途；
 - `london_brick`、`violet_alchemist`、`forest_craft` 三套 Style Kit；
+- 一至五层基础楼层，每层独立用途、前向退台和阳台形式；
 - 根据 24–40 体素地块宽度自适应的 2–5 开间立面；
-- 入口、店窗、工作室宽窗、上层窗、阳台与花箱组件；
+- 真正改变窗洞宽度和高度的 15%–90% 窗墙比；
 - 每栋建筑、每个楼层和每个装饰槽的路径化稳定子 seed；
 - 任意 seed 的确定性重放，以及加层时低层分格与材料保持不变。
 
@@ -146,7 +156,7 @@ BuildingSpec + seed
 1. 保留原有地面层和标准楼层模块；
 2. 追加一个或两个楼层模块；
 3. 将 vertical-expansion port 移到新顶层；
-4. 从新檐口重新生成原屋顶类型、烟囱和屋顶装饰。
+4. 从新檐口重新生成连续坡屋顶、烟囱和屋顶装饰。
 
 测试还会逐项比较扩建前后的低层 `facade.floors`、材料和稳定装饰槽，避免随机数调用顺序导致整栋建筑“换脸”。
 
@@ -154,20 +164,19 @@ BuildingSpec + seed
 
 ## 程序化坡屋顶
 
-坡屋顶不再由固定层数的手写条带组成。生成器接收：
+坡屋顶统一使用连续线性剖面。生成器接收：
 
 - 建筑宽度与深度
-- 屋脊高度和相对位置
-- 前后坡面曲线指数
+- 屋脊高度和 0–100% 相对位置
 - 出檐和屋面厚度
 
-屋脊始终平行联排街道，生成器逐个深度切片计算连续单调的阶梯坡面。标准人字坡使用线性剖面，曼萨尔屋顶使用先陡后缓的曲线剖面，魔法屋顶使用偏心屋脊和非对称曲线。外露左右端自动填满山墙；内部端是否可见由相邻建筑包络决定。
+屋脊始终平行联排街道，生成器为每个深度切片生成完整屋面行。50% 是对称双坡顶，偏离中心得到不对称双坡，0% 和 100% 分别退化为两个方向的单坡顶。左右山墙和前后高檐封墙都会自动补齐；相邻建筑暴露部分仍由双方屋顶包络决定。
 
 ## 当前边界
 
 - 尚未把体素 `BuildingSpec` 写入服务端城市存档或建设命令。
 - 当前使用互斥稀疏体素场和材质级实例批次；尚未实现 chunk、greedy meshing 和顶点 AO。
-- 主体仍是单矩形；侧翼、退台、塔楼、L 形屋顶交谷属于 v0.2。
+- 主体支持沿临街深度方向逐层退台；左右收分、侧翼、塔楼和 L 形屋顶交谷尚未实现。
 - 后立面和内院仍是占位级语法。
 - decoration 尚未提供单体素编辑 UI。
 - 自动连接只实现 party wall；连廊、拱廊、共用屋面和内部打通仍未实现。

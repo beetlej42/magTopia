@@ -1,6 +1,8 @@
 import { createRng } from "../utils/random.js";
 
-export const BUILDING_SPEC_VERSION = "0.1";
+export const BUILDING_SPEC_VERSION = "0.2";
+export const FLOOR_USE_IDS = Object.freeze(["shop", "home", "workshop", "storage"]);
+export const FLOOR_BALCONY_IDS = Object.freeze(["none", "selective", "full"]);
 
 export const BUILDING_ARCHETYPES = Object.freeze({
   townhouse: Object.freeze({
@@ -10,7 +12,6 @@ export const BUILDING_ARCHETYPES = Object.freeze({
     groundPurpose: "home",
     upperPurpose: "home",
     groundModules: ["window", "entrance"],
-    roofTypes: ["gable", "mansard"],
     balconyChance: 0.2,
     flowerBoxChance: 0.55,
     magicWindowChance: 0.08
@@ -22,7 +23,6 @@ export const BUILDING_ARCHETYPES = Object.freeze({
     groundPurpose: "shop",
     upperPurpose: "home",
     groundModules: ["shop_window", "entrance"],
-    roofTypes: ["magic_asymmetric", "mansard", "gable"],
     balconyChance: 0.12,
     flowerBoxChance: 0.3,
     magicWindowChance: 1
@@ -34,7 +34,6 @@ export const BUILDING_ARCHETYPES = Object.freeze({
     groundPurpose: "workshop",
     upperPurpose: "atelier",
     groundModules: ["workshop_window", "service_door"],
-    roofTypes: ["gable", "mansard"],
     balconyChance: 0.08,
     flowerBoxChance: 0.18,
     magicWindowChance: 0.25
@@ -54,7 +53,6 @@ export const VOXEL_STYLE_KITS = Object.freeze({
     metal: "iron",
     magicPrimary: "violetMagic",
     magicSecondary: "tealMagic",
-    roofTypes: ["gable", "mansard"],
     roofPitchRange: [0.3, 0.38],
     greeneryMultiplier: 0.85,
     magicMultiplier: 0.55
@@ -71,7 +69,6 @@ export const VOXEL_STYLE_KITS = Object.freeze({
     metal: "iron",
     magicPrimary: "violetMagic",
     magicSecondary: "tealMagic",
-    roofTypes: ["magic_asymmetric", "mansard", "gable"],
     roofPitchRange: [0.34, 0.44],
     greeneryMultiplier: 0.55,
     magicMultiplier: 1
@@ -88,7 +85,6 @@ export const VOXEL_STYLE_KITS = Object.freeze({
     metal: "iron",
     magicPrimary: "tealMagic",
     magicSecondary: "violetMagic",
-    roofTypes: ["gable", "mansard"],
     roofPitchRange: [0.32, 0.4],
     greeneryMultiplier: 1.45,
     magicMultiplier: 0.7
@@ -108,8 +104,18 @@ export function createBuildingSpec(options = {}) {
   const floors = baseFloors + expandedBy;
   const floorHeight = clampInteger(options.floorHeight ?? 20, 12, 28);
   const variation = clampNumber(options.variation ?? 0.65, 0, 1);
-  const archetype = resolveArchetype(options.archetype);
+  const requestedArchetype = resolveArchetype(options.archetype);
   const style = resolveStyleKit(options.style);
+  const floorSpecs = planFloorStack({
+    seed: stableSeed(seed, id, "floors"),
+    floors,
+    floorHeight,
+    depthVoxels,
+    archetype: requestedArchetype,
+    floorPrograms: options.floorPrograms,
+    windowRatio: options.windowRatio
+  });
+  const archetype = resolveArchetype(archetypeIdForPurpose(floorSpecs[0].purpose));
   const adjacency = normalizeAdjacency(options.adjacency);
   const origin = {
     x: Math.round(options.origin?.x ?? 0),
@@ -122,16 +128,16 @@ export function createBuildingSpec(options = {}) {
     floors,
     floorHeight,
     variation,
-    archetype
+    archetype,
+    floorSpecs
   });
   const materials = planMaterials(style, stableSeed(seed, id, "materials"));
   const roof = planRoofGrammar({
     seed: stableSeed(seed, id, "roof"),
-    depth: depthVoxels,
-    variation,
+    depth: depthVoxels - floorSpecs.at(-1).frontSetbackVoxels,
     archetype,
     style,
-    roofOverride: options.roofOverride
+    ridgePosition: options.ridgePosition
   });
   const decorations = planDecorations({
     seed: stableSeed(seed, id, "decorations"),
@@ -162,12 +168,7 @@ export function createBuildingSpec(options = {}) {
     floors,
     expandedBy,
     floorHeight,
-    floorSpecs: Array.from({ length: floors }, (_, floor) => ({
-      index: floor,
-      heightVoxels: floorHeight,
-      purpose: floor === 0 ? archetype.groundPurpose : archetype.upperPurpose,
-      seed: stableSeed(seed, id, "floor", floor)
-    })),
+    floorSpecs,
     wallHeightVoxels: floors * floorHeight,
     facade,
     roof,
@@ -195,6 +196,15 @@ export function planFacadeGrammar(options = {}) {
   const floorHeight = clampInteger(options.floorHeight ?? 20, 12, 28);
   const variation = clampNumber(options.variation ?? 0.65, 0, 1);
   const archetype = resolveArchetype(options.archetype);
+  const floorSpecs = options.floorSpecs ?? planFloorStack({
+    seed: stableSeed(options.seed || "facade-001", "floors"),
+    floors,
+    floorHeight,
+    depthVoxels: options.depth ?? 36,
+    archetype,
+    floorPrograms: options.floorPrograms,
+    windowRatio: options.windowRatio
+  });
   const seed = String(options.seed || "facade-001");
   const rhythmRng = createRng(stableSeed(seed, "rhythm"));
   const maximumBays = Math.max(2, Math.floor((width - 4) / 6));
@@ -202,20 +212,34 @@ export function planFacadeGrammar(options = {}) {
   const bayCount = clampInteger(archetype.preferredBays + bayNudge, 2, maximumBays);
   const bays = distributeBays(width, bayCount);
   const entranceRng = createRng(stableSeed(seed, "entrance"));
-  const entranceBay = archetype.id === "workshop"
+  const entranceBay = floorSpecs[0].purpose === "workshop"
     ? (entranceRng() < 0.5 ? 0 : bayCount - 1)
     : Math.floor(entranceRng() * bayCount);
   const symmetry = Number((1 - variation * (0.18 + rhythmRng() * 0.38)).toFixed(3));
   const floorPlans = Array.from({ length: floors }, (_, floor) => {
     const floorRng = createRng(stableSeed(seed, "floor", floor));
+    const floorSpec = floorSpecs[floor];
+    const selectiveBalconyBay = floorSpec.balcony === "selective"
+      ? Math.floor(floorRng() * bayCount)
+      : -1;
     return {
       index: floor,
       y: floor * floorHeight,
-      modules: bays.map((bay) => (
-        floor === 0
-          ? planGroundModule(bay, entranceBay, archetype, floorHeight)
-          : planUpperModule(bay, floor, floorHeight, archetype, variation, floorRng)
-      ))
+      purpose: floorSpec.purpose,
+      frontSetbackVoxels: floorSpec.frontSetbackVoxels,
+      balcony: floorSpec.balcony,
+      windowRatio: floorSpec.windowRatio,
+      modules: bays.map((bay) => planFloorModule({
+        bay,
+        floor,
+        entranceBay,
+        floorHeight,
+        floorSpec,
+        archetype,
+        variation,
+        rng: floorRng,
+        selectiveBalconyBay
+      }))
     };
   });
 
@@ -234,46 +258,100 @@ export function stableSeed(seed, ...path) {
   return [String(seed), ...path.map(String)].join(":");
 }
 
-function planGroundModule(bay, entranceBay, archetype, floorHeight) {
-  const isEntrance = bay.index === entranceBay;
-  let type;
-  if (isEntrance) {
-    type = archetype.id === "workshop" ? "service_door" : "entrance";
-  } else if (archetype.id === "magic_shop") {
-    type = "shop_window";
-  } else if (archetype.id === "workshop") {
-    type = "workshop_window";
-  } else {
-    type = "window";
+export function planFloorStack(options = {}) {
+  const floors = clampInteger(options.floors ?? 1, 1, 12);
+  const floorHeight = clampInteger(options.floorHeight ?? 20, 12, 28);
+  const depthVoxels = clampInteger(options.depthVoxels ?? 36, 16, 64);
+  const archetype = resolveArchetype(options.archetype);
+  const programs = Array.isArray(options.floorPrograms) ? options.floorPrograms : [];
+  const defaultWindowRatio = clampNumber(options.windowRatio ?? 0.58, 0.15, 0.9);
+  let cumulativeSetback = 0;
+  return Array.from({ length: floors }, (_, index) => {
+    const explicit = programs[index];
+    const source = explicit ?? {
+      ...(programs.at(-1) ?? {}),
+      setbackVoxels: 0,
+      setback: 0,
+      balcony: "none"
+    };
+    const fallbackPurpose = index === 0 ? archetype.groundPurpose : archetype.upperPurpose;
+    const purpose = FLOOR_USE_IDS.includes(source.purpose ?? source.use)
+      ? (source.purpose ?? source.use)
+      : normalizeFloorPurpose(fallbackPurpose);
+    const setbackStep = index === 0
+      ? 0
+      : clampInteger(source.setbackVoxels ?? source.setback ?? 0, 0, 6);
+    cumulativeSetback = Math.min(cumulativeSetback + setbackStep, Math.max(0, depthVoxels - 16));
+    const balcony = index === 0 || !FLOOR_BALCONY_IDS.includes(source.balcony)
+      ? "none"
+      : source.balcony;
+    return {
+      index,
+      heightVoxels: floorHeight,
+      purpose,
+      setbackVoxels: setbackStep,
+      frontSetbackVoxels: cumulativeSetback,
+      balcony,
+      windowRatio: clampNumber(source.windowRatio ?? defaultWindowRatio, 0.15, 0.9),
+      seed: stableSeed(options.seed || "floor-stack-001", index)
+    };
+  });
+}
+
+function planFloorModule({
+  bay,
+  floor,
+  entranceBay,
+  floorHeight,
+  floorSpec,
+  archetype,
+  variation,
+  rng,
+  selectiveBalconyBay
+}) {
+  const isGroundEntrance = floor === 0 && bay.index === entranceBay;
+  if (floorSpec.purpose === "storage" && rng() < 0.45 + variation * 0.25) {
+    return { bay: bay.index, type: "blank", opening: null };
   }
-  const inset = type === "workshop_window" ? 1 : 2;
-  const start = bay.start + inset;
-  const end = bay.start + bay.width - inset - 1;
-  const yStart = type === "entrance" || type === "service_door" ? 2 : 4;
-  const yEnd = type === "workshop_window" ? floorHeight - 4 : floorHeight - 5;
+  let type;
+  if (isGroundEntrance) {
+    type = floorSpec.purpose === "workshop" ? "service_door" : "entrance";
+  } else if (floorSpec.purpose === "shop") {
+    type = "shop_window";
+  } else if (floorSpec.purpose === "workshop") {
+    type = "workshop_window";
+  } else if (floorSpec.purpose === "storage") {
+    type = "small_window";
+  } else {
+    type = floor === 0 ? "window" : "upper_window";
+  }
+  const ratio = type === "small_window"
+    ? Math.min(0.35, floorSpec.windowRatio)
+    : floorSpec.windowRatio;
+  const availableWidth = Math.max(2, bay.width - 2);
+  const openingWidth = type === "entrance" || type === "service_door"
+    ? Math.min(5, availableWidth)
+    : Math.max(2, Math.round(availableWidth * ratio));
+  const start = bay.start + Math.floor((bay.width - openingWidth) / 2);
+  const end = start + openingWidth - 1;
+  const availableHeight = floorHeight - 7;
+  const openingHeight = type === "entrance" || type === "service_door"
+    ? Math.min(14, availableHeight)
+    : Math.max(4, Math.round(availableHeight * (0.35 + ratio * 0.65)));
+  const yStart = type === "entrance" || type === "service_door"
+    ? 2
+    : Math.max(4, Math.round((floorHeight - openingHeight) / 2));
+  const yEnd = Math.min(floorHeight - 4, yStart + openingHeight - 1);
   return {
     bay: bay.index,
     type,
-    opening: { xStart: start, xEnd: Math.max(start, end), yStart, yEnd }
-  };
-}
-
-function planUpperModule(bay, floor, floorHeight, archetype, variation, rng) {
-  const blankChance = variation * (archetype.id === "workshop" ? 0.22 : 0.08);
-  if (rng() < blankChance) return { bay: bay.index, type: "blank", opening: null };
-  const inset = bay.width >= 9 ? 2 : 1;
-  const start = bay.start + inset;
-  const end = bay.start + bay.width - inset - 1;
-  return {
-    bay: bay.index,
-    type: "upper_window",
     opening: {
       xStart: start,
-      xEnd: Math.max(start, end),
-      yStart: 5,
-      yEnd: Math.min(floorHeight - 5, 15)
+      xEnd: end,
+      yStart,
+      yEnd
     },
-    balcony: floor === 1 && rng() < archetype.balconyChance * (0.55 + variation),
+    balcony: floorSpec.balcony === "selective" && bay.index === selectiveBalconyBay,
     flowerBox: rng() < archetype.flowerBoxChance * (0.5 + variation * 0.7)
   };
 }
@@ -312,17 +390,11 @@ function planMaterials(style, seed) {
   };
 }
 
-function planRoofGrammar({ seed, depth, variation, archetype, style, roofOverride }) {
+function planRoofGrammar({ seed, depth, archetype, style, ridgePosition }) {
   const rng = createRng(seed);
-  const allowed = archetype.roofTypes.filter((type) => style.roofTypes.includes(type));
-  const candidates = allowed.length > 0 ? allowed : ["gable"];
-  const type = candidates.includes(roofOverride) ? roofOverride : choose(rng, candidates);
   const [minimumPitch, maximumPitch] = style.roofPitchRange;
   const pitch = minimumPitch + (maximumPitch - minimumPitch) * (0.35 + rng() * 0.65);
   const ridgeHeight = Math.max(6, Math.round(depth * pitch));
-  const asymmetry = type === "magic_asymmetric" ? 0.08 + variation * 0.08 : 0;
-  const ridgeRatio = 0.5 + (rng() - 0.5) * asymmetry;
-  const exponent = type === "mansard" ? 2.2 : 1;
   const chimneys = Array.from(
     { length: archetype.id === "workshop" ? 2 : (rng() < 0.55 ? 2 : 1) },
     (_, index) => ({
@@ -332,15 +404,16 @@ function planRoofGrammar({ seed, depth, variation, archetype, style, roofOverrid
     })
   );
   return {
-    grammar: "pitched-roof-v0.1",
-    type,
+    grammar: "continuous-pitched-roof-v0.2",
+    type: "pitched",
     seed,
+    depthVoxels: depth,
     overhang: 1,
     thickness: 1,
-    ridgeRatio,
+    ridgeRatio: clampNumber(ridgePosition ?? 0.5, 0, 1),
     ridgeHeight,
-    backExponent: type === "magic_asymmetric" ? 1.2 + variation * 0.35 : exponent,
-    frontExponent: type === "magic_asymmetric" ? 1.55 + variation * 0.55 : exponent,
+    backExponent: 1,
+    frontExponent: 1,
     chimneys
   };
 }
@@ -350,7 +423,7 @@ function planDecorations({ seed, floors, facade, variation, archetype, style, de
   const upperFloors = facade.floors.slice(1);
   const candidateWindows = upperFloors.flatMap((floor) => (
     floor.modules
-      .filter((module) => module.type === "upper_window")
+      .filter((module) => module.opening && module.type !== "entrance" && module.type !== "service_door")
       .map((module) => ({ floor: floor.index, bay: module.bay }))
   ));
   const magicChance = archetype.magicWindowChance * style.magicMultiplier * (0.35 + density * 0.65);
@@ -361,7 +434,7 @@ function planDecorations({ seed, floors, facade, variation, archetype, style, de
     density,
     greenery: clampNumber(density * style.greeneryMultiplier, 0, 1),
     magicWindow,
-    signBay: archetype.groundPurpose === "shop" ? facade.entranceBay : null,
+    signBay: facade.floors[0]?.purpose === "shop" ? facade.entranceBay : null,
     roofDecoration: null,
     stableSlots: candidateWindows.map((candidate) => ({
       ...candidate,
@@ -395,6 +468,17 @@ function resolveStyleKit(value) {
 
 function choose(rng, values) {
   return values[Math.floor(rng() * values.length) % values.length];
+}
+
+function normalizeFloorPurpose(value) {
+  if (value === "atelier") return "workshop";
+  return FLOOR_USE_IDS.includes(value) ? value : "home";
+}
+
+function archetypeIdForPurpose(purpose) {
+  if (purpose === "shop") return "magic_shop";
+  if (purpose === "workshop") return "workshop";
+  return "townhouse";
 }
 
 function clampInteger(value, minimum, maximum) {

@@ -14,7 +14,8 @@ import {
 import {
   BUILDING_SPEC_VERSION,
   createBuildingSpec,
-  planFacadeGrammar
+  planFacadeGrammar,
+  planFloorStack
 } from "../src/generators/voxelBuildingGrammar.js";
 
 test("voxel config keeps the high-resolution parcel contract bounded", () => {
@@ -32,20 +33,26 @@ test("voxel config keeps the high-resolution parcel contract bounded", () => {
   assert.equal(config.floors, 5);
   assert.equal(config.expansionFloors, 0);
   assert.equal(config.buildingCount, 3);
-  assert.equal(config.roofVariant, 2);
+  assert.equal(config.roofVariant, 0);
+  assert.equal(config.roofType, "pitched");
   assert.equal(config.materialScheme, 0);
-  assert.equal(config.archetypeVariant, 0);
+  assert.equal(config.archetypeVariant, 1);
   assert.equal(config.styleVariant, 0);
   assert.equal(config.parcelWidth, 32);
   assert.equal(config.parcelDepth, 36);
   assert.equal(config.detailDensity, 1);
 });
 
-test("simple agent names resolve to archetype, style kit, and roof family", () => {
+test("atomic floor programs derive the building archetype and keep the selected style", () => {
   const config = normalizeVoxelBuildingConfig({
-    archetype: "workshop",
+    floors: 2,
+    floorPrograms: [
+      { purpose: "workshop", setbackVoxels: 0, balcony: "none" },
+      { purpose: "home", setbackVoxels: 2, balcony: "full" }
+    ],
     style: "forest_craft",
-    roofType: "mansard"
+    ridgePosition: 1,
+    windowRatio: 0.2
   });
 
   assert.equal(config.archetype, "workshop");
@@ -53,8 +60,10 @@ test("simple agent names resolve to archetype, style kit, and roof family", () =
   assert.equal(config.style, "forest_craft");
   assert.equal(config.styleVariant, 2);
   assert.equal(config.materialScheme, 2);
-  assert.equal(config.roofType, "mansard");
-  assert.equal(config.roofVariant, 1);
+  assert.equal(config.roofType, "pitched");
+  assert.equal(config.ridgePosition, 1);
+  assert.deepEqual(config.floorPrograms.slice(0, 2).map((floor) => floor.purpose), ["workshop", "home"]);
+  assert.ok(config.floorPrograms.slice(0, 2).every((floor) => floor.windowRatio === 0.2));
 });
 
 test("adjacent buildings share deterministic party-wall ports", () => {
@@ -96,6 +105,11 @@ test("adding floors changes only the selected building and regenerates its roof 
     before.buildings[1].facade.floors
   );
   assert.deepEqual(after.buildings[1].materials, before.buildings[1].materials);
+  assert.deepEqual(
+    after.buildings[1].floorSpecs.slice(0, before.buildings[1].floors),
+    before.buildings[1].floorSpecs
+  );
+  assert.equal(after.buildings[1].floorSpecs.at(-1).setbackVoxels, 0);
 });
 
 test("voxel contract exposes simple agent controls and derived rendering", () => {
@@ -108,7 +122,7 @@ test("voxel contract exposes simple agent controls and derived rendering", () =>
   assert.equal(contract.meshing.solidInteriors, false);
   assert.equal(contract.expansion.supported, true);
   assert.equal(contract.adjacency.supported, true);
-  assert.ok(contract.agentControl.simple.includes("archetype"));
+  assert.ok(contract.agentControl.simple.includes("floorPrograms"));
   assert.ok(contract.materialIds.includes("warmWindow"));
   assert.equal(contract.plan.buildings.length, 2);
 });
@@ -134,7 +148,7 @@ test("semantic voxel priorities reject lower-phase writes but preserve equal-pha
   assert.equal(buffer.getMaterialAt(1, 2, 3), "limestone");
 });
 
-test("BuildingSpec v0.1 produces bounded facade bays and stable lower-floor sub-seeds", () => {
+test("BuildingSpec v0.2 produces bounded facade bays and stable lower-floor sub-seeds", () => {
   const before = createBuildingSpec({
     id: "stable-magic-shop",
     seed: "facade-stability",
@@ -144,6 +158,10 @@ test("BuildingSpec v0.1 produces bounded facade bays and stable lower-floor sub-
     depthVoxels: 40,
     baseFloors: 2,
     expandedBy: 0,
+    floorPrograms: [
+      { purpose: "shop", setbackVoxels: 0, balcony: "none" },
+      { purpose: "home", setbackVoxels: 2, balcony: "full" }
+    ],
     variation: 0.8,
     detailDensity: 1
   });
@@ -156,6 +174,10 @@ test("BuildingSpec v0.1 produces bounded facade bays and stable lower-floor sub-
     depthVoxels: 40,
     baseFloors: 2,
     expandedBy: 1,
+    floorPrograms: [
+      { purpose: "shop", setbackVoxels: 0, balcony: "none" },
+      { purpose: "home", setbackVoxels: 2, balcony: "full" }
+    ],
     variation: 0.8,
     detailDensity: 1
   });
@@ -164,6 +186,7 @@ test("BuildingSpec v0.1 produces bounded facade bays and stable lower-floor sub-
   assert.deepEqual(after.facade.floors.slice(0, before.floors), before.facade.floors);
   assert.deepEqual(after.materials, before.materials);
   assert.equal(after.roof.type, before.roof.type);
+  assert.equal(after.roof.type, "pitched");
   assert.deepEqual(after.decorations.magicWindow, before.decorations.magicWindow);
   assert.equal(before.facade.bays.reduce((total, bay) => total + bay.width, 0), 32);
   assert.equal(before.facade.bays[0].start, 2);
@@ -171,6 +194,56 @@ test("BuildingSpec v0.1 produces bounded facade bays and stable lower-floor sub-
     before.facade.bays.at(-1).start + before.facade.bays.at(-1).width,
     before.footprint.widthVoxels - 2
   );
+});
+
+test("floor stacks compose purpose, cumulative setbacks, balconies, and a one-floor building", () => {
+  const stack = planFloorStack({
+    floors: 3,
+    depthVoxels: 36,
+    floorPrograms: [
+      { purpose: "shop", setbackVoxels: 0, balcony: "none" },
+      { purpose: "home", setbackVoxels: 2, balcony: "full" },
+      { purpose: "storage", setbackVoxels: 4, balcony: "selective" }
+    ],
+    windowRatio: 0.25
+  });
+
+  assert.deepEqual(stack.map((floor) => floor.purpose), ["shop", "home", "storage"]);
+  assert.deepEqual(stack.map((floor) => floor.frontSetbackVoxels), [0, 2, 6]);
+  assert.deepEqual(stack.map((floor) => floor.balcony), ["none", "full", "selective"]);
+  assert.ok(stack.every((floor) => floor.windowRatio === 0.25));
+
+  const oneFloor = createBuildingSpec({
+    floors: 1,
+    floorPrograms: [{ purpose: "shop" }],
+    ridgePosition: 0
+  });
+  assert.equal(oneFloor.floors, 1);
+  assert.equal(oneFloor.floorSpecs.length, 1);
+  assert.equal(oneFloor.floorSpecs[0].purpose, "shop");
+  assert.equal(oneFloor.roof.ridgeRatio, 0);
+});
+
+test("smaller window share produces genuinely smaller openings", () => {
+  const compact = planFacadeGrammar({
+    seed: "window-share",
+    width: 32,
+    floors: 2,
+    floorPrograms: [{ purpose: "shop" }, { purpose: "home" }],
+    windowRatio: 0.2
+  });
+  const generous = planFacadeGrammar({
+    seed: "window-share",
+    width: 32,
+    floors: 2,
+    floorPrograms: [{ purpose: "shop" }, { purpose: "home" }],
+    windowRatio: 0.8
+  });
+  const compactOpening = compact.floors[1].modules.find((module) => module.opening).opening;
+  const generousOpening = generous.floors[1].modules.find((module) => module.opening).opening;
+
+  assert.ok(compactOpening.xEnd - compactOpening.xStart < generousOpening.xEnd - generousOpening.xStart);
+  assert.ok(compactOpening.yEnd - compactOpening.yStart < generousOpening.yEnd - generousOpening.yStart);
 });
 
 test("facade grammar varies deterministically across seeds without leaving its parcel", () => {
@@ -228,6 +301,26 @@ test("procedural pitched roofs adapt to dimensions and fill both end gables", ()
   }
 });
 
+test("ridge extremes produce continuous opposite mono-pitch profiles", () => {
+  const backRidge = planPitchedRoof({ depth: 24, ridgeRatio: 0, ridgeHeight: 10 });
+  const centered = planPitchedRoof({ depth: 24, ridgeRatio: 0.5, ridgeHeight: 10 });
+  const frontRidge = planPitchedRoof({ depth: 24, ridgeRatio: 1, ridgeHeight: 10 });
+
+  assert.equal(backRidge.ridgeIndex, 0);
+  assert.equal(frontRidge.ridgeIndex, frontRidge.profile.length - 1);
+  assert.ok(backRidge.edgeCaps.back.length > backRidge.edgeCaps.front.length);
+  assert.ok(frontRidge.edgeCaps.front.length > frontRidge.edgeCaps.back.length);
+  assert.ok(backRidge.profile.every((row, index, rows) => index === 0 || row.y <= rows[index - 1].y));
+  assert.ok(frontRidge.profile.every((row, index, rows) => index === 0 || row.y >= rows[index - 1].y));
+  for (const roof of [backRidge, centered, frontRidge]) {
+    assert.equal(roof.surface.length, roof.profile.length * (roof.width + roof.overhang * 2) * roof.thickness);
+    roof.profile.forEach((row, index) => {
+      assert.equal(row.z, index - roof.overhang);
+      assert.ok(roof.surface.some((voxel) => voxel.z === row.z));
+    });
+  }
+});
+
 test("technical slice batches surface voxels into a bounded material draw-call set", () => {
   const object = createVoxelBuildingLab({
     seed: "render-batch-test",
@@ -236,8 +329,7 @@ test("technical slice batches surface voxels into a bounded material draw-call s
     expansionFloors: 1,
     detailDensity: 1,
     archetypeVariant: 1,
-    styleVariant: 1,
-    roofVariant: 2
+    styleVariant: 1
   });
   const diagnostics = object.userData.getVoxelDiagnostics();
 

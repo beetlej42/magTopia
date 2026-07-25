@@ -41,6 +41,8 @@ import {
 import {
   BUILDING_ARCHETYPES,
   BUILDING_SPEC_VERSION,
+  FLOOR_BALCONY_IDS,
+  FLOOR_USE_IDS,
   VOXEL_STYLE_KITS,
   createBuildingSpec
 } from "./generators/voxelBuildingGrammar.js";
@@ -163,20 +165,24 @@ const MODES = {
     defaultPreset: "connectedTerraceDay",
     normalize: normalizeVoxelBuildingConfig,
     randomize: (seed) => {
-      const archetypeVariant = Math.floor(Math.random() * 3);
       const styleVariant = Math.floor(Math.random() * 3);
-      const roofVariant = Math.floor(Math.random() * 3);
+      const floors = 1 + Math.floor(Math.random() * 5);
+      const groundPurpose = ["shop", "home", "workshop"][Math.floor(Math.random() * 3)];
+      const floorPrograms = Array.from({ length: floors }, (_, index) => ({
+        purpose: index === 0 ? groundPurpose : ["home", "home", "workshop", "storage"][Math.floor(Math.random() * 4)],
+        setbackVoxels: index === 0 ? 0 : [0, 0, 2, 4][Math.floor(Math.random() * 4)],
+        balcony: index === 0 ? "none" : ["none", "none", "selective", "full"][Math.floor(Math.random() * 4)]
+      }));
       return normalizeVoxelBuildingConfig({
         ...VOXEL_BUILDING_PRESETS.connectedTerraceDay,
         seed,
-        floors: 2 + Math.floor(Math.random() * 3),
-        roofVariant,
-        roofType: ["gable", "mansard", "magic_asymmetric"][roofVariant],
-        archetypeVariant,
-        archetype: ["townhouse", "magic_shop", "workshop"][archetypeVariant],
+        floors,
+        floorPrograms,
         styleVariant,
         style: ["london_brick", "violet_alchemist", "forest_craft"][styleVariant],
         materialScheme: styleVariant,
+        ridgePosition: Math.random(),
+        windowRatio: 0.2 + Math.random() * 0.65,
         variation: 0.35 + Math.random() * 0.65,
         parcelWidth: 24 + Math.floor(Math.random() * 5) * 4,
         parcelDepth: 28 + Math.floor(Math.random() * 5) * 4
@@ -186,19 +192,8 @@ const MODES = {
       { key: "sunTime", label: "Sun Time", min: 0, max: 1, step: 0.01 },
       { key: "nightLighting", label: "Night Lights", min: 0, max: 1, step: 0.01 },
       { key: "buildingCount", label: "Connected Buildings", min: 1, max: 3, step: 1 },
-      { key: "floors", label: "Base Floors", min: 2, max: 5, step: 1 },
+      { key: "floors", label: "Base Floors", min: 1, max: 5, step: 1 },
       { key: "expansionFloors", label: "Add Floors", min: 0, max: 2, step: 1 },
-      {
-        key: "archetypeVariant",
-        label: "Archetype",
-        control: "select",
-        aliasKey: "archetype",
-        options: [
-          { value: 0, label: "Townhouse", configValue: "townhouse" },
-          { value: 1, label: "Magic Shop", configValue: "magic_shop" },
-          { value: 2, label: "Workshop", configValue: "workshop" }
-        ]
-      },
       {
         key: "styleVariant",
         label: "Style Kit",
@@ -210,21 +205,13 @@ const MODES = {
           { value: 2, label: "Forest Craft", configValue: "forest_craft" }
         ]
       },
-      {
-        key: "roofVariant",
-        label: "Roof Family",
-        control: "select",
-        aliasKey: "roofType",
-        options: [
-          { value: 0, label: "Gable", configValue: "gable" },
-          { value: 1, label: "Mansard", configValue: "mansard" },
-          { value: 2, label: "Magic Asymmetric", configValue: "magic_asymmetric" }
-        ]
-      },
+      { key: "ridgePosition", label: "Ridge Position", min: 0, max: 1, step: 0.01, format: "percent" },
+      { key: "windowRatio", label: "Window Share", min: 0.15, max: 0.9, step: 0.01, format: "percent" },
       { key: "parcelWidth", label: "Parcel Width", min: 24, max: 40, step: 4 },
       { key: "parcelDepth", label: "Parcel Depth", min: 28, max: 44, step: 4 },
       { key: "variation", label: "Grammar Variation", min: 0, max: 1, step: 0.01 },
-      { key: "detailDensity", label: "Decoration", min: 0, max: 1, step: 0.01 }
+      { key: "detailDensity", label: "Decoration", min: 0, max: 1, step: 0.01 },
+      ...createVoxelFloorControlDefinitions()
     ]
   },
   parcel: {
@@ -298,6 +285,7 @@ const cityViewerResources = document.querySelector("#city-viewer-resources");
 const cityViewerRefresh = document.querySelector("#city-viewer-refresh");
 const sliderInputs = new Map();
 const sliderValues = new Map();
+const sliderFields = new Map();
 const cityViewerContext = resolveCityViewerContext();
 if (cityViewerContext) document.documentElement.dataset.magicTownViewer = "loading";
 
@@ -471,6 +459,7 @@ function buildSliderUi() {
   sliderRoot.replaceChildren();
   sliderInputs.clear();
   sliderValues.clear();
+  sliderFields.clear();
 
   MODES[currentMode].sliders.forEach((definition) => {
     const isSelect = definition.control === "select";
@@ -522,19 +511,28 @@ function buildSliderUi() {
         syncApiPill();
         return;
       }
-      const value = Number(input.value);
-      const selectedOption = definition.options?.find((option) => Number(option.value) === value);
-      const patch = definition.aliasKey
+      const value = definition.valueType === "string" ? input.value : Number(input.value);
+      const selectedOption = definition.options?.find((option) => String(option.value) === String(value));
+      let patch = definition.aliasKey
         ? {
           [definition.key]: value,
           [definition.aliasKey]: selectedOption?.configValue
         }
         : { [definition.key]: value };
+      if (definition.arrayKey) {
+        const nextArray = structuredClone(currentConfig[definition.arrayKey] ?? []);
+        nextArray[definition.floorIndex] = {
+          ...(nextArray[definition.floorIndex] ?? {}),
+          [definition.property]: value
+        };
+        patch = { [definition.arrayKey]: nextArray };
+      }
       rebuildActive({ ...currentConfig, ...patch });
     });
 
     if (!isSelect) sliderValues.set(definition.key, valueText);
     sliderInputs.set(definition.key, input);
+    sliderFields.set(definition.key, label);
     label.append(top, input);
     sliderRoot.append(label);
   });
@@ -699,10 +697,16 @@ function syncUi() {
   MODES[currentMode].sliders.forEach((definition) => {
     const { key } = definition;
     const input = sliderInputs.get(key);
-    const value = currentConfig[key];
+    const value = definition.arrayKey
+      ? currentConfig[definition.arrayKey]?.[definition.floorIndex]?.[definition.property]
+      : currentConfig[key];
     input.value = value;
+    sliderFields.get(key).hidden = definition.floorIndex != null
+      && definition.floorIndex >= currentConfig.floors;
     if (definition.control !== "select") {
-      sliderValues.get(key).textContent = formatSliderValue(value, input.step);
+      sliderValues.get(key).textContent = definition.format === "percent"
+        ? `${Math.round(Number(value) * 100)}%`
+        : formatSliderValue(value, input.step);
     }
   });
 }
@@ -744,7 +748,7 @@ function syncApiPill() {
   } else if (currentMode === "comparison") {
     apiPill.textContent = "MagicTown.compareAssetRepresentations({ depthStrength, comparisonYaw, showBounds, depthWireframe })";
   } else if (currentMode === "voxel") {
-    apiPill.textContent = "MagicTown.generateVoxelStreet({ archetype: 'magic_shop', style: 'violet_alchemist', parcelWidth, parcelDepth, floors, roofType, variation, seed })";
+    apiPill.textContent = "MagicTown.generateVoxelStreet({ floorPrograms: [{ purpose: 'shop' }, { purpose: 'home', setbackVoxels: 2, balcony: 'full' }], ridgePosition: 0.5, windowRatio: 0.45, style: 'violet_alchemist' })";
   } else {
     apiPill.textContent = `MagicTown.previewParcel({ footprint: '${currentConfig.footprint}', floors: ${currentConfig.floors}, maxHeight: ${currentConfig.maxHeight} })`;
   }
@@ -867,7 +871,10 @@ function exposeAgentApi() {
       return {
         specVersion: BUILDING_SPEC_VERSION,
         archetypes: structuredClone(BUILDING_ARCHETYPES),
-        styleKits: structuredClone(VOXEL_STYLE_KITS)
+        styleKits: structuredClone(VOXEL_STYLE_KITS),
+        floorPurposes: [...FLOOR_USE_IDS],
+        floorBalconies: [...FLOOR_BALCONY_IDS],
+        ridgePositionRange: [0, 1]
       };
     },
     getWorldContract(config = configsByMode.map) {
@@ -1193,6 +1200,9 @@ function inferMode(config) {
     || "style" in config
     || "styleVariant" in config
     || "roofType" in config
+    || "ridgePosition" in config
+    || "windowRatio" in config
+    || "floorPrograms" in config
     || "parcelWidth" in config
     || "parcelDepth" in config
     || "variation" in config
@@ -1210,6 +1220,59 @@ function findPresetName(config) {
 
 function formatSliderValue(value, step) {
   return Number(value).toFixed(String(step).includes(".") ? 2 : 0);
+}
+
+function createVoxelFloorControlDefinitions() {
+  return Array.from({ length: 5 }, (_, floorIndex) => {
+    const floorNumber = floorIndex + 1;
+    const controls = [{
+      key: `floor-${floorNumber}-purpose`,
+      label: `Floor ${floorNumber} · Use`,
+      control: "select",
+      valueType: "string",
+      arrayKey: "floorPrograms",
+      floorIndex,
+      property: "purpose",
+      options: [
+        { value: "shop", label: "Shop" },
+        { value: "home", label: "Home" },
+        { value: "workshop", label: "Workshop" },
+        { value: "storage", label: "Storage" }
+      ]
+    }];
+    if (floorIndex === 0) return controls;
+    controls.push(
+      {
+        key: `floor-${floorNumber}-setback`,
+        label: `Floor ${floorNumber} · Setback`,
+        control: "select",
+        arrayKey: "floorPrograms",
+        floorIndex,
+        property: "setbackVoxels",
+        options: [
+          { value: 0, label: "Flush" },
+          { value: 2, label: "Small · 2 voxels" },
+          { value: 4, label: "Deep · 4 voxels" },
+          { value: 6, label: "Terrace · 6 voxels" }
+        ]
+      },
+      {
+        key: `floor-${floorNumber}-balcony`,
+        label: `Floor ${floorNumber} · Balcony`,
+        control: "select",
+        valueType: "string",
+        arrayKey: "floorPrograms",
+        floorIndex,
+        property: "balcony",
+        options: [
+          { value: "none", label: "None" },
+          { value: "selective", label: "One Bay" },
+          { value: "full", label: "Full Width" }
+        ]
+      }
+    );
+    return controls;
+  }).flat();
 }
 
 function titleCase(value) {
