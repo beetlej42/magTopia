@@ -172,11 +172,23 @@ const MODES = {
       const cornerFacades = CORNER_FACADE_MODE_IDS[Math.floor(Math.random() * CORNER_FACADE_MODE_IDS.length)];
       const floors = 1 + Math.floor(Math.random() * 5);
       const groundPurpose = ["shop", "home", "workshop"][Math.floor(Math.random() * 3)];
-      const floorPrograms = Array.from({ length: floors }, (_, index) => ({
-        purpose: index === 0 ? groundPurpose : ["home", "home", "workshop", "storage"][Math.floor(Math.random() * 4)],
-        setbackVoxels: index === 0 ? 0 : [0, 0, 2, 4][Math.floor(Math.random() * 4)],
-        balcony: index === 0 ? "none" : ["none", "none", "selective", "full"][Math.floor(Math.random() * 4)]
-      }));
+      const floorPrograms = Array.from({ length: floors }, (_, index) => {
+        const purpose = index === 0
+          ? groundPurpose
+          : ["home", "home", "workshop", "storage"][Math.floor(Math.random() * 4)];
+        const windowRange = {
+          shop: [0.68, 0.9],
+          home: [0.22, 0.52],
+          workshop: [0.42, 0.72],
+          storage: [0.15, 0.34]
+        }[purpose];
+        return {
+          purpose,
+          setbackVoxels: index === 0 ? 0 : [0, 0, 2, 4][Math.floor(Math.random() * 4)],
+          balcony: index === 0 ? "none" : ["none", "none", "selective", "full"][Math.floor(Math.random() * 4)],
+          windowRatio: windowRange[0] + Math.random() * (windowRange[1] - windowRange[0])
+        };
+      });
       return normalizeVoxelBuildingConfig({
         ...VOXEL_BUILDING_PRESETS.connectedTerraceDay,
         seed,
@@ -243,7 +255,6 @@ const MODES = {
           { value: "both", label: "Both Corners" }
         ]
       },
-      { key: "windowRatio", label: "Window Share", min: 0.15, max: 0.9, step: 0.01, format: "percent" },
       { key: "parcelWidth", label: "Parcel Width", min: 24, max: 40, step: 4 },
       { key: "parcelDepth", label: "Parcel Depth", min: 28, max: 44, step: 4 },
       { key: "variation", label: "Grammar Variation", min: 0, max: 1, step: 0.01 },
@@ -786,7 +797,7 @@ function syncApiPill() {
   } else if (currentMode === "comparison") {
     apiPill.textContent = "MagicTown.compareAssetRepresentations({ depthStrength, comparisonYaw, showBounds, depthWireframe })";
   } else if (currentMode === "voxel") {
-    apiPill.textContent = "MagicTown.generateVoxelStreet({ floorPrograms: [{ purpose: 'shop' }, { purpose: 'home' }], cornerFacades: 'both', roofForm: 'hip', style: 'violet_alchemist' })";
+    apiPill.textContent = "MagicTown.generateVoxelStreet({ floorPrograms: [{ purpose: 'shop', windowRatio: 0.86 }, { purpose: 'home', windowRatio: 0.32 }], cornerFacades: 'both', roofForm: 'hip' })";
   } else {
     apiPill.textContent = `MagicTown.previewParcel({ footprint: '${currentConfig.footprint}', floors: ${currentConfig.floors}, maxHeight: ${currentConfig.maxHeight} })`;
   }
@@ -914,6 +925,7 @@ function exposeAgentApi() {
         floorBalconies: [...FLOOR_BALCONY_IDS],
         roofForms: [...ROOF_FORM_IDS],
         cornerFacadeModes: [...CORNER_FACADE_MODE_IDS],
+        floorWindowRatioRange: [0.15, 0.9],
         ridgePositionRange: [0, 1]
       };
     },
@@ -1267,21 +1279,34 @@ function formatSliderValue(value, step) {
 function createVoxelFloorControlDefinitions() {
   return Array.from({ length: 5 }, (_, floorIndex) => {
     const floorNumber = floorIndex + 1;
-    const controls = [{
-      key: `floor-${floorNumber}-purpose`,
-      label: `Floor ${floorNumber} · Use`,
-      control: "select",
-      valueType: "string",
-      arrayKey: "floorPrograms",
-      floorIndex,
-      property: "purpose",
-      options: [
-        { value: "shop", label: "Shop" },
-        { value: "home", label: "Home" },
-        { value: "workshop", label: "Workshop" },
-        { value: "storage", label: "Storage" }
-      ]
-    }];
+    const controls = [
+      {
+        key: `floor-${floorNumber}-purpose`,
+        label: `Floor ${floorNumber} · Use`,
+        control: "select",
+        valueType: "string",
+        arrayKey: "floorPrograms",
+        floorIndex,
+        property: "purpose",
+        options: [
+          { value: "shop", label: "Shop" },
+          { value: "home", label: "Home" },
+          { value: "workshop", label: "Workshop" },
+          { value: "storage", label: "Storage" }
+        ]
+      },
+      {
+        key: `floor-${floorNumber}-window-ratio`,
+        label: `Floor ${floorNumber} · Window Share`,
+        min: 0.15,
+        max: 0.9,
+        step: 0.01,
+        format: "percent",
+        arrayKey: "floorPrograms",
+        floorIndex,
+        property: "windowRatio"
+      }
+    ];
     if (floorIndex === 0) return controls;
     controls.push(
       {

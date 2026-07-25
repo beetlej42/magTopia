@@ -21,8 +21,8 @@ MagicTown.generateVoxelStreet({
   buildingCount: 3,
   floors: 2,
   floorPrograms: [
-    { purpose: "shop" },
-    { purpose: "home", setbackVoxels: 4, balcony: "full" }
+    { purpose: "shop", windowRatio: 0.86 },
+    { purpose: "home", windowRatio: 0.32, setbackVoxels: 4, balcony: "full" }
   ],
   style: "violet_alchemist",
   parcelWidth: 36,
@@ -30,7 +30,6 @@ MagicTown.generateVoxelStreet({
   cornerFacades: "both",
   roofForm: "hip",
   ridgePosition: 0.35,
-  windowRatio: 0.42,
   variation: 0.82,
   nightLighting: 0.3
 });
@@ -45,8 +44,8 @@ MagicTown.createVoxelBuildingSpec({
   depthVoxels: 40,
   baseFloors: 2,
   floorPrograms: [
-    { purpose: "shop" },
-    { purpose: "home", setbackVoxels: 4, balcony: "full" }
+    { purpose: "shop", windowRatio: 0.86 },
+    { purpose: "home", windowRatio: 0.32, setbackVoxels: 4, balcony: "full" }
   ],
   sideFacadeSides: ["right"],
   roofForm: "gable_cross",
@@ -109,18 +108,21 @@ BuildingSpec + seed
 ```json
 {
   "floorPrograms": [
-    { "purpose": "shop" },
-    { "purpose": "home", "setbackVoxels": 2, "balcony": "full" }
+    { "purpose": "shop", "windowRatio": 0.86 },
+    { "purpose": "home", "windowRatio": 0.32, "setbackVoxels": 2, "balcony": "full" }
   ],
   "style": "violet_alchemist",
   "cornerFacades": "both",
   "roofForm": "gable_street",
-  "ridgePosition": 0.5,
-  "windowRatio": 0.4
+  "ridgePosition": 0.5
 }
 ```
 
 服务端负责补全屋顶、立面开间、窗户节奏、烟囱、店面、统一材质和装饰槽。
+
+`windowRatio` 属于每个 `floorPrograms` 条目，范围为 0.15–0.9。正面和侧面
+共同使用该层数值，因此大橱窗商铺与小窗住宅可以直接垂直组合。顶层同名参数
+仅作为旧调用和缺省楼层的兼容默认值。
 
 `cornerFacades` 可以是 `none`、`left`、`right` 或 `both`。它只作用于联排
 真正暴露的端部：商铺用途会把橱窗和入口延续到侧面，住宅、工坊与仓储楼层也

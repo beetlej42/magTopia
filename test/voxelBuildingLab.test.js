@@ -305,6 +305,33 @@ test("smaller window share produces genuinely smaller openings", () => {
   assert.ok(compactOpening.yEnd - compactOpening.yStart < generousOpening.yEnd - generousOpening.yStart);
 });
 
+test("each floor keeps an independent window share across front and corner facades", () => {
+  const plan = planVoxelStreet({
+    seed: "per-floor-window-share",
+    buildingCount: 1,
+    floors: 2,
+    cornerFacades: "right",
+    floorPrograms: [
+      { purpose: "shop", windowRatio: 0.88 },
+      { purpose: "home", windowRatio: 0.24 }
+    ]
+  });
+  const building = plan.buildings[0];
+  const openingArea = (module) => (
+    (module.opening.xEnd - module.opening.xStart + 1)
+    * (module.opening.yEnd - module.opening.yStart + 1)
+  );
+  const largestOpening = (facade, floor) => Math.max(
+    ...facade.floors[floor].modules.filter((module) => module.opening).map(openingArea)
+  );
+
+  assert.deepEqual(building.floorSpecs.map((floor) => floor.windowRatio), [0.88, 0.24]);
+  assert.deepEqual(building.facade.floors.map((floor) => floor.windowRatio), [0.88, 0.24]);
+  assert.deepEqual(building.sideFacades.right.floors.map((floor) => floor.windowRatio), [0.88, 0.24]);
+  assert.ok(largestOpening(building.facade, 0) > largestOpening(building.facade, 1));
+  assert.ok(largestOpening(building.sideFacades.right, 0) > largestOpening(building.sideFacades.right, 1));
+});
+
 test("facade grammar varies deterministically across seeds without leaving its parcel", () => {
   const first = planFacadeGrammar({
     seed: "facade-a",

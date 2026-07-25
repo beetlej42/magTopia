@@ -108,8 +108,8 @@ MagicTown.generateVoxelStreet({
   buildingCount: 3,
   floors: 2,
   floorPrograms: [
-    { purpose: "shop" },
-    { purpose: "home", setbackVoxels: 4, balcony: "full" }
+    { purpose: "shop", windowRatio: 0.86 },
+    { purpose: "home", windowRatio: 0.32, setbackVoxels: 4, balcony: "full" }
   ],
   style: "violet_alchemist",
   parcelWidth: 36,
@@ -117,7 +117,6 @@ MagicTown.generateVoxelStreet({
   cornerFacades: "both",
   roofForm: "hip",
   ridgePosition: 0.35,
-  windowRatio: 0.42,
   variation: 0.82,
   nightLighting: 0.3
 });
@@ -132,8 +131,8 @@ MagicTown.createVoxelBuildingSpec({
   depthVoxels: 40,
   baseFloors: 2,
   floorPrograms: [
-    { purpose: "shop" },
-    { purpose: "home", setbackVoxels: 4, balcony: "full" }
+    { purpose: "shop", windowRatio: 0.86 },
+    { purpose: "home", windowRatio: 0.32, setbackVoxels: 4, balcony: "full" }
   ],
   sideFacadeSides: ["right"],
   roofForm: "gable_cross",
@@ -143,8 +142,9 @@ MagicTown.createVoxelBuildingSpec({
 
 The deterministic `BuildingSpec v0.2 + seed` remains the source of truth.
 Atomic floor programs independently select shop, home, workshop, or storage
-uses plus front setbacks and balcony forms. Three style kits compile the stack
-into stable front and optional corner-side facade bays, scale-aware openings, a continuous pitched roof,
+uses plus window share, front setbacks, and balcony forms. Three style kits
+compile the stack into stable front and optional corner-side facade bays,
+scale-aware openings, a continuous pitched roof,
 chimneys, flower boxes, and window-bound magic effects. Roofs use one shared
 two-dimensional height-field solver and can form a street-aligned gable,
 cross-aligned gable, or four-slope hip. Components write into

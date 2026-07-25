@@ -65,7 +65,7 @@
       setbackVoxels: 0,
       frontSetbackVoxels: 0,
       balcony: "none",
-      windowRatio: 0.42
+      windowRatio: 0.86
     },
     {
       index: 1,
@@ -73,7 +73,7 @@
       setbackVoxels: 4,
       frontSetbackVoxels: 4,
       balcony: "full",
-      windowRatio: 0.42
+      windowRatio: 0.32
     }
   ],
   facade: {
@@ -107,7 +107,13 @@
 
 ## 窗墙比
 
-`windowRatio` 的范围是 `0.15–0.9`。它同时控制窗洞宽度和高度，而不是只改变窗户数量。因此 20% 会生成真正更窄、更矮的窗户；门仍保留可用的最小尺寸。
+`floorPrograms[].windowRatio` 的范围是 `0.15–0.9`，并且逐层独立。它同时
+控制该层窗洞的宽度和高度，而不是只改变窗户数量。因此一层商铺可以使用
+`0.86` 的通高大橱窗，二层住宅同时使用 `0.32` 的较小窗户；门仍保留可用的
+最小尺寸。正立面与街角侧立面读取同一份楼层参数，所以转角两面会保持一致。
+
+顶层 `windowRatio` 只作为旧 API 和未显式填写楼层的默认值保留。生成实验室
+不再提供整栋滑杆，而是为每层显示独立的 `Window Share`。
 
 立面先保留左右结构边，再把可用宽度分配给 2–5 个 bay。楼层用途决定每个 bay 使用普通窗、商店窗、工坊窗、小储藏窗或入口。
 

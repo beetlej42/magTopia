@@ -116,9 +116,9 @@ export const VOXEL_BUILDING_PRESETS = Object.freeze({
     archetypeVariant: 0,
     styleVariant: 0,
     floorPrograms: [
-      { purpose: "shop", setbackVoxels: 0, balcony: "none" },
-      { purpose: "home", setbackVoxels: 0, balcony: "selective" },
-      { purpose: "home", setbackVoxels: 0, balcony: "none" }
+      { purpose: "shop", setbackVoxels: 0, balcony: "none", windowRatio: 0.82 },
+      { purpose: "home", setbackVoxels: 0, balcony: "selective", windowRatio: 0.38 },
+      { purpose: "home", setbackVoxels: 0, balcony: "none", windowRatio: 0.34 }
     ],
     ridgePosition: 0.5,
     roofForm: "gable_street",
@@ -140,9 +140,9 @@ export const VOXEL_BUILDING_PRESETS = Object.freeze({
     archetypeVariant: 1,
     styleVariant: 1,
     floorPrograms: [
-      { purpose: "shop", setbackVoxels: 0, balcony: "none" },
-      { purpose: "home", setbackVoxels: 2, balcony: "full" },
-      { purpose: "home", setbackVoxels: 0, balcony: "none" }
+      { purpose: "shop", setbackVoxels: 0, balcony: "none", windowRatio: 0.88 },
+      { purpose: "home", setbackVoxels: 2, balcony: "full", windowRatio: 0.42 },
+      { purpose: "home", setbackVoxels: 0, balcony: "none", windowRatio: 0.36 }
     ],
     ridgePosition: 0.36,
     roofForm: "hip",
@@ -164,10 +164,10 @@ export const VOXEL_BUILDING_PRESETS = Object.freeze({
     archetypeVariant: 0,
     styleVariant: 0,
     floorPrograms: [
-      { purpose: "shop", setbackVoxels: 0, balcony: "none" },
-      { purpose: "home", setbackVoxels: 0, balcony: "selective" },
-      { purpose: "home", setbackVoxels: 2, balcony: "none" },
-      { purpose: "home", setbackVoxels: 0, balcony: "selective" }
+      { purpose: "shop", setbackVoxels: 0, balcony: "none", windowRatio: 0.8 },
+      { purpose: "home", setbackVoxels: 0, balcony: "selective", windowRatio: 0.42 },
+      { purpose: "home", setbackVoxels: 2, balcony: "none", windowRatio: 0.36 },
+      { purpose: "home", setbackVoxels: 0, balcony: "selective", windowRatio: 0.34 }
     ],
     ridgePosition: 0.62,
     roofForm: "gable_cross",
@@ -189,9 +189,9 @@ export const VOXEL_BUILDING_PRESETS = Object.freeze({
     archetypeVariant: 0,
     styleVariant: 0,
     floorPrograms: [
-      { purpose: "home", setbackVoxels: 0, balcony: "none" },
-      { purpose: "home", setbackVoxels: 0, balcony: "selective" },
-      { purpose: "home", setbackVoxels: 2, balcony: "none" }
+      { purpose: "home", setbackVoxels: 0, balcony: "none", windowRatio: 0.42 },
+      { purpose: "home", setbackVoxels: 0, balcony: "selective", windowRatio: 0.38 },
+      { purpose: "home", setbackVoxels: 2, balcony: "none", windowRatio: 0.32 }
     ],
     ridgePosition: 0.5,
     roofForm: "gable_street",
@@ -213,9 +213,9 @@ export const VOXEL_BUILDING_PRESETS = Object.freeze({
     archetypeVariant: 1,
     styleVariant: 1,
     floorPrograms: [
-      { purpose: "shop", setbackVoxels: 0, balcony: "none" },
-      { purpose: "home", setbackVoxels: 2, balcony: "full" },
-      { purpose: "home", setbackVoxels: 0, balcony: "selective" }
+      { purpose: "shop", setbackVoxels: 0, balcony: "none", windowRatio: 0.9 },
+      { purpose: "home", setbackVoxels: 2, balcony: "full", windowRatio: 0.46 },
+      { purpose: "home", setbackVoxels: 0, balcony: "selective", windowRatio: 0.4 }
     ],
     ridgePosition: 0.28,
     roofForm: "hip",
@@ -237,8 +237,8 @@ export const VOXEL_BUILDING_PRESETS = Object.freeze({
     archetypeVariant: 2,
     styleVariant: 2,
     floorPrograms: [
-      { purpose: "workshop", setbackVoxels: 0, balcony: "none" },
-      { purpose: "storage", setbackVoxels: 2, balcony: "none" }
+      { purpose: "workshop", setbackVoxels: 0, balcony: "none", windowRatio: 0.62 },
+      { purpose: "storage", setbackVoxels: 2, balcony: "none", windowRatio: 0.24 }
     ],
     ridgePosition: 0,
     roofForm: "gable_cross",
@@ -268,7 +268,8 @@ export function normalizeVoxelBuildingConfig(config = {}) {
     base.floorPrograms,
     floors + Math.round(clamp(base.expansionFloors, 0, 2)),
     BUILDING_ARCHETYPE_IDS[requestedArchetypeVariant],
-    windowRatio
+    windowRatio,
+    Object.hasOwn(config, "windowRatio") && !Object.hasOwn(config, "floorPrograms")
   );
   const derivedArchetype = archetypeForFloorPurpose(floorPrograms[0].purpose);
   const archetypeVariant = BUILDING_ARCHETYPE_IDS.indexOf(derivedArchetype);
@@ -410,7 +411,7 @@ export function getVoxelBuildingContract(config = {}) {
       endCaps: "left/right and front/back closures are height-field-derived; party-wall exposure samples the shared boundary"
     },
     agentControl: {
-      simple: ["floorPrograms", "footprint", "style", "roofForm", "ridgePosition", "cornerFacades", "windowRatio"],
+      simple: ["floorPrograms", "floorPrograms[].windowRatio", "footprint", "style", "roofForm", "ridgePosition", "cornerFacades"],
       advanced: ["floor purpose", "floor setback", "floor balcony", "facade.rhythm", "component materials", "decoration slots"],
       decoration: "sparse voxel patches applied after deterministic generation"
     },
@@ -1681,7 +1682,13 @@ function enumIndex(values, requestedName, fallbackIndex) {
   return Math.round(clamp(fallbackIndex, 0, values.length - 1));
 }
 
-function normalizeConfiguredFloorPrograms(source, requestedFloors, archetype, windowRatio) {
+function normalizeConfiguredFloorPrograms(
+  source,
+  requestedFloors,
+  archetype,
+  windowRatio,
+  forceGlobalWindowRatio = false
+) {
   const programs = Array.isArray(source) ? source : [];
   const count = Math.max(5, requestedFloors);
   return Array.from({ length: count }, (_, index) => {
@@ -1703,7 +1710,11 @@ function normalizeConfiguredFloorPrograms(source, requestedFloors, archetype, wi
       balcony: index === 0 || !FLOOR_BALCONY_IDS.includes(explicit?.balcony)
         ? "none"
         : explicit.balcony,
-      windowRatio: clamp(windowRatio, 0.15, 0.9)
+      windowRatio: clamp(
+        forceGlobalWindowRatio ? windowRatio : (explicit?.windowRatio ?? windowRatio),
+        0.15,
+        0.9
+      )
     };
   });
 }
