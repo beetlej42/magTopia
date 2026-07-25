@@ -43,6 +43,7 @@ import {
   BUILDING_SPEC_VERSION,
   FLOOR_BALCONY_IDS,
   FLOOR_USE_IDS,
+  ROOF_FORM_IDS,
   VOXEL_STYLE_KITS,
   createBuildingSpec
 } from "./generators/voxelBuildingGrammar.js";
@@ -166,6 +167,7 @@ const MODES = {
     normalize: normalizeVoxelBuildingConfig,
     randomize: (seed) => {
       const styleVariant = Math.floor(Math.random() * 3);
+      const roofForm = ROOF_FORM_IDS[Math.floor(Math.random() * ROOF_FORM_IDS.length)];
       const floors = 1 + Math.floor(Math.random() * 5);
       const groundPurpose = ["shop", "home", "workshop"][Math.floor(Math.random() * 3)];
       const floorPrograms = Array.from({ length: floors }, (_, index) => ({
@@ -181,6 +183,7 @@ const MODES = {
         styleVariant,
         style: ["london_brick", "violet_alchemist", "forest_craft"][styleVariant],
         materialScheme: styleVariant,
+        roofForm,
         ridgePosition: Math.random(),
         windowRatio: 0.2 + Math.random() * 0.65,
         variation: 0.35 + Math.random() * 0.65,
@@ -205,7 +208,26 @@ const MODES = {
           { value: 2, label: "Forest Craft", configValue: "forest_craft" }
         ]
       },
-      { key: "ridgePosition", label: "Ridge Position", min: 0, max: 1, step: 0.01, format: "percent" },
+      {
+        key: "roofForm",
+        label: "Roof Form",
+        control: "select",
+        valueType: "string",
+        options: [
+          { value: "gable_street", label: "Gable · Street Ridge" },
+          { value: "gable_cross", label: "Gable · Cross Ridge" },
+          { value: "hip", label: "Hip · Four Slopes" }
+        ]
+      },
+      {
+        key: "ridgePosition",
+        label: "Ridge Position",
+        min: 0,
+        max: 1,
+        step: 0.01,
+        format: "percent",
+        visible: (config) => config.roofForm !== "hip"
+      },
       { key: "windowRatio", label: "Window Share", min: 0.15, max: 0.9, step: 0.01, format: "percent" },
       { key: "parcelWidth", label: "Parcel Width", min: 24, max: 40, step: 4 },
       { key: "parcelDepth", label: "Parcel Depth", min: 28, max: 44, step: 4 },
@@ -701,8 +723,9 @@ function syncUi() {
       ? currentConfig[definition.arrayKey]?.[definition.floorIndex]?.[definition.property]
       : currentConfig[key];
     input.value = value;
-    sliderFields.get(key).hidden = definition.floorIndex != null
-      && definition.floorIndex >= currentConfig.floors;
+    const hiddenByFloor = definition.floorIndex != null && definition.floorIndex >= currentConfig.floors;
+    const hiddenByCondition = definition.visible && !definition.visible(currentConfig);
+    sliderFields.get(key).hidden = hiddenByFloor || hiddenByCondition;
     if (definition.control !== "select") {
       sliderValues.get(key).textContent = definition.format === "percent"
         ? `${Math.round(Number(value) * 100)}%`
@@ -748,7 +771,7 @@ function syncApiPill() {
   } else if (currentMode === "comparison") {
     apiPill.textContent = "MagicTown.compareAssetRepresentations({ depthStrength, comparisonYaw, showBounds, depthWireframe })";
   } else if (currentMode === "voxel") {
-    apiPill.textContent = "MagicTown.generateVoxelStreet({ floorPrograms: [{ purpose: 'shop' }, { purpose: 'home', setbackVoxels: 2, balcony: 'full' }], ridgePosition: 0.5, windowRatio: 0.45, style: 'violet_alchemist' })";
+    apiPill.textContent = "MagicTown.generateVoxelStreet({ floorPrograms: [{ purpose: 'shop' }, { purpose: 'home' }], roofForm: 'hip', windowRatio: 0.45, style: 'violet_alchemist' })";
   } else {
     apiPill.textContent = `MagicTown.previewParcel({ footprint: '${currentConfig.footprint}', floors: ${currentConfig.floors}, maxHeight: ${currentConfig.maxHeight} })`;
   }
@@ -874,6 +897,7 @@ function exposeAgentApi() {
         styleKits: structuredClone(VOXEL_STYLE_KITS),
         floorPurposes: [...FLOOR_USE_IDS],
         floorBalconies: [...FLOOR_BALCONY_IDS],
+        roofForms: [...ROOF_FORM_IDS],
         ridgePositionRange: [0, 1]
       };
     },
@@ -1200,6 +1224,7 @@ function inferMode(config) {
     || "style" in config
     || "styleVariant" in config
     || "roofType" in config
+    || "roofForm" in config
     || "ridgePosition" in config
     || "windowRatio" in config
     || "floorPrograms" in config

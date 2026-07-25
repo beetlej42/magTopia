@@ -27,6 +27,7 @@ MagicTown.generateVoxelStreet({
   style: "violet_alchemist",
   parcelWidth: 36,
   parcelDepth: 40,
+  roofForm: "hip",
   ridgePosition: 0.35,
   windowRatio: 0.42,
   variation: 0.82,
@@ -46,6 +47,7 @@ MagicTown.createVoxelBuildingSpec({
     { purpose: "shop" },
     { purpose: "home", setbackVoxels: 4, balcony: "full" }
   ],
+  roofForm: "gable_cross",
   ridgePosition: 0.35
 });
 ```
@@ -109,6 +111,7 @@ BuildingSpec + seed
     { "purpose": "home", "setbackVoxels": 2, "balcony": "full" }
   ],
   "style": "violet_alchemist",
+  "roofForm": "gable_street",
   "ridgePosition": 0.5,
   "windowRatio": 0.4
 }
@@ -164,13 +167,19 @@ BuildingSpec + seed
 
 ## 程序化坡屋顶
 
-坡屋顶统一使用连续线性剖面。生成器接收：
+坡屋顶统一使用二维整数高度场。生成器接收：
 
 - 建筑宽度与深度
+- 屋顶形式
 - 屋脊高度和 0–100% 相对位置
 - 出檐和屋面厚度
 
-屋脊始终平行联排街道，生成器为每个深度切片生成完整屋面行。50% 是对称双坡顶，偏离中心得到不对称双坡，0% 和 100% 分别退化为两个方向的单坡顶。短坡相邻切片若跨越多个体素高度，会自动补齐竖向阶梯面，因此 7%/93% 等近边缘位置也保持面连通。左右山墙和前后高檐封墙都会自动补齐；相邻建筑暴露部分仍由双方屋顶包络决定。
+`gable_street` 的屋脊平行街道，`gable_cross` 将同一套双坡规则旋转 90°，
+`hip` 则根据体素到四条檐边的最短距离形成四面坡和居中短屋脊。两种双坡顶
+都支持 0–100% 屋脊位置：50% 是对称双坡，偏离中心得到不对称双坡，
+两个极端退化为相反方向的单坡。相邻高度若跨越多个体素，会自动补齐竖向
+阶梯面，因此 7%/93% 等近边缘位置仍保持面连通。山墙、四周封檐、烟囱、
+天窗和相邻共墙包络全部从同一高度场派生。
 
 ## 当前边界
 

@@ -3,6 +3,7 @@ import { createRng } from "../utils/random.js";
 export const BUILDING_SPEC_VERSION = "0.2";
 export const FLOOR_USE_IDS = Object.freeze(["shop", "home", "workshop", "storage"]);
 export const FLOOR_BALCONY_IDS = Object.freeze(["none", "selective", "full"]);
+export const ROOF_FORM_IDS = Object.freeze(["gable_street", "gable_cross", "hip"]);
 
 export const BUILDING_ARCHETYPES = Object.freeze({
   townhouse: Object.freeze({
@@ -137,7 +138,8 @@ export function createBuildingSpec(options = {}) {
     depth: depthVoxels - floorSpecs.at(-1).frontSetbackVoxels,
     archetype,
     style,
-    ridgePosition: options.ridgePosition
+    ridgePosition: options.ridgePosition,
+    roofForm: options.roofForm
   });
   const decorations = planDecorations({
     seed: stableSeed(seed, id, "decorations"),
@@ -390,7 +392,7 @@ function planMaterials(style, seed) {
   };
 }
 
-function planRoofGrammar({ seed, depth, archetype, style, ridgePosition }) {
+function planRoofGrammar({ seed, depth, archetype, style, ridgePosition, roofForm }) {
   const rng = createRng(seed);
   const [minimumPitch, maximumPitch] = style.roofPitchRange;
   const pitch = minimumPitch + (maximumPitch - minimumPitch) * (0.35 + rng() * 0.65);
@@ -404,8 +406,9 @@ function planRoofGrammar({ seed, depth, archetype, style, ridgePosition }) {
     })
   );
   return {
-    grammar: "continuous-pitched-roof-v0.2",
+    grammar: "voxel-roof-heightfield-v0.3",
     type: "pitched",
+    form: ROOF_FORM_IDS.includes(roofForm) ? roofForm : "gable_street",
     seed,
     depthVoxels: depth,
     overhang: 1,

@@ -4,6 +4,7 @@ import {
   BUILDING_SPEC_VERSION,
   FLOOR_BALCONY_IDS,
   FLOOR_USE_IDS,
+  ROOF_FORM_IDS,
   VOXEL_STYLE_KIT_IDS,
   createBuildingSpec
 } from "./voxelBuildingGrammar.js";
@@ -119,6 +120,7 @@ export const VOXEL_BUILDING_PRESETS = Object.freeze({
       { purpose: "home", setbackVoxels: 0, balcony: "none" }
     ],
     ridgePosition: 0.5,
+    roofForm: "gable_street",
     windowRatio: 0.58,
     variation: 0.58,
     parcelWidth: 32,
@@ -141,6 +143,7 @@ export const VOXEL_BUILDING_PRESETS = Object.freeze({
       { purpose: "home", setbackVoxels: 0, balcony: "none" }
     ],
     ridgePosition: 0.36,
+    roofForm: "hip",
     windowRatio: 0.62,
     variation: 0.72,
     parcelWidth: 32,
@@ -164,6 +167,7 @@ export const VOXEL_BUILDING_PRESETS = Object.freeze({
       { purpose: "home", setbackVoxels: 0, balcony: "selective" }
     ],
     ridgePosition: 0.62,
+    roofForm: "gable_cross",
     windowRatio: 0.55,
     variation: 0.66,
     parcelWidth: 32,
@@ -186,6 +190,7 @@ export const VOXEL_BUILDING_PRESETS = Object.freeze({
       { purpose: "home", setbackVoxels: 2, balcony: "none" }
     ],
     ridgePosition: 0.5,
+    roofForm: "gable_street",
     windowRatio: 0.48,
     variation: 0.5,
     parcelWidth: 32,
@@ -208,6 +213,7 @@ export const VOXEL_BUILDING_PRESETS = Object.freeze({
       { purpose: "home", setbackVoxels: 0, balcony: "selective" }
     ],
     ridgePosition: 0.28,
+    roofForm: "hip",
     windowRatio: 0.68,
     variation: 0.82,
     parcelWidth: 36,
@@ -229,6 +235,7 @@ export const VOXEL_BUILDING_PRESETS = Object.freeze({
       { purpose: "storage", setbackVoxels: 2, balcony: "none" }
     ],
     ridgePosition: 0,
+    roofForm: "gable_cross",
     windowRatio: 0.38,
     variation: 0.76,
     parcelWidth: 36,
@@ -268,6 +275,7 @@ export function normalizeVoxelBuildingConfig(config = {}) {
     expansionFloors: Math.round(clamp(base.expansionFloors, 0, 2)),
     roofVariant: 0,
     roofType: "pitched",
+    roofForm: ROOF_FORM_IDS.includes(base.roofForm) ? base.roofForm : "gable_street",
     ridgePosition: clamp(base.ridgePosition ?? 0.5, 0, 1),
     windowRatio,
     floorPrograms,
@@ -308,6 +316,7 @@ export function planVoxelStreet(config = {}) {
       floorHeight: VOXEL_PARCEL.floorHeight,
       voxelSize: VOXEL_SIZE,
       ridgePosition: params.ridgePosition,
+      roofForm: params.roofForm,
       floorPrograms: params.floorPrograms,
       windowRatio: params.windowRatio,
       detailDensity: params.detailDensity,
@@ -368,22 +377,23 @@ export function getVoxelBuildingContract(config = {}) {
     },
     buildingGrammar: {
       specVersion: BUILDING_SPEC_VERSION,
-      pipeline: ["BuildingSpec", "floor stack", "facade bays", "continuous pitched roof", "decorations", "voxel field"],
+      pipeline: ["BuildingSpec", "floor stack", "facade bays", "2D roof height field", "decorations", "voxel field"],
       stableSubSeeds: true,
       archetypes: BUILDING_ARCHETYPE_IDS,
       styleKits: VOXEL_STYLE_KIT_IDS,
       floorPurposes: FLOOR_USE_IDS,
-      floorBalconies: FLOOR_BALCONY_IDS
+      floorBalconies: FLOOR_BALCONY_IDS,
+      roofForms: ROOF_FORM_IDS
     },
     roofSystem: {
-      type: "continuous linear pitched roof",
-      ridgeAxis: "parallel to the terrace frontage",
+      type: "two-dimensional voxel height field",
+      forms: ROOF_FORM_IDS,
       parameters: ["width", "depth", "ridge height", "ridge position 0..1", "overhang", "thickness"],
-      extremes: "ridge positions 0 and 1 become opposite mono-pitch roofs",
-      endCaps: "filled only on exposed outer gable ends; party-wall exposure is envelope-derived"
+      extremes: "gable ridge positions 0 and 1 become opposite mono-pitch roofs",
+      endCaps: "left/right and front/back closures are height-field-derived; party-wall exposure samples the shared boundary"
     },
     agentControl: {
-      simple: ["floorPrograms", "footprint", "style", "ridgePosition", "windowRatio"],
+      simple: ["floorPrograms", "footprint", "style", "roofForm", "ridgePosition", "windowRatio"],
       advanced: ["floor purpose", "floor setback", "floor balcony", "facade.rhythm", "component materials", "decoration slots"],
       decoration: "sparse voxel patches applied after deterministic generation"
     },
@@ -445,6 +455,7 @@ export function createVoxelBuildingLab(config = {}) {
       windowRatio: floor.windowRatio
     }))),
     ridgePositions: plan.buildings.map((building) => building.roof.ridgeRatio),
+    roofForms: plan.buildings.map((building) => building.roof.form),
     magicWindowCount,
     magicDecorationPlacement: "upper_window"
   };
@@ -579,6 +590,129 @@ export function planPitchedRoof(options = {}) {
     ridgeY: baseY + ridgeHeight,
     maximumProfileStep,
     profile,
+    surface,
+    endCaps,
+    edgeCaps
+  };
+}
+
+export function planVoxelRoof(options = {}) {
+  const width = Math.max(4, Math.round(options.width ?? VOXEL_PARCEL.width));
+  const depth = Math.max(4, Math.round(options.depth ?? VOXEL_PARCEL.depth));
+  const baseY = Math.round(options.baseY ?? 0);
+  const overhang = Math.max(0, Math.round(options.overhang ?? 1));
+  const thickness = Math.max(1, Math.round(options.thickness ?? 1));
+  const ridgeRatio = clamp(options.ridgeRatio ?? 0.5, 0, 1);
+  const ridgeHeight = Math.max(2, Math.round(options.ridgeHeight ?? depth * 0.34));
+  const form = ROOF_FORM_IDS.includes(options.form) ? options.form : "gable_street";
+  const capLeft = options.capLeft !== false;
+  const capRight = options.capRight !== false;
+  const fullXSpan = width + overhang * 2;
+  const fullZSpan = depth + overhang * 2;
+  const xStart = capLeft ? -overhang : 0;
+  const xEnd = width - 1 + (capRight ? overhang : 0);
+  const zStart = -overhang;
+  const zEnd = depth - 1 + overhang;
+  const heightField = [];
+  const heightByCoordinate = new Map();
+
+  for (let z = zStart; z <= zEnd; z += 1) {
+    for (let x = xStart; x <= xEnd; x += 1) {
+      const xIndex = x + overhang;
+      const zIndex = z + overhang;
+      let rise;
+      if (form === "gable_cross") {
+        rise = linearTentRise(xIndex, fullXSpan, ridgeRatio, ridgeHeight);
+      } else if (form === "hip") {
+        const distanceToEave = Math.min(
+          xIndex,
+          fullXSpan - 1 - xIndex,
+          zIndex,
+          fullZSpan - 1 - zIndex
+        );
+        const maximumDistance = Math.max(1, Math.floor((Math.min(fullXSpan, fullZSpan) - 1) / 2));
+        rise = Math.round(ridgeHeight * clamp(distanceToEave / maximumDistance, 0, 1));
+      } else {
+        rise = linearTentRise(zIndex, fullZSpan, ridgeRatio, ridgeHeight);
+      }
+      const cell = { x, y: baseY + rise, z };
+      heightField.push(cell);
+      heightByCoordinate.set(`${x},${z}`, cell.y);
+    }
+  }
+
+  const surface = [];
+  const surfaceKeys = new Set();
+  let maximumProfileStep = 0;
+  const addSurfaceColumn = (x, z, fromY, toY) => {
+    for (let bridgeY = Math.min(fromY, toY); bridgeY <= Math.max(fromY, toY); bridgeY += 1) {
+      for (let layer = 0; layer < thickness; layer += 1) {
+        const y = bridgeY - layer;
+        const key = `${x},${y},${z}`;
+        if (surfaceKeys.has(key)) continue;
+        surfaceKeys.add(key);
+        surface.push({ x, y, z });
+      }
+    }
+  };
+  heightField.forEach((cell) => {
+    addSurfaceColumn(cell.x, cell.z, cell.y, cell.y);
+    const leftY = heightByCoordinate.get(`${cell.x - 1},${cell.z}`);
+    const backY = heightByCoordinate.get(`${cell.x},${cell.z - 1}`);
+    if (leftY != null) {
+      maximumProfileStep = Math.max(maximumProfileStep, Math.abs(cell.y - leftY));
+      addSurfaceColumn(cell.x, cell.z, cell.y, leftY);
+    }
+    if (backY != null) {
+      maximumProfileStep = Math.max(maximumProfileStep, Math.abs(cell.y - backY));
+      addSurfaceColumn(cell.x, cell.z, cell.y, backY);
+    }
+  });
+
+  const endCaps = { left: [], right: [] };
+  const edgeCaps = { back: [], front: [] };
+  for (let localZ = 0; localZ < depth; localZ += 1) {
+    const leftRoofY = heightByCoordinate.get(`0,${localZ}`) ?? baseY;
+    const rightRoofY = heightByCoordinate.get(`${width - 1},${localZ}`) ?? baseY;
+    if (capLeft) {
+      for (let y = baseY; y < leftRoofY; y += 1) endCaps.left.push({ x: 0, y, z: localZ });
+    }
+    if (capRight) {
+      for (let y = baseY; y < rightRoofY; y += 1) endCaps.right.push({ x: width - 1, y, z: localZ });
+    }
+  }
+  for (let x = 0; x < width; x += 1) {
+    const backRoofY = heightByCoordinate.get(`${x},0`) ?? baseY;
+    const frontRoofY = heightByCoordinate.get(`${x},${depth - 1}`) ?? baseY;
+    for (let y = baseY; y < backRoofY; y += 1) edgeCaps.back.push({ x, y, z: 0 });
+    for (let y = baseY; y < frontRoofY; y += 1) edgeCaps.front.push({ x, y, z: depth - 1 });
+  }
+
+  const ridgeY = Math.max(...heightField.map((cell) => cell.y));
+  const ridgeCells = heightField.filter((cell) => cell.y === ridgeY);
+  const representativeRidge = ridgeCells[Math.floor(ridgeCells.length / 2)] ?? { x: 0, z: 0 };
+  const profile = Array.from({ length: fullZSpan }, (_, index) => {
+    const z = index - overhang;
+    const row = heightField.filter((cell) => cell.z === z);
+    return { z, y: Math.max(...row.map((cell) => cell.y)) };
+  });
+
+  return {
+    form,
+    width,
+    depth,
+    baseY,
+    overhang,
+    thickness,
+    ridgeRatio,
+    ridgeHeight,
+    ridgeY,
+    ridgeX: representativeRidge.x,
+    ridgeZ: representativeRidge.z,
+    maximumProfileStep,
+    profile,
+    heightField,
+    ridgeCells,
     surface,
     endCaps,
     edgeCaps
@@ -1006,25 +1140,23 @@ function addRoof(buffer, building, xStart, zBack, zFront) {
     buffer.addVoxel(building.materials.wall, xStart + voxel.x, voxel.y, zBack + voxel.z, index + 409, roofWrite);
   });
 
-  const ridgeStartX = building.adjacency.exposedLeftWall ? -roofPlan.overhang : 0;
-  const ridgeEndX = building.footprint.widthVoxels - 1 + (building.adjacency.exposedRightWall ? roofPlan.overhang : 0);
-  for (let localX = ridgeStartX; localX <= ridgeEndX; localX += 1) {
+  roofPlan.ridgeCells.forEach((ridgeCell, index) => {
     buffer.addVoxel(
       building.materials.metal,
-      xStart + localX,
-      roofPlan.ridgeY + 1,
-      zBack + roofPlan.ridgeZ,
-      localX + 47,
+      xStart + ridgeCell.x,
+      ridgeCell.y + 1,
+      zBack + ridgeCell.z,
+      index + 47,
       { priority: VOXEL_WRITE_PRIORITIES.trim, owner: `${building.id}:ridge` }
     );
-  }
+  });
 
   const dormerLocalZ = Math.max(4, building.roof.depthVoxels - 7);
-  const dormerRoofY = roofSurfaceYAt(roofPlan, dormerLocalZ);
   const dormerCenters = building.footprint.widthVoxels >= 24
     ? [Math.round(building.footprint.widthVoxels * 0.28), Math.round(building.footprint.widthVoxels * 0.72)]
     : [Math.round(building.footprint.widthVoxels * 0.5)];
   dormerCenters.forEach((center, index) => {
+    const dormerRoofY = roofSurfaceYAt(roofPlan, dormerLocalZ, center);
     addDormer(
       buffer,
       xStart + center - 3,
@@ -1051,7 +1183,7 @@ function addChimneys(buffer, building, xStart, zBack) {
   building.roof.chimneys.forEach((chimney, index) => {
     const localX = Math.round(clamp(chimney.xRatio, 0.08, 0.82) * (building.footprint.widthVoxels - 4));
     const localZ = Math.round(clamp(chimney.zRatio, 0.08, 0.82) * (building.roof.depthVoxels - 4));
-    const top = roofSurfaceYAt(roofPlan, localZ) - 1;
+    const top = roofSurfaceYAt(roofPlan, localZ, localX) - 1;
     const chimneyHeight = Math.max(8, chimney.height);
     buffer.addBox(building.materials.wall, xStart + localX, top, zBack + localZ, 4, chimneyHeight, 4, index, roofWrite);
     buffer.addBox(
@@ -1131,8 +1263,8 @@ function addPartyWallExposures(buffer, plan) {
     const boundaryX = right.origin.x;
     const depth = Math.min(left.roof.depthVoxels, right.roof.depthVoxels);
     for (let localZ = 0; localZ < depth; localZ += 1) {
-      const leftEnvelope = roofSurfaceYAt(leftRoof, localZ) + 1;
-      const rightEnvelope = roofSurfaceYAt(rightRoof, localZ) + 1;
+      const leftEnvelope = roofSurfaceYAt(leftRoof, localZ, left.footprint.widthVoxels - 1) + 1;
+      const rightEnvelope = roofSurfaceYAt(rightRoof, localZ, 0) + 1;
       if (leftEnvelope === rightEnvelope) continue;
       const taller = leftEnvelope > rightEnvelope ? left : right;
       const lowerEnvelope = Math.min(leftEnvelope, rightEnvelope);
@@ -1156,7 +1288,8 @@ function addPartyWallExposures(buffer, plan) {
 }
 
 function roofPlanForBuilding(building) {
-  return planPitchedRoof({
+  return planVoxelRoof({
+    form: building.roof.form,
     width: building.footprint.widthVoxels,
     depth: building.roof.depthVoxels,
     baseY: building.wallHeightVoxels,
@@ -1164,16 +1297,15 @@ function roofPlanForBuilding(building) {
     thickness: building.roof.thickness,
     ridgeRatio: building.roof.ridgeRatio,
     ridgeHeight: building.roof.ridgeHeight,
-    backExponent: building.roof.backExponent,
-    frontExponent: building.roof.frontExponent,
     capLeft: building.adjacency.exposedLeftWall,
     capRight: building.adjacency.exposedRightWall
   });
 }
 
-function roofSurfaceYAt(roofPlan, localZ) {
-  const index = Math.round(clamp(localZ + roofPlan.overhang, 0, roofPlan.profile.length - 1));
-  return roofPlan.profile[index].y;
+function roofSurfaceYAt(roofPlan, localZ, localX = Math.floor(roofPlan.width / 2)) {
+  const x = Math.round(clamp(localX, 0, roofPlan.width - 1));
+  const z = Math.round(clamp(localZ, 0, roofPlan.depth - 1));
+  return roofPlan.heightField.find((cell) => cell.x === x && cell.z === z)?.y ?? roofPlan.baseY;
 }
 
 function addStreetLamps(root, plan) {
@@ -1294,4 +1426,15 @@ function archetypeForFloorPurpose(purpose) {
   if (purpose === "shop") return "magic_shop";
   if (purpose === "workshop") return "workshop";
   return "townhouse";
+}
+
+function linearTentRise(index, span, ridgeRatio, ridgeHeight) {
+  const ridgeIndex = Math.round((span - 1) * clamp(ridgeRatio, 0, 1));
+  if (index <= ridgeIndex) {
+    return ridgeIndex === 0 ? ridgeHeight : Math.round(ridgeHeight * clamp(index / ridgeIndex, 0, 1));
+  }
+  const run = span - 1 - ridgeIndex;
+  return run === 0
+    ? ridgeHeight
+    : Math.round(ridgeHeight * clamp((span - 1 - index) / run, 0, 1));
 }

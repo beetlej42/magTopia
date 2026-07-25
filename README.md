@@ -100,7 +100,7 @@ The optional `Procedural Voxel Street` mode validates a high-resolution voxel
 building grammar alongside the existing low-poly and depth-relief paths. One
 four-unit parcel is 32 voxels wide (`0.125` world unit per voxel). The demo
 supports one to three automatically joined terrace buildings, two to five base
-floors, vertical expansion, three roof families, material schemes, decoration
+floors, vertical expansion, three roof forms, material schemes, decoration
 density, and functional day/night emissive lighting.
 
 ```js
@@ -114,6 +114,7 @@ MagicTown.generateVoxelStreet({
   style: "violet_alchemist",
   parcelWidth: 36,
   parcelDepth: 40,
+  roofForm: "hip",
   ridgePosition: 0.35,
   windowRatio: 0.42,
   variation: 0.82,
@@ -133,6 +134,7 @@ MagicTown.createVoxelBuildingSpec({
     { purpose: "shop" },
     { purpose: "home", setbackVoxels: 4, balcony: "full" }
   ],
+  roofForm: "gable_cross",
   ridgePosition: 0.35
 });
 ```
@@ -141,7 +143,9 @@ The deterministic `BuildingSpec v0.2 + seed` remains the source of truth.
 Atomic floor programs independently select shop, home, workshop, or storage
 uses plus front setbacks and balcony forms. Three style kits compile the stack
 into stable facade bays, scale-aware openings, a continuous pitched roof,
-chimneys, flower boxes, and window-bound magic effects. Components write into
+chimneys, flower boxes, and window-bound magic effects. Roofs use one shared
+two-dimensional height-field solver and can form a street-aligned gable,
+cross-aligned gable, or four-slope hip. Components write into
 one mutually-exclusive sparse voxel field;
 semantic write phases protect later details while equal-priority conflicts use
 last-write-wins. Hidden interior voxels are culled and visible cells are batched

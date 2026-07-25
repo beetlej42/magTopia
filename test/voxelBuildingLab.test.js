@@ -8,6 +8,7 @@ import {
   getVoxelBuildingContract,
   normalizeVoxelBuildingConfig,
   planPitchedRoof,
+  planVoxelRoof,
   planVoxelStreet,
   VOXEL_WRITE_PRIORITIES
 } from "../src/generators/voxelBuildingLab.js";
@@ -338,6 +339,65 @@ test("near-edge ridges bridge every skipped height so 7% and 93% roofs stay face
         assert.ok(sliceY.has(y), `ridge ${ridgeRatio} missing bridge voxel at z=${row.z}, y=${y}`);
       }
     });
+  }
+});
+
+test("two-dimensional roof fields support both gable axes and a four-slope hip", () => {
+  const streetGable = planVoxelRoof({
+    form: "gable_street",
+    width: 32,
+    depth: 36,
+    ridgeRatio: 0.35,
+    ridgeHeight: 12
+  });
+  const crossGable = planVoxelRoof({
+    form: "gable_cross",
+    width: 32,
+    depth: 36,
+    ridgeRatio: 0.65,
+    ridgeHeight: 12
+  });
+  const hip = planVoxelRoof({
+    form: "hip",
+    width: 32,
+    depth: 36,
+    ridgeHeight: 12
+  });
+  const heightAt = (roof, x, z) => roof.heightField.find((cell) => cell.x === x && cell.z === z).y;
+
+  assert.equal(heightAt(streetGable, 2, 10), heightAt(streetGable, 28, 10));
+  assert.notEqual(heightAt(streetGable, 16, 2), heightAt(streetGable, 16, 12));
+  assert.equal(heightAt(crossGable, 10, 2), heightAt(crossGable, 10, 30));
+  assert.notEqual(heightAt(crossGable, 2, 18), heightAt(crossGable, 20, 18));
+
+  assert.equal(heightAt(hip, -1, -1), hip.baseY);
+  assert.equal(heightAt(hip, 32, 36), hip.baseY);
+  assert.ok(hip.ridgeCells.length > 1);
+  assert.ok(hip.ridgeY > hip.baseY);
+
+  for (const roof of [streetGable, crossGable, hip]) {
+    const field = new Map(roof.heightField.map((cell) => [`${cell.x},${cell.z}`, cell.y]));
+    roof.heightField.forEach((cell) => {
+      for (const [dx, dz] of [[-1, 0], [0, -1]]) {
+        const neighborY = field.get(`${cell.x + dx},${cell.z + dz}`);
+        if (neighborY == null) continue;
+        const sliceY = new Set(
+          roof.surface
+            .filter((voxel) => voxel.x === cell.x && voxel.z === cell.z)
+            .map((voxel) => voxel.y)
+        );
+        for (let y = Math.min(cell.y, neighborY); y <= Math.max(cell.y, neighborY); y += 1) {
+          assert.ok(sliceY.has(y), `${roof.form} missing bridge at ${cell.x},${y},${cell.z}`);
+        }
+      }
+    });
+  }
+});
+
+test("street plans preserve the requested roof form", () => {
+  for (const roofForm of ["gable_street", "gable_cross", "hip"]) {
+    const plan = planVoxelStreet({ seed: `roof-form-${roofForm}`, roofForm });
+    assert.ok(plan.buildings.every((building) => building.roof.form === roofForm));
   }
 });
 
