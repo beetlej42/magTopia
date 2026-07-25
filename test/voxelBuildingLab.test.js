@@ -3,9 +3,11 @@ import test from "node:test";
 import {
   VOXEL_PARCEL,
   VOXEL_SIZE,
+  VoxelInstanceBuffer,
   createVoxelBuildingLab,
   getVoxelBuildingContract,
   normalizeVoxelBuildingConfig,
+  planPitchedRoof,
   planVoxelStreet
 } from "../src/generators/voxelBuildingLab.js";
 
@@ -78,6 +80,39 @@ test("voxel contract exposes simple agent controls and derived rendering", () =>
   assert.equal(contract.plan.buildings.length, 2);
 });
 
+test("voxel occupancy is mutually exclusive and later materials win", () => {
+  const buffer = new VoxelInstanceBuffer("last-write-wins");
+  buffer.addVoxel("brickRed", 4, 8, 12);
+  buffer.addVoxel("sandstone", 4, 8, 12);
+
+  assert.equal(buffer.occupiedVoxelCount, 1);
+  assert.equal(buffer.overwrittenVoxelCount, 1);
+  assert.equal(buffer.getMaterialAt(4, 8, 12), "sandstone");
+});
+
+test("procedural pitched roofs adapt to dimensions and fill both end gables", () => {
+  const narrow = planPitchedRoof({ width: 16, depth: 20, baseY: 40, ridgeHeight: 7 });
+  const wide = planPitchedRoof({ width: 48, depth: 30, baseY: 60, ridgeHeight: 11 });
+
+  assert.equal(narrow.ridgeY, 47);
+  assert.equal(wide.ridgeY, 71);
+  assert.equal(narrow.profile.length, narrow.depth + narrow.overhang * 2);
+  assert.equal(wide.profile.length, wide.depth + wide.overhang * 2);
+  assert.ok(wide.surface.length > narrow.surface.length);
+
+  for (const roof of [narrow, wide]) {
+    for (let z = 0; z < roof.depth; z += 1) {
+      const roofY = roof.profile[z + roof.overhang].y;
+      const leftColumn = roof.endCaps.left.filter((voxel) => voxel.z === z);
+      const rightColumn = roof.endCaps.right.filter((voxel) => voxel.z === z);
+      assert.equal(leftColumn.length, roofY - roof.baseY);
+      assert.equal(rightColumn.length, roofY - roof.baseY);
+      assert.equal(leftColumn[0]?.y ?? roof.baseY, roof.baseY);
+      assert.equal(rightColumn[0]?.y ?? roof.baseY, roof.baseY);
+    }
+  }
+});
+
 test("technical slice batches surface voxels into a bounded material draw-call set", () => {
   const object = createVoxelBuildingLab({
     seed: "render-batch-test",
@@ -93,11 +128,19 @@ test("technical slice batches surface voxels into a bounded material draw-call s
   assert.equal(diagnostics.omittedPartyWalls, 4);
   assert.equal(diagnostics.surfaceOnly, true);
   assert.equal(diagnostics.expandedBuildingId, "voxel-building-2");
+  assert.equal(diagnostics.magicDecorationPlacement, "upper_window");
+  assert.ok(diagnostics.overwrittenVoxels > 0);
+  assert.ok(diagnostics.exposedPartyWallVoxels > 0);
+  assert.ok(diagnostics.culledInteriorVoxels > 0);
   assert.ok(diagnostics.instanceCount > 8_000);
-  assert.ok(diagnostics.instanceCount < 30_000);
+  assert.ok(diagnostics.instanceCount < 50_000);
   assert.ok(diagnostics.drawCalls <= 14);
   assert.equal(
     object.children.filter((child) => child.isInstancedMesh).length,
     diagnostics.drawCalls
   );
+  const magicMesh = object.children.find((child) => child.userData.materialId === "violetMagic");
+  const daylightEmission = magicMesh.material.emissiveIntensity;
+  object.userData.updateDaylight({ nightFactor: 1 });
+  assert.ok(magicMesh.material.emissiveIntensity > daylightEmission);
 });

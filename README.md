@@ -115,10 +115,13 @@ MagicTown.generateVoxelStreet({
 MagicTown.getVoxelBuildingContract();
 ```
 
-The deterministic `BuildingSpec + seed` remains the source of truth. Rendered
-voxels are derived and currently batched by material as a visual spike; the
-production target is a chunked greedy surface mesh rather than one draw call
-per voxel.
+The deterministic `BuildingSpec + seed` remains the source of truth. Components
+write into one mutually-exclusive sparse voxel field with last-write-wins
+material resolution, then hidden interior voxels are culled and visible cells
+are batched by material. Roofs use an adaptive width/depth profile with filled
+outer gables, and party-wall exposure is derived from both neighbouring roof
+envelopes. The production target remains a chunked greedy surface mesh rather
+than one draw call per voxel.
 
 ## City workbench API
 

@@ -12,6 +12,14 @@ export const VOXEL_PARCEL = Object.freeze({
 
 const ROOF_TYPES = ["gable", "mansard", "magic_asymmetric"];
 const UPPER_WINDOW_CENTERS = [9, 23];
+const VOXEL_NEIGHBORS = [
+  [1, 0, 0],
+  [-1, 0, 0],
+  [0, 1, 0],
+  [0, -1, 0],
+  [0, 0, 1],
+  [0, 0, -1]
+];
 const BRICK_SCHEMES = [
   ["brickRed", "brickBrown", "brickRed"],
   ["brickBrown", "brickRed", "brickBrown"],
@@ -169,7 +177,8 @@ export function planVoxelStreet(config = {}) {
       wallHeightVoxels: floors * VOXEL_PARCEL.floorHeight,
       roof: {
         type: roofType,
-        seed: Math.floor(rng() * 0x7fffffff)
+        seed: Math.floor(rng() * 0x7fffffff),
+        ...roofParametersForType(roofType, VOXEL_PARCEL.depth)
       },
       materials: {
         wall: scheme[index % scheme.length],
@@ -222,9 +231,16 @@ export function getVoxelBuildingContract(config = {}) {
       voxelsPerFourUnitParcel: VOXEL_PARCEL.width
     },
     meshing: {
-      prototypeStrategy: "surface-only instanced voxel boxes",
+      prototypeStrategy: "mutually-exclusive sparse voxel field + surface-culled instanced boxes",
+      conflictPolicy: "last write wins at each integer voxel coordinate",
       solidInteriors: false,
       productionTarget: "chunked greedy surface mesh"
+    },
+    roofSystem: {
+      type: "adaptive pitched roof profile",
+      ridgeAxis: "parallel to the terrace frontage",
+      parameters: ["width", "depth", "ridge height", "ridge ratio", "front exponent", "back exponent", "overhang", "thickness"],
+      endCaps: "filled only on exposed outer gable ends; party-wall exposure is envelope-derived"
     },
     agentControl: {
       simple: ["archetype", "footprint", "floors", "style", "quality"],
@@ -254,6 +270,7 @@ export function createVoxelBuildingLab(config = {}) {
   const buffer = new VoxelInstanceBuffer(params.seed);
   addStreetBase(buffer, plan);
   plan.buildings.forEach((building) => addBuilding(buffer, building, params));
+  const exposedPartyWallVoxels = addPartyWallExposures(buffer, plan);
 
   const materialMeshes = buffer.createMeshes();
   materialMeshes.forEach((mesh) => root.add(mesh));
@@ -268,8 +285,13 @@ export function createVoxelBuildingLab(config = {}) {
     buildingCount: plan.buildings.length,
     connectionCount: plan.connections.length,
     omittedPartyWalls: plan.connections.length * 2,
+    exposedPartyWallVoxels,
+    overwrittenVoxels: buffer.overwrittenVoxelCount,
+    culledInteriorVoxels: buffer.culledInteriorVoxelCount,
+    occupiedVoxels: buffer.occupiedVoxelCount,
     surfaceOnly: true,
-    expandedBuildingId: plan.buildings.find((building) => building.expandedBy > 0)?.id ?? null
+    expandedBuildingId: plan.buildings.find((building) => building.expandedBy > 0)?.id ?? null,
+    magicDecorationPlacement: "upper_window"
   };
 
   root.userData.config = params;
@@ -320,32 +342,145 @@ export function voxelDaylightStyle(sunTime = 0.52) {
   };
 }
 
-class VoxelInstanceBuffer {
+export function planPitchedRoof(options = {}) {
+  const width = Math.max(4, Math.round(options.width ?? VOXEL_PARCEL.width));
+  const depth = Math.max(4, Math.round(options.depth ?? VOXEL_PARCEL.depth));
+  const baseY = Math.round(options.baseY ?? 0);
+  const overhang = Math.max(0, Math.round(options.overhang ?? 1));
+  const thickness = Math.max(1, Math.round(options.thickness ?? 1));
+  const ridgeRatio = clamp(options.ridgeRatio ?? 0.5, 0.2, 0.8);
+  const ridgeHeight = Math.max(2, Math.round(options.ridgeHeight ?? depth * 0.34));
+  const backExponent = clamp(options.backExponent ?? 1, 0.5, 3);
+  const frontExponent = clamp(options.frontExponent ?? 1, 0.5, 3);
+  const capLeft = options.capLeft !== false;
+  const capRight = options.capRight !== false;
+  const crossSpan = depth + overhang * 2;
+  const ridgeIndex = Math.round(clamp((crossSpan - 1) * ridgeRatio, 1, crossSpan - 2));
+  const xStart = capLeft ? -overhang : 0;
+  const xEnd = width - 1 + (capRight ? overhang : 0);
+  const profile = [];
+  const surface = [];
+  const endCaps = { left: [], right: [] };
+
+  for (let index = 0; index < crossSpan; index += 1) {
+    const z = index - overhang;
+    const approachingRidge = index <= ridgeIndex;
+    const run = approachingRidge ? ridgeIndex : crossSpan - 1 - ridgeIndex;
+    const distance = approachingRidge ? index : crossSpan - 1 - index;
+    const t = run === 0 ? 1 : clamp(distance / run, 0, 1);
+    const exponent = approachingRidge ? backExponent : frontExponent;
+    const rise = Math.round(ridgeHeight * (1 - ((1 - t) ** exponent)));
+    const y = baseY + rise;
+    profile.push({ z, y });
+    for (let x = xStart; x <= xEnd; x += 1) {
+      for (let layer = 0; layer < thickness; layer += 1) {
+        surface.push({ x, y: y - layer, z });
+      }
+    }
+  }
+
+  for (let localZ = 0; localZ < depth; localZ += 1) {
+    const roofY = profile[localZ + overhang].y;
+    if (capLeft) {
+      for (let y = baseY; y < roofY; y += 1) endCaps.left.push({ x: 0, y, z: localZ });
+    }
+    if (capRight) {
+      for (let y = baseY; y < roofY; y += 1) endCaps.right.push({ x: width - 1, y, z: localZ });
+    }
+  }
+
+  return {
+    width,
+    depth,
+    baseY,
+    overhang,
+    thickness,
+    ridgeRatio,
+    ridgeHeight,
+    ridgeIndex,
+    ridgeZ: ridgeIndex - overhang,
+    ridgeY: baseY + ridgeHeight,
+    profile,
+    surface,
+    endCaps
+  };
+}
+
+export class VoxelInstanceBuffer {
   constructor(seed) {
     this.seed = seed;
-    this.instances = new Map();
+    this.voxels = new Map();
+    this.visibleInstances = null;
     this.instanceCount = 0;
+    this.occupiedVoxelCount = 0;
+    this.overwrittenVoxelCount = 0;
+    this.culledInteriorVoxelCount = 0;
   }
 
   addVoxel(materialId, x, y, z, shadeKey = 0) {
-    this.addBox(materialId, x, y, z, 1, 1, 1, shadeKey);
+    if (!MATERIAL_LIBRARY[materialId]) throw new Error(`Unknown voxel material: ${materialId}`);
+    const position = {
+      x: Math.round(x),
+      y: Math.round(y),
+      z: Math.round(z)
+    };
+    const key = voxelKey(position.x, position.y, position.z);
+    if (this.voxels.has(key)) this.overwrittenVoxelCount += 1;
+    this.voxels.set(key, { ...position, materialId, shadeKey });
+    this.visibleInstances = null;
+    this.occupiedVoxelCount = this.voxels.size;
   }
 
   addBox(materialId, x, y, z, width, height, depth, shadeKey = 0) {
     if (!MATERIAL_LIBRARY[materialId]) throw new Error(`Unknown voxel material: ${materialId}`);
     if (width <= 0 || height <= 0 || depth <= 0) return;
-    if (!this.instances.has(materialId)) this.instances.set(materialId, []);
-    this.instances.get(materialId).push({ x, y, z, width, height, depth, shadeKey });
-    this.instanceCount += 1;
+    const minX = Math.round(x);
+    const minY = Math.round(y);
+    const minZ = Math.round(z);
+    const maxX = minX + Math.round(width);
+    const maxY = minY + Math.round(height);
+    const maxZ = minZ + Math.round(depth);
+    for (let voxelY = minY; voxelY < maxY; voxelY += 1) {
+      for (let voxelZ = minZ; voxelZ < maxZ; voxelZ += 1) {
+        for (let voxelX = minX; voxelX < maxX; voxelX += 1) {
+          this.addVoxel(materialId, voxelX, voxelY, voxelZ, shadeKey);
+        }
+      }
+    }
   }
 
   materialCounts() {
-    return Object.fromEntries([...this.instances].map(([id, instances]) => [id, instances.length]));
+    return Object.fromEntries([...this.getVisibleInstances()].map(([id, instances]) => [id, instances.length]));
+  }
+
+  getMaterialAt(x, y, z) {
+    return this.voxels.get(voxelKey(x, y, z))?.materialId ?? null;
+  }
+
+  getVisibleInstances() {
+    if (this.visibleInstances) return this.visibleInstances;
+    const instances = new Map();
+    let culled = 0;
+    for (const voxel of this.voxels.values()) {
+      const hidden = VOXEL_NEIGHBORS.every(([dx, dy, dz]) => (
+        this.voxels.has(voxelKey(voxel.x + dx, voxel.y + dy, voxel.z + dz))
+      ));
+      if (hidden) {
+        culled += 1;
+        continue;
+      }
+      if (!instances.has(voxel.materialId)) instances.set(voxel.materialId, []);
+      instances.get(voxel.materialId).push(voxel);
+    }
+    this.visibleInstances = instances;
+    this.culledInteriorVoxelCount = culled;
+    this.instanceCount = [...instances.values()].reduce((total, values) => total + values.length, 0);
+    return instances;
   }
 
   createMeshes() {
     const dummy = new THREE.Object3D();
-    return [...this.instances].map(([materialId, instances]) => {
+    return [...this.getVisibleInstances()].map(([materialId, instances]) => {
       const definition = MATERIAL_LIBRARY[materialId];
       const material = new THREE.MeshStandardMaterial({
         color: definition.colors[0],
@@ -362,16 +497,16 @@ class VoxelInstanceBuffer {
       mesh.receiveShadow = true;
 
       instances.forEach((instance, index) => {
-        const gap = Math.min(instance.width, instance.height, instance.depth) === 1 ? 0.985 : 0.995;
+        const gap = 0.985;
         dummy.position.set(
-          (instance.x + instance.width / 2) * VOXEL_SIZE,
-          (instance.y + instance.height / 2) * VOXEL_SIZE,
-          (instance.z + instance.depth / 2) * VOXEL_SIZE
+          (instance.x + 0.5) * VOXEL_SIZE,
+          (instance.y + 0.5) * VOXEL_SIZE,
+          (instance.z + 0.5) * VOXEL_SIZE
         );
         dummy.scale.set(
-          instance.width * VOXEL_SIZE * gap,
-          instance.height * VOXEL_SIZE * gap,
-          instance.depth * VOXEL_SIZE * gap
+          VOXEL_SIZE * gap,
+          VOXEL_SIZE * gap,
+          VOXEL_SIZE * gap
         );
         dummy.updateMatrix();
         mesh.setMatrixAt(index, dummy.matrix);
@@ -497,78 +632,121 @@ function addFlowerBox(buffer, x, y, z, shade) {
 }
 
 function addRoof(buffer, building, xStart, zBack, zFront) {
-  const width = building.footprint.widthVoxels;
-  const wallHeight = building.wallHeightVoxels;
-  if (building.roof.type === "gable") {
-    const roofHeight = 15;
-    for (let layer = 0; layer < roofHeight; layer += 1) {
-      const leftX = xStart + layer;
-      const rightX = xStart + width - 1 - layer;
-      for (let z = zBack - 1; z <= zFront + 1; z += 2) {
-        buffer.addBox("slate", leftX, wallHeight + layer, z, 2, 1, Math.min(2, zFront + 2 - z), layer + z);
-        buffer.addBox("slate", rightX - 1, wallHeight + layer, z, 2, 1, Math.min(2, zFront + 2 - z), layer + z + 3);
-      }
-      for (let x = leftX + 2; x < rightX - 1; x += 2) {
-        buffer.addBox(building.materials.wall, x, wallHeight + layer, zFront, 2, 1, 1, x + layer);
-      }
-      buffer.addVoxel(building.materials.trim, leftX, wallHeight + layer, zFront + 1, layer);
-      buffer.addVoxel(building.materials.trim, rightX, wallHeight + layer, zFront + 1, layer + 2);
-    }
-    buffer.addBox("iron", xStart + width / 2 - 1, wallHeight + roofHeight, zBack - 1, 2, 1, zFront - zBack + 3, 41);
-    addDormer(buffer, xStart + 7, wallHeight + 5, zFront - 2, building.materials.trim, 1);
-    addDormer(buffer, xStart + 20, wallHeight + 5, zFront - 2, building.materials.trim, 2);
-    return;
+  const roofPlan = roofPlanForBuilding(building);
+  roofPlan.surface.forEach((voxel, index) => {
+    buffer.addVoxel("slate", xStart + voxel.x, voxel.y, zBack + voxel.z, index);
+  });
+  roofPlan.endCaps.left.forEach((voxel, index) => {
+    buffer.addVoxel(building.materials.wall, xStart + voxel.x, voxel.y, zBack + voxel.z, index + 101);
+  });
+  roofPlan.endCaps.right.forEach((voxel, index) => {
+    buffer.addVoxel(building.materials.wall, xStart + voxel.x, voxel.y, zBack + voxel.z, index + 211);
+  });
+
+  const ridgeStartX = building.adjacency.exposedLeftWall ? -roofPlan.overhang : 0;
+  const ridgeEndX = building.footprint.widthVoxels - 1 + (building.adjacency.exposedRightWall ? roofPlan.overhang : 0);
+  for (let localX = ridgeStartX; localX <= ridgeEndX; localX += 1) {
+    buffer.addVoxel("iron", xStart + localX, roofPlan.ridgeY + 1, zBack + roofPlan.ridgeZ, localX + 47);
   }
 
-  const roofHeight = building.roof.type === "mansard" ? 13 : 16;
-  for (let layer = 0; layer < roofHeight; layer += 1) {
-    const frontInset = building.roof.type === "mansard"
-      ? layer < 8 ? layer : 8 + Math.round((layer - 8) * 1.75)
-      : Math.round(layer * 0.9);
-    const backInset = building.roof.type === "magic_asymmetric"
-      ? Math.round(layer * 1.35)
-      : frontInset;
-    const frontZ = zFront - Math.min(frontInset, VOXEL_PARCEL.depth / 2 - 1);
-    const backZ = zBack + Math.min(backInset, VOXEL_PARCEL.depth / 2 - 1);
-    for (let x = xStart - 1; x <= xStart + width; x += 2) {
-      buffer.addBox("slate", x, wallHeight + layer, frontZ, Math.min(2, xStart + width + 1 - x), 1, 2, x + layer);
-      buffer.addBox("slate", x, wallHeight + layer, backZ, Math.min(2, xStart + width + 1 - x), 1, 2, x + layer + 5);
-    }
-  }
-  buffer.addBox("iron", xStart - 1, wallHeight + roofHeight, -1, width + 2, 1, 2, 47);
-  addDormer(buffer, xStart + 6, wallHeight + 5, zFront - 5, building.materials.trim, 3);
-  addDormer(buffer, xStart + 20, wallHeight + 5, zFront - 5, building.materials.trim, 4);
+  const dormerLocalZ = Math.max(4, building.footprint.depthVoxels - 7);
+  const dormerRoofY = roofSurfaceYAt(roofPlan, dormerLocalZ);
+  const dormerCenters = building.footprint.widthVoxels >= 24
+    ? [Math.round(building.footprint.widthVoxels * 0.28), Math.round(building.footprint.widthVoxels * 0.72)]
+    : [Math.round(building.footprint.widthVoxels * 0.5)];
+  dormerCenters.forEach((center, index) => {
+    addDormer(
+      buffer,
+      xStart + center - 3,
+      dormerRoofY - 2,
+      zBack + dormerLocalZ,
+      building.materials.trim,
+      index + building.index * 3
+    );
+  });
 }
 
 function addDormer(buffer, x, y, z, trim, shade) {
-  buffer.addBox("slate", x - 1, y, z - 2, 8, 8, 4, shade);
-  buffer.addBox("warmWindow", x + 1, y + 2, z + 2, 4, 4, 1, shade + 1);
-  buffer.addBox(trim, x, y + 1, z + 1, 1, 6, 2, shade + 2);
-  buffer.addBox(trim, x + 5, y + 1, z + 1, 1, 6, 2, shade + 3);
-  buffer.addBox(trim, x, y + 6, z + 1, 6, 1, 2, shade + 4);
+  buffer.addBox("slate", x - 1, y, z - 2, 8, 7, 4, shade);
+  buffer.addBox("warmWindow", x + 1, y + 2, z + 2, 4, 3, 1, shade + 1);
+  buffer.addBox(trim, x, y + 1, z + 1, 1, 5, 2, shade + 2);
+  buffer.addBox(trim, x + 5, y + 1, z + 1, 1, 5, 2, shade + 3);
+  buffer.addBox(trim, x, y + 5, z + 1, 6, 1, 2, shade + 4);
 }
 
 function addChimneys(buffer, building, xStart, zBack) {
-  const top = building.wallHeightVoxels + (building.roof.type === "gable" ? 10 : 9);
+  const roofPlan = roofPlanForBuilding(building);
   const positions = building.index % 2 === 0 ? [5, 25] : [8, 22];
   positions.forEach((localX, index) => {
-    buffer.addBox(building.materials.wall, xStart + localX, top, zBack + 9 + index * 12, 4, 12, 4, index);
-    buffer.addBox("sandstone", xStart + localX - 1, top + 11, zBack + 8 + index * 12, 6, 2, 6, index + 1);
-    buffer.addBox(building.materials.wall, xStart + localX, top + 13, zBack + 9 + index * 12, 1, 3, 1, index + 2);
-    buffer.addBox(building.materials.wall, xStart + localX + 2, top + 13, zBack + 11 + index * 12, 1, 3, 1, index + 3);
+    const localZ = 9 + index * 12;
+    const top = roofSurfaceYAt(roofPlan, localZ) - 1;
+    buffer.addBox(building.materials.wall, xStart + localX, top, zBack + localZ, 4, 12, 4, index);
+    buffer.addBox("sandstone", xStart + localX - 1, top + 11, zBack + localZ - 1, 6, 2, 6, index + 1);
+    buffer.addBox(building.materials.wall, xStart + localX, top + 13, zBack + localZ, 1, 3, 1, index + 2);
+    buffer.addBox(building.materials.wall, xStart + localX + 2, top + 13, zBack + localZ + 2, 1, 3, 1, index + 3);
   });
 }
 
 function addMagicDecoration(buffer, building, params, xStart, zFront) {
   if (params.detailDensity < 0.25) return;
   if (building.index === Math.floor(params.buildingCount / 2)) {
-    const y = building.wallHeightVoxels + 8;
-    buffer.addBox("violetMagic", xStart + 15, y, zFront - 3, 2, 6, 2, 70);
-    buffer.addVoxel("tealMagic", xStart + 13, y + 2, zFront - 2, 71);
-    buffer.addVoxel("tealMagic", xStart + 18, y + 4, zFront - 2, 72);
+    const decoratedFloor = Math.min(2, building.floors - 1);
+    const windowCenter = UPPER_WINDOW_CENTERS[building.index % UPPER_WINDOW_CENTERS.length];
+    const y = decoratedFloor * VOXEL_PARCEL.floorHeight + 7;
+    buffer.addBox("violetMagic", xStart + windowCenter - 1, y, zFront + 2, 2, 6, 1, 70);
+    buffer.addVoxel("tealMagic", xStart + windowCenter - 3, y + 1, zFront + 2, 71);
+    buffer.addVoxel("tealMagic", xStart + windowCenter + 2, y + 4, zFront + 2, 72);
   } else if (params.detailDensity > 0.75) {
     buffer.addBox("foliage", xStart + (building.index === 0 ? 1 : 29), 7, zFront + 2, 2, 16, 2, 73 + building.index);
   }
+}
+
+function addPartyWallExposures(buffer, plan) {
+  let added = 0;
+  for (let index = 0; index < plan.buildings.length - 1; index += 1) {
+    const left = plan.buildings[index];
+    const right = plan.buildings[index + 1];
+    const leftRoof = roofPlanForBuilding(left);
+    const rightRoof = roofPlanForBuilding(right);
+    const boundaryX = right.origin.x;
+    const depth = Math.min(left.footprint.depthVoxels, right.footprint.depthVoxels);
+    for (let localZ = 0; localZ < depth; localZ += 1) {
+      const leftEnvelope = roofSurfaceYAt(leftRoof, localZ) + 1;
+      const rightEnvelope = roofSurfaceYAt(rightRoof, localZ) + 1;
+      if (leftEnvelope === rightEnvelope) continue;
+      const taller = leftEnvelope > rightEnvelope ? left : right;
+      const lowerEnvelope = Math.min(leftEnvelope, rightEnvelope);
+      const upperEnvelope = Math.max(leftEnvelope, rightEnvelope);
+      const x = taller === left ? boundaryX - 1 : boundaryX;
+      const z = taller.origin.z + localZ;
+      for (let y = lowerEnvelope; y < upperEnvelope - 1; y += 1) {
+        buffer.addVoxel(taller.materials.wall, x, y, z, index * 1000 + localZ * 20 + y);
+        added += 1;
+      }
+    }
+  }
+  return added;
+}
+
+function roofPlanForBuilding(building) {
+  return planPitchedRoof({
+    width: building.footprint.widthVoxels,
+    depth: building.footprint.depthVoxels,
+    baseY: building.wallHeightVoxels,
+    overhang: building.roof.overhang,
+    thickness: building.roof.thickness,
+    ridgeRatio: building.roof.ridgeRatio,
+    ridgeHeight: building.roof.ridgeHeight,
+    backExponent: building.roof.backExponent,
+    frontExponent: building.roof.frontExponent,
+    capLeft: building.adjacency.exposedLeftWall,
+    capRight: building.adjacency.exposedRightWall
+  });
+}
+
+function roofSurfaceYAt(roofPlan, localZ) {
+  const index = Math.round(clamp(localZ + roofPlan.overhang, 0, roofPlan.profile.length - 1));
+  return roofPlan.profile[index].y;
 }
 
 function addStreetLamps(root, plan) {
@@ -629,6 +807,37 @@ function isFrontOpening(localX, y, floors) {
   return UPPER_WINDOW_CENTERS.some((center) => localX >= center - 4 && localX <= center + 3);
 }
 
+function roofParametersForType(type, depth) {
+  if (type === "mansard") {
+    return {
+      overhang: 1,
+      thickness: 1,
+      ridgeRatio: 0.5,
+      ridgeHeight: Math.max(6, Math.round(depth * 0.31)),
+      backExponent: 2.2,
+      frontExponent: 2.2
+    };
+  }
+  if (type === "magic_asymmetric") {
+    return {
+      overhang: 1,
+      thickness: 1,
+      ridgeRatio: 0.58,
+      ridgeHeight: Math.max(7, Math.round(depth * 0.4)),
+      backExponent: 1.25,
+      frontExponent: 1.8
+    };
+  }
+  return {
+    overhang: 1,
+    thickness: 1,
+    ridgeRatio: 0.5,
+    ridgeHeight: Math.max(6, Math.round(depth * 0.34)),
+    backExponent: 1,
+    frontExponent: 1
+  };
+}
+
 function hashNumber(...values) {
   let hash = 2166136261;
   const text = values.join(":");
@@ -637,6 +846,10 @@ function hashNumber(...values) {
     hash = Math.imul(hash, 16777619);
   }
   return hash >>> 0;
+}
+
+function voxelKey(x, y, z) {
+  return `${x},${y},${z}`;
 }
 
 function clamp(value, min, max) {
