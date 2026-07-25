@@ -162,18 +162,26 @@ const MODES = {
     presets: VOXEL_BUILDING_PRESETS,
     defaultPreset: "connectedTerraceDay",
     normalize: normalizeVoxelBuildingConfig,
-    randomize: (seed) => normalizeVoxelBuildingConfig({
-      ...VOXEL_BUILDING_PRESETS.connectedTerraceDay,
-      seed,
-      floors: 2 + Math.floor(Math.random() * 3),
-      roofVariant: Math.floor(Math.random() * 3),
-      materialScheme: Math.floor(Math.random() * 3),
-      archetypeVariant: Math.floor(Math.random() * 3),
-      styleVariant: Math.floor(Math.random() * 3),
-      variation: 0.35 + Math.random() * 0.65,
-      parcelWidth: 24 + Math.floor(Math.random() * 5) * 4,
-      parcelDepth: 28 + Math.floor(Math.random() * 5) * 4
-    }),
+    randomize: (seed) => {
+      const archetypeVariant = Math.floor(Math.random() * 3);
+      const styleVariant = Math.floor(Math.random() * 3);
+      const roofVariant = Math.floor(Math.random() * 3);
+      return normalizeVoxelBuildingConfig({
+        ...VOXEL_BUILDING_PRESETS.connectedTerraceDay,
+        seed,
+        floors: 2 + Math.floor(Math.random() * 3),
+        roofVariant,
+        roofType: ["gable", "mansard", "magic_asymmetric"][roofVariant],
+        archetypeVariant,
+        archetype: ["townhouse", "magic_shop", "workshop"][archetypeVariant],
+        styleVariant,
+        style: ["london_brick", "violet_alchemist", "forest_craft"][styleVariant],
+        materialScheme: styleVariant,
+        variation: 0.35 + Math.random() * 0.65,
+        parcelWidth: 24 + Math.floor(Math.random() * 5) * 4,
+        parcelDepth: 28 + Math.floor(Math.random() * 5) * 4
+      });
+    },
     sliders: [
       { key: "sunTime", label: "Sun Time", min: 0, max: 1, step: 0.01 },
       { key: "nightLighting", label: "Night Lights", min: 0, max: 1, step: 0.01 },
@@ -183,26 +191,35 @@ const MODES = {
       {
         key: "archetypeVariant",
         label: "Archetype",
-        min: 0,
-        max: 2,
-        step: 1,
-        valueLabels: ["Townhouse", "Magic Shop", "Workshop"]
+        control: "select",
+        aliasKey: "archetype",
+        options: [
+          { value: 0, label: "Townhouse", configValue: "townhouse" },
+          { value: 1, label: "Magic Shop", configValue: "magic_shop" },
+          { value: 2, label: "Workshop", configValue: "workshop" }
+        ]
       },
       {
         key: "styleVariant",
         label: "Style Kit",
-        min: 0,
-        max: 2,
-        step: 1,
-        valueLabels: ["London Brick", "Violet Alchemist", "Forest Craft"]
+        control: "select",
+        aliasKey: "style",
+        options: [
+          { value: 0, label: "London Brick", configValue: "london_brick" },
+          { value: 1, label: "Violet Alchemist", configValue: "violet_alchemist" },
+          { value: 2, label: "Forest Craft", configValue: "forest_craft" }
+        ]
       },
       {
         key: "roofVariant",
         label: "Roof Family",
-        min: 0,
-        max: 2,
-        step: 1,
-        valueLabels: ["Gable", "Mansard", "Magic Asymmetric"]
+        control: "select",
+        aliasKey: "roofType",
+        options: [
+          { value: 0, label: "Gable", configValue: "gable" },
+          { value: 1, label: "Mansard", configValue: "mansard" },
+          { value: 2, label: "Magic Asymmetric", configValue: "magic_asymmetric" }
+        ]
       },
       { key: "parcelWidth", label: "Parcel Width", min: 24, max: 40, step: 4 },
       { key: "parcelDepth", label: "Parcel Depth", min: 28, max: 44, step: 4 },
@@ -456,25 +473,36 @@ function buildSliderUi() {
   sliderValues.clear();
 
   MODES[currentMode].sliders.forEach((definition) => {
+    const isSelect = definition.control === "select";
     const label = document.createElement("label");
-    label.className = "slider-field";
+    label.className = isSelect ? "field" : "slider-field";
     label.htmlFor = `${definition.key}-control`;
 
     const top = document.createElement("span");
-    top.className = "slider-label";
+    if (!isSelect) top.className = "slider-label";
 
     const labelText = document.createElement("span");
     labelText.textContent = definition.label;
     const valueText = document.createElement("strong");
-    top.append(labelText, valueText);
+    top.append(labelText);
+    if (!isSelect) top.append(valueText);
 
-    const input = document.createElement("input");
+    const input = document.createElement(isSelect ? "select" : "input");
     input.id = `${definition.key}-control`;
-    input.type = "range";
-    input.min = definition.min;
-    input.max = definition.max;
-    input.step = definition.step;
-    input.addEventListener("input", () => {
+    if (isSelect) {
+      definition.options.forEach(({ value, label: optionLabel }) => {
+        const option = document.createElement("option");
+        option.value = String(value);
+        option.textContent = optionLabel;
+        input.append(option);
+      });
+    } else {
+      input.type = "range";
+      input.min = definition.min;
+      input.max = definition.max;
+      input.step = definition.step;
+    }
+    input.addEventListener(isSelect ? "change" : "input", () => {
       if (definition.key === "sunTime") {
         currentConfig = { ...currentConfig, sunTime: Number(input.value) };
         configsByMode[currentMode] = currentConfig;
@@ -494,10 +522,18 @@ function buildSliderUi() {
         syncApiPill();
         return;
       }
-      rebuildActive({ ...currentConfig, [definition.key]: Number(input.value) });
+      const value = Number(input.value);
+      const selectedOption = definition.options?.find((option) => Number(option.value) === value);
+      const patch = definition.aliasKey
+        ? {
+          [definition.key]: value,
+          [definition.aliasKey]: selectedOption?.configValue
+        }
+        : { [definition.key]: value };
+      rebuildActive({ ...currentConfig, ...patch });
     });
 
-    sliderValues.set(definition.key, valueText);
+    if (!isSelect) sliderValues.set(definition.key, valueText);
     sliderInputs.set(definition.key, input);
     label.append(top, input);
     sliderRoot.append(label);
@@ -665,8 +701,9 @@ function syncUi() {
     const input = sliderInputs.get(key);
     const value = currentConfig[key];
     input.value = value;
-    sliderValues.get(key).textContent = definition.valueLabels?.[Math.round(value)]
-      ?? formatSliderValue(value, input.step);
+    if (definition.control !== "select") {
+      sliderValues.get(key).textContent = formatSliderValue(value, input.step);
+    }
   });
 }
 
