@@ -1,0 +1,12 @@
+{
+  "jobId": "1470420350583881728",
+  "sourceImage": "public/generated/magic-london-starter-001/starter-workshop-001/model/hunyuan3d-input.png",
+  "submittedAt": "2026-07-19T14:05:30.354Z",
+  "parameters": {
+    "Model": "3.0",
+    "GenerateType": "LowPoly",
+    "PolygonType": "triangle",
+    "EnablePBR": false
+  },
+  "requestId": "b2f936fd-0ae6-46c0-ae95-3ed56d5bc3f9"
+}

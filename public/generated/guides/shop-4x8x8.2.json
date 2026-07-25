@@ -1,0 +1,20 @@
+{
+  "kind": "magic-town-parcel-guideplate",
+  "dimensions": {
+    "length": 4.0,
+    "width": 8.0,
+    "height": 8.2,
+    "unit": "world"
+  },
+  "gridUnit": 4.0,
+  "camera": {
+    "yaw": 45,
+    "elevation": 55,
+    "roll": 0,
+    "projection": "orthographic"
+  },
+  "entrance": "south",
+  "safeMargin": 0.32,
+  "keyColor": "#ff00ff",
+  "instruction": "The dark base is immutable. Replace only the translucent blue envelope with one building that remains fully inside its outline."
+}

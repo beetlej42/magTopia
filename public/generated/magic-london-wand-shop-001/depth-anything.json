@@ -1,0 +1,10 @@
+{
+  "model": "depth-anything/Depth-Anything-V2-Small-hf",
+  "input": "rgb.png",
+  "compositedInput": "depthanything-input-composited.png",
+  "depth": "depth-anything.png",
+  "normal": "normal-depth-anything.png",
+  "normalStrength": 7.0,
+  "device": "mps",
+  "note": "Normal map is derived from the Depth Anything depth map via finite differences."
+}

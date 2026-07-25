@@ -1,0 +1,12 @@
+{
+  "jobId": "1470425929888817152",
+  "sourceImage": "public/generated/magic-london-starter-001/starter-herbalist-001/model/hunyuan3d-input.png",
+  "submittedAt": "2026-07-19T14:27:40.532Z",
+  "parameters": {
+    "Model": "3.0",
+    "GenerateType": "LowPoly",
+    "PolygonType": "triangle",
+    "EnablePBR": false
+  },
+  "requestId": "4bc85b15-8a8a-4bee-9ce3-a8bb7a753ae9"
+}

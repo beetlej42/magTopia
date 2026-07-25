@@ -1,0 +1,26 @@
+{
+  "name": "magic-town",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.7.0",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "server": "node --env-file-if-exists=.env apps/server/start.js",
+    "server:dev": "node --env-file-if-exists=.env --watch apps/server/start.js",
+    "db:migrate": "node --env-file-if-exists=.env apps/server/migrate.js",
+    "worker": "node --env-file-if-exists=.env apps/server/worker-start.js",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "node --test",
+    "hunyuan3d": "node scripts/hunyuan3d.mjs"
+  },
+  "dependencies": {
+    "@fastify/swagger": "^9.8.1",
+    "@fastify/swagger-ui": "^6.1.0",
+    "fastify": "^5.10.0",
+    "pg": "^8.22.0",
+    "three": "^0.160.0",
+    "vite": "^5.0.0"
+  }
+}

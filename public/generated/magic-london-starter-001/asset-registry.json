@@ -1,0 +1,22 @@
+{
+  "packId": "magic-london-starter-001",
+  "status": "official",
+  "productionMethod": "guideplate-conditioned-image-edit",
+  "guideplate": "guide-4x4x4.png",
+  "contract": {
+    "footprint": "1x1",
+    "dimensions": { "length": 4, "width": 4, "height": 4, "unit": "world" },
+    "camera": { "yaw": 45, "elevation": 55, "roll": 0, "projection": "orthographic" },
+    "baseAnchorContract": "guideplate-visible-triangle-v1",
+    "baseAnchorsUv": {
+      "left": [0.22666666666666663, 0.35632478632478637],
+      "near": [0.5, 0.2301709401709402],
+      "right": [0.7733333333333334, 0.35632478632478637]
+    }
+  },
+  "assets": [
+    { "assetId": "starter-cottage-001", "archetype": "starter_residence", "nightProfile": "residential" },
+    { "assetId": "starter-workshop-001", "archetype": "starter_workshop", "nightProfile": "early_shop" },
+    { "assetId": "starter-herbalist-001", "archetype": "starter_herbalist", "nightProfile": "residential" }
+  ]
+}

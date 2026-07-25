@@ -1,0 +1,43 @@
+{
+  "jobId": "1470269658174840832",
+  "status": "DONE",
+  "completedAt": "2026-07-19T04:12:17.166Z",
+  "creditConsumed": 25,
+  "creditDetails": "{\"GenerateType-LowPoly\":25}",
+  "files": [
+    {
+      "type": "obj",
+      "modelFile": "obj-1.zip",
+      "modelUrl": "https://hunyuan-prod-1258344699.cos.ap-guangzhou.tencentcos.cn/3d/output/1455663493/25c7b984-1885-415e-8808-7733d7c4f4bc_0.zip",
+      "modelBytes": 10613102,
+      "previewFile": "obj-1-preview.png",
+      "previewUrl": "https://hunyuan-prod-1258344699.cos.ap-guangzhou.tencentcos.cn/3d/output/1455663493/preview_25c7b984-1885-415e-8808-7733d7c4f4bc_0.png",
+      "previewBytes": 92571
+    },
+    {
+      "type": "glb",
+      "modelFile": "glb-2.glb",
+      "modelUrl": "https://hunyuan-prod-1258344699.cos.ap-guangzhou.tencentcos.cn/3d/output/1455663493/25c7b984-1885-415e-8808-7733d7c4f4bc_0.glb",
+      "modelBytes": 11304124,
+      "optimizedModelFile": "glb-2-1024-webp.glb",
+      "optimizedModelBytes": 102560,
+      "textureOptimization": {
+        "maxTextureSize": 1024,
+        "webpQuality": 80,
+        "images": [
+          {
+            "imageIndex": 0,
+            "from": [4096, 4096],
+            "to": [1024, 1024],
+            "originalBytes": 11231693,
+            "optimizedBytes": 30038
+          }
+        ]
+      },
+      "previewFile": "glb-2-preview.png",
+      "previewUrl": "https://hunyuan-prod-1258344699.cos.ap-guangzhou.tencentcos.cn/3d/output/1455663493/preview_25c7b984-1885-415e-8808-7733d7c4f4bc_0.png",
+      "previewBytes": 92571
+    }
+  ],
+  "requestId": "4b252702-457b-4299-8c44-f5ad443340ae"
+}

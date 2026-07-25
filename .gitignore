@@ -1,0 +1,16 @@
+node_modules/
+.pnpm-store/
+dist/
+.DS_Store
+.env
+.venv/
+.uv-cache/
+.tools/
+__pycache__/
+*.py[cod]
+
+# Reproducible production intermediates. Runtime-ready PNG/JSON/optimized GLB
+# assets under public/generated remain tracked.
+public/generated/**/*.npy
+public/generated/hunyuan3d/**/obj-*.zip
+public/generated/hunyuan3d/**/glb-[0-9].glb

@@ -1,0 +1,49 @@
+{
+  "input": "depth-anything-raw.npy",
+  "guide": "public/generated/magic-london-starter-001/guide-4x4x4.json",
+  "fitSurfaces": "walls-ground",
+  "guideDepth": "depth-guide-walls-ground.npy",
+  "guideDepthPreview": "depth-guide-walls-ground.png",
+  "depth": "depth-anything-linear-walls-ground.png",
+  "calibratedDepth": "depth-anything-linear-walls-ground.npy",
+  "normal": "normal-depth-anything-linear-walls-ground.png",
+  "normalStrength": 9.0,
+  "calibration": {
+    "kind": "global-linear-quantile-fit-v1",
+    "formula": "viewDepth = slope * rawDepth + intercept",
+    "slope": 2.2909103750812245,
+    "intercept": -4.360347577965359,
+    "direction": 1,
+    "rmse": 0.07863608379931965,
+    "rSquared": 0.9946950367887818,
+    "quantiles": {
+      "low": 0.02,
+      "high": 0.98,
+      "count": 97
+    },
+    "ranges": {
+      "raw": [
+        1.2617586851119995,
+        3.9563965797424316
+      ],
+      "guide": [
+        -0.25756174325942993,
+        4.633962154388428
+      ],
+      "calibrated": [
+        -1.4697715153934356,
+        4.703402394502448
+      ]
+    },
+    "anchorDirectionCovariance": 1.916522075417519,
+    "fitSurfaces": "walls-ground",
+    "encoding": {
+      "file": "depth-anything-linear-walls-ground.png",
+      "minimumViewDepth": -1.4697715153934356,
+      "maximumViewDepth": 4.703402394502448,
+      "bits": 8,
+      "clamped": false
+    }
+  },
+  "note": "The global linear fit samples only the guide-visible ground and vertical walls; the resulting mapping is applied unchanged to the full asset depth map."
+}

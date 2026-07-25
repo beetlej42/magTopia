@@ -1,0 +1,14 @@
+{
+  "source": "source-magenta.png",
+  "width": 887,
+  "height": 1774,
+  "keyColor": "#f304f3",
+  "maps": {
+    "rgb": "rgb.png",
+    "depth": "depth-anything.png",
+    "normal": "normal-depth-anything.png",
+    "mask": "mask.png",
+    "depthMetadata": "depth-anything.json"
+  },
+  "depthNote": "Depth Anything V2 supplies the runtime depth map; the normal map is derived from its depth gradients."
+}

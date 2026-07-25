@@ -1,0 +1,569 @@
+import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { getAssetRegistry } from "../city/assets.js";
+import { resolveAutomaticModelOrientation } from "./modelOrientation.js";
+
+const BUILDING_BASE_ELEVATION = 0.105;
+const FALLBACK_BASE_ANCHORS_UV = Object.freeze({
+  left: [0.22666666666666663, 0.35632478632478637],
+  near: [0.5, 0.2301709401709402],
+  right: [0.7733333333333334, 0.35632478632478637]
+});
+const DEPTH_MESH_SUBDIVISIONS = 96;
+const GROUND_SEAM_HEIGHT_RATIO = 0.08;
+
+export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cityState, parallaxStrength = 0.12, useHunyuanModels = 1 }) {
+  const root = new THREE.Group();
+  root.name = "MagicLondonStarterDistrict";
+  const cells = new Map(grid.cells.map((cell) => [cell.id, cell]));
+  const assets = new Map(getAssetRegistry().map((asset) => [asset.assetId, asset]));
+  const tileSize = grid.cellWorldSize;
+  const placements = [];
+  const skipped = [];
+  const depthMeshControllers = [];
+
+  Object.values(cityState?.buildings ?? {}).forEach((building, index) => {
+    const asset = assets.get(building.program.assetId);
+    const footprintCellIds = building.footprintCells?.length ? building.footprintCells : [building.site.lotId];
+    const renderCells = footprintCellIds.map((cellId) => resolveRenderCell(cells, cellId)).filter(Boolean);
+    if (!asset || !renderCells.length) {
+      skipped.push({ buildingId: building.id, assetId: building.program.assetId, cellId: building.footprintCells?.[0] ?? building.site.lotId, assetFound: Boolean(asset), cellFound: renderCells.length > 0 });
+      return;
+    }
+    const useModel = Boolean(useHunyuanModels && asset.model?.glb);
+    const buildingObject = createStarterBuilding(asset, building.program.name, renderCells, tileSize, sampleGroundHeight, index, building.site.entrance, parallaxStrength, useModel);
+    if (buildingObject.userData.depthMeshController) depthMeshControllers.push(buildingObject.userData.depthMeshController);
+    placements.push({
+      assetId: asset.assetId,
+      label: building.program.name,
+      cellId: renderCells[0].id,
+      footprintCells: renderCells.map((cell) => cell.id),
+      entrance: building.site.entrance,
+      entranceFrontageCell: getNeighborCellId(renderCells, building.site.entrance),
+      buildingId: building.id,
+      representation: buildingObject.userData.representation
+    });
+    root.add(buildingObject);
+  });
+
+  root.userData.contract = {
+    id: "magic-london-starter-district-001",
+    assets: placements.map(({ assetId }) => assetId),
+    placements,
+    cityBuildings: Object.keys(cityState?.buildings ?? {}).length,
+    validGridCells: cells.size,
+    skipped,
+    roads: Object.values(cityState?.cells ?? {}).filter((cell) => cell.infrastructure === "road").length,
+    assetGroundRule: "Building assets provide their own visible ground treatment; the runtime adds no parcel foundation, entrance apron, or steps.",
+    guideplateRule: "Every asset shares one immutable three-corner guideplate contract for its screen-plane frame. View depth is decoded only by the global linear fit, with no spatial anchor correction.",
+    baseFitRule: "Building bodies are rigid local depth meshes. Only a narrow ground seam conforms to terrain; no screen-space or per-pixel depth correction runs in Isometric Play.",
+    depthParallaxRule: "Depth Anything drives actual mesh relief. Camera perspective comes from the scene camera rather than a position-dependent UV shift.",
+    modelRule: "Assets with a runtime GLB may replace their rigid depth mesh. The model is normalized to its parcel, grounded on the sampled terrain, and lit by the shared world lights.",
+    modelOrientationRule: "Runtime GLBs are rendered from the immutable guide camera at 0, 90, 180, and 270 degrees. Foreground-normalized facade RGB and edge similarity selects the yaw; only confidence below four percent requests review.",
+    entranceRule: "Starter assets expose their visible door on the north grid facade (world +Z); entrance direction remains a logical routing contract only.",
+    rule: "Starter assets are rendered only from construction events in CityState."
+  };
+  root.userData.getModelDiagnostics = () => root.children
+    .filter((child) => child.userData?.representation === "hunyuan3d-model")
+    .map((child) => ({
+      assetId: child.userData.assetId,
+      status: child.userData.modelStatus,
+      modelPath: child.userData.modelPath,
+      worldBounds: child.userData.worldBounds ?? null,
+      orientation: child.userData.orientation ?? null
+    }));
+  root.userData.updateBaseFit = () => {
+    const entries = depthMeshControllers.map((controller) => ({
+      assetId: controller.assetId,
+      representation: "rigid-local-depth-mesh",
+      screenSpaceWarpEnabled: false,
+      depthReliefEnabled: true,
+      depthStrength: controller.depthStrength,
+      groundSeamHeight: controller.groundSeamHeight,
+      maxAnchorErrorPx: 0,
+      uprightDeviationDegrees: 0,
+      uprightScaleRatio: 1,
+      parallaxViewOffset: [0, 0],
+      parallaxUvShiftEstimate: 0
+    }));
+    const diagnostics = {
+      enabled: false,
+      contract: "rigid-local-depth-mesh-v1",
+      spriteCount: entries.length,
+      maxAnchorErrorPx: 0,
+      maxUprightDeviationDegrees: 0,
+      depthParallaxEnabled: entries.length > 0,
+      maxParallaxViewOffset: 0,
+      maxParallaxUvShift: 0,
+      uprightReferenceScale: 1,
+      uprightScaleRatioRange: [1, 1],
+      entries
+    };
+    root.userData.baseFitDiagnostics = diagnostics;
+    return diagnostics;
+  };
+  return root;
+}
+
+function createStarterBuilding(asset, label, cells, tileSize, sampleGroundHeight, index, entrance = "south", parallaxStrength = 0.12, useModel = false) {
+  if (useModel) return createStarterModelBuilding(asset, label, cells, tileSize, sampleGroundHeight, entrance);
+  return createStarterSpriteBuilding(asset, label, cells, tileSize, sampleGroundHeight, index, entrance, parallaxStrength);
+}
+
+export function createStandaloneStarterAsset(asset, {
+  representation = "depth",
+  parcelSize = 4,
+  depthStrength = 1,
+  depthVariant = "all",
+  label = asset.assetId
+} = {}) {
+  const cell = {
+    id: `comparison-${representation}`,
+    column: 0,
+    row: 0,
+    center: { x: 0, z: 0 }
+  };
+  const sampleGroundHeight = () => 0;
+  if (representation === "model") {
+    return createStarterModelBuilding(asset, label, [cell], parcelSize, sampleGroundHeight, "south");
+  }
+  const variant = asset.depthVariants?.[depthVariant] ?? asset.depthVariants?.all;
+  const depthAsset = variant
+    ? { ...asset, maps: { ...asset.maps, depth: variant.depth, normal: variant.normal }, depthEncoding: variant.depthEncoding }
+    : asset;
+  const object = createStarterSpriteBuilding(depthAsset, label, [cell], parcelSize, sampleGroundHeight, 0, "south", 0.12 * depthStrength);
+  object.userData.depthFitSurfaces = variant?.fitSurfaces ?? "all";
+  return object;
+}
+
+function createStarterModelBuilding(asset, label, cells, tileSize, sampleGroundHeight, entrance) {
+  const group = new THREE.Group();
+  group.name = `${asset.assetId}-${label}`;
+  const parcel = getParcelBounds(cells, tileSize);
+  const baseY = sampleGroundHeight(parcel.center.x, parcel.center.z) + BUILDING_BASE_ELEVATION;
+  group.userData = {
+    assetId: asset.assetId,
+    cellId: cells[0].id,
+    footprintCells: cells.map((cell) => cell.id),
+    entrance,
+    label,
+    representation: "hunyuan3d-model",
+    modelPath: asset.model.glb,
+    modelStatus: "loading",
+    parcel: { cellSize: tileSize, width: parcel.width, depth: parcel.depth, worldDimensions: asset.dimensions }
+  };
+
+  new GLTFLoader().load(asset.model.glb, async (gltf) => {
+    const model = gltf.scene;
+    model.name = `${asset.assetId}-Hunyuan3D`;
+    const fallbackRotationY = Number(asset.model.rotationY ?? 0);
+    let orientation = {
+      method: "configured-fallback",
+      rotationY: fallbackRotationY,
+      requiresReview: false,
+      confidence: 1,
+      scores: []
+    };
+    if (asset.model.orientationMode === "auto-rgb-four-way") {
+      group.userData.modelStatus = "orienting";
+      try {
+        const result = await resolveAutomaticModelOrientation(asset, model);
+        orientation = result;
+      } catch (error) {
+        orientation = {
+          method: "configured-fallback",
+          rotationY: fallbackRotationY,
+          requiresReview: true,
+          confidence: 0,
+          scores: [],
+          error: error?.message ?? String(error)
+        };
+      }
+    }
+    model.rotation.y = THREE.MathUtils.degToRad(orientation.rotationY);
+    model.updateMatrixWorld(true);
+
+    let bounds = new THREE.Box3().setFromObject(model);
+    const size = bounds.getSize(new THREE.Vector3());
+    const footprintSpan = Math.max(size.x, size.z, 0.001);
+    const desiredSpan = Math.min(parcel.width, parcel.depth) * (asset.model.footprintFill ?? 0.9);
+    model.scale.setScalar(desiredSpan / footprintSpan);
+    model.updateMatrixWorld(true);
+
+    bounds = new THREE.Box3().setFromObject(model);
+    const center = bounds.getCenter(new THREE.Vector3());
+    model.position.x += parcel.center.x - center.x;
+    model.position.y += baseY - bounds.min.y;
+    model.position.z += parcel.center.z - center.z;
+    model.updateMatrixWorld(true);
+    bounds = new THREE.Box3().setFromObject(model);
+
+    model.traverse((object) => {
+      if (!object.isMesh) return;
+      object.castShadow = true;
+      object.receiveShadow = true;
+    });
+    group.add(model);
+    group.userData.modelStatus = "loaded";
+    group.userData.orientation = orientation;
+    group.userData.worldBounds = {
+      min: bounds.min.toArray(),
+      max: bounds.max.toArray(),
+      size: bounds.getSize(new THREE.Vector3()).toArray()
+    };
+  }, undefined, (error) => {
+    group.userData.modelStatus = "error";
+    group.userData.modelError = error?.message ?? String(error);
+    console.error(`Failed to load ${asset.model.glb}`, error);
+  });
+  return group;
+}
+
+function createStarterSpriteBuilding(asset, label, cells, tileSize, sampleGroundHeight, index, entrance = "south", parallaxStrength = 0.12) {
+  const group = new THREE.Group();
+  group.name = `${asset.assetId}-${label}`;
+  const parcel = getParcelBounds(cells, tileSize);
+  const baseY = sampleGroundHeight(parcel.center.x, parcel.center.z) + BUILDING_BASE_ELEVATION;
+  const baseAnchorsUv = normalizeBaseAnchors(asset.baseAnchorsUv ?? asset.guideplate?.baseAnchorsUv);
+  const colorTexture = loadAssetTexture(asset.maps.rgb, true);
+  const depthTexture = loadAssetTexture(asset.maps.depth, false);
+  const normalTexture = loadAssetTexture(asset.maps.normal, false);
+  const placement = createRigidDepthMeshPlacement(asset, parcel, sampleGroundHeight, baseY);
+  const material = createRigidDepthMeshMaterial({ asset, colorTexture, depthTexture, normalTexture, baseAnchorsUv, placement, parallaxStrength });
+  const mesh = new THREE.Mesh(createRigidDepthMeshGeometry(baseAnchorsUv), material);
+  mesh.position.set(parcel.center.x, baseY, parcel.center.z);
+  mesh.scale.set(placement.scaleX, placement.scaleY, placement.scaleZ);
+  mesh.renderOrder = 2 + index;
+  mesh.name = `${asset.assetId}-RigidDepthMesh`;
+  mesh.userData.textures = [colorTexture, depthTexture, normalTexture];
+  group.add(mesh);
+  group.userData = {
+    assetId: asset.assetId,
+    cellId: cells[0].id,
+    footprintCells: cells.map((cell) => cell.id),
+    entrance,
+    label,
+    representation: "rigid-local-depth-mesh",
+    parcel: { cellSize: tileSize, width: parcel.width, depth: parcel.depth, worldDimensions: asset.guideplate?.dimensions ?? { length: 4, width: 4, height: 4, unit: "world" } },
+    guideplate: asset.guideplate ?? null,
+    depthMeshController: {
+      assetId: asset.assetId,
+      groundSeamHeight: placement.groundSeamHeight,
+      depthEncoding: asset.depthEncoding,
+      depthStrength: parallaxStrength / 0.12
+    }
+  };
+  return group;
+}
+
+function createRigidDepthMeshPlacement(asset, parcel, sampleGroundHeight, baseY) {
+  const dimensions = asset.guideplate?.dimensions ?? asset.dimensions ?? { length: 4, width: 4, height: 4 };
+  const nativeWidth = Math.max(Number(dimensions.length ?? 4), 1e-6);
+  const nativeDepth = Math.max(Number(dimensions.width ?? 4), 1e-6);
+  const nativeHeight = Math.max(Number(dimensions.height ?? 4), 1e-6);
+  const scaleX = parcel.width / nativeWidth;
+  const scaleZ = parcel.depth / nativeDepth;
+  const scaleY = Math.min(scaleX, scaleZ);
+  const sampleOffset = (x, z) => (sampleGroundHeight(x, z) + BUILDING_BASE_ELEVATION - baseY) / scaleY;
+  return {
+    nativeWidth,
+    nativeDepth,
+    nativeHeight,
+    scaleX,
+    scaleY,
+    scaleZ,
+    groundSeamHeight: nativeHeight * GROUND_SEAM_HEIGHT_RATIO,
+    groundOffsets: {
+      left: sampleOffset(parcel.minX, parcel.maxZ),
+      near: sampleOffset(parcel.maxX, parcel.maxZ),
+      right: sampleOffset(parcel.maxX, parcel.minZ),
+      far: sampleOffset(parcel.minX, parcel.minZ)
+    }
+  };
+}
+
+function createRigidDepthMeshGeometry(baseAnchorsUv = FALLBACK_BASE_ANCHORS_UV) {
+  const anchors = normalizeBaseAnchors(baseAnchorsUv);
+  const axisValues = (axis) => uniqueSorted([
+    ...Array.from({ length: DEPTH_MESH_SUBDIVISIONS + 1 }, (_, index) => index / DEPTH_MESH_SUBDIVISIONS),
+    anchors.left[axis],
+    anchors.near[axis],
+    anchors.right[axis]
+  ]);
+  const columns = axisValues(0);
+  const rows = axisValues(1);
+  const positions = [];
+  const uvs = [];
+  rows.forEach((v) => columns.forEach((u) => {
+    positions.push(0, 0, 0);
+    uvs.push(u, v);
+  }));
+  const indices = [];
+  for (let row = 0; row < rows.length - 1; row += 1) {
+    for (let column = 0; column < columns.length - 1; column += 1) {
+      const bottomLeft = row * columns.length + column;
+      const bottomRight = bottomLeft + 1;
+      const topLeft = bottomLeft + columns.length;
+      const topRight = topLeft + 1;
+      indices.push(topLeft, bottomRight, topRight, topLeft, bottomLeft, bottomRight);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function loadAssetTexture(path, srgb, onLoad) {
+  const texture = new THREE.TextureLoader().load(path, onLoad);
+  texture.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = true;
+  return texture;
+}
+
+function createRigidDepthMeshMaterial({ asset, colorTexture, depthTexture, normalTexture, baseAnchorsUv, placement, parallaxStrength }) {
+  const anchors = normalizeBaseAnchors(baseAnchorsUv);
+  const dimensions = asset.guideplate?.dimensions ?? asset.dimensions ?? { length: 4, width: 4, height: 4 };
+  const basis = createOrthographicCameraBasis(asset.guideplate?.camera ?? { yaw: 45, elevation: 55 });
+  const localAnchors = {
+    left: new THREE.Vector3(-placement.nativeWidth / 2, 0, placement.nativeDepth / 2),
+    near: new THREE.Vector3(placement.nativeWidth / 2, 0, placement.nativeDepth / 2),
+    right: new THREE.Vector3(placement.nativeWidth / 2, 0, -placement.nativeDepth / 2)
+  };
+  const screenAnchor = (point) => new THREE.Vector2(point.dot(basis.right), point.dot(basis.up));
+  const expectedDepth = (point) => point.dot(basis.view);
+  const encoding = asset.depthEncoding;
+  if (!["global-linear-quantile-fit-v1", "metric-depth-view-translation-v1"].includes(encoding?.kind)) {
+    throw new Error(`${asset.assetId} is missing a supported view-depth encoding`);
+  }
+  const uniforms = {
+    colorMap: { value: colorTexture },
+    depthMap: { value: depthTexture },
+    normalMap: { value: normalTexture },
+    sourceLeft: { value: new THREE.Vector2(...anchors.left) },
+    sourceNear: { value: new THREE.Vector2(...anchors.near) },
+    sourceRight: { value: new THREE.Vector2(...anchors.right) },
+    screenLeft: { value: screenAnchor(localAnchors.left) },
+    screenNear: { value: screenAnchor(localAnchors.near) },
+    screenRight: { value: screenAnchor(localAnchors.right) },
+    expectedAnchorDepths: { value: new THREE.Vector3(expectedDepth(localAnchors.left), expectedDepth(localAnchors.near), expectedDepth(localAnchors.right)) },
+    depthRange: { value: new THREE.Vector2(Number(encoding.minimumViewDepth), Number(encoding.maximumViewDepth)) },
+    guideRight: { value: basis.right },
+    guideUp: { value: basis.up },
+    guideView: { value: basis.view },
+    depthReliefStrength: { value: parallaxStrength / 0.12 },
+    nativeDimensions: { value: new THREE.Vector3(Number(dimensions.length ?? 4), Number(dimensions.height ?? 4), Number(dimensions.width ?? 4)) },
+    groundOffsets: { value: new THREE.Vector4(placement.groundOffsets.left, placement.groundOffsets.near, placement.groundOffsets.right, placement.groundOffsets.far) },
+    groundSeamHeight: { value: placement.groundSeamHeight }
+  };
+  const material = new THREE.ShaderMaterial({
+    uniforms,
+    vertexShader: `
+      uniform sampler2D depthMap;
+      uniform vec2 sourceLeft;
+      uniform vec2 sourceNear;
+      uniform vec2 sourceRight;
+      uniform vec2 screenLeft;
+      uniform vec2 screenNear;
+      uniform vec2 screenRight;
+      uniform vec3 expectedAnchorDepths;
+      uniform vec2 depthRange;
+      uniform vec3 guideRight;
+      uniform vec3 guideUp;
+      uniform vec3 guideView;
+      uniform float depthReliefStrength;
+      uniform vec3 nativeDimensions;
+      uniform vec4 groundOffsets;
+      uniform float groundSeamHeight;
+      varying vec2 vUv;
+
+      vec3 triangleWeights(vec2 point) {
+        vec2 nearAxis = sourceNear - sourceLeft;
+        vec2 rightAxis = sourceRight - sourceLeft;
+        vec2 offset = point - sourceLeft;
+        float determinant = nearAxis.x * rightAxis.y - nearAxis.y * rightAxis.x;
+        float nearWeight = (offset.x * rightAxis.y - offset.y * rightAxis.x) / determinant;
+        float rightWeight = (nearAxis.x * offset.y - nearAxis.y * offset.x) / determinant;
+        return vec3(1.0 - nearWeight - rightWeight, nearWeight, rightWeight);
+      }
+
+      float decodeDepth(float encodedDepth) {
+        return mix(depthRange.x, depthRange.y, clamp(encodedDepth, 0.0, 1.0));
+      }
+
+      void main() {
+        vUv = uv;
+        vec3 weights = triangleWeights(uv);
+        vec2 screen = weights.x * screenLeft + weights.y * screenNear + weights.z * screenRight;
+        float affineBaseDepth = dot(weights, expectedAnchorDepths);
+        float globallyFittedViewDepth = decodeDepth(texture2D(depthMap, uv).r);
+        float viewDepth = mix(affineBaseDepth, globallyFittedViewDepth, clamp(depthReliefStrength, 0.0, 2.0));
+        vec3 localPosition = guideRight * screen.x + guideUp * screen.y + guideView * viewDepth;
+        localPosition.x = clamp(localPosition.x, -nativeDimensions.x * 0.7, nativeDimensions.x * 0.7);
+        localPosition.y = clamp(localPosition.y, -nativeDimensions.y * 0.08, nativeDimensions.y * 1.32);
+        localPosition.z = clamp(localPosition.z, -nativeDimensions.z * 0.7, nativeDimensions.z * 0.7);
+
+        float plotX = clamp(localPosition.x / nativeDimensions.x + 0.5, 0.0, 1.0);
+        float plotZ = clamp(localPosition.z / nativeDimensions.z + 0.5, 0.0, 1.0);
+        float positiveZOffset = mix(groundOffsets.x, groundOffsets.y, plotX);
+        float negativeZOffset = mix(groundOffsets.w, groundOffsets.z, plotX);
+        float groundOffset = mix(negativeZOffset, positiveZOffset, plotZ);
+        float groundBlend = 1.0 - smoothstep(0.0, groundSeamHeight, max(localPosition.y, 0.0));
+        localPosition.y += groundOffset * groundBlend;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(localPosition, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform sampler2D colorMap;
+      uniform sampler2D normalMap;
+      varying vec2 vUv;
+
+      void main() {
+        vec4 baseColor = texture2D(colorMap, vUv);
+        if (baseColor.a < 0.08) discard;
+        vec3 reliefNormal = normalize(texture2D(normalMap, vUv).rgb * 2.0 - 1.0);
+        float normalLight = max(dot(reliefNormal, normalize(vec3(-0.3, 0.42, 0.86))), 0.0);
+        baseColor.rgb *= 0.94 + normalLight * 0.1;
+        gl_FragColor = baseColor;
+        #include <colorspace_fragment>
+      }
+    `,
+    transparent: true,
+    alphaTest: 0.08,
+    side: THREE.DoubleSide,
+    depthWrite: true,
+    depthTest: true,
+    toneMapped: false
+  });
+  material.userData.rigidDepthMesh = true;
+  return material;
+}
+
+export function createOrthographicCameraBasis(camera = {}) {
+  const yaw = THREE.MathUtils.degToRad(Number(camera.yaw ?? 45));
+  const elevation = THREE.MathUtils.degToRad(Number(camera.elevation ?? 55));
+  const sinYaw = Math.sin(yaw);
+  const cosYaw = Math.cos(yaw);
+  const sinElevation = Math.sin(elevation);
+  const cosElevation = Math.cos(elevation);
+  return {
+    right: new THREE.Vector3(cosYaw, 0, -sinYaw),
+    up: new THREE.Vector3(-sinElevation * sinYaw, cosElevation, -sinElevation * cosYaw),
+    view: new THREE.Vector3(cosElevation * sinYaw, sinElevation, cosElevation * cosYaw)
+  };
+}
+
+export function reconstructRigidDepthPoint({
+  uv,
+  encodedDepth,
+  baseAnchorsUv = FALLBACK_BASE_ANCHORS_UV,
+  dimensions = { length: 4, width: 4, height: 4 },
+  camera = { yaw: 45, elevation: 55 },
+  depthEncoding
+}) {
+  const basis = createOrthographicCameraBasis(camera);
+  const width = Number(dimensions.length ?? 4);
+  const depth = Number(dimensions.width ?? 4);
+  const localAnchors = {
+    left: new THREE.Vector3(-width / 2, 0, depth / 2),
+    near: new THREE.Vector3(width / 2, 0, depth / 2),
+    right: new THREE.Vector3(width / 2, 0, -depth / 2)
+  };
+  const weights = getTriangleWeights(uv, baseAnchorsUv);
+  const decode = (value) => THREE.MathUtils.lerp(
+    Number(depthEncoding.minimumViewDepth),
+    Number(depthEncoding.maximumViewDepth),
+    THREE.MathUtils.clamp(Number(value), 0, 1)
+  );
+  const keys = ["left", "near", "right"];
+  const screen = new THREE.Vector2();
+  keys.forEach((key, index) => {
+    const anchor = localAnchors[key];
+    screen.addScaledVector(new THREE.Vector2(anchor.dot(basis.right), anchor.dot(basis.up)), weights[index]);
+  });
+  return basis.right.clone().multiplyScalar(screen.x)
+    .addScaledVector(basis.up, screen.y)
+    .addScaledVector(basis.view, decode(encodedDepth));
+}
+
+function getTriangleWeights(point, anchors) {
+  const source = normalizeBaseAnchors(anchors);
+  const left = source.left;
+  const nearAxis = [source.near[0] - left[0], source.near[1] - left[1]];
+  const rightAxis = [source.right[0] - left[0], source.right[1] - left[1]];
+  const offset = [point[0] - left[0], point[1] - left[1]];
+  const determinant = nearAxis[0] * rightAxis[1] - nearAxis[1] * rightAxis[0];
+  if (Math.abs(determinant) < 1e-8) throw new Error("Base anchors must form a non-degenerate triangle");
+  const nearWeight = (offset[0] * rightAxis[1] - offset[1] * rightAxis[0]) / determinant;
+  const rightWeight = (nearAxis[0] * offset[1] - nearAxis[1] * offset[0]) / determinant;
+  return [1 - nearWeight - rightWeight, nearWeight, rightWeight];
+}
+
+export function mapPointThroughBaseFit(point, sourceAnchors, targetAnchors) {
+  const source = normalizeBaseAnchors(sourceAnchors);
+  const left = source.left;
+  const nearAxis = [source.near[0] - left[0], source.near[1] - left[1]];
+  const rightAxis = [source.right[0] - left[0], source.right[1] - left[1]];
+  const offset = [point[0] - left[0], point[1] - left[1]];
+  const determinant = nearAxis[0] * rightAxis[1] - nearAxis[1] * rightAxis[0];
+  if (Math.abs(determinant) < 1e-8) throw new Error("Base-fit source anchors must form a non-degenerate triangle");
+  const nearWeight = (offset[0] * rightAxis[1] - offset[1] * rightAxis[0]) / determinant;
+  const rightWeight = (nearAxis[0] * offset[1] - nearAxis[1] * offset[0]) / determinant;
+  return [
+    targetAnchors.left[0] + nearWeight * (targetAnchors.near[0] - targetAnchors.left[0]) + rightWeight * (targetAnchors.right[0] - targetAnchors.left[0]),
+    targetAnchors.left[1] + nearWeight * (targetAnchors.near[1] - targetAnchors.left[1]) + rightWeight * (targetAnchors.right[1] - targetAnchors.left[1])
+  ];
+}
+
+function normalizeBaseAnchors(baseAnchorsUv) {
+  const anchors = baseAnchorsUv ?? FALLBACK_BASE_ANCHORS_UV;
+  return {
+    left: [...anchors.left],
+    near: [...anchors.near],
+    right: [...anchors.right]
+  };
+}
+
+function uniqueSorted(values) {
+  return [...new Set(values.map((value) => Number(value.toFixed(12))))].sort((a, b) => a - b);
+}
+
+function resolveRenderCell(cells, sourceCellId) {
+  const exact = cells.get(sourceCellId);
+  if (exact) return exact;
+  const match = /^cell-(\d+)-(\d+)$/.exec(sourceCellId ?? "");
+  if (!match) return null;
+  const column = Number(match[1]);
+  const row = Number(match[2]);
+  return [...cells.values()].sort((a, b) =>
+    Math.abs(a.column - column) + Math.abs(a.row - row) - (Math.abs(b.column - column) + Math.abs(b.row - row))
+  )[0] ?? null;
+}
+
+function getParcelBounds(cells, tileSize) {
+  const minX = Math.min(...cells.map((cell) => cell.center.x - tileSize / 2));
+  const maxX = Math.max(...cells.map((cell) => cell.center.x + tileSize / 2));
+  const minZ = Math.min(...cells.map((cell) => cell.center.z - tileSize / 2));
+  const maxZ = Math.max(...cells.map((cell) => cell.center.z + tileSize / 2));
+  return {
+    minX,
+    maxX,
+    minZ,
+    maxZ,
+    width: maxX - minX,
+    depth: maxZ - minZ,
+    center: { x: (minX + maxX) / 2, z: (minZ + maxZ) / 2 }
+  };
+}
+
+function getNeighborCellId(cells, entrance) {
+  const offsets = { north: [0, -1], east: [1, 0], south: [0, 1], west: [-1, 0] };
+  const [dx, dy] = offsets[entrance] ?? offsets.south;
+  const footprintIds = new Set(cells.map((cell) => cell.id));
+  const edge = cells.find((cell) => !footprintIds.has(`cell-${cell.column + dx}-${cell.row + dy}`));
+  return edge ? `cell-${edge.column + dx}-${edge.row + dy}` : null;
+}
