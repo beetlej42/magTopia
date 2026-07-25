@@ -515,6 +515,7 @@ export function planPitchedRoof(options = {}) {
   const xEnd = width - 1 + (capRight ? overhang : 0);
   const profile = [];
   const surface = [];
+  const surfaceKeys = new Set();
   const endCaps = { left: [], right: [] };
   const edgeCaps = { back: [], front: [] };
 
@@ -528,12 +529,26 @@ export function planPitchedRoof(options = {}) {
     const rise = Math.round(ridgeHeight * (1 - ((1 - t) ** exponent)));
     const y = baseY + rise;
     profile.push({ z, y });
+  }
+
+  let maximumProfileStep = 0;
+  profile.forEach((row, index) => {
+    const previousY = profile[index - 1]?.y ?? row.y;
+    const lowerY = Math.min(previousY, row.y);
+    const upperY = Math.max(previousY, row.y);
+    maximumProfileStep = Math.max(maximumProfileStep, upperY - lowerY);
     for (let x = xStart; x <= xEnd; x += 1) {
-      for (let layer = 0; layer < thickness; layer += 1) {
-        surface.push({ x, y: y - layer, z });
+      for (let bridgeY = lowerY; bridgeY <= upperY; bridgeY += 1) {
+        for (let layer = 0; layer < thickness; layer += 1) {
+          const y = bridgeY - layer;
+          const key = `${x},${y},${row.z}`;
+          if (surfaceKeys.has(key)) continue;
+          surfaceKeys.add(key);
+          surface.push({ x, y, z: row.z });
+        }
       }
     }
-  }
+  });
 
   for (let localZ = 0; localZ < depth; localZ += 1) {
     const roofY = profile[localZ + overhang].y;
@@ -562,6 +577,7 @@ export function planPitchedRoof(options = {}) {
     ridgeIndex,
     ridgeZ: ridgeIndex - overhang,
     ridgeY: baseY + ridgeHeight,
+    maximumProfileStep,
     profile,
     surface,
     endCaps,

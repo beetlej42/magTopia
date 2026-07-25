@@ -313,10 +313,30 @@ test("ridge extremes produce continuous opposite mono-pitch profiles", () => {
   assert.ok(backRidge.profile.every((row, index, rows) => index === 0 || row.y <= rows[index - 1].y));
   assert.ok(frontRidge.profile.every((row, index, rows) => index === 0 || row.y >= rows[index - 1].y));
   for (const roof of [backRidge, centered, frontRidge]) {
-    assert.equal(roof.surface.length, roof.profile.length * (roof.width + roof.overhang * 2) * roof.thickness);
+    assert.ok(roof.surface.length >= roof.profile.length * (roof.width + roof.overhang * 2) * roof.thickness);
     roof.profile.forEach((row, index) => {
       assert.equal(row.z, index - roof.overhang);
       assert.ok(roof.surface.some((voxel) => voxel.z === row.z));
+    });
+  }
+});
+
+test("near-edge ridges bridge every skipped height so 7% and 93% roofs stay face-connected", () => {
+  for (const ridgeRatio of [0.07, 0.93]) {
+    const roof = planPitchedRoof({ width: 18, depth: 36, ridgeRatio, ridgeHeight: 14 });
+    assert.ok(roof.maximumProfileStep > 1);
+    roof.profile.forEach((row, index) => {
+      const previousY = roof.profile[index - 1]?.y ?? row.y;
+      const lowerY = Math.min(previousY, row.y);
+      const upperY = Math.max(previousY, row.y);
+      const sliceY = new Set(
+        roof.surface
+          .filter((voxel) => voxel.x === 0 && voxel.z === row.z)
+          .map((voxel) => voxel.y)
+      );
+      for (let y = lowerY; y <= upperY; y += 1) {
+        assert.ok(sliceY.has(y), `ridge ${ridgeRatio} missing bridge voxel at z=${row.z}, y=${y}`);
+      }
     });
   }
 });
