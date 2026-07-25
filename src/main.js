@@ -38,6 +38,12 @@ import {
   normalizeVoxelBuildingConfig,
   voxelDaylightStyle
 } from "./generators/voxelBuildingLab.js";
+import {
+  BUILDING_ARCHETYPES,
+  BUILDING_SPEC_VERSION,
+  VOXEL_STYLE_KITS,
+  createBuildingSpec
+} from "./generators/voxelBuildingGrammar.js";
 import { createCityState } from "./city/state.js";
 import { createCityWorkbench } from "./city/workbench.js";
 import { createStarterCityWorkbench } from "./city/scenarios.js";
@@ -161,7 +167,12 @@ const MODES = {
       seed,
       floors: 2 + Math.floor(Math.random() * 3),
       roofVariant: Math.floor(Math.random() * 3),
-      materialScheme: Math.floor(Math.random() * 3)
+      materialScheme: Math.floor(Math.random() * 3),
+      archetypeVariant: Math.floor(Math.random() * 3),
+      styleVariant: Math.floor(Math.random() * 3),
+      variation: 0.35 + Math.random() * 0.65,
+      parcelWidth: 24 + Math.floor(Math.random() * 5) * 4,
+      parcelDepth: 28 + Math.floor(Math.random() * 5) * 4
     }),
     sliders: [
       { key: "sunTime", label: "Sun Time", min: 0, max: 1, step: 0.01 },
@@ -169,8 +180,33 @@ const MODES = {
       { key: "buildingCount", label: "Connected Buildings", min: 1, max: 3, step: 1 },
       { key: "floors", label: "Base Floors", min: 2, max: 5, step: 1 },
       { key: "expansionFloors", label: "Add Floors", min: 0, max: 2, step: 1 },
-      { key: "roofVariant", label: "Roof Set", min: 0, max: 2, step: 1 },
-      { key: "materialScheme", label: "Material Scheme", min: 0, max: 2, step: 1 },
+      {
+        key: "archetypeVariant",
+        label: "Archetype",
+        min: 0,
+        max: 2,
+        step: 1,
+        valueLabels: ["Townhouse", "Magic Shop", "Workshop"]
+      },
+      {
+        key: "styleVariant",
+        label: "Style Kit",
+        min: 0,
+        max: 2,
+        step: 1,
+        valueLabels: ["London Brick", "Violet Alchemist", "Forest Craft"]
+      },
+      {
+        key: "roofVariant",
+        label: "Roof Family",
+        min: 0,
+        max: 2,
+        step: 1,
+        valueLabels: ["Gable", "Mansard", "Magic Asymmetric"]
+      },
+      { key: "parcelWidth", label: "Parcel Width", min: 24, max: 40, step: 4 },
+      { key: "parcelDepth", label: "Parcel Depth", min: 28, max: 44, step: 4 },
+      { key: "variation", label: "Grammar Variation", min: 0, max: 1, step: 0.01 },
       { key: "detailDensity", label: "Decoration", min: 0, max: 1, step: 0.01 }
     ]
   },
@@ -207,6 +243,9 @@ const presetLabels = {
   connectedTerraceDay: "Voxel Terrace · Day",
   connectedTerraceNight: "Voxel Terrace · Night",
   addFloorStudy: "Voxel Terrace · Add Floor",
+  grammarTownhouses: "Grammar · Townhouses",
+  grammarMagicShops: "Grammar · Magic Shops",
+  grammarWorkshops: "Grammar · Workshops",
   cottage: "1 × 1 Cottage",
   shop: "1 × 2 Shop",
   tower: "1 × 3 Tower",
@@ -621,11 +660,13 @@ function syncUi() {
   cameraModeField.hidden = currentMode !== "map";
   cameraModeControl.value = currentConfig.cameraMode ?? "play";
 
-  MODES[currentMode].sliders.forEach(({ key }) => {
+  MODES[currentMode].sliders.forEach((definition) => {
+    const { key } = definition;
     const input = sliderInputs.get(key);
     const value = currentConfig[key];
     input.value = value;
-    sliderValues.get(key).textContent = formatSliderValue(value, input.step);
+    sliderValues.get(key).textContent = definition.valueLabels?.[Math.round(value)]
+      ?? formatSliderValue(value, input.step);
   });
 }
 
@@ -666,7 +707,7 @@ function syncApiPill() {
   } else if (currentMode === "comparison") {
     apiPill.textContent = "MagicTown.compareAssetRepresentations({ depthStrength, comparisonYaw, showBounds, depthWireframe })";
   } else if (currentMode === "voxel") {
-    apiPill.textContent = "MagicTown.generateVoxelStreet({ buildingCount, floors, expansionFloors, roofVariant, materialScheme, nightLighting })";
+    apiPill.textContent = "MagicTown.generateVoxelStreet({ archetype: 'magic_shop', style: 'violet_alchemist', parcelWidth, parcelDepth, floors, roofType, variation, seed })";
   } else {
     apiPill.textContent = `MagicTown.previewParcel({ footprint: '${currentConfig.footprint}', floors: ${currentConfig.floors}, maxHeight: ${currentConfig.maxHeight} })`;
   }
@@ -781,6 +822,16 @@ function exposeAgentApi() {
     },
     getVoxelBuildingContract(config = configsByMode.voxel) {
       return getVoxelBuildingContract(config);
+    },
+    createVoxelBuildingSpec(options = {}) {
+      return createBuildingSpec(options);
+    },
+    getVoxelGrammarCatalog() {
+      return {
+        specVersion: BUILDING_SPEC_VERSION,
+        archetypes: structuredClone(BUILDING_ARCHETYPES),
+        styleKits: structuredClone(VOXEL_STYLE_KITS)
+      };
     },
     getWorldContract(config = configsByMode.map) {
       return getIsometricDevelopmentContract(config);
@@ -1095,7 +1146,21 @@ function inferMode(config) {
   if ("mapId" in config || "developmentColumns" in config || "developmentRows" in config || "cameraMode" in config || "perspective" in config || "showGrid" in config || "trainSpeed" in config) return "map";
   if ("leftVanishingDistance" in config || "rightVanishingDistance" in config || "footprintWidth" in config || "footprintDepth" in config) return "vanishing";
   if ("comparisonYaw" in config || "depthStrength" in config || "depthWireframe" in config || "showBounds" in config) return "comparison";
-  if ("buildingCount" in config || "expansionFloors" in config || "roofVariant" in config || "materialScheme" in config || "detailDensity" in config) return "voxel";
+  if (
+    "buildingCount" in config
+    || "expansionFloors" in config
+    || "roofVariant" in config
+    || "materialScheme" in config
+    || "archetype" in config
+    || "archetypeVariant" in config
+    || "style" in config
+    || "styleVariant" in config
+    || "roofType" in config
+    || "parcelWidth" in config
+    || "parcelDepth" in config
+    || "variation" in config
+    || "detailDensity" in config
+  ) return "voxel";
   if ("footprint" in config || "maxHeight" in config) return "parcel";
   if ("parallaxStrength" in config || "reliefStrength" in config || "meshResolution" in config || "colorPath" in config || "depthPath" in config) return "asset";
   return currentMode;

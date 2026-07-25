@@ -1,5 +1,10 @@
 import * as THREE from "three";
-import { createRng } from "../utils/random.js";
+import {
+  BUILDING_ARCHETYPE_IDS,
+  BUILDING_SPEC_VERSION,
+  VOXEL_STYLE_KIT_IDS,
+  createBuildingSpec
+} from "./voxelBuildingGrammar.js";
 
 export const VOXEL_SIZE = 0.125;
 export const VOXEL_PARCEL = Object.freeze({
@@ -11,7 +16,6 @@ export const VOXEL_PARCEL = Object.freeze({
 });
 
 const ROOF_TYPES = ["gable", "mansard", "magic_asymmetric"];
-const UPPER_WINDOW_CENTERS = [9, 23];
 const VOXEL_NEIGHBORS = [
   [1, 0, 0],
   [-1, 0, 0],
@@ -20,11 +24,15 @@ const VOXEL_NEIGHBORS = [
   [0, 0, 1],
   [0, 0, -1]
 ];
-const BRICK_SCHEMES = [
-  ["brickRed", "brickBrown", "brickRed"],
-  ["brickBrown", "brickRed", "brickBrown"],
-  ["brickRed", "brickRed", "brickBrown"]
-];
+export const VOXEL_WRITE_PRIORITIES = Object.freeze({
+  terrain: 0,
+  structure: 10,
+  roof: 20,
+  opening: 30,
+  trim: 40,
+  decoration: 50,
+  effect: 60
+});
 
 const MATERIAL_LIBRARY = Object.freeze({
   brickRed: {
@@ -103,6 +111,11 @@ export const VOXEL_BUILDING_PRESETS = Object.freeze({
     expansionFloors: 0,
     roofVariant: 0,
     materialScheme: 0,
+    archetypeVariant: 0,
+    styleVariant: 0,
+    variation: 0.58,
+    parcelWidth: 32,
+    parcelDepth: 36,
     detailDensity: 0.82
   },
   connectedTerraceNight: {
@@ -114,6 +127,11 @@ export const VOXEL_BUILDING_PRESETS = Object.freeze({
     expansionFloors: 0,
     roofVariant: 0,
     materialScheme: 0,
+    archetypeVariant: 1,
+    styleVariant: 1,
+    variation: 0.72,
+    parcelWidth: 32,
+    parcelDepth: 36,
     detailDensity: 0.92
   },
   addFloorStudy: {
@@ -125,12 +143,75 @@ export const VOXEL_BUILDING_PRESETS = Object.freeze({
     expansionFloors: 1,
     roofVariant: 1,
     materialScheme: 1,
+    archetypeVariant: 0,
+    styleVariant: 0,
+    variation: 0.66,
+    parcelWidth: 32,
+    parcelDepth: 36,
     detailDensity: 0.9
+  },
+  grammarTownhouses: {
+    seed: "grammar-townhouses-001",
+    sunTime: 0.6,
+    nightLighting: 0.12,
+    buildingCount: 3,
+    floors: 3,
+    expansionFloors: 0,
+    roofVariant: 0,
+    materialScheme: 0,
+    archetypeVariant: 0,
+    styleVariant: 0,
+    variation: 0.5,
+    parcelWidth: 32,
+    parcelDepth: 36,
+    detailDensity: 0.7
+  },
+  grammarMagicShops: {
+    seed: "grammar-magic-shops-001",
+    sunTime: 0.18,
+    nightLighting: 0.8,
+    buildingCount: 3,
+    floors: 3,
+    expansionFloors: 0,
+    roofVariant: 2,
+    materialScheme: 1,
+    archetypeVariant: 1,
+    styleVariant: 1,
+    variation: 0.82,
+    parcelWidth: 36,
+    parcelDepth: 40,
+    detailDensity: 1
+  },
+  grammarWorkshops: {
+    seed: "grammar-workshops-001",
+    sunTime: 0.48,
+    nightLighting: 0.3,
+    buildingCount: 3,
+    floors: 2,
+    expansionFloors: 0,
+    roofVariant: 0,
+    materialScheme: 2,
+    archetypeVariant: 2,
+    styleVariant: 2,
+    variation: 0.76,
+    parcelWidth: 36,
+    parcelDepth: 32,
+    detailDensity: 0.86
   }
 });
 
 export function normalizeVoxelBuildingConfig(config = {}) {
   const base = { ...VOXEL_BUILDING_PRESETS.connectedTerraceDay, ...config };
+  const archetypeVariant = enumIndex(
+    BUILDING_ARCHETYPE_IDS,
+    config.archetype,
+    base.archetypeVariant
+  );
+  const requestedStyleVariant = Object.hasOwn(config, "styleVariant")
+    ? config.styleVariant
+    : (Object.hasOwn(config, "materialScheme") ? config.materialScheme : base.styleVariant);
+  const styleVariant = enumIndex(VOXEL_STYLE_KIT_IDS, config.style, requestedStyleVariant);
+  const roofVariant = enumIndex(ROOF_TYPES, config.roofType ?? config.roof, base.roofVariant);
   return {
     ...base,
     seed: String(base.seed || "voxel-terrace-001"),
@@ -139,81 +220,79 @@ export function normalizeVoxelBuildingConfig(config = {}) {
     buildingCount: Math.round(clamp(base.buildingCount, 1, 3)),
     floors: Math.round(clamp(base.floors, 2, 5)),
     expansionFloors: Math.round(clamp(base.expansionFloors, 0, 2)),
-    roofVariant: Math.round(clamp(base.roofVariant, 0, ROOF_TYPES.length - 1)),
-    materialScheme: Math.round(clamp(base.materialScheme, 0, BRICK_SCHEMES.length - 1)),
+    roofVariant,
+    roofType: ROOF_TYPES[roofVariant],
+    materialScheme: styleVariant,
+    archetypeVariant,
+    archetype: BUILDING_ARCHETYPE_IDS[archetypeVariant],
+    styleVariant,
+    style: VOXEL_STYLE_KIT_IDS[styleVariant],
+    variation: clamp(base.variation, 0, 1),
+    parcelWidth: Math.round(clamp(base.parcelWidth, 24, 40)),
+    parcelDepth: Math.round(clamp(base.parcelDepth, 28, 44)),
     detailDensity: clamp(base.detailDensity, 0, 1)
   };
 }
 
 export function planVoxelStreet(config = {}) {
   const params = normalizeVoxelBuildingConfig(config);
-  const streetWidth = params.buildingCount * VOXEL_PARCEL.width;
+  const streetWidth = params.buildingCount * params.parcelWidth;
   const firstX = -streetWidth / 2;
   const expansionIndex = Math.floor(params.buildingCount / 2);
-  const scheme = BRICK_SCHEMES[params.materialScheme];
-  const rng = createRng(params.seed);
+  const archetype = BUILDING_ARCHETYPE_IDS[params.archetypeVariant];
+  const style = VOXEL_STYLE_KIT_IDS[params.styleVariant];
 
   const buildings = Array.from({ length: params.buildingCount }, (_, index) => {
     const expandedBy = index === expansionIndex ? params.expansionFloors : 0;
-    const floors = params.floors + expandedBy;
-    const roofType = ROOF_TYPES[(params.roofVariant + index) % ROOF_TYPES.length];
-    return {
-      id: `voxel-building-${index + 1}`,
+    const id = `voxel-building-${index + 1}`;
+    return createBuildingSpec({
+      id,
       index,
-      origin: {
-        x: firstX + index * VOXEL_PARCEL.width,
-        y: 0,
-        z: -VOXEL_PARCEL.depth / 2
-      },
-      footprint: {
-        widthVoxels: VOXEL_PARCEL.width,
-        depthVoxels: VOXEL_PARCEL.depth,
-        worldWidth: VOXEL_PARCEL.worldWidth,
-        worldDepth: VOXEL_PARCEL.worldDepth
-      },
+      seed: params.seed,
+      archetype,
+      style,
+      variation: params.variation,
+      widthVoxels: params.parcelWidth,
+      depthVoxels: params.parcelDepth,
       baseFloors: params.floors,
-      floors,
       expandedBy,
-      wallHeightVoxels: floors * VOXEL_PARCEL.floorHeight,
-      roof: {
-        type: roofType,
-        seed: Math.floor(rng() * 0x7fffffff),
-        ...roofParametersForType(roofType, VOXEL_PARCEL.depth)
-      },
-      materials: {
-        wall: scheme[index % scheme.length],
-        trim: index === 1 ? "limestone" : "sandstone",
-        roof: "slate",
-        shopfront: "timber",
-        window: "warmWindow"
+      floorHeight: VOXEL_PARCEL.floorHeight,
+      voxelSize: VOXEL_SIZE,
+      roofOverride: ROOF_TYPES[params.roofVariant],
+      detailDensity: params.detailDensity,
+      origin: {
+        x: firstX + index * params.parcelWidth,
+        y: 0,
+        z: -params.parcelDepth / 2
       },
       adjacency: {
         left: index > 0 ? `voxel-building-${index}` : null,
         right: index < params.buildingCount - 1 ? `voxel-building-${index + 2}` : null,
         exposedLeftWall: index === 0,
         exposedRightWall: index === params.buildingCount - 1
-      },
-      ports: {
-        entrance: { face: "south", x: 26, y: 0, z: VOXEL_PARCEL.depth - 1 },
-        verticalExpansion: { face: "up", floor: floors },
-        leftPartyWall: index > 0,
-        rightPartyWall: index < params.buildingCount - 1
       }
-    };
+    });
   });
 
   return {
     renderer: "voxel-procedural-v1",
     seed: params.seed,
     voxelSize: VOXEL_SIZE,
-    parcel: structuredClone(VOXEL_PARCEL),
+    specVersion: BUILDING_SPEC_VERSION,
+    parcel: {
+      ...structuredClone(VOXEL_PARCEL),
+      width: params.parcelWidth,
+      depth: params.parcelDepth,
+      worldWidth: params.parcelWidth * VOXEL_SIZE,
+      worldDepth: params.parcelDepth * VOXEL_SIZE
+    },
     streetWidthVoxels: streetWidth,
     buildings,
     connections: buildings.slice(0, -1).map((building, index) => ({
       type: "party_wall",
       from: building.id,
       to: buildings[index + 1].id,
-      sharedBoundaryX: building.origin.x + VOXEL_PARCEL.width
+      sharedBoundaryX: building.origin.x + building.footprint.widthVoxels
     }))
   };
 }
@@ -232,9 +311,16 @@ export function getVoxelBuildingContract(config = {}) {
     },
     meshing: {
       prototypeStrategy: "mutually-exclusive sparse voxel field + surface-culled instanced boxes",
-      conflictPolicy: "last write wins at each integer voxel coordinate",
+      conflictPolicy: "higher semantic phase wins; equal-priority writes use last-write-wins",
       solidInteriors: false,
       productionTarget: "chunked greedy surface mesh"
+    },
+    buildingGrammar: {
+      specVersion: BUILDING_SPEC_VERSION,
+      pipeline: ["BuildingSpec", "mass/floors", "facade bays", "roof solver", "decorations", "voxel field"],
+      stableSubSeeds: true,
+      archetypes: BUILDING_ARCHETYPE_IDS,
+      styleKits: VOXEL_STYLE_KIT_IDS
     },
     roofSystem: {
       type: "adaptive pitched roof profile",
@@ -277,7 +363,9 @@ export function createVoxelBuildingLab(config = {}) {
 
   const lamps = addStreetLamps(root, plan);
   const windowLights = addWindowLights(root, plan);
+  const magicWindowCount = plan.buildings.filter((building) => building.decorations.magicWindow).length;
   const diagnostics = {
+    specVersion: plan.specVersion,
     voxelSize: VOXEL_SIZE,
     instanceCount: buffer.instanceCount,
     drawCalls: materialMeshes.length,
@@ -287,10 +375,15 @@ export function createVoxelBuildingLab(config = {}) {
     omittedPartyWalls: plan.connections.length * 2,
     exposedPartyWallVoxels,
     overwrittenVoxels: buffer.overwrittenVoxelCount,
+    rejectedLowerPriorityVoxels: buffer.rejectedVoxelCount,
     culledInteriorVoxels: buffer.culledInteriorVoxelCount,
     occupiedVoxels: buffer.occupiedVoxelCount,
     surfaceOnly: true,
     expandedBuildingId: plan.buildings.find((building) => building.expandedBy > 0)?.id ?? null,
+    archetypes: [...new Set(plan.buildings.map((building) => building.archetype))],
+    styleKits: [...new Set(plan.buildings.map((building) => building.style))],
+    facadeRhythms: plan.buildings.map((building) => building.facade.rhythm),
+    magicWindowCount,
     magicDecorationPlacement: "upper_window"
   };
 
@@ -414,10 +507,11 @@ export class VoxelInstanceBuffer {
     this.instanceCount = 0;
     this.occupiedVoxelCount = 0;
     this.overwrittenVoxelCount = 0;
+    this.rejectedVoxelCount = 0;
     this.culledInteriorVoxelCount = 0;
   }
 
-  addVoxel(materialId, x, y, z, shadeKey = 0) {
+  addVoxel(materialId, x, y, z, shadeKey = 0, options = {}) {
     if (!MATERIAL_LIBRARY[materialId]) throw new Error(`Unknown voxel material: ${materialId}`);
     const position = {
       x: Math.round(x),
@@ -425,13 +519,26 @@ export class VoxelInstanceBuffer {
       z: Math.round(z)
     };
     const key = voxelKey(position.x, position.y, position.z);
-    if (this.voxels.has(key)) this.overwrittenVoxelCount += 1;
-    this.voxels.set(key, { ...position, materialId, shadeKey });
+    const current = this.voxels.get(key);
+    const priority = Number(options.priority ?? 0);
+    if (current && current.priority > priority) {
+      this.rejectedVoxelCount += 1;
+      return false;
+    }
+    if (current) this.overwrittenVoxelCount += 1;
+    this.voxels.set(key, {
+      ...position,
+      materialId,
+      shadeKey,
+      priority,
+      owner: options.owner ?? null
+    });
     this.visibleInstances = null;
     this.occupiedVoxelCount = this.voxels.size;
+    return true;
   }
 
-  addBox(materialId, x, y, z, width, height, depth, shadeKey = 0) {
+  addBox(materialId, x, y, z, width, height, depth, shadeKey = 0, options = {}) {
     if (!MATERIAL_LIBRARY[materialId]) throw new Error(`Unknown voxel material: ${materialId}`);
     if (width <= 0 || height <= 0 || depth <= 0) return;
     const minX = Math.round(x);
@@ -443,7 +550,7 @@ export class VoxelInstanceBuffer {
     for (let voxelY = minY; voxelY < maxY; voxelY += 1) {
       for (let voxelZ = minZ; voxelZ < maxZ; voxelZ += 1) {
         for (let voxelX = minX; voxelX < maxX; voxelX += 1) {
-          this.addVoxel(materialId, voxelX, voxelY, voxelZ, shadeKey);
+          this.addVoxel(materialId, voxelX, voxelY, voxelZ, shadeKey, options);
         }
       }
     }
@@ -521,13 +628,14 @@ export class VoxelInstanceBuffer {
 function addStreetBase(buffer, plan) {
   const width = plan.streetWidthVoxels + 16;
   const startX = -width / 2;
-  const front = VOXEL_PARCEL.depth / 2;
-  buffer.addBox("pavement", startX, -2, -VOXEL_PARCEL.depth / 2 - 3, width, 2, VOXEL_PARCEL.depth + 18, 1);
-  buffer.addBox("pavement", startX - 4, -1, front, width + 8, 2, 10, 2);
-  buffer.addBox("road", startX - 8, -2, front + 10, width + 16, 1, 28, 3);
+  const front = plan.parcel.depth / 2;
+  const terrain = { priority: VOXEL_WRITE_PRIORITIES.terrain, owner: "street" };
+  buffer.addBox("pavement", startX, -2, -plan.parcel.depth / 2 - 3, width, 2, plan.parcel.depth + 18, 1, terrain);
+  buffer.addBox("pavement", startX - 4, -1, front, width + 8, 2, 10, 2, terrain);
+  buffer.addBox("road", startX - 8, -2, front + 10, width + 16, 1, 28, 3, terrain);
 
   for (let x = startX - 4; x < startX + width + 4; x += 4) {
-    buffer.addBox("limestone", x, 1, front + 8, 3, 1, 2, x);
+    buffer.addBox("limestone", x, 1, front + 8, 3, 1, 2, x, terrain);
   }
 }
 
@@ -552,9 +660,12 @@ function addFacade(buffer, building, params, xStart, zFront, wallHeight) {
   const width = building.footprint.widthVoxels;
   for (let y = 0; y < wallHeight; y += 1) {
     for (let localX = 0; localX < width; localX += 1) {
-      if (isFrontOpening(localX, y, building.floors)) continue;
+      if (isFrontOpening(localX, y, building)) continue;
       const shade = hashNumber(localX, y, building.index, params.seed);
-      buffer.addVoxel(building.materials.wall, xStart + localX, y, zFront, shade);
+      buffer.addVoxel(building.materials.wall, xStart + localX, y, zFront, shade, {
+        priority: VOXEL_WRITE_PRIORITIES.structure,
+        owner: `${building.id}:facade`
+      });
     }
   }
 }
@@ -563,7 +674,17 @@ function addBackWall(buffer, building, xStart, zBack, wallHeight) {
   const width = building.footprint.widthVoxels;
   for (let y = 0; y < wallHeight; y += 1) {
     for (let localX = 0; localX < width; localX += 2) {
-      buffer.addBox(building.materials.wall, xStart + localX, y, zBack, Math.min(2, width - localX), 1, 1, localX + y * 7);
+      buffer.addBox(
+        building.materials.wall,
+        xStart + localX,
+        y,
+        zBack,
+        Math.min(2, width - localX),
+        1,
+        1,
+        localX + y * 7,
+        { priority: VOXEL_WRITE_PRIORITIES.structure, owner: `${building.id}:back-wall` }
+      );
     }
   }
 }
@@ -579,12 +700,23 @@ function addSideWall(buffer, building, x, zBack, wallHeight, depth, side) {
         1,
         1,
         Math.min(2, depth - 1 - localZ),
-        localZ + y * 5 + (side === "left" ? 11 : 23)
+        localZ + y * 5 + (side === "left" ? 11 : 23),
+        { priority: VOXEL_WRITE_PRIORITIES.structure, owner: `${building.id}:${side}-wall` }
       );
     }
   }
   for (let y = 0; y < wallHeight; y += 5) {
-    buffer.addBox(building.materials.trim, x + (side === "left" ? -1 : 0), y, zBack + depth - 3, 2, 2, 3, y);
+    buffer.addBox(
+      building.materials.trim,
+      x + (side === "left" ? -1 : 0),
+      y,
+      zBack + depth - 3,
+      2,
+      2,
+      3,
+      y,
+      { priority: VOXEL_WRITE_PRIORITIES.trim, owner: `${building.id}:${side}-quoins` }
+    );
   }
 }
 
@@ -592,61 +724,167 @@ function addFacadeModules(buffer, building, params, xStart, zFront) {
   const width = building.footprint.widthVoxels;
   const wallHeight = building.wallHeightVoxels;
   const trim = building.materials.trim;
+  const trimWrite = { priority: VOXEL_WRITE_PRIORITIES.trim, owner: `${building.id}:facade-trim` };
+  const openingWrite = { priority: VOXEL_WRITE_PRIORITIES.opening, owner: `${building.id}:facade-opening` };
 
-  buffer.addBox("timber", xStart + 2, 2, zFront + 1, width - 4, 14, 2, building.index);
-  buffer.addBox("warmWindow", xStart + 4, 4, zFront + 3, 8, 10, 1, 1);
-  buffer.addBox("warmWindow", xStart + 14, 4, zFront + 3, 8, 10, 1, 2);
-  buffer.addBox("timber", xStart + 24, 2, zFront + 2, 6, 14, 2, 3);
-  buffer.addBox("warmWindow", xStart + 25, 8, zFront + 4, 4, 6, 1, 4);
-  buffer.addBox(trim, xStart + 1, 16, zFront, width - 2, 3, 3, 5);
-  buffer.addBox("timber", xStart + 3, 18, zFront + 1, width - 6, 3, 2, 6);
-
-  for (let floor = 1; floor < building.floors; floor += 1) {
-    const floorY = floor * VOXEL_PARCEL.floorHeight;
-    UPPER_WINDOW_CENTERS.forEach((center, bayIndex) => {
-      const windowX = xStart + center - 3;
-      buffer.addBox("warmWindow", windowX, floorY + 5, zFront + 1, 6, 10, 1, floor * 10 + bayIndex);
-      buffer.addBox(trim, windowX - 1, floorY + 4, zFront, 1, 12, 2, bayIndex);
-      buffer.addBox(trim, windowX + 6, floorY + 4, zFront, 1, 12, 2, bayIndex + 1);
-      buffer.addBox(trim, windowX - 1, floorY + 4, zFront, 8, 1, 2, bayIndex + 2);
-      buffer.addBox(trim, windowX - 1, floorY + 15, zFront, 8, 2, 3, bayIndex + 3);
-      buffer.addBox("timber", windowX + 2, floorY + 5, zFront + 2, 1, 10, 1, bayIndex + 4);
-      if (params.detailDensity > 0.45 && (floor + bayIndex + building.index) % 2 === 0) {
-        addFlowerBox(buffer, windowX, floorY + 16, zFront + 3, bayIndex + floor);
+  building.facade.floors.forEach((floorPlan) => {
+    const floorY = floorPlan.y;
+    floorPlan.modules.forEach((module) => {
+      if (!module.opening) return;
+      const opening = module.opening;
+      const moduleX = xStart + opening.xStart;
+      const moduleWidth = opening.xEnd - opening.xStart + 1;
+      const moduleY = floorY + opening.yStart;
+      const moduleHeight = opening.yEnd - opening.yStart + 1;
+      if (module.type === "entrance" || module.type === "service_door") {
+        buffer.addBox(
+          building.materials.door,
+          moduleX,
+          moduleY,
+          zFront + 1,
+          moduleWidth,
+          moduleHeight,
+          2,
+          module.bay,
+          openingWrite
+        );
+        if (module.type === "entrance" && moduleWidth >= 4) {
+          buffer.addBox(
+            building.materials.window,
+            moduleX + 1,
+            moduleY + Math.max(3, moduleHeight - 6),
+            zFront + 3,
+            moduleWidth - 2,
+            4,
+            1,
+            module.bay + 101,
+            trimWrite
+          );
+        }
+      } else {
+        buffer.addBox(
+          building.materials.window,
+          moduleX,
+          moduleY,
+          zFront + 1,
+          moduleWidth,
+          moduleHeight,
+          1,
+          floorPlan.index * 20 + module.bay,
+          openingWrite
+        );
+        if (moduleWidth >= 5) {
+          const mullionX = moduleX + Math.floor(moduleWidth / 2);
+          buffer.addBox(
+            building.materials.shopfront,
+            mullionX,
+            moduleY,
+            zFront + 2,
+            1,
+            moduleHeight,
+            1,
+            module.bay + 131,
+            trimWrite
+          );
+        }
+      }
+      addOpeningFrame(
+        buffer,
+        trim,
+        moduleX,
+        moduleY,
+        zFront,
+        moduleWidth,
+        moduleHeight,
+        floorPlan.index * 40 + module.bay,
+        trimWrite
+      );
+      if (module.balcony) {
+        addBalcony(buffer, building, moduleX, floorY + opening.yStart - 1, zFront, moduleWidth, module.bay);
+      } else if (module.flowerBox && params.detailDensity > 0.35) {
+        addFlowerBox(
+          buffer,
+          moduleX,
+          floorY + opening.yEnd + 1,
+          zFront + 3,
+          module.bay + floorPlan.index,
+          moduleWidth
+        );
       }
     });
-    buffer.addBox(trim, xStart - 1, floorY - 1, zFront, width + 2, 2, 2, floor);
-  }
+    if (floorPlan.index > 0) {
+      buffer.addBox(trim, xStart - 1, floorY - 1, zFront, width + 2, 2, 2, floorPlan.index, trimWrite);
+    }
+  });
 
-  buffer.addBox(trim, xStart - 1, wallHeight - 2, zFront - 1, width + 2, 3, 3, 17);
-  buffer.addBox("limestone", xStart - 2, wallHeight + 1, zFront - 2, width + 4, 2, 4, 19);
-  buffer.addBox(trim, xStart, 0, zFront + 1, 2, wallHeight, 2, 29);
-  buffer.addBox(trim, xStart + width - 2, 0, zFront + 1, 2, wallHeight, 2, 31);
+  buffer.addBox(trim, xStart - 1, wallHeight - 2, zFront - 1, width + 2, 3, 3, 17, trimWrite);
+  buffer.addBox("limestone", xStart - 2, wallHeight + 1, zFront - 2, width + 4, 2, 4, 19, trimWrite);
+  buffer.addBox(trim, xStart, 0, zFront + 1, 2, wallHeight, 2, 29, trimWrite);
+  buffer.addBox(trim, xStart + width - 2, 0, zFront + 1, 2, wallHeight, 2, 31, trimWrite);
 }
 
-function addFlowerBox(buffer, x, y, z, shade) {
-  buffer.addBox("timber", x, y, z, 6, 2, 2, shade);
-  [0, 2, 4].forEach((offset, index) => {
-    buffer.addBox("foliage", x + offset, y + 2, z, 2, 2 + (index % 2), 2, shade + index);
-  });
+function addOpeningFrame(buffer, material, x, y, z, width, height, shade, write) {
+  buffer.addBox(material, x - 1, y - 1, z, 1, height + 2, 2, shade, write);
+  buffer.addBox(material, x + width, y - 1, z, 1, height + 2, 2, shade + 1, write);
+  buffer.addBox(material, x - 1, y - 1, z, width + 2, 1, 2, shade + 2, write);
+  buffer.addBox(material, x - 1, y + height, z, width + 2, 2, 3, shade + 3, write);
+}
+
+function addBalcony(buffer, building, x, y, z, width, shade) {
+  const decorationWrite = {
+    priority: VOXEL_WRITE_PRIORITIES.decoration,
+    owner: `${building.id}:balcony`
+  };
+  buffer.addBox(building.materials.trim, x - 1, y, z + 1, width + 2, 2, 5, shade, decorationWrite);
+  for (let offset = 0; offset <= width; offset += 2) {
+    buffer.addBox(building.materials.metal, x + offset, y + 2, z + 5, 1, 5, 1, shade + offset, decorationWrite);
+  }
+  buffer.addBox(building.materials.metal, x - 1, y + 6, z + 5, width + 2, 1, 1, shade + 31, decorationWrite);
+}
+
+function addFlowerBox(buffer, x, y, z, shade, requestedWidth = 6) {
+  const width = Math.max(2, Math.min(8, Math.round(requestedWidth)));
+  const decorationWrite = { priority: VOXEL_WRITE_PRIORITIES.decoration, owner: "flower-box" };
+  buffer.addBox("timber", x, y, z, width, 2, 2, shade, decorationWrite);
+  for (let offset = 0, index = 0; offset < width; offset += 2, index += 1) {
+    buffer.addBox(
+      "foliage",
+      x + offset,
+      y + 2,
+      z,
+      2,
+      2 + (index % 2),
+      2,
+      shade + index,
+      decorationWrite
+    );
+  }
 }
 
 function addRoof(buffer, building, xStart, zBack, zFront) {
   const roofPlan = roofPlanForBuilding(building);
+  const roofWrite = { priority: VOXEL_WRITE_PRIORITIES.roof, owner: `${building.id}:roof` };
   roofPlan.surface.forEach((voxel, index) => {
-    buffer.addVoxel("slate", xStart + voxel.x, voxel.y, zBack + voxel.z, index);
+    buffer.addVoxel(building.materials.roof, xStart + voxel.x, voxel.y, zBack + voxel.z, index, roofWrite);
   });
   roofPlan.endCaps.left.forEach((voxel, index) => {
-    buffer.addVoxel(building.materials.wall, xStart + voxel.x, voxel.y, zBack + voxel.z, index + 101);
+    buffer.addVoxel(building.materials.wall, xStart + voxel.x, voxel.y, zBack + voxel.z, index + 101, roofWrite);
   });
   roofPlan.endCaps.right.forEach((voxel, index) => {
-    buffer.addVoxel(building.materials.wall, xStart + voxel.x, voxel.y, zBack + voxel.z, index + 211);
+    buffer.addVoxel(building.materials.wall, xStart + voxel.x, voxel.y, zBack + voxel.z, index + 211, roofWrite);
   });
 
   const ridgeStartX = building.adjacency.exposedLeftWall ? -roofPlan.overhang : 0;
   const ridgeEndX = building.footprint.widthVoxels - 1 + (building.adjacency.exposedRightWall ? roofPlan.overhang : 0);
   for (let localX = ridgeStartX; localX <= ridgeEndX; localX += 1) {
-    buffer.addVoxel("iron", xStart + localX, roofPlan.ridgeY + 1, zBack + roofPlan.ridgeZ, localX + 47);
+    buffer.addVoxel(
+      building.materials.metal,
+      xStart + localX,
+      roofPlan.ridgeY + 1,
+      zBack + roofPlan.ridgeZ,
+      localX + 47,
+      { priority: VOXEL_WRITE_PRIORITIES.trim, owner: `${building.id}:ridge` }
+    );
   }
 
   const dormerLocalZ = Math.max(4, building.footprint.depthVoxels - 7);
@@ -667,37 +905,86 @@ function addRoof(buffer, building, xStart, zBack, zFront) {
 }
 
 function addDormer(buffer, x, y, z, trim, shade) {
-  buffer.addBox("slate", x - 1, y, z - 2, 8, 7, 4, shade);
-  buffer.addBox("warmWindow", x + 1, y + 2, z + 2, 4, 3, 1, shade + 1);
-  buffer.addBox(trim, x, y + 1, z + 1, 1, 5, 2, shade + 2);
-  buffer.addBox(trim, x + 5, y + 1, z + 1, 1, 5, 2, shade + 3);
-  buffer.addBox(trim, x, y + 5, z + 1, 6, 1, 2, shade + 4);
+  const write = { priority: VOXEL_WRITE_PRIORITIES.decoration, owner: "dormer" };
+  buffer.addBox("slate", x - 1, y, z - 2, 8, 7, 4, shade, write);
+  buffer.addBox("warmWindow", x + 1, y + 2, z + 2, 4, 3, 1, shade + 1, write);
+  buffer.addBox(trim, x, y + 1, z + 1, 1, 5, 2, shade + 2, write);
+  buffer.addBox(trim, x + 5, y + 1, z + 1, 1, 5, 2, shade + 3, write);
+  buffer.addBox(trim, x, y + 5, z + 1, 6, 1, 2, shade + 4, write);
 }
 
 function addChimneys(buffer, building, xStart, zBack) {
   const roofPlan = roofPlanForBuilding(building);
-  const positions = building.index % 2 === 0 ? [5, 25] : [8, 22];
-  positions.forEach((localX, index) => {
-    const localZ = 9 + index * 12;
+  const roofWrite = { priority: VOXEL_WRITE_PRIORITIES.decoration, owner: `${building.id}:chimneys` };
+  building.roof.chimneys.forEach((chimney, index) => {
+    const localX = Math.round(clamp(chimney.xRatio, 0.08, 0.82) * (building.footprint.widthVoxels - 4));
+    const localZ = Math.round(clamp(chimney.zRatio, 0.08, 0.82) * (building.footprint.depthVoxels - 4));
     const top = roofSurfaceYAt(roofPlan, localZ) - 1;
-    buffer.addBox(building.materials.wall, xStart + localX, top, zBack + localZ, 4, 12, 4, index);
-    buffer.addBox("sandstone", xStart + localX - 1, top + 11, zBack + localZ - 1, 6, 2, 6, index + 1);
-    buffer.addBox(building.materials.wall, xStart + localX, top + 13, zBack + localZ, 1, 3, 1, index + 2);
-    buffer.addBox(building.materials.wall, xStart + localX + 2, top + 13, zBack + localZ + 2, 1, 3, 1, index + 3);
+    const chimneyHeight = Math.max(8, chimney.height);
+    buffer.addBox(building.materials.wall, xStart + localX, top, zBack + localZ, 4, chimneyHeight, 4, index, roofWrite);
+    buffer.addBox(
+      building.materials.trim,
+      xStart + localX - 1,
+      top + chimneyHeight - 1,
+      zBack + localZ - 1,
+      6,
+      2,
+      6,
+      index + 1,
+      roofWrite
+    );
+    buffer.addBox(
+      building.materials.wall,
+      xStart + localX,
+      top + chimneyHeight + 1,
+      zBack + localZ,
+      1,
+      3,
+      1,
+      index + 2,
+      roofWrite
+    );
+    buffer.addBox(
+      building.materials.wall,
+      xStart + localX + 2,
+      top + chimneyHeight + 1,
+      zBack + localZ + 2,
+      1,
+      3,
+      1,
+      index + 3,
+      roofWrite
+    );
   });
 }
 
 function addMagicDecoration(buffer, building, params, xStart, zFront) {
-  if (params.detailDensity < 0.25) return;
-  if (building.index === Math.floor(params.buildingCount / 2)) {
-    const decoratedFloor = Math.min(2, building.floors - 1);
-    const windowCenter = UPPER_WINDOW_CENTERS[building.index % UPPER_WINDOW_CENTERS.length];
-    const y = decoratedFloor * VOXEL_PARCEL.floorHeight + 7;
-    buffer.addBox("violetMagic", xStart + windowCenter - 1, y, zFront + 2, 2, 6, 1, 70);
-    buffer.addVoxel("tealMagic", xStart + windowCenter - 3, y + 1, zFront + 2, 71);
-    buffer.addVoxel("tealMagic", xStart + windowCenter + 2, y + 4, zFront + 2, 72);
-  } else if (params.detailDensity > 0.75) {
-    buffer.addBox("foliage", xStart + (building.index === 0 ? 1 : 29), 7, zFront + 2, 2, 16, 2, 73 + building.index);
+  const slot = building.decorations.magicWindow;
+  if (slot) {
+    const module = building.facade.floors[slot.floor]?.modules.find((candidate) => candidate.bay === slot.bay);
+    if (module?.opening) {
+      const center = Math.round((module.opening.xStart + module.opening.xEnd) / 2);
+      const y = slot.floor * building.floorHeight + module.opening.yStart + 2;
+      const effectWrite = { priority: VOXEL_WRITE_PRIORITIES.effect, owner: `${building.id}:magic-window` };
+      buffer.addBox(building.materials.magicPrimary, xStart + center - 1, y, zFront + 2, 2, 6, 1, 70, effectWrite);
+      buffer.addVoxel(building.materials.magicSecondary, xStart + center - 3, y + 1, zFront + 2, 71, effectWrite);
+      buffer.addVoxel(building.materials.magicSecondary, xStart + center + 2, y + 4, zFront + 2, 72, effectWrite);
+    }
+  }
+  if (building.decorations.greenery > 0.72) {
+    const rightSide = building.index % 2 === 1;
+    const localX = rightSide ? building.footprint.widthVoxels - 3 : 1;
+    buffer.addBox(
+      "foliage",
+      xStart + localX,
+      7,
+      zFront + 2,
+      2,
+      16,
+      2,
+      73 + building.index,
+      { priority: VOXEL_WRITE_PRIORITIES.decoration, owner: `${building.id}:greenery` }
+    );
   }
 }
 
@@ -720,7 +1007,14 @@ function addPartyWallExposures(buffer, plan) {
       const x = taller === left ? boundaryX - 1 : boundaryX;
       const z = taller.origin.z + localZ;
       for (let y = lowerEnvelope; y < upperEnvelope - 1; y += 1) {
-        buffer.addVoxel(taller.materials.wall, x, y, z, index * 1000 + localZ * 20 + y);
+        buffer.addVoxel(
+          taller.materials.wall,
+          x,
+          y,
+          z,
+          index * 1000 + localZ * 20 + y,
+          { priority: VOXEL_WRITE_PRIORITIES.roof, owner: `${taller.id}:party-wall-exposure` }
+        );
         added += 1;
       }
     }
@@ -753,8 +1047,8 @@ function addStreetLamps(root, plan) {
   const lamps = [];
   const xStart = -plan.streetWidthVoxels / 2;
   for (let index = 0; index <= plan.buildings.length; index += 1) {
-    const x = (xStart + index * VOXEL_PARCEL.width) * VOXEL_SIZE;
-    const z = (VOXEL_PARCEL.depth / 2 + 7) * VOXEL_SIZE;
+    const x = (xStart + index * plan.parcel.width) * VOXEL_SIZE;
+    const z = (plan.parcel.depth / 2 + 7) * VOXEL_SIZE;
     const group = new THREE.Group();
     const post = new THREE.Mesh(
       new THREE.BoxGeometry(VOXEL_SIZE * 1.2, VOXEL_SIZE * 22, VOXEL_SIZE * 1.2),
@@ -789,53 +1083,27 @@ function addWindowLights(root, plan) {
   return plan.buildings.map((building) => {
     const light = new THREE.PointLight("#f2aa55", 0, 6, 2);
     light.position.set(
-      (building.origin.x + VOXEL_PARCEL.width / 2) * VOXEL_SIZE,
+      (building.origin.x + building.footprint.widthVoxels / 2) * VOXEL_SIZE,
       VOXEL_SIZE * 10,
-      VOXEL_SIZE * (VOXEL_PARCEL.depth / 2 + 4)
+      VOXEL_SIZE * (building.origin.z + building.footprint.depthVoxels + 4)
     );
     root.add(light);
     return light;
   });
 }
 
-function isFrontOpening(localX, y, floors) {
-  const floor = Math.floor(y / VOXEL_PARCEL.floorHeight);
-  const localY = y % VOXEL_PARCEL.floorHeight;
-  if (floor >= floors) return false;
-  if (floor === 0) return localX >= 2 && localX <= 29 && localY >= 2 && localY <= 18;
-  if (localY < 4 || localY > 16) return false;
-  return UPPER_WINDOW_CENTERS.some((center) => localX >= center - 4 && localX <= center + 3);
-}
-
-function roofParametersForType(type, depth) {
-  if (type === "mansard") {
-    return {
-      overhang: 1,
-      thickness: 1,
-      ridgeRatio: 0.5,
-      ridgeHeight: Math.max(6, Math.round(depth * 0.31)),
-      backExponent: 2.2,
-      frontExponent: 2.2
-    };
-  }
-  if (type === "magic_asymmetric") {
-    return {
-      overhang: 1,
-      thickness: 1,
-      ridgeRatio: 0.58,
-      ridgeHeight: Math.max(7, Math.round(depth * 0.4)),
-      backExponent: 1.25,
-      frontExponent: 1.8
-    };
-  }
-  return {
-    overhang: 1,
-    thickness: 1,
-    ridgeRatio: 0.5,
-    ridgeHeight: Math.max(6, Math.round(depth * 0.34)),
-    backExponent: 1,
-    frontExponent: 1
-  };
+function isFrontOpening(localX, y, building) {
+  const floor = Math.floor(y / building.floorHeight);
+  const localY = y % building.floorHeight;
+  const floorPlan = building.facade.floors[floor];
+  if (!floorPlan) return false;
+  return floorPlan.modules.some((module) => (
+    module.opening
+    && localX >= module.opening.xStart
+    && localX <= module.opening.xEnd
+    && localY >= module.opening.yStart
+    && localY <= module.opening.yEnd
+  ));
 }
 
 function hashNumber(...values) {
@@ -854,4 +1122,10 @@ function voxelKey(x, y, z) {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, Number(value)));
+}
+
+function enumIndex(values, requestedName, fallbackIndex) {
+  const namedIndex = values.indexOf(requestedName);
+  if (namedIndex >= 0) return namedIndex;
+  return Math.round(clamp(fallbackIndex, 0, values.length - 1));
 }

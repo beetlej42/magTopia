@@ -15,6 +15,7 @@ render or pixel-art sprite sheet.
 - Visual north star: [docs/VISUAL_TARGET.md](docs/VISUAL_TARGET.md)
 - Art, camera, palette, and asset contract: [docs/ART_DIRECTION.md](docs/ART_DIRECTION.md)
 - Experimental procedural voxel vertical slice: [docs/VOXEL_BUILDING_SPIKE.md](docs/VOXEL_BUILDING_SPIKE.md)
+- Voxel `BuildingSpec v0.1`: [docs/VOXEL_BUILDING_SPEC_V0.1.md](docs/VOXEL_BUILDING_SPEC_V0.1.md)
 
 ## Run
 
@@ -107,19 +108,35 @@ MagicTown.generateVoxelStreet({
   buildingCount: 3,
   floors: 3,
   expansionFloors: 1,
-  roofVariant: 1,
-  materialScheme: 1,
+  archetype: "magic_shop",
+  style: "violet_alchemist",
+  parcelWidth: 36,
+  parcelDepth: 40,
+  roofType: "magic_asymmetric",
+  variation: 0.82,
   nightLighting: 0.3
 });
 
 MagicTown.getVoxelBuildingContract();
+MagicTown.getVoxelGrammarCatalog();
+MagicTown.createVoxelBuildingSpec({
+  id: "agent-shop-1",
+  seed: "agent-shop-seed",
+  archetype: "magic_shop",
+  style: "violet_alchemist",
+  widthVoxels: 36,
+  depthVoxels: 40,
+  baseFloors: 3
+});
 ```
 
-The deterministic `BuildingSpec + seed` remains the source of truth. Components
-write into one mutually-exclusive sparse voxel field with last-write-wins
-material resolution, then hidden interior voxels are culled and visible cells
-are batched by material. Roofs use an adaptive width/depth profile with filled
-outer gables, and party-wall exposure is derived from both neighbouring roof
+The deterministic `BuildingSpec v0.1 + seed` remains the source of truth. Three
+archetypes and three style kits compile into stable facade bays, openings,
+adaptive roofs, chimneys, balconies, flower boxes, and window-bound magic
+effects. Components write into one mutually-exclusive sparse voxel field;
+semantic write phases protect later details while equal-priority conflicts use
+last-write-wins. Hidden interior voxels are culled and visible cells are batched
+by material. Party-wall exposure is derived from both neighbouring roof
 envelopes. The production target remains a chunked greedy surface mesh rather
 than one draw call per voxel.
 

@@ -21,19 +21,39 @@ MagicTown.generateVoxelStreet({
   buildingCount: 3,
   floors: 3,
   expansionFloors: 1,
-  roofVariant: 1,
-  materialScheme: 1,
+  archetype: "magic_shop",
+  style: "violet_alchemist",
+  parcelWidth: 36,
+  parcelDepth: 40,
+  roofType: "magic_asymmetric",
+  variation: 0.82,
   nightLighting: 0.3
 });
 
 MagicTown.getVoxelBuildingContract();
+MagicTown.getVoxelGrammarCatalog();
+MagicTown.createVoxelBuildingSpec({
+  id: "agent-shop-1",
+  seed: "agent-shop-seed",
+  archetype: "magic_shop",
+  style: "violet_alchemist",
+  widthVoxels: 36,
+  depthVoxels: 40,
+  baseFloors: 3
+});
 ```
 
-三个预设分别验证日景、夜景和加层：
+除日景、夜景和加层预设外，生成实验室还提供三组语法预设：
 
 - `Voxel Terrace · Day`
 - `Voxel Terrace · Night`
 - `Voxel Terrace · Add Floor`
+- `Grammar · Townhouses`
+- `Grammar · Magic Shops`
+- `Grammar · Workshops`
+
+`BuildingSpec v0.1` 的字段、稳定子 seed、Archetype 和 Style Kit 规则见
+[`VOXEL_BUILDING_SPEC_V0.1.md`](VOXEL_BUILDING_SPEC_V0.1.md)。
 
 ## 分辨率与空间合同
 
@@ -46,13 +66,16 @@ prototype depth = 4.5 world units = 36 voxels
 
 当前原型先将所有组件写入一个互斥稀疏体素场，再剔除六面都被遮挡的内部体素。约四万级可见表面实例会按材质合并为不超过 14 个 `InstancedMesh` 批次；这用来快速验证建筑语法和画面，不是生产阶段的最终网格格式。
 
-同一个整数体素坐标只能存在一种材质，冲突采用 `last write wins`：
+同一个整数体素坐标只能存在一种材质。冲突先比较语义阶段优先级，同阶段才采用 `last write wins`：
 
 ```text
-主体墙面
-  -> 窗和店面组件覆盖墙面
-  -> 屋顶和烟囱覆盖主体
-  -> decoration patch 最后覆盖
+terrain
+  -> structure
+  -> roof
+  -> opening
+  -> trim
+  -> decoration
+  -> effect
 ```
 
 因此组件之间不会生成两张共面的材质面，也不会因深度精度产生闪烁。
@@ -93,6 +116,17 @@ BuildingSpec + seed
 
 单体素修改只作为确定性程序化生成后的稀疏 decoration patch。持久化的源数据仍然是 `BuildingSpec + seed + patches`，而不是整栋建筑的体素快照。
 
+## v0.1 建筑语法
+
+当前 `BuildingSpec` 编译器已实现：
+
+- `townhouse`、`magic_shop`、`workshop` 三种 Archetype；
+- `london_brick`、`violet_alchemist`、`forest_craft` 三套 Style Kit；
+- 根据 24–40 体素地块宽度自适应的 2–5 开间立面；
+- 入口、店窗、工作室宽窗、上层窗、阳台与花箱组件；
+- 每栋建筑、每个楼层和每个装饰槽的路径化稳定子 seed；
+- 任意 seed 的确定性重放，以及加层时低层分格与材料保持不变。
+
 ## 相邻连接
 
 每栋建筑声明左右 party-wall port。紧邻建筑会：
@@ -114,6 +148,8 @@ BuildingSpec + seed
 3. 将 vertical-expansion port 移到新顶层；
 4. 从新檐口重新生成原屋顶类型、烟囱和屋顶装饰。
 
+测试还会逐项比较扩建前后的低层 `facade.floors`、材料和稳定装饰槽，避免随机数调用顺序导致整栋建筑“换脸”。
+
 这验证了扩建不需要修改每个体素，也不需要重新生产独立图片或 GLB。
 
 ## 程序化坡屋顶
@@ -131,6 +167,7 @@ BuildingSpec + seed
 
 - 尚未把体素 `BuildingSpec` 写入服务端城市存档或建设命令。
 - 当前使用互斥稀疏体素场和材质级实例批次；尚未实现 chunk、greedy meshing 和顶点 AO。
+- 主体仍是单矩形；侧翼、退台、塔楼、L 形屋顶交谷属于 v0.2。
 - 后立面和内院仍是占位级语法。
 - decoration 尚未提供单体素编辑 UI。
 - 自动连接只实现 party wall；连廊、拱廊、共用屋面和内部打通仍未实现。
