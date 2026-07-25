@@ -27,6 +27,7 @@ MagicTown.generateVoxelStreet({
   style: "violet_alchemist",
   parcelWidth: 36,
   parcelDepth: 40,
+  cornerFacades: "both",
   roofForm: "hip",
   ridgePosition: 0.35,
   windowRatio: 0.42,
@@ -47,6 +48,7 @@ MagicTown.createVoxelBuildingSpec({
     { purpose: "shop" },
     { purpose: "home", setbackVoxels: 4, balcony: "full" }
   ],
+  sideFacadeSides: ["right"],
   roofForm: "gable_cross",
   ridgePosition: 0.35
 });
@@ -111,6 +113,7 @@ BuildingSpec + seed
     { "purpose": "home", "setbackVoxels": 2, "balcony": "full" }
   ],
   "style": "violet_alchemist",
+  "cornerFacades": "both",
   "roofForm": "gable_street",
   "ridgePosition": 0.5,
   "windowRatio": 0.4
@@ -118,6 +121,10 @@ BuildingSpec + seed
 ```
 
 服务端负责补全屋顶、立面开间、窗户节奏、烟囱、店面、统一材质和装饰槽。
+
+`cornerFacades` 可以是 `none`、`left`、`right` 或 `both`。它只作用于联排
+真正暴露的端部：商铺用途会把橱窗和入口延续到侧面，住宅、工坊与仓储楼层也
+会生成对应尺度的侧向门窗。被相邻建筑遮挡的 party wall 永远不会因此开洞。
 
 高级模式可以覆盖：
 
@@ -137,6 +144,7 @@ BuildingSpec + seed
 - 一至五层基础楼层，每层独立用途、前向退台和阳台形式；
 - 根据 24–40 体素地块宽度自适应的 2–5 开间立面；
 - 真正改变窗洞宽度和高度的 15%–90% 窗墙比；
+- 可选的左右街角侧立面，并按每层用途生成门窗、阳台和花箱；
 - 每栋建筑、每个楼层和每个装饰槽的路径化稳定子 seed；
 - 任意 seed 的确定性重放，以及加层时低层分格与材料保持不变。
 

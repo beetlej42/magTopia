@@ -114,6 +114,7 @@ MagicTown.generateVoxelStreet({
   style: "violet_alchemist",
   parcelWidth: 36,
   parcelDepth: 40,
+  cornerFacades: "both",
   roofForm: "hip",
   ridgePosition: 0.35,
   windowRatio: 0.42,
@@ -134,6 +135,7 @@ MagicTown.createVoxelBuildingSpec({
     { purpose: "shop" },
     { purpose: "home", setbackVoxels: 4, balcony: "full" }
   ],
+  sideFacadeSides: ["right"],
   roofForm: "gable_cross",
   ridgePosition: 0.35
 });
@@ -142,7 +144,7 @@ MagicTown.createVoxelBuildingSpec({
 The deterministic `BuildingSpec v0.2 + seed` remains the source of truth.
 Atomic floor programs independently select shop, home, workshop, or storage
 uses plus front setbacks and balcony forms. Three style kits compile the stack
-into stable facade bays, scale-aware openings, a continuous pitched roof,
+into stable front and optional corner-side facade bays, scale-aware openings, a continuous pitched roof,
 chimneys, flower boxes, and window-bound magic effects. Roofs use one shared
 two-dimensional height-field solver and can form a street-aligned gable,
 cross-aligned gable, or four-slope hip. Components write into
@@ -152,6 +154,12 @@ last-write-wins. Hidden interior voxels are culled and visible cells are batched
 by material. Party-wall exposure is derived from both neighbouring roof
 envelopes. The production target remains a chunked greedy surface mesh rather
 than one draw call per voxel.
+
+`cornerFacades` accepts `none`, `left`, `right`, or `both`. Only exposed ends
+of a terrace receive the additional facade; shared party walls remain closed.
+The side facade inherits every floor's use, so a ground-floor shop continues
+around the corner with shop windows while upper home floors receive residential
+windows and their own stable decoration slots.
 
 ## City workbench API
 

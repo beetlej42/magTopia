@@ -5,7 +5,7 @@
 ## 编译链
 
 ```text
-地块 + 邻接边 + floorPrograms + style kit + seed
+地块 + 邻接边 + floorPrograms + corner facades + style kit + seed
   -> BuildingSpec v0.2
   -> floor stack
   -> facade-bays-v0.1
@@ -81,6 +81,13 @@
     rhythm: "4-bay",
     floors: []
   },
+  sideFacades: {
+    right: {
+      grammar: "facade-bays-v0.1",
+      rhythm: "4-bay",
+      floors: []
+    }
+  },
   roof: {
     grammar: "voxel-roof-heightfield-v0.3",
     type: "pitched",
@@ -103,6 +110,23 @@
 `windowRatio` 的范围是 `0.15–0.9`。它同时控制窗洞宽度和高度，而不是只改变窗户数量。因此 20% 会生成真正更窄、更矮的窗户；门仍保留可用的最小尺寸。
 
 立面先保留左右结构边，再把可用宽度分配给 2–5 个 bay。楼层用途决定每个 bay 使用普通窗、商店窗、工坊窗、小储藏窗或入口。
+
+## 街角侧立面
+
+侧立面不是墙面装饰贴片，而是与正立面同级的程序化立面。街段接口使用
+`cornerFacades: "none" | "left" | "right" | "both"`；单栋
+`BuildingSpec` 接口使用 `sideFacadeSides: ["left", "right"]`。
+
+只有没有相邻建筑的暴露侧面会接受侧立面。每个侧面使用独立、稳定的路径化
+seed 和沿建筑深度分配的开间，但继承同一组 `floorSpecs`：
+
+- `shop` 层生成侧向商店橱窗和可选侧门；
+- `home` 层生成住宅窗、花箱和阳台；
+- `workshop` 与 `storage` 保持各自的门窗尺度；
+- 前向退台会同步缩短该层侧立面，不会在已经退掉的区域生成悬空窗口。
+
+因此街角建筑可以让商铺沿相邻两面连续展开，同时联排内部 party wall 仍保持
+完全封闭。加层只追加新的侧立面楼层，已有低层开间不因随机数顺序而改变。
 
 ## 二维连续坡屋顶
 

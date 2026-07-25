@@ -17,6 +17,7 @@ export const VOXEL_PARCEL = Object.freeze({
   worldWidth: 4,
   worldDepth: 4.5
 });
+export const CORNER_FACADE_MODE_IDS = Object.freeze(["none", "left", "right", "both"]);
 
 const VOXEL_NEIGHBORS = [
   [1, 0, 0],
@@ -121,6 +122,7 @@ export const VOXEL_BUILDING_PRESETS = Object.freeze({
     ],
     ridgePosition: 0.5,
     roofForm: "gable_street",
+    cornerFacades: "right",
     windowRatio: 0.58,
     variation: 0.58,
     parcelWidth: 32,
@@ -144,6 +146,7 @@ export const VOXEL_BUILDING_PRESETS = Object.freeze({
     ],
     ridgePosition: 0.36,
     roofForm: "hip",
+    cornerFacades: "both",
     windowRatio: 0.62,
     variation: 0.72,
     parcelWidth: 32,
@@ -168,6 +171,7 @@ export const VOXEL_BUILDING_PRESETS = Object.freeze({
     ],
     ridgePosition: 0.62,
     roofForm: "gable_cross",
+    cornerFacades: "right",
     windowRatio: 0.55,
     variation: 0.66,
     parcelWidth: 32,
@@ -191,6 +195,7 @@ export const VOXEL_BUILDING_PRESETS = Object.freeze({
     ],
     ridgePosition: 0.5,
     roofForm: "gable_street",
+    cornerFacades: "none",
     windowRatio: 0.48,
     variation: 0.5,
     parcelWidth: 32,
@@ -214,6 +219,7 @@ export const VOXEL_BUILDING_PRESETS = Object.freeze({
     ],
     ridgePosition: 0.28,
     roofForm: "hip",
+    cornerFacades: "both",
     windowRatio: 0.68,
     variation: 0.82,
     parcelWidth: 36,
@@ -236,6 +242,7 @@ export const VOXEL_BUILDING_PRESETS = Object.freeze({
     ],
     ridgePosition: 0,
     roofForm: "gable_cross",
+    cornerFacades: "right",
     windowRatio: 0.38,
     variation: 0.76,
     parcelWidth: 36,
@@ -276,6 +283,7 @@ export function normalizeVoxelBuildingConfig(config = {}) {
     roofVariant: 0,
     roofType: "pitched",
     roofForm: ROOF_FORM_IDS.includes(base.roofForm) ? base.roofForm : "gable_street",
+    cornerFacades: CORNER_FACADE_MODE_IDS.includes(base.cornerFacades) ? base.cornerFacades : "none",
     ridgePosition: clamp(base.ridgePosition ?? 0.5, 0, 1),
     windowRatio,
     floorPrograms,
@@ -302,6 +310,13 @@ export function planVoxelStreet(config = {}) {
   const buildings = Array.from({ length: params.buildingCount }, (_, index) => {
     const expandedBy = index === expansionIndex ? params.expansionFloors : 0;
     const id = `voxel-building-${index + 1}`;
+    const sideFacadeSides = [];
+    if (index === 0 && (params.cornerFacades === "left" || params.cornerFacades === "both")) {
+      sideFacadeSides.push("left");
+    }
+    if (index === params.buildingCount - 1 && (params.cornerFacades === "right" || params.cornerFacades === "both")) {
+      sideFacadeSides.push("right");
+    }
     return createBuildingSpec({
       id,
       index,
@@ -320,6 +335,7 @@ export function planVoxelStreet(config = {}) {
       floorPrograms: params.floorPrograms,
       windowRatio: params.windowRatio,
       detailDensity: params.detailDensity,
+      sideFacadeSides,
       origin: {
         x: firstX + index * params.parcelWidth,
         y: 0,
@@ -383,7 +399,8 @@ export function getVoxelBuildingContract(config = {}) {
       styleKits: VOXEL_STYLE_KIT_IDS,
       floorPurposes: FLOOR_USE_IDS,
       floorBalconies: FLOOR_BALCONY_IDS,
-      roofForms: ROOF_FORM_IDS
+      roofForms: ROOF_FORM_IDS,
+      cornerFacadeModes: CORNER_FACADE_MODE_IDS
     },
     roofSystem: {
       type: "two-dimensional voxel height field",
@@ -393,7 +410,7 @@ export function getVoxelBuildingContract(config = {}) {
       endCaps: "left/right and front/back closures are height-field-derived; party-wall exposure samples the shared boundary"
     },
     agentControl: {
-      simple: ["floorPrograms", "footprint", "style", "roofForm", "ridgePosition", "windowRatio"],
+      simple: ["floorPrograms", "footprint", "style", "roofForm", "ridgePosition", "cornerFacades", "windowRatio"],
       advanced: ["floor purpose", "floor setback", "floor balcony", "facade.rhythm", "component materials", "decoration slots"],
       decoration: "sparse voxel patches applied after deterministic generation"
     },
@@ -447,6 +464,9 @@ export function createVoxelBuildingLab(config = {}) {
     archetypes: [...new Set(plan.buildings.map((building) => building.archetype))],
     styleKits: [...new Set(plan.buildings.map((building) => building.style))],
     facadeRhythms: plan.buildings.map((building) => building.facade.rhythm),
+    sideFacadeRhythms: plan.buildings.map((building) => Object.fromEntries(
+      Object.entries(building.sideFacades).map(([side, facade]) => [side, facade.rhythm])
+    )),
     floorStacks: plan.buildings.map((building) => building.floorSpecs.map((floor) => ({
       purpose: floor.purpose,
       setbackVoxels: floor.setbackVoxels,
@@ -871,6 +891,10 @@ function addBuilding(buffer, building, params) {
   if (building.adjacency.exposedLeftWall) addSideWall(buffer, building, xStart, zBack, depth, "left");
   if (building.adjacency.exposedRightWall) addSideWall(buffer, building, xStart + width - 1, zBack, depth, "right");
   addFacadeModules(buffer, building, params, xStart, zFront);
+  if (building.sideFacades.left) addSideFacadeModules(buffer, building, params, xStart, zBack, depth, "left");
+  if (building.sideFacades.right) {
+    addSideFacadeModules(buffer, building, params, xStart + width - 1, zBack, depth, "right");
+  }
   addRoof(buffer, building, xStart, zBack, zFront);
   addChimneys(buffer, building, xStart, zBack);
   addMagicDecoration(buffer, building, params, xStart, zFront);
@@ -920,15 +944,13 @@ function addSideWall(buffer, building, x, zBack, depth, side) {
     const floorY = floorSpec.index * building.floorHeight;
     for (let localY = 0; localY < floorSpec.heightVoxels; localY += 1) {
       const y = floorY + localY;
-      for (let localZ = 1; localZ < floorDepth - 1; localZ += 2) {
-        buffer.addBox(
+      for (let localZ = 1; localZ < floorDepth - 1; localZ += 1) {
+        if (isSideOpening(localZ, y, building, side)) continue;
+        buffer.addVoxel(
           building.materials.wall,
           x,
           y,
           zBack + localZ,
-          1,
-          1,
-          Math.min(2, floorDepth - 1 - localZ),
           localZ + y * 5 + (side === "left" ? 11 : 23),
           { priority: VOXEL_WRITE_PRIORITIES.structure, owner: `${building.id}:${side}-wall:floor-${floorSpec.index}` }
         );
@@ -949,6 +971,236 @@ function addSideWall(buffer, building, x, zBack, depth, side) {
       );
     }
   });
+}
+
+function addSideFacadeModules(buffer, building, params, wallX, zBack, depth, side) {
+  const sideFacade = building.sideFacades[side];
+  const trim = building.materials.trim;
+  const trimWrite = { priority: VOXEL_WRITE_PRIORITIES.trim, owner: `${building.id}:${side}-facade-trim` };
+  const openingWrite = { priority: VOXEL_WRITE_PRIORITIES.opening, owner: `${building.id}:${side}-facade-opening` };
+
+  sideFacade.floors.forEach((floorPlan) => {
+    const floorY = floorPlan.y;
+    const floorSpec = building.floorSpecs[floorPlan.index];
+    const floorDepth = depth - floorSpec.frontSetbackVoxels;
+    floorPlan.modules.forEach((module) => {
+      if (!module.opening || module.opening.xEnd >= floorDepth - 1) return;
+      const opening = module.opening;
+      const moduleZ = zBack + opening.xStart;
+      const moduleWidth = opening.xEnd - opening.xStart + 1;
+      const moduleY = floorY + opening.yStart;
+      const moduleHeight = opening.yEnd - opening.yStart + 1;
+      if (module.type === "entrance" || module.type === "service_door") {
+        buffer.addBox(
+          building.materials.door,
+          sideBoxX(wallX, side, 1, 2),
+          moduleY,
+          moduleZ,
+          2,
+          moduleHeight,
+          moduleWidth,
+          module.bay,
+          openingWrite
+        );
+        if (module.type === "entrance" && moduleWidth >= 4) {
+          buffer.addBox(
+            building.materials.window,
+            sideBoxX(wallX, side, 3, 1),
+            moduleY + Math.max(3, moduleHeight - 6),
+            moduleZ + 1,
+            1,
+            4,
+            moduleWidth - 2,
+            module.bay + 101,
+            trimWrite
+          );
+        }
+      } else {
+        buffer.addBox(
+          building.materials.window,
+          sideBoxX(wallX, side, 1, 1),
+          moduleY,
+          moduleZ,
+          1,
+          moduleHeight,
+          moduleWidth,
+          floorPlan.index * 20 + module.bay,
+          openingWrite
+        );
+        if (moduleWidth >= 5) {
+          buffer.addBox(
+            building.materials.shopfront,
+            sideBoxX(wallX, side, 2, 1),
+            moduleY,
+            moduleZ + Math.floor(moduleWidth / 2),
+            1,
+            moduleHeight,
+            1,
+            module.bay + 131,
+            trimWrite
+          );
+        }
+      }
+      addSideOpeningFrame(
+        buffer,
+        trim,
+        wallX,
+        moduleY,
+        moduleZ,
+        moduleWidth,
+        moduleHeight,
+        side,
+        floorPlan.index * 40 + module.bay,
+        trimWrite
+      );
+      if (module.balcony && floorSpec.balcony !== "full") {
+        addSideBalcony(
+          buffer,
+          building,
+          wallX,
+          floorY + opening.yStart - 1,
+          moduleZ,
+          moduleWidth,
+          side,
+          module.bay
+        );
+      } else if (module.flowerBox && params.detailDensity > 0.35) {
+        addSideFlowerBox(
+          buffer,
+          wallX,
+          floorY + opening.yEnd + 1,
+          moduleZ,
+          moduleWidth,
+          side,
+          module.bay + floorPlan.index
+        );
+      }
+    });
+    if (floorSpec.balcony === "full" && floorPlan.index > 0 && floorDepth > 6) {
+      addSideBalcony(
+        buffer,
+        building,
+        wallX,
+        floorY + 3,
+        zBack + 2,
+        floorDepth - 4,
+        side,
+        200 + floorPlan.index
+      );
+    }
+    if (floorPlan.index > 0) {
+      buffer.addBox(
+        trim,
+        sideBoxX(wallX, side, 0, 2),
+        floorY - 1,
+        zBack,
+        2,
+        2,
+        floorDepth,
+        floorPlan.index,
+        trimWrite
+      );
+    }
+  });
+
+  const topFloorSpec = building.floorSpecs.at(-1);
+  const topDepth = depth - topFloorSpec.frontSetbackVoxels;
+  buffer.addBox(
+    trim,
+    sideBoxX(wallX, side, 0, 3),
+    building.wallHeightVoxels - 2,
+    zBack - 1,
+    3,
+    3,
+    topDepth + 2,
+    17,
+    trimWrite
+  );
+}
+
+function addSideOpeningFrame(buffer, material, wallX, y, z, width, height, side, shade, write) {
+  const frameX = sideBoxX(wallX, side, 0, 2);
+  buffer.addBox(material, frameX, y - 1, z - 1, 2, height + 2, 1, shade, write);
+  buffer.addBox(material, frameX, y - 1, z + width, 2, height + 2, 1, shade + 1, write);
+  buffer.addBox(material, frameX, y - 1, z - 1, 2, 1, width + 2, shade + 2, write);
+  buffer.addBox(
+    material,
+    sideBoxX(wallX, side, 0, 3),
+    y + height,
+    z - 1,
+    3,
+    2,
+    width + 2,
+    shade + 3,
+    write
+  );
+}
+
+function addSideBalcony(buffer, building, wallX, y, z, width, side, shade) {
+  const decorationWrite = {
+    priority: VOXEL_WRITE_PRIORITIES.decoration,
+    owner: `${building.id}:${side}-balcony`
+  };
+  buffer.addBox(
+    building.materials.trim,
+    sideBoxX(wallX, side, 1, 5),
+    y,
+    z - 1,
+    5,
+    2,
+    width + 2,
+    shade,
+    decorationWrite
+  );
+  for (let offset = 0; offset <= width; offset += 2) {
+    buffer.addBox(
+      building.materials.metal,
+      sideBoxX(wallX, side, 5, 1),
+      y + 2,
+      z + offset,
+      1,
+      5,
+      1,
+      shade + offset,
+      decorationWrite
+    );
+  }
+  buffer.addBox(
+    building.materials.metal,
+    sideBoxX(wallX, side, 5, 1),
+    y + 6,
+    z - 1,
+    1,
+    1,
+    width + 2,
+    shade + 31,
+    decorationWrite
+  );
+}
+
+function addSideFlowerBox(buffer, wallX, y, z, requestedWidth, side, shade) {
+  const width = Math.max(2, Math.min(8, Math.round(requestedWidth)));
+  const decorationWrite = { priority: VOXEL_WRITE_PRIORITIES.decoration, owner: `${side}-flower-box` };
+  buffer.addBox("timber", sideBoxX(wallX, side, 2, 2), y, z, 2, 2, width, shade, decorationWrite);
+  for (let offset = 0, index = 0; offset < width; offset += 2, index += 1) {
+    buffer.addBox(
+      "foliage",
+      sideBoxX(wallX, side, 2, 2),
+      y + 2,
+      z + offset,
+      2,
+      2 + (index % 2),
+      Math.min(2, width - offset),
+      shade + index,
+      decorationWrite
+    );
+  }
+}
+
+function sideBoxX(wallX, side, outwardDistance, thickness) {
+  return side === "left"
+    ? wallX - outwardDistance - thickness + 1
+    : wallX + outwardDistance;
 }
 
 function addFacadeModules(buffer, building, params, xStart, zFront) {
@@ -1345,15 +1597,31 @@ function addStreetLamps(root, plan) {
 }
 
 function addWindowLights(root, plan) {
-  return plan.buildings.map((building) => {
-    const light = new THREE.PointLight("#f2aa55", 0, 6, 2);
-    light.position.set(
+  return plan.buildings.flatMap((building) => {
+    const lights = [];
+    const frontLight = new THREE.PointLight("#f2aa55", 0, 6, 2);
+    frontLight.position.set(
       (building.origin.x + building.footprint.widthVoxels / 2) * VOXEL_SIZE,
       VOXEL_SIZE * 10,
       VOXEL_SIZE * (building.origin.z + building.footprint.depthVoxels + 4)
     );
-    root.add(light);
-    return light;
+    root.add(frontLight);
+    lights.push(frontLight);
+    Object.keys(building.sideFacades).forEach((side) => {
+      const sideLight = new THREE.PointLight("#f2aa55", 0, 6, 2);
+      sideLight.position.set(
+        VOXEL_SIZE * (
+          side === "left"
+            ? building.origin.x - 4
+            : building.origin.x + building.footprint.widthVoxels + 4
+        ),
+        VOXEL_SIZE * 10,
+        VOXEL_SIZE * (building.origin.z + building.footprint.depthVoxels / 2)
+      );
+      root.add(sideLight);
+      lights.push(sideLight);
+    });
+    return lights;
   });
 }
 
@@ -1366,6 +1634,24 @@ function isFrontOpening(localX, y, building) {
     module.opening
     && localX >= module.opening.xStart
     && localX <= module.opening.xEnd
+    && localY >= module.opening.yStart
+    && localY <= module.opening.yEnd
+  ));
+}
+
+function isSideOpening(localZ, y, building, side) {
+  const floor = Math.floor(y / building.floorHeight);
+  const localY = y % building.floorHeight;
+  const floorPlan = building.sideFacades[side]?.floors[floor];
+  const floorSpec = building.floorSpecs[floor];
+  if (!floorPlan || !floorSpec || localZ >= building.footprint.depthVoxels - floorSpec.frontSetbackVoxels) {
+    return false;
+  }
+  return floorPlan.modules.some((module) => (
+    module.opening
+    && module.opening.xEnd < building.footprint.depthVoxels - floorSpec.frontSetbackVoxels - 1
+    && localZ >= module.opening.xStart
+    && localZ <= module.opening.xEnd
     && localY >= module.opening.yStart
     && localY <= module.opening.yEnd
   ));

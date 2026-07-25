@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  CORNER_FACADE_MODE_IDS,
   VOXEL_PARCEL,
   VOXEL_SIZE,
   VoxelInstanceBuffer,
@@ -91,6 +92,59 @@ test("adjacent buildings share deterministic party-wall ports", () => {
   }));
 });
 
+test("corner facade modes only decorate exposed terrace ends", () => {
+  const plan = planVoxelStreet({
+    seed: "corner-facade-test",
+    buildingCount: 3,
+    floors: 2,
+    cornerFacades: "both",
+    floorPrograms: [
+      { purpose: "shop" },
+      { purpose: "home" }
+    ]
+  });
+
+  assert.deepEqual(CORNER_FACADE_MODE_IDS, ["none", "left", "right", "both"]);
+  assert.deepEqual(Object.keys(plan.buildings[0].sideFacades), ["left"]);
+  assert.deepEqual(Object.keys(plan.buildings[1].sideFacades), []);
+  assert.deepEqual(Object.keys(plan.buildings[2].sideFacades), ["right"]);
+  assert.ok(
+    plan.buildings[2].sideFacades.right.floors[0].modules.some((module) => module.type === "shop_window")
+  );
+  assert.ok(plan.buildings[2].ports.sideEntrances.some((port) => port.face === "right"));
+  assert.deepEqual(plan, planVoxelStreet({
+    seed: "corner-facade-test",
+    buildingCount: 3,
+    floors: 2,
+    cornerFacades: "both",
+    floorPrograms: [
+      { purpose: "shop" },
+      { purpose: "home" }
+    ]
+  }));
+});
+
+test("side facades add real shopfront voxels while blank sides remain plain", () => {
+  const plain = createVoxelBuildingLab({
+    seed: "corner-shopfront-render",
+    buildingCount: 1,
+    floors: 1,
+    cornerFacades: "none",
+    floorPrograms: [{ purpose: "shop" }]
+  }).userData.diagnostics;
+  const corner = createVoxelBuildingLab({
+    seed: "corner-shopfront-render",
+    buildingCount: 1,
+    floors: 1,
+    cornerFacades: "right",
+    floorPrograms: [{ purpose: "shop" }]
+  }).userData.diagnostics;
+
+  assert.deepEqual(plain.sideFacadeRhythms, [{}]);
+  assert.ok(corner.sideFacadeRhythms[0].right);
+  assert.ok(corner.materialCounts.warmWindow > plain.materialCounts.warmWindow);
+});
+
 test("adding floors changes only the selected building and regenerates its roof base", () => {
   const before = planVoxelStreet({ seed: "vertical-expansion", buildingCount: 3, floors: 3, expansionFloors: 0 });
   const after = planVoxelStreet({ seed: "vertical-expansion", buildingCount: 3, floors: 3, expansionFloors: 1 });
@@ -104,6 +158,10 @@ test("adding floors changes only the selected building and regenerates its roof 
   assert.deepEqual(
     after.buildings[1].facade.floors.slice(0, before.buildings[1].floors),
     before.buildings[1].facade.floors
+  );
+  assert.deepEqual(
+    after.buildings[2].sideFacades.right.floors.slice(0, before.buildings[2].floors),
+    before.buildings[2].sideFacades.right.floors
   );
   assert.deepEqual(after.buildings[1].materials, before.buildings[1].materials);
   assert.deepEqual(

@@ -32,6 +32,7 @@ import {
   normalizeAssetComparisonConfig
 } from "./generators/assetComparisonLab.js";
 import {
+  CORNER_FACADE_MODE_IDS,
   VOXEL_BUILDING_PRESETS,
   createVoxelBuildingLab,
   getVoxelBuildingContract,
@@ -168,6 +169,7 @@ const MODES = {
     randomize: (seed) => {
       const styleVariant = Math.floor(Math.random() * 3);
       const roofForm = ROOF_FORM_IDS[Math.floor(Math.random() * ROOF_FORM_IDS.length)];
+      const cornerFacades = CORNER_FACADE_MODE_IDS[Math.floor(Math.random() * CORNER_FACADE_MODE_IDS.length)];
       const floors = 1 + Math.floor(Math.random() * 5);
       const groundPurpose = ["shop", "home", "workshop"][Math.floor(Math.random() * 3)];
       const floorPrograms = Array.from({ length: floors }, (_, index) => ({
@@ -184,6 +186,7 @@ const MODES = {
         style: ["london_brick", "violet_alchemist", "forest_craft"][styleVariant],
         materialScheme: styleVariant,
         roofForm,
+        cornerFacades,
         ridgePosition: Math.random(),
         windowRatio: 0.2 + Math.random() * 0.65,
         variation: 0.35 + Math.random() * 0.65,
@@ -227,6 +230,18 @@ const MODES = {
         step: 0.01,
         format: "percent",
         visible: (config) => config.roofForm !== "hip"
+      },
+      {
+        key: "cornerFacades",
+        label: "Corner Facades",
+        control: "select",
+        valueType: "string",
+        options: [
+          { value: "none", label: "None · Blank Sides" },
+          { value: "left", label: "Left Corner" },
+          { value: "right", label: "Right Corner" },
+          { value: "both", label: "Both Corners" }
+        ]
       },
       { key: "windowRatio", label: "Window Share", min: 0.15, max: 0.9, step: 0.01, format: "percent" },
       { key: "parcelWidth", label: "Parcel Width", min: 24, max: 40, step: 4 },
@@ -771,7 +786,7 @@ function syncApiPill() {
   } else if (currentMode === "comparison") {
     apiPill.textContent = "MagicTown.compareAssetRepresentations({ depthStrength, comparisonYaw, showBounds, depthWireframe })";
   } else if (currentMode === "voxel") {
-    apiPill.textContent = "MagicTown.generateVoxelStreet({ floorPrograms: [{ purpose: 'shop' }, { purpose: 'home' }], roofForm: 'hip', windowRatio: 0.45, style: 'violet_alchemist' })";
+    apiPill.textContent = "MagicTown.generateVoxelStreet({ floorPrograms: [{ purpose: 'shop' }, { purpose: 'home' }], cornerFacades: 'both', roofForm: 'hip', style: 'violet_alchemist' })";
   } else {
     apiPill.textContent = `MagicTown.previewParcel({ footprint: '${currentConfig.footprint}', floors: ${currentConfig.floors}, maxHeight: ${currentConfig.maxHeight} })`;
   }
@@ -898,6 +913,7 @@ function exposeAgentApi() {
         floorPurposes: [...FLOOR_USE_IDS],
         floorBalconies: [...FLOOR_BALCONY_IDS],
         roofForms: [...ROOF_FORM_IDS],
+        cornerFacadeModes: [...CORNER_FACADE_MODE_IDS],
         ridgePositionRange: [0, 1]
       };
     },
@@ -1225,6 +1241,7 @@ function inferMode(config) {
     || "styleVariant" in config
     || "roofType" in config
     || "roofForm" in config
+    || "cornerFacades" in config
     || "ridgePosition" in config
     || "windowRatio" in config
     || "floorPrograms" in config

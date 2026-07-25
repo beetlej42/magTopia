@@ -132,6 +132,25 @@ export function createBuildingSpec(options = {}) {
     archetype,
     floorSpecs
   });
+  const requestedSideFacadeSides = normalizeSideFacadeSides(options.sideFacadeSides);
+  const sideFacades = Object.fromEntries(
+    requestedSideFacadeSides
+      .filter((side) => (
+        side === "left"
+          ? adjacency.exposedLeftWall
+          : adjacency.exposedRightWall
+      ))
+      .map((side) => [side, planFacadeGrammar({
+        seed: stableSeed(seed, id, "facade", side),
+        width: depthVoxels,
+        depth: widthVoxels,
+        floors,
+        floorHeight,
+        variation,
+        archetype,
+        floorSpecs
+      })])
+  );
   const materials = planMaterials(style, stableSeed(seed, id, "materials"));
   const roof = planRoofGrammar({
     seed: stableSeed(seed, id, "roof"),
@@ -173,6 +192,7 @@ export function createBuildingSpec(options = {}) {
     floorSpecs,
     wallHeightVoxels: floors * floorHeight,
     facade,
+    sideFacades,
     roof,
     materials,
     decorations,
@@ -185,6 +205,20 @@ export function createBuildingSpec(options = {}) {
         y: 0,
         z: depthVoxels - 1
       },
+      sideEntrances: Object.entries(sideFacades).flatMap(([side, sideFacade]) => {
+        const entranceModule = sideFacade.floors[0]?.modules.find((module) => (
+          module.type === "entrance" || module.type === "service_door"
+        ));
+        return entranceModule?.opening
+          ? [{
+              face: side,
+              bay: entranceModule.bay,
+              x: side === "left" ? 0 : widthVoxels - 1,
+              y: 0,
+              z: Math.round((entranceModule.opening.xStart + entranceModule.opening.xEnd) / 2)
+            }]
+          : [];
+      }),
       verticalExpansion: { face: "up", floor: floors },
       leftPartyWall: Boolean(adjacency.left),
       rightPartyWall: Boolean(adjacency.right)
@@ -453,6 +487,13 @@ function normalizeAdjacency(adjacency = {}) {
     exposedLeftWall: adjacency.exposedLeftWall ?? !adjacency.left,
     exposedRightWall: adjacency.exposedRightWall ?? !adjacency.right
   };
+}
+
+function normalizeSideFacadeSides(value) {
+  const sides = Array.isArray(value)
+    ? value
+    : (value === "both" ? ["left", "right"] : [value]);
+  return [...new Set(sides.filter((side) => side === "left" || side === "right"))];
 }
 
 function resolveArchetype(value) {
