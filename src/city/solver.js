@@ -17,15 +17,23 @@ export function findCandidateParcels(state, criteria = {}) {
   for (const lot of Object.values(state.cells)) {
     const occupancy = canOccupyFootprint(state, lot.id, footprint);
     if (!occupancy.ok) continue;
+    if (!footprintWithinBounds(state, occupancy.cells, criteria.bounds)) continue;
     const entranceDirections = allowedEntrances(state, occupancy.cells);
     if (!entranceDirections.length) continue;
+    const scoreExplanation = scoreLot(state, lot, criteria, true);
     candidates.push({
       lotId: lot.id,
       footprintCells: occupancy.cells,
       center: lot.center,
       entranceDirections,
-      score: scoreLot(state, lot, criteria),
-      context: { adjacentRoad: entranceDirections.some((direction) => adjacentRoad(state, occupancy.cells, direction)), scenic: lot.column < 18 ? "waterfront" : "urban" }
+      score: scoreExplanation.total,
+      scoreExplanation,
+      terrainSummary: summarizeTerrain(state, occupancy.cells),
+      context: {
+        adjacentRoad: entranceDirections.some((direction) => adjacentRoad(state, occupancy.cells, direction)),
+        scenic: isNearWater(state, lot, 3) ? "waterfront" : "urban",
+        boundsMatched: Boolean(criteria.bounds)
+      }
     });
   }
   return candidates.sort((a, b) => b.score - a.score).slice(0, criteria.limit ?? 24);
@@ -37,7 +45,13 @@ export function previewConstruction(state, proposal) {
   if (!occupancy.ok) return { feasible: false, errors: [occupancy.reason] };
   const availableEntrances = allowedEntrances(state, occupancy.cells);
   if (!availableEntrances.includes(proposal.site.entrance)) return { feasible: false, errors: [`Entrance ${proposal.site.entrance} has no buildable frontage`] };
-  const route = proposal.connectionRequest ? solveConnection(state, occupancy.cells, proposal.connectionRequest, proposal.site.entrance) : emptyRoute();
+  const explicitEntrance = proposal.site.entranceCellId;
+  if (explicitEntrance && !getEntranceFrontageCells(state, occupancy.cells, proposal.site.entrance).includes(explicitEntrance)) {
+    return { feasible: false, errors: [`Entrance port ${explicitEntrance} is not routeable from the ${proposal.site.entrance} facade`] };
+  }
+  const route = proposal.connectionRequest
+    ? solveConnection(state, occupancy.cells, proposal.connectionRequest, proposal.site.entrance, explicitEntrance)
+    : emptyRoute();
   if (!route.feasible) return { feasible: false, errors: [route.reason] };
   const buildingCost = buildingCostFor(proposal.site.footprint, proposal.program.archetype);
   const cost = addCosts(buildingCost, route.cost);
@@ -47,6 +61,7 @@ export function previewConstruction(state, proposal) {
     feasible: shortages.length === 0,
     errors: shortages.length ? [`Insufficient ${shortages.join(", ")}`] : [],
     footprintCells: occupancy.cells,
+    gradingPlan: createGradingPlan(state, occupancy.cells),
     allowedEntrances: availableEntrances,
     connectionPlan: route,
     cost,
@@ -55,13 +70,26 @@ export function previewConstruction(state, proposal) {
   };
 }
 
-export function solveConnection(state, footprintCells, request, entrance = "south") {
+function createGradingPlan(state, cellIds) {
+  const minimum = Math.min(...cellIds.map((cellId) => Number(state.cells[cellId]?.surface?.minElevationVoxels ?? 0)));
+  const maximum = Math.max(...cellIds.map((cellId) => Number(state.cells[cellId]?.surface?.maxElevationVoxels ?? 0)));
+  return {
+    strategy: "grade_to_global_construction_datum",
+    sourceElevationRangeVoxels: [minimum, maximum],
+    maximumCutFillVoxels: Math.max(Math.abs(minimum), Math.abs(maximum)),
+    roadSurfaceVoxelY: Number(state.world?.constructionDatum?.roadSurfaceVoxelY ?? -1),
+    buildingBaseVoxelY: Number(state.world?.constructionDatum?.buildingBaseVoxelY ?? 0),
+    finishedConstructionHeightWorld: Number(state.world?.constructionDatum?.finishedConstructionHeightWorld ?? -0.0625)
+  };
+}
+
+export function solveConnection(state, footprintCells, request, entrance = "south", entranceCellId = null) {
   const targetBuilding = request.toBuildingId ? state.buildings[request.toBuildingId] : null;
   const targetFootprintCells = targetBuilding?.footprintCells ?? [];
   const targetEntrance = request.targetEntrance ?? targetBuilding?.site?.entrance ?? null;
-  const startIds = getEntranceFrontageCells(state, footprintCells, entrance);
+  const startIds = entranceCellId ? [entranceCellId] : getEntranceFrontageCells(state, footprintCells, entrance);
   const targetIds = targetBuilding
-    ? getEntranceFrontageCells(state, targetFootprintCells, targetEntrance)
+    ? (authoritativeEntranceCellId(targetBuilding) ? [authoritativeEntranceCellId(targetBuilding)] : getEntranceFrontageCells(state, targetFootprintCells, targetEntrance))
     : [request.toCellId ?? state.nodes[request.to]?.cellId].filter(Boolean);
   if (!targetIds.length || !targetIds.some((cellId) => state.cells[cellId])) return { feasible: false, reason: "Connection target is not a known city node" };
   if (!startIds.length) return { feasible: false, reason: `Entrance ${entrance} has no routeable frontage` };
@@ -77,9 +105,17 @@ export function solveConnection(state, footprintCells, request, entrance = "sout
   if (!best) return { feasible: false, reason: "No unblocked route exists between the two entrances" };
 
   const { route, startId, targetId } = best;
-  const bridgeCells = route.filter((cellId) => !state.cells[cellId]);
-  const roadCells = route.filter((cellId) => state.cells[cellId] && !footprintCells.includes(cellId) && !targetFootprintCells.includes(cellId) && state.cells[cellId].infrastructure !== "road");
-  return { feasible: true, targetId, targetBuildingId: request.toBuildingId ?? null, entrance, targetEntrance, entranceCellId: startId, route, roadCells, bridgeCells, cost: addCosts(scaleCost(ROAD_COST, roadCells.length), scaleCost(BRIDGE_COST, bridgeCells.length)) };
+  const bridgeRouteCells = route.filter((cellId) => isWaterCell(state.cells[cellId]));
+  const bridgeCells = bridgeRouteCells.filter((cellId) => state.infrastructure[cellId]?.type !== "bridge");
+  const roadCells = route.filter((cellId) => {
+    const cell = state.cells[cellId];
+    return cell
+      && !isWaterCell(cell)
+      && !footprintCells.includes(cellId)
+      && !targetFootprintCells.includes(cellId)
+      && cell.infrastructure !== "road";
+  });
+  return { feasible: true, targetId, targetBuildingId: request.toBuildingId ?? null, entrance, targetEntrance, entranceCellId: startId, route, roadCells, bridgeCells, bridgeRouteCells, cost: addCosts(scaleCost(ROAD_COST, roadCells.length), scaleCost(BRIDGE_COST, bridgeCells.length)) };
 }
 
 export function previewConnectionBetween(state, from, to) {
@@ -92,7 +128,7 @@ export function previewConnectionBetween(state, from, to) {
   const request = target.kind === "building"
     ? { toBuildingId: target.id, targetEntrance: target.entrance }
     : { toCellId: target.cellId };
-  return solveConnection(state, source.footprintCells, request, source.entrance);
+  return solveConnection(state, source.footprintCells, request, source.entrance, source.entranceCellId);
 }
 
 function resolveConnectionEndpoint(state, endpoint, label) {
@@ -105,7 +141,8 @@ function resolveConnectionEndpoint(state, endpoint, label) {
       kind: "building",
       id: endpoint.id,
       footprintCells: building.footprintCells,
-      entrance: endpoint.entrance ?? building.site.entrance
+      entrance: endpoint.entrance ?? building.site.entrance,
+      entranceCellId: authoritativeEntranceCellId(building)
     };
   }
   const cellId = endpoint.kind === "node" ? state.nodes[endpoint.id]?.cellId : endpoint.id;
@@ -121,11 +158,17 @@ function resolveConnectionEndpoint(state, endpoint, label) {
   };
 }
 
+function authoritativeEntranceCellId(building) {
+  return building?.voxelDesign?.ports?.find((port) => port.type === "primary_entrance")?.frontageCellId
+    ?? building?.site?.entranceCellId
+    ?? null;
+}
+
 function firstRouteableDirection(state, cellId) {
   const cell = state.cells[cellId];
   return DIRECTIONS.find((direction) => {
     const candidate = state.cells[neighborId(cell, direction)];
-    return candidate && !candidate.occupancy && (!candidate.infrastructure || candidate.infrastructure === "road");
+    return candidate && !candidate.occupancy && !candidate.reservation && (!candidate.infrastructure || candidate.infrastructure === "road");
   }) ?? "south";
 }
 
@@ -133,20 +176,42 @@ function emptyRoute() { return { feasible: true, route: [], roadCells: [], bridg
 function allowedEntrances(state, cells) { return DIRECTIONS.filter((direction) => getEntranceFrontageCells(state, cells, direction).length > 0); }
 function adjacentRoad(state, cells, direction) { return cells.some((id) => state.cells[neighborId(state.cells[id], direction)]?.infrastructure === "road"); }
 function neighborId(cell, direction) { const [x, y] = DIRECTION_OFFSETS[direction]; return `cell-${cell.column + x}-${cell.row + y}`; }
-function scoreLot(state, lot, criteria) { const near = criteria.near?.includes("riverfront") && lot.column < 18 ? 20 : 0; const road = Object.values(state.cells).some((cell) => cell.infrastructure === "road" && Math.abs(cell.column - lot.column) + Math.abs(cell.row - lot.row) < 4) ? 12 : 0; return near + road - Math.abs(lot.row - 25) * 0.1; }
+function scoreLot(state, lot, criteria, explain = false) {
+  const nearEntries = Array.isArray(criteria.near) ? criteria.near : [];
+  const wantsWaterfront = nearEntries.some((entry) => (entry?.kind ?? entry) === "riverfront" || (entry?.kind ?? entry) === "waterfront");
+  const roadDistance = nearestRoadDistance(state, lot);
+  const road = roadDistance < 4 ? 12 - roadDistance : 0;
+  const water = wantsWaterfront && isNearWater(state, lot, 4) ? 20 : 0;
+  const endpoint = nearEntries.reduce((score, entry) => score + endpointProximityScore(state, lot, entry), 0);
+  const prefer = preferenceScore(state, lot, criteria.prefer);
+  const avoid = preferenceScore(state, lot, criteria.avoid);
+  const centerRow = ((state.world?.grid?.rows ?? 50) - 1) / 2;
+  const centrality = -Math.abs(lot.row - centerRow) * 0.1;
+  const result = { waterfront: water, roadProximity: road, endpointProximity: endpoint, preferences: prefer, avoidPenalty: -avoid, centrality };
+  result.total = Object.values(result).reduce((sum, value) => sum + value, 0);
+  return explain ? result : result.total;
+}
 
 export function getEntranceFrontageCells(state, footprintCells, direction) {
   if (!DIRECTION_OFFSETS[direction]) return [];
   const footprint = new Set(footprintCells);
-  return footprintCells.flatMap((cellId) => {
+  const routeable = footprintCells.flatMap((cellId) => {
     const cell = state.cells[cellId];
     if (!cell) return [];
     const frontageId = neighborId(cell, direction);
     const frontage = state.cells[frontageId];
-    if (!frontage || footprint.has(frontageId) || frontage.occupancy) return [];
+    if (!frontage || footprint.has(frontageId) || frontage.occupancy || frontage.reservation) return [];
     if (frontage.infrastructure && frontage.infrastructure !== "road") return [];
     return [frontageId];
   }).filter((cellId, index, all) => all.indexOf(cellId) === index);
+  // Voxel grammars place the main door near the facade centre. Limit routing
+  // to its one or two centre cells so a successful logical road reaches the
+  // door rather than an arbitrary corner of a wide facade.
+  const axis = direction === "north" || direction === "south" ? "column" : "row";
+  routeable.sort((left, right) => state.cells[left][axis] - state.cells[right][axis] || left.localeCompare(right));
+  if (routeable.length <= 2) return routeable;
+  const middle = (routeable.length - 1) / 2;
+  return routeable.filter((_, index) => Math.abs(index - middle) <= 0.5);
 }
 
 function findRoadRoute(state, startId, targetId, blocked) {
@@ -169,9 +234,12 @@ function findRoadRoute(state, startId, targetId, blocked) {
     for (const neighbor of routeNeighbors(current, bounds)) {
       if (blocked.has(neighbor)) continue;
       const cell = state.cells[neighbor];
+      if (!cell) continue;
       if (cell?.occupancy) continue;
+      if (cell?.reservation) continue;
       if (cell?.infrastructure && cell.infrastructure !== "road") continue;
-      const stepCost = cell?.infrastructure === "road" ? 0.22 : cell ? 1 : 8;
+      const existingBridge = state.infrastructure[neighbor]?.type === "bridge";
+      const stepCost = cell.infrastructure === "road" || existingBridge ? 0.22 : isWaterCell(cell) ? 8 : 1;
       const tentative = (gScore.get(current) ?? Infinity) + stepCost;
       if (tentative >= (gScore.get(neighbor) ?? Infinity)) continue;
       cameFrom.set(neighbor, current);
@@ -182,6 +250,76 @@ function findRoadRoute(state, startId, targetId, blocked) {
     }
   }
   return null;
+}
+
+function isWaterCell(cell) {
+  return Boolean(cell && (cell.bridgeRequired || cell.surface?.kind === "water" || cell.ground === "water"));
+}
+
+function footprintWithinBounds(state, cellIds, bounds) {
+  if (!bounds) return true;
+  const minColumn = Number(bounds.min_column ?? bounds.minColumn ?? -Infinity);
+  const maxColumn = Number(bounds.max_column ?? bounds.maxColumn ?? Infinity);
+  const minRow = Number(bounds.min_row ?? bounds.minRow ?? -Infinity);
+  const maxRow = Number(bounds.max_row ?? bounds.maxRow ?? Infinity);
+  return cellIds.every((cellId) => {
+    const cell = state.cells[cellId];
+    return cell.column >= minColumn && cell.column <= maxColumn && cell.row >= minRow && cell.row <= maxRow;
+  });
+}
+
+function summarizeTerrain(state, cellIds) {
+  const cells = cellIds.map((cellId) => state.cells[cellId]);
+  return {
+    kinds: [...new Set(cells.map((cell) => cell.surface?.kind ?? cell.ground ?? "unknown"))],
+    strictBuildable: cells.every((cell) => cell.strictBuildable !== false),
+    maximumHeightRangeVoxels: Math.max(0, ...cells.map((cell) => Number(cell.surface?.heightRangeVoxels ?? 0))),
+    maximumElevationVoxels: Math.max(0, ...cells.map((cell) => Number(cell.surface?.maxElevationVoxels ?? 0)))
+  };
+}
+
+function nearestRoadDistance(state, lot) {
+  let distance = Infinity;
+  for (const cell of Object.values(state.cells)) {
+    if (cell.infrastructure !== "road" && state.infrastructure[cell.id]?.type !== "bridge") continue;
+    distance = Math.min(distance, Math.abs(cell.column - lot.column) + Math.abs(cell.row - lot.row));
+  }
+  return distance;
+}
+
+function isNearWater(state, lot, radius) {
+  for (let row = lot.row - radius; row <= lot.row + radius; row += 1) {
+    for (let column = lot.column - radius; column <= lot.column + radius; column += 1) {
+      if (Math.abs(column - lot.column) + Math.abs(row - lot.row) > radius) continue;
+      if (isWaterCell(state.cells[`cell-${column}-${row}`])) return true;
+    }
+  }
+  return false;
+}
+
+function endpointProximityScore(state, lot, entry) {
+  if (!entry || typeof entry !== "object") return 0;
+  let target = null;
+  if (entry.kind === "building") {
+    const building = state.buildings[entry.id];
+    target = building ? state.cells[building.footprintCells?.[0] ?? building.site?.lotId] : null;
+  } else if (entry.kind === "node") target = state.cells[state.nodes[entry.id]?.cellId];
+  else if (entry.kind === "cell") target = state.cells[entry.id];
+  if (!target) return 0;
+  const distance = Math.abs(target.column - lot.column) + Math.abs(target.row - lot.row);
+  const maximum = Number(entry.max_distance ?? entry.maxDistance ?? 12);
+  return distance <= maximum ? Math.max(0, 16 - distance) : -20;
+}
+
+function preferenceScore(state, lot, entries) {
+  const values = Array.isArray(entries) ? entries : entries ? [entries] : [];
+  return values.reduce((score, entry) => {
+    const kind = entry?.kind ?? entry;
+    if (["waterfront", "riverfront"].includes(kind)) return score + (isNearWater(state, lot, 4) ? 6 : 0);
+    if (["road", "existing_road"].includes(kind)) return score + (nearestRoadDistance(state, lot) < 4 ? 6 : 0);
+    if (kind === "flat_terrain") return score + (Number(lot.surface?.heightRangeVoxels ?? 0) <= 1 ? 4 : 0);
+    return score;
+  }, 0);
 }
 
 function pushRouteCandidate(heap, candidate) {

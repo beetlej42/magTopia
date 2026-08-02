@@ -46,10 +46,16 @@ export function createRepository(database, config) {
     async createCity(principal, input = {}) {
       requirePlayer(principal);
       const id = createId("city");
-      const world = createServiceWorldContract({ mapId: input.map_id });
+      const mapSeed = input.map_seed ?? "agent-quarter-day-001";
+      const world = createServiceWorldContract({
+        mapId: input.map_id,
+        seed: mapSeed,
+        columns: input.world_columns,
+        rows: input.world_rows
+      });
       const state = createCityState(world, {
         cityId: id,
-        mapSeed: input.map_seed ?? "riverfront-001",
+        mapSeed,
         resources: input.resources,
         rulesetVersion: "magic-london-mvp@1"
       });
@@ -189,6 +195,117 @@ export function createRepository(database, config) {
       return result.rowCount ? assetResponse(result.rows[0], {}) : null;
     },
 
+    async getAssetsForCity(principal, cityId, assetIds = []) {
+      const { row } = await this.getCity(principal, cityId);
+      const uniqueIds = [...new Set(assetIds.filter(Boolean))];
+      if (!uniqueIds.length) return [];
+      const result = await database.query(
+        `SELECT * FROM asset_definitions
+         WHERE id = ANY($1::text[]) AND status = 'validated'
+         AND (owner_player_id IS NULL OR owner_player_id = $2)
+         ORDER BY owner_player_id NULLS FIRST, created_at`,
+        [uniqueIds, row.owner_player_id]
+      );
+      return result.rows.map((asset) => assetResponse(asset, {}));
+    },
+
+    async createBuildingDesign(principal, cityId, design) {
+      return database.transaction(async (client) => {
+        await assertCityAccess(client, principal, cityId, true);
+        await client.query(
+          `INSERT INTO building_designs(
+             id, city_id, building_id, status, generation_mode, current_revision,
+             confirmed_revision, created_by_principal_kind, created_by_principal_id
+           ) VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $8)`,
+          [
+            design.id,
+            cityId,
+            design.source?.buildingId ?? null,
+            design.status,
+            design.generation.mode,
+            design.revision,
+            principal.kind,
+            principal.id
+          ]
+        );
+        await insertBuildingDesignRevision(client, principal, design);
+        return buildingDesignResponse({
+          id: design.id,
+          city_id: cityId,
+          building_id: design.source?.buildingId ?? null,
+          status: design.status,
+          current_revision: design.revision,
+          confirmed_revision: null,
+          design_jsonb: design,
+          created_at: new Date(),
+          updated_at: new Date()
+        });
+      });
+    },
+
+    async getBuildingDesign(principal, cityId, designId) {
+      await this.getCity(principal, cityId);
+      const result = await database.query(
+        `SELECT d.*, r.design_jsonb, r.spec_hash
+         FROM building_designs d
+         JOIN building_design_revisions r ON r.design_id = d.id AND r.revision = d.current_revision
+         WHERE d.id = $1 AND d.city_id = $2`,
+        [designId, cityId]
+      );
+      if (!result.rowCount) throw new ServiceError(404, "BUILDING_DESIGN_NOT_FOUND", "Building design not found");
+      return buildingDesignResponse(result.rows[0]);
+    },
+
+    async listBuildingDesigns(principal, cityId) {
+      await this.getCity(principal, cityId);
+      const result = await database.query(
+        `SELECT d.*, r.design_jsonb, r.spec_hash
+         FROM building_designs d
+         JOIN building_design_revisions r ON r.design_id = d.id AND r.revision = d.current_revision
+         WHERE d.city_id = $1 ORDER BY d.updated_at DESC LIMIT 100`,
+        [cityId]
+      );
+      return result.rows.map(buildingDesignResponse);
+    },
+
+    async appendBuildingDesignRevision(principal, cityId, design, expectedRevision) {
+      return database.transaction(async (client) => {
+        await assertCityAccess(client, principal, cityId, true);
+        const found = await client.query("SELECT * FROM building_designs WHERE id = $1 AND city_id = $2 FOR UPDATE", [design.id, cityId]);
+        if (!found.rowCount) throw new ServiceError(404, "BUILDING_DESIGN_NOT_FOUND", "Building design not found");
+        const row = found.rows[0];
+        if (row.status !== "editable") throw new ServiceError(409, "BUILDING_DESIGN_LOCKED", `Building design is ${row.status}`);
+        if (Number(row.current_revision) !== Number(expectedRevision)) {
+          throw new ServiceError(409, "BUILDING_DESIGN_REVISION_CONFLICT", "Building design changed since it was read", { expected: Number(expectedRevision), actual: Number(row.current_revision) });
+        }
+        if (design.revision !== Number(row.current_revision) + 1) throw new ServiceError(400, "INVALID_BUILDING_DESIGN_REVISION", "New building design revision must increment by one");
+        await insertBuildingDesignRevision(client, principal, design);
+        await client.query(
+          "UPDATE building_designs SET current_revision = $1, generation_mode = $2, updated_at = now() WHERE id = $3",
+          [design.revision, design.generation.mode, design.id]
+        );
+        return buildingDesignResponse({ ...row, current_revision: design.revision, generation_mode: design.generation.mode, design_jsonb: design, spec_hash: design.specHash, updated_at: new Date() });
+      });
+    },
+
+    async confirmBuildingDesign(principal, cityId, design, expectedRevision) {
+      return database.transaction(async (client) => {
+        await assertCityAccess(client, principal, cityId, true);
+        const found = await client.query("SELECT * FROM building_designs WHERE id = $1 AND city_id = $2 FOR UPDATE", [design.id, cityId]);
+        if (!found.rowCount) throw new ServiceError(404, "BUILDING_DESIGN_NOT_FOUND", "Building design not found");
+        const row = found.rows[0];
+        if (Number(row.current_revision) !== Number(expectedRevision)) {
+          throw new ServiceError(409, "BUILDING_DESIGN_REVISION_CONFLICT", "Building design changed since it was read", { expected: Number(expectedRevision), actual: Number(row.current_revision) });
+        }
+        if (row.status === "built") throw new ServiceError(409, "BUILDING_DESIGN_ALREADY_BUILT", "Building design was already built");
+        await client.query(
+          "UPDATE building_designs SET status = 'confirmed', confirmed_revision = current_revision, updated_at = now() WHERE id = $1",
+          [design.id]
+        );
+        return buildingDesignResponse({ ...row, status: "confirmed", confirmed_revision: expectedRevision, design_jsonb: design, spec_hash: design.specHash, updated_at: new Date() });
+      });
+    },
+
     async getOrder(principal, cityId, orderId) {
       await this.getCity(principal, cityId);
       const result = await database.query("SELECT * FROM construction_orders WHERE id = $1 AND city_id = $2", [orderId, cityId]);
@@ -326,6 +443,30 @@ function orderResponse(row) {
 
 function assetJobResponse(row) {
   return { id: row.id, city_id: row.city_id, status: row.status, provider: row.provider, spec: row.spec_jsonb, attempts: row.attempts, output: row.output_jsonb, error: row.error_jsonb, created_at: row.created_at, updated_at: row.updated_at };
+}
+
+function buildingDesignResponse(row) {
+  return {
+    ...structuredClone(row.design_jsonb),
+    id: row.id,
+    cityId: row.city_id,
+    buildingId: row.building_id ?? row.design_jsonb?.source?.buildingId ?? null,
+    status: row.status,
+    revision: Number(row.current_revision),
+    confirmedRevision: row.confirmed_revision == null ? null : Number(row.confirmed_revision),
+    specHash: row.spec_hash ?? row.design_jsonb?.specHash,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+async function insertBuildingDesignRevision(client, principal, design) {
+  await client.query(
+    `INSERT INTO building_design_revisions(
+       design_id, revision, spec_hash, design_jsonb, created_by_principal_kind, created_by_principal_id
+     ) VALUES ($1, $2, $3, $4, $5, $6)`,
+    [design.id, design.revision, design.specHash, JSON.stringify(design), principal.kind, principal.id]
+  );
 }
 
 async function ownerForCity(database, cityId) {

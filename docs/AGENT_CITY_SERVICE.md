@@ -623,7 +623,7 @@ docs/
 
 ### Phase 3：资产选择与异步生产（约 6–10 个开发日）
 
-**实现状态：完成。** 自动 provider 使用阿里云百炼原生 DashScope API 的 `qwen-image-2.0`；未配置 `DASHSCOPE_API_KEY` 时使用 `codex-manual` 桥接。两种方式都在注册前执行 RGB/mask/depth/normal 派生与 manifest 校验。
+**实现状态：完成。** 正式自动 provider 使用 TokenHub 的 `hy-image-v3.0`：框架图与 Magic London 风格参考生成白天关灯 RGB，再执行结构锁定的开灯配对编辑，并用跨平台差分派生 emissive。生产服务不依赖 Apple Vision。Qwen 保留为回退 provider，未配置自动生成密钥时使用 `codex-manual` 桥接。所有方式都在注册前执行 RGB/mask/depth/normal 派生与 manifest 校验。
 
 - 资产搜索和匹配解释；
 - `reuse` / `produce` 联合合同；

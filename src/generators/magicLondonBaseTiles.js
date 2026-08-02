@@ -1,4 +1,9 @@
 import * as THREE from "three";
+import {
+  CARDINAL_ROAD_DIRECTIONS as ROAD_DIRECTIONS,
+  CARDINAL_ROAD_OFFSETS as ROAD_OFFSETS,
+  deriveCardinalRoadPorts
+} from "../city/road-topology.js";
 
 const COLORS = {
   road: "#8d8b87",
@@ -26,13 +31,6 @@ const ROAD_WEAR_MATERIALS = [
   new THREE.MeshStandardMaterial({ color: "#817f7c", roughness: 1, flatShading: true }),
   new THREE.MeshStandardMaterial({ color: "#999590", roughness: 1, flatShading: true })
 ];
-const ROAD_DIRECTIONS = ["north", "east", "south", "west"];
-const ROAD_OFFSETS = {
-  north: [0, -1],
-  east: [1, 0],
-  south: [0, 1],
-  west: [-1, 0]
-};
 const ROAD_WORLD_OFFSETS = {
   north: [0, 1],
   east: [1, 0],
@@ -121,11 +119,7 @@ export function createRoadRenderPlan(cityState, grid) {
 
 export function getRoadTileTopology(cell, allRoadIds, fallbackPorts = ["north", "south"]) {
   const roadIds = allRoadIds instanceof Set ? allRoadIds : new Set(allRoadIds ?? []);
-  const ports = ROAD_DIRECTIONS.filter((direction) => {
-    const [dx, dy] = ROAD_OFFSETS[direction];
-    return roadIds.has(`cell-${cell.column + dx}-${cell.row + dy}`);
-  });
-  if (!ports.length) ports.push(...fallbackPorts);
+  const ports = deriveCardinalRoadPorts(cell, roadIds, fallbackPorts);
   return { ports, topology: classifyRoadTopology(ports) };
 }
 

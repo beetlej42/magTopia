@@ -4,14 +4,23 @@ import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import { calculateDailyIncome, createEngineContext, executeCityCommand } from "../../src/city/engine.js";
 import { normalizeConstructionProposal } from "../../src/city/contracts.js";
+import { AGENT_VOXEL_ROAD_RENDER_CONTRACT } from "../../src/city/road-topology.js";
 import { findCandidateParcels, previewConnectionBetween, previewConstruction } from "../../src/city/solver.js";
 import { createId, hashRequest } from "./ids.js";
 import { ServiceError, errorEnvelope } from "./errors.js";
 import { createOpenApiDocument } from "./openapi.js";
-import { finalizeAssetJob, prepareAssetMaps } from "./asset-production.js";
+import { finalizeAssetJob, normalizeAssetVolume, prepareAssetMaps } from "./asset-production.js";
+import {
+  buildingDesignToConstructionBody,
+  confirmBuildingDesign,
+  createBuildingDesignDraft,
+  createBuildingUpgradeDraft,
+  reviseBuildingDesign
+} from "../../src/city/building-design.js";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PLAYBOOK_PATH = path.resolve(SERVER_DIR, "../../docs/agent-playbook.md");
+const BUILDING_DESIGN_API_PATH = path.resolve(SERVER_DIR, "../../docs/BUILDING_DESIGN_API_V1.md");
 const DASHBOARD_PATH = path.join(SERVER_DIR, "dashboard.html");
 const GENERATED_ROOT = path.resolve(SERVER_DIR, "../../public/generated");
 const DIST_ROOT = path.resolve(SERVER_DIR, "../../dist");
@@ -32,6 +41,12 @@ export async function createApp({ repository, config, logger = false }) {
 
   app.get("/", async (_request, reply) => reply.type("text/html; charset=utf-8").send(homePage(config.publicBaseUrl)));
   app.get("/agent/playbook.md", async (_request, reply) => reply.type("text/markdown; charset=utf-8").send(await fs.readFile(PLAYBOOK_PATH, "utf8")));
+  app.get("/agent/building-design-api-v1.md", async (_request, reply) => reply.type("text/markdown; charset=utf-8").send(await fs.readFile(BUILDING_DESIGN_API_PATH, "utf8")));
+  app.get("/style-reference/isometric-magic-london-city.jpg", async (_request, reply) =>
+    reply.type("image/jpeg").header("Cache-Control", "public, max-age=86400").send(
+      await fs.readFile(path.resolve(SERVER_DIR, "../../docs/reference-images/isometric-magic-london-city.jpg"))
+    )
+  );
   app.get("/dashboard", async (_request, reply) => reply.type("text/html; charset=utf-8").send(await fs.readFile(DASHBOARD_PATH, "utf8")));
   app.get("/cities/:cityId", async (_request, reply) => {
     reply.header("Cache-Control", "no-store");
@@ -90,11 +105,20 @@ export async function createApp({ repository, config, logger = false }) {
   app.get("/api/v1/cities/:cityId/render-state", async (request) => {
     const principal = await authenticate(repository, request, "city:read");
     const { row, state } = await repository.getCity(principal, request.params.cityId);
+    const assetIds = Object.values(state.buildings ?? {}).map((building) => building.assetId ?? building.program?.assetId).filter(Boolean);
+    const assets = await repository.getAssetsForCity(principal, request.params.cityId, assetIds);
     return {
       city_id: row.id,
       name: row.name,
       city_version: Number(row.city_version),
-      state
+      state,
+      assets,
+      render_contract: {
+        mode: "agentcity",
+        terrain: "base-voxel-heightfield",
+        buildings: "city-state-voxel-designs-with-runtime-asset-fallback",
+        ...AGENT_VOXEL_ROAD_RENDER_CONTRACT
+      }
     };
   });
 
@@ -133,13 +157,62 @@ export async function createApp({ repository, config, logger = false }) {
     return buildingResponse(state, building);
   });
 
+  app.get("/api/v1/cities/:cityId/building-designs", async (request) => {
+    const principal = await authenticate(repository, request, "city:read");
+    return { data: await repository.listBuildingDesigns(principal, request.params.cityId) };
+  });
+
+  app.post("/api/v1/cities/:cityId/building-designs", async (request, reply) => {
+    const principal = await authenticate(repository, request, "city:build");
+    const input = request.body ?? {};
+    const draft = designDomainCall(() => createBuildingDesignDraft(input, buildingDesignContext(principal, createId("design"))));
+    return reply.code(201).send(await repository.createBuildingDesign(principal, request.params.cityId, draft));
+  });
+
+  app.get("/api/v1/cities/:cityId/building-designs/:designId", async (request) => {
+    const principal = await authenticate(repository, request, "city:read");
+    return repository.getBuildingDesign(principal, request.params.cityId, request.params.designId);
+  });
+
+  app.post("/api/v1/cities/:cityId/building-designs/:designId/revisions", async (request, reply) => {
+    const principal = await authenticate(repository, request, "city:build");
+    const current = await repository.getBuildingDesign(principal, request.params.cityId, request.params.designId);
+    const expectedRevision = request.body?.expected_revision ?? request.body?.expectedRevision;
+    const revised = designDomainCall(() => reviseBuildingDesign(current, request.body ?? {}, buildingDesignContext(principal)));
+    return reply.code(201).send(await repository.appendBuildingDesignRevision(principal, request.params.cityId, revised, expectedRevision));
+  });
+
+  app.post("/api/v1/cities/:cityId/building-designs/:designId/confirm", async (request) => {
+    const principal = await authenticate(repository, request, "city:build");
+    const current = await repository.getBuildingDesign(principal, request.params.cityId, request.params.designId);
+    const expectedRevision = request.body?.expected_revision ?? request.body?.expectedRevision;
+    const confirmed = designDomainCall(() => confirmBuildingDesign(current, request.body ?? {}, buildingDesignContext(principal)));
+    return repository.confirmBuildingDesign(principal, request.params.cityId, confirmed, expectedRevision);
+  });
+
+  app.post("/api/v1/cities/:cityId/buildings/:buildingId/upgrade-designs", async (request, reply) => {
+    const principal = await authenticate(repository, request, "city:build");
+    const { state } = await repository.getCity(principal, request.params.cityId, { write: true });
+    const building = state.buildings[request.params.buildingId];
+    if (!building) throw new ServiceError(404, "BUILDING_NOT_FOUND", "Building not found");
+    const draft = designDomainCall(() => createBuildingUpgradeDraft(
+      building,
+      request.body ?? {},
+      buildingDesignContext(principal, createId("design"))
+    ));
+    return reply.code(201).send(await repository.createBuildingDesign(principal, request.params.cityId, draft));
+  });
+
   app.post("/api/v1/cities/:cityId/site-searches", async (request) => {
     const principal = await authenticate(repository, request, "city:read");
     const { state } = await repository.getCity(principal, request.params.cityId);
     const input = request.body ?? {};
     const candidates = findCandidateParcels(state, {
       footprint: input.footprint,
-      near: (input.near ?? []).map((entry) => entry.kind ?? entry),
+      near: input.near ?? [],
+      prefer: input.prefer ?? [],
+      avoid: input.avoid ?? [],
+      bounds: input.bounds ?? null,
       limit: Math.min(Number(input.limit ?? 12), 100)
     });
     return { city_version: state.version, data: candidates.map(explainCandidate) };
@@ -153,8 +226,28 @@ export async function createApp({ repository, config, logger = false }) {
   app.post("/api/v1/cities/:cityId/construction-previews", async (request) => {
     const principal = await authenticate(repository, request, "city:build");
     const { state } = await repository.getCity(principal, request.params.cityId, { write: true });
-    const body = normalizeConstructionBody(request.body ?? {});
+    const { body, linkedDesign } = await resolveConstructionBody(repository, principal, request.params.cityId, request.body ?? {});
     const asset = await validateAssetChoice(repository, principal, body);
+    if (asset.mode === "voxel" && !linkedDesign) throw new ServiceError(400, "BUILDING_DESIGN_REQUIRED", "Voxel construction must reference a confirmed building design");
+    if (linkedDesign?.source?.kind === "upgrade") {
+      const building = state.buildings[linkedDesign.source.buildingId];
+      if (!building) throw new ServiceError(404, "BUILDING_NOT_FOUND", "Upgrade target building not found");
+      const baseMatches = building.voxelDesign?.id === linkedDesign.source.baseDesignId
+        && building.voxelDesign?.revision === linkedDesign.source.baseDesignRevision;
+      return {
+        city_version: state.version,
+        preview_token: hashRequest({ cityId: request.params.cityId, cityVersion: state.version, body }),
+        asset,
+        feasible: baseMatches,
+        operation: "upgrade_building",
+        building_id: building.id,
+        design_id: linkedDesign.id,
+        design_revision: linkedDesign.revision,
+        errors: baseMatches ? [] : ["Building changed after this upgrade design was created"],
+        cost: { coins: 0, timber: 0, stone: 0 },
+        resources_after: state.resources
+      };
+    }
     const proposal = proposalFromBody(body, principal, asset);
     const preview = previewConstruction(state, proposal);
     return {
@@ -167,7 +260,7 @@ export async function createApp({ repository, config, logger = false }) {
 
   app.post("/api/v1/cities/:cityId/construction-orders", async (request, reply) => {
     const principal = await authenticate(repository, request, "city:build");
-    const body = normalizeConstructionBody(request.body ?? {});
+    const { body, linkedDesign } = await resolveConstructionBody(repository, principal, request.params.cityId, request.body ?? {});
     if (body.asset?.mode === "produce") requireScope(principal, "asset:request");
     const expectedVersion = expectedCityVersion(request, body);
     const response = await repository.transactCity({
@@ -181,7 +274,7 @@ export async function createApp({ repository, config, logger = false }) {
       reason: body.actor_note
     }, async ({ client, state, city }) => {
       const assetChoice = body.asset;
-      if (!assetChoice || !["reuse", "produce"].includes(assetChoice.mode)) throw new ServiceError(400, "ASSET_CHOICE_REQUIRED", "asset.mode must be reuse or produce");
+      if (!assetChoice || !["reuse", "produce", "voxel"].includes(assetChoice.mode)) throw new ServiceError(400, "ASSET_CHOICE_REQUIRED", "asset.mode must be reuse, produce, or voxel");
       let asset = null;
       if (assetChoice.mode === "reuse") {
         const result = await client.query(
@@ -193,9 +286,38 @@ export async function createApp({ repository, config, logger = false }) {
         asset = result.rows[0];
         assertAssetCompatibility(asset, body);
       }
-      const proposal = proposalFromBody(body, principal, asset ? { mode: "reuse", asset_id: asset.id } : { mode: "produce", spec: normalizeAssetSpec(body) });
+      const resolvedAsset = assetChoice.mode === "voxel"
+        ? { mode: "voxel" }
+        : asset ? { mode: "reuse", asset_id: asset.id } : { mode: "produce", spec: normalizeAssetSpec(body) };
+      const proposal = proposalFromBody(body, principal, resolvedAsset);
       const context = engineContext();
       const orderId = createId("order");
+      if (assetChoice.mode === "voxel") {
+        if (!linkedDesign) throw new ServiceError(400, "BUILDING_DESIGN_REQUIRED", "Voxel construction must reference a confirmed building design");
+        const locked = await client.query(
+          "SELECT status, current_revision, confirmed_revision FROM building_designs WHERE id = $1 AND city_id = $2 FOR UPDATE",
+          [linkedDesign.id, city.id]
+        );
+        if (!locked.rowCount || locked.rows[0].status !== "confirmed" || Number(locked.rows[0].confirmed_revision) !== linkedDesign.revision) {
+          throw new ServiceError(409, "BUILDING_DESIGN_NOT_CONFIRMED", "Building design changed or is no longer confirmed");
+        }
+        const sourceBuildingId = linkedDesign.source?.kind === "upgrade" ? linkedDesign.source.buildingId : null;
+        const engineResult = sourceBuildingId
+          ? executeCityCommand(state, { type: "upgrade_building", buildingId: sourceBuildingId, voxelDesign: body.voxel_design, actor: actorId(principal) }, context)
+          : executeCityCommand(state, { type: "construct_building", proposal, assetId: null }, context);
+        if (!engineResult.accepted) return rejectedCommand(engineResult);
+        const buildingId = engineResult.building.id;
+        await client.query(
+          `INSERT INTO construction_orders(id, city_id, status, asset_mode, request_jsonb)
+           VALUES ($1, $2, 'completed', 'voxel', $3)`,
+          [orderId, city.id, JSON.stringify(body)]
+        );
+        await client.query("UPDATE building_designs SET status = 'built', building_id = $1, updated_at = now() WHERE id = $2", [buildingId, linkedDesign.id]);
+        return {
+          nextState: engineResult.state,
+          response: commandEnvelope(orderId, engineResult, { kind: sourceBuildingId ? "upgrade_order" : "construction_order", id: orderId, status: "completed", building_id: buildingId, design_id: linkedDesign.id, design_revision: linkedDesign.revision })
+        };
+      }
       if (assetChoice.mode === "reuse") {
         const engineResult = executeCityCommand(state, { type: "construct_building", proposal, assetId: asset.id }, context);
         if (!engineResult.accepted) return rejectedCommand(engineResult);
@@ -280,6 +402,7 @@ export async function createApp({ repository, config, logger = false }) {
     const principal = await authenticate(repository, request, "city:connect");
     const { state } = await repository.getCity(principal, request.params.cityId, { write: true });
     const body = request.body ?? {};
+    validateConnectionRequest(body);
     const plan = previewConnectionBetween(state, body.from, body.to);
     const resourcesAfter = plan.feasible ? subtract(state.resources, plan.cost) : null;
     return { city_version: state.version, feasible: Boolean(plan.feasible && !negativeKeys(resourcesAfter).length), plan, resources_after: resourcesAfter };
@@ -288,6 +411,7 @@ export async function createApp({ repository, config, logger = false }) {
   app.post("/api/v1/cities/:cityId/connections", async (request, reply) => {
     const principal = await authenticate(repository, request, "city:connect");
     const body = request.body ?? {};
+    validateConnectionRequest(body);
     const response = await repository.transactCity({
       principal,
       cityId: request.params.cityId,
@@ -348,6 +472,16 @@ export async function createApp({ repository, config, logger = false }) {
   return app;
 }
 
+function validateConnectionRequest(body) {
+  for (const field of ["from", "to"]) {
+    const endpoint = body?.[field];
+    if (!endpoint || typeof endpoint !== "object") throw new ServiceError(400, "INVALID_CONNECTION_ENDPOINT", `${field} endpoint is required`);
+    if (!['building', 'cell', 'node'].includes(endpoint.kind) || typeof endpoint.id !== "string" || !endpoint.id.trim()) {
+      throw new ServiceError(400, "INVALID_CONNECTION_ENDPOINT", `${field} must contain kind=building|cell|node and a non-empty id`);
+    }
+  }
+}
+
 async function authenticate(repository, request, scope = null) {
   const authorization = request.headers.authorization ?? "";
   const match = /^Bearer\s+(.+)$/i.exec(authorization);
@@ -379,7 +513,12 @@ function proposalFromBody(body, principal, asset) {
     return normalizeConstructionProposal({
       id: body.proposal_id,
       actor: actorId(principal),
-      site: { lotId: body.site?.lot_id, footprint: body.site?.footprint, entrance: body.site?.entrance },
+      site: {
+        lotId: body.site?.lot_id,
+        footprint: body.site?.footprint,
+        entrance: body.site?.entrance,
+        entranceCellId: body.site?.entrance_cell_id
+      },
       program: {
         archetype: body.program?.archetype,
         assetId: asset?.asset_id ?? null,
@@ -393,7 +532,8 @@ function proposalFromBody(body, principal, asset) {
         patterns: body.design?.patterns,
         prompt: body.design?.creative_brief ?? body.program?.description ?? `${body.program?.name ?? body.program?.archetype} for MagicTown`
       },
-      connectionRequest
+      connectionRequest,
+      voxelDesign: body.voxel_design
     }, engineContext());
   } catch (error) {
     throw new ServiceError(400, "INVALID_CONSTRUCTION_PROPOSAL", error.message);
@@ -412,7 +552,8 @@ function normalizeConstructionBody(input = {}) {
     actor_note: input.actor_note ?? input.actorNote,
     site: {
       ...site,
-      lot_id: site.lot_id ?? site.lotId ?? site.cell_id ?? site.cellId ?? input.lot_id ?? input.lotId
+      lot_id: site.lot_id ?? site.lotId ?? site.cell_id ?? site.cellId ?? input.lot_id ?? input.lotId,
+      entrance_cell_id: site.entrance_cell_id ?? site.entranceCellId
     },
     design: {
       ...design,
@@ -425,15 +566,18 @@ function normalizeConstructionBody(input = {}) {
       spec: {
         ...spec,
         district_style: spec.district_style ?? spec.districtStyle,
-        creative_brief: spec.creative_brief ?? spec.creativeBrief ?? spec.prompt
+        creative_brief: spec.creative_brief ?? spec.creativeBrief ?? spec.prompt,
+        guide_volume: spec.guide_volume ?? spec.guideVolume ?? spec.volume
       }
-    }
+    },
+    voxel_design: input.voxel_design ?? input.voxelDesign
   };
 }
 
 async function validateAssetChoice(repository, principal, body) {
   const choice = body.asset;
-  if (!choice || !["reuse", "produce"].includes(choice.mode)) throw new ServiceError(400, "ASSET_CHOICE_REQUIRED", "asset.mode must be reuse or produce");
+  if (!choice || !["reuse", "produce", "voxel"].includes(choice.mode)) throw new ServiceError(400, "ASSET_CHOICE_REQUIRED", "asset.mode must be reuse, produce, or voxel");
+  if (choice.mode === "voxel") return { mode: "voxel", design_id: body.design_id, design_revision: body.design_revision, design_hash: body.design_hash };
   if (choice.mode === "produce") {
     requireScope(principal, "asset:request");
     return { mode: "produce", spec: normalizeAssetSpec(body), provider: "asynchronous" };
@@ -451,12 +595,18 @@ function assertAssetCompatibility(asset, body) {
 
 function normalizeAssetSpec(body) {
   const source = body.asset?.spec ?? {};
+  const volume = normalizeAssetVolume(
+    source.guide_volume ?? source.volume ?? source.dimensions ?? body.program?.attributes?.guideVolume,
+    source.footprint ?? body.site?.footprint
+  );
   const spec = {
     archetype: source.archetype ?? body.program?.archetype,
     footprint: source.footprint ?? body.site?.footprint,
     district_style: source.district_style ?? body.design?.district_style ?? "london_common",
     patterns: source.patterns ?? body.design?.patterns ?? [],
     creative_brief: source.creative_brief ?? body.design?.creative_brief ?? body.program?.description ?? body.program?.name,
+    guide_volume: volume.id,
+    dimensions: volume.dimensions,
     camera: { yaw: 45, elevation: 55, roll: 0, projection: "orthographic" },
     style: "soft_isometric_lowpoly_urban_diorama"
   };
@@ -476,6 +626,46 @@ async function enforceAssetJobLimit(principal, client) {
     [principal.kind, principal.id]
   );
   if (Number(result.rows[0].count) >= configured) throw new ServiceError(429, "ASSET_JOB_LIMIT_REACHED", "Daily asset production limit reached", { limit: configured, resets_at: "next server-local day" });
+}
+
+async function resolveConstructionBody(repository, principal, cityId, input) {
+  const designId = input.design_id ?? input.designId;
+  if (!designId) return { body: normalizeConstructionBody(input), linkedDesign: null };
+  const linkedDesign = await repository.getBuildingDesign(principal, cityId, String(designId));
+  const requestedRevision = input.design_revision ?? input.designRevision;
+  if (requestedRevision != null && Number(requestedRevision) !== linkedDesign.revision) {
+    throw new ServiceError(409, "BUILDING_DESIGN_REVISION_CONFLICT", "Requested building design revision is not current", { requested: Number(requestedRevision), actual: linkedDesign.revision });
+  }
+  const requestedHash = input.design_hash ?? input.designHash;
+  if (requestedHash && requestedHash !== linkedDesign.specHash) {
+    throw new ServiceError(409, "BUILDING_DESIGN_HASH_MISMATCH", "Requested building design hash does not match the confirmed design");
+  }
+  let resolved;
+  try {
+    resolved = buildingDesignToConstructionBody(linkedDesign, input);
+  } catch (error) {
+    throw new ServiceError(409, "BUILDING_DESIGN_NOT_READY", error.message);
+  }
+  return { body: normalizeConstructionBody(resolved), linkedDesign };
+}
+
+function buildingDesignContext(principal, id = undefined) {
+  return {
+    ...(id ? { id, seed: id } : {}),
+    actor: actorId(principal),
+    now: () => new Date().toISOString(),
+    hash: hashRequest
+  };
+}
+
+function designDomainCall(callback) {
+  try {
+    return callback();
+  } catch (error) {
+    if (/revision conflict/i.test(error.message)) throw new ServiceError(409, "BUILDING_DESIGN_REVISION_CONFLICT", error.message);
+    if (/cannot be revised|cannot be confirmed|already built/i.test(error.message)) throw new ServiceError(409, "BUILDING_DESIGN_LOCKED", error.message);
+    throw new ServiceError(400, "INVALID_BUILDING_DESIGN", error.message);
+  }
 }
 
 function commandEnvelope(commandId, result, resource) {
@@ -543,7 +733,10 @@ function buildingResponse(state, building) {
 }
 
 function compactBuilding(building) { return building ? { id: building.id, name: building.program?.name, archetype: building.program?.archetype, status: building.status ?? "completed" } : null; }
-function explainCandidate(candidate) { return { ...candidate, score_explanation: { riverfront_preference: candidate.context.scenic === "waterfront" ? 20 : 0, road_proximity: candidate.context.adjacentRoad ? 12 : 0, centrality: "minor row-distance adjustment" } }; }
+function explainCandidate(candidate) {
+  const { scoreExplanation, ...rest } = candidate;
+  return { ...rest, score_explanation: scoreExplanation };
+}
 function numberParam(value, fallback) { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : fallback; }
 function subtract(a, b) { return { coins: a.coins - b.coins, timber: a.timber - b.timber, stone: a.stone - b.stone }; }
 function negativeKeys(value) { return value ? Object.entries(value).filter(([, amount]) => amount < 0).map(([key]) => key) : []; }
@@ -558,6 +751,8 @@ function agentSnapshot(row, state, events, orders, config) {
   const buildings = Object.values(state.buildings);
   const residential = buildings.filter((building) => building.program?.purpose === "residential").length;
   const services = buildings.length - residential;
+  const districtIds = new Set(buildings.map((building) => building.program?.attributes?.districtId).filter(Boolean));
+  const bridgeCount = Object.values(state.infrastructure ?? {}).filter((item) => item.type === "bridge").length;
   return {
     city_id: row.id,
     name: row.name,
@@ -567,8 +762,15 @@ function agentSnapshot(row, state, events, orders, config) {
     turn: state.turn,
     elapsed_hours: state.elapsedHours,
     resources: state.resources,
+    world: state.world ?? null,
     daily_production: dailyProduction,
-    counts: { buildings: buildings.length, roads: Object.values(state.cells).filter((cell) => cell.infrastructure === "road").length, pending_orders: orders.filter((order) => !["completed", "failed", "cancelled"].includes(order.status)).length },
+    counts: {
+      buildings: buildings.length,
+      districts: districtIds.size,
+      roads: Object.values(state.cells).filter((cell) => cell.infrastructure === "road").length,
+      bridges: bridgeCount,
+      pending_orders: orders.filter((order) => !["completed", "failed", "cancelled"].includes(order.status)).length
+    },
     needs: [{ kind: "residential", pressure: Math.max(0, Math.min(1, (services - residential) / 5)), reason: "service capacity compared with nearby housing" }],
     recent_changes: events,
     pending_orders: orders.filter((order) => !["completed", "failed", "cancelled"].includes(order.status)),
@@ -586,7 +788,7 @@ async function completeManualAsset(repository, config, principal, job, body, ide
   if (!idempotencyKey) throw new ServiceError(400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key header is required");
   if (!["awaiting_codex", "queued", "generating"].includes(job.status)) throw new ServiceError(409, "ASSET_JOB_NOT_ACCEPTING_ARTIFACT", `Asset job is ${job.status}`);
   let manifest = body.manifest;
-  if (body.image_data_base64) manifest = await prepareAssetMaps(job.id, Buffer.from(body.image_data_base64, "base64"), { assetOutputRoot: config.assetOutputRoot });
+  if (body.image_data_base64) manifest = await prepareAssetMaps(job.id, Buffer.from(body.image_data_base64, "base64"), { assetOutputRoot: config.assetOutputRoot, spec: job.spec, config });
   if (!manifest?.maps?.rgb) throw new ServiceError(400, "ASSET_ARTIFACT_REQUIRED", "Provide a generated PNG as image_data_base64 or a validated manifest with maps.rgb");
   return finalizeAssetJob({ repository, principal, job, manifest, idempotencyKey, endpoint: `asset-jobs/${job.id}/artifacts` });
 }

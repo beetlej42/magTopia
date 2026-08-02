@@ -60,6 +60,10 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
     assert.equal(renderState.city_id, cityA.id);
     assert.equal(renderState.city_version, 0);
     assert.ok(Object.keys(renderState.state.cells).length > 0);
+    assert.equal(renderState.render_contract.mode, "agentcity");
+    assert.equal(renderState.render_contract.infrastructureRenderer, "state-driven-voxel-road-v2-victorian-bridges");
+    assert.equal(renderState.render_contract.roadAsset, "shared-victorian-voxel-road-tile-v1");
+    assert.equal(renderState.render_contract.agentSuppliesVisualDirections, false);
     assert.equal((await app.inject(auth(agentB, { method: "GET", url: `/api/v1/cities/${cityB.id}/snapshot` }))).statusCode, 200);
     assert.equal((await app.inject(auth(agent, { method: "GET", url: `/api/v1/cities/${cityB.id}/render-state` }))).statusCode, 403);
     assert.equal((await app.inject(auth(agent, { method: "GET", url: `/api/v1/cities/${cityB.id}/snapshot` }))).statusCode, 403);
@@ -131,6 +135,27 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
     assert.ok(producedJob.output.manifest.maps.depth);
     assert.ok(producedJob.output.manifest.maps.normal);
     assert.ok(producedJob.output.manifest.maps.mask);
+    assert.ok(producedJob.output.manifest.maps.emissive);
+    assert.equal(producedJob.output.manifest.baseAnchorContract, "guideplate-visible-triangle-v1");
+    assert.equal(producedJob.output.manifest.baseAnchorSource, "derived-visible-matte-extrema-v1");
+    assert.equal(producedJob.output.manifest.guideplate.guideVolume, "1x1x2");
+    assert.equal(producedJob.output.manifest.guideplate.guideVersion, "absolute-scale-v4");
+    assert.equal(producedJob.output.manifest.guideplate.scaleContract.heightUnitMeaning, "one normal above-ground storey");
+    assert.equal(producedJob.output.manifest.generationContract.promptVersion, "magic-london-absolute-scale-art-v6");
+    assert.deepEqual(producedJob.output.manifest.generationContract.inputImageRoles, ["geometry_guideplate"]);
+    assert.equal(producedJob.output.manifest.generationContract.styleReferenceId, null);
+    assert.deepEqual(producedJob.output.manifest.dimensions, { length: 4, width: 4, height: 8, unit: "world" });
+    const producedAnchors = producedJob.output.manifest.baseAnchorsUv;
+    assert.ok(producedAnchors.left[0] < producedAnchors.near[0]);
+    assert.ok(producedAnchors.near[0] < producedAnchors.right[0]);
+    assert.ok(producedAnchors.left[1] > producedAnchors.near[1]);
+    assert.ok(producedAnchors.right[1] > producedAnchors.near[1]);
+    const producedRenderState = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${cityA.id}/render-state` }), 200);
+    const producedAsset = producedRenderState.assets.find((asset) => asset.id === producedJob.output.asset_id);
+    assert.ok(producedAsset);
+    assert.equal(producedAsset.manifest.maps.rgb, producedJob.output.manifest.maps.rgb);
+    assert.equal(producedAsset.manifest.maps.emissive, producedJob.output.manifest.maps.emissive);
+    assert.ok(Object.values(producedRenderState.state.buildings).some((building) => building.assetId === producedJob.output.asset_id));
 
     const beforeFailure = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${cityA.id}/snapshot` }), 200);
     const sites4 = await json(app, auth(agent, { method: "POST", url: `/api/v1/cities/${cityA.id}/site-searches`, payload: { footprint: "1x1", limit: 40 } }), 200);
@@ -192,6 +217,91 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
     const afterCancel = await json(app, auth(playerA, { method: "GET", url: `/api/v1/cities/${cityA.id}/snapshot` }), 200);
     assert.deepEqual(afterCancel.resources, beforeCancel.resources);
 
+    const voxelDraft = await json(app, auth(playerA, {
+      method: "POST",
+      url: `/api/v1/cities/${cityA.id}/building-designs`,
+      payload: {
+        site: { lot_id: site4.lotId, footprint: "1x1", entrance: site4.entranceDirections[0] },
+        intent: { name: "Voxel Tea House", purpose: "tea shop", frontage: "display", style: "victorian_domestic" },
+        requirements: { preferred_floors: 1 }
+      }
+    }), 201);
+    assert.equal(voxelDraft.generation.mode, "floor_stack");
+    const voxelRevision = await json(app, auth(playerA, {
+      method: "POST",
+      url: `/api/v1/cities/${cityA.id}/building-designs/${voxelDraft.id}/revisions`,
+      payload: {
+        expected_revision: voxelDraft.revision,
+        operations: [{ op: "add_decoration", decoration: { id: "tea-sign", type: "hanging_sign", anchor: "main/floor-0/facade-south/bay-1" } }]
+      }
+    }), 201);
+    const voxelConfirmed = await json(app, auth(playerA, {
+      method: "POST",
+      url: `/api/v1/cities/${cityA.id}/building-designs/${voxelDraft.id}/confirm`,
+      payload: { expected_revision: voxelRevision.revision }
+    }), 200);
+    assert.equal(voxelConfirmed.status, "confirmed");
+    const voxelOrder = await json(app, auth(playerA, {
+      method: "POST",
+      url: `/api/v1/cities/${cityA.id}/construction-orders`,
+      headers: { "idempotency-key": "voxel-build-1" },
+      payload: {
+        expected_city_version: afterCancel.city_version,
+        design_id: voxelConfirmed.id,
+        design_revision: voxelConfirmed.revision,
+        design_hash: voxelConfirmed.specHash
+      }
+    }), 201);
+    assert.equal(voxelOrder.status, "completed");
+    const voxelReplay = await json(app, auth(playerA, {
+      method: "POST",
+      url: `/api/v1/cities/${cityA.id}/construction-orders`,
+      headers: { "idempotency-key": "voxel-build-1" },
+      payload: {
+        expected_city_version: afterCancel.city_version,
+        design_id: voxelConfirmed.id,
+        design_revision: voxelConfirmed.revision,
+        design_hash: voxelConfirmed.specHash
+      }
+    }), 201);
+    assert.equal(voxelReplay.idempotent_replay, true);
+
+    const upgradeDraft = await json(app, auth(playerA, {
+      method: "POST",
+      url: `/api/v1/cities/${cityA.id}/buildings/${voxelOrder.resource.building_id}/upgrade-designs`,
+      payload: { goal: { type: "add_floor", count: 1 } }
+    }), 201);
+    assert.equal(upgradeDraft.generation.sourceSpec.floors, 2);
+    const upgradeConfirmed = await json(app, auth(playerA, {
+      method: "POST",
+      url: `/api/v1/cities/${cityA.id}/building-designs/${upgradeDraft.id}/confirm`,
+      payload: { expected_revision: upgradeDraft.revision }
+    }), 200);
+    const upgradePreview = await json(app, auth(playerA, {
+      method: "POST",
+      url: `/api/v1/cities/${cityA.id}/construction-previews`,
+      payload: {
+        expected_city_version: voxelOrder.city_version_after,
+        design_id: upgradeConfirmed.id,
+        design_revision: upgradeConfirmed.revision,
+        design_hash: upgradeConfirmed.specHash
+      }
+    }), 200);
+    assert.equal(upgradePreview.feasible, true);
+    const upgradeOrder = await json(app, auth(playerA, {
+      method: "POST",
+      url: `/api/v1/cities/${cityA.id}/construction-orders`,
+      headers: { "idempotency-key": "voxel-upgrade-1" },
+      payload: {
+        expected_city_version: voxelOrder.city_version_after,
+        design_id: upgradeConfirmed.id,
+        design_revision: upgradeConfirmed.revision,
+        design_hash: upgradeConfirmed.specHash
+      }
+    }), 201);
+    assert.equal(upgradeOrder.resource.kind, "upgrade_order");
+    assert.equal(upgradeOrder.resource.building_id, voxelOrder.resource.building_id);
+
     const credentials = await json(app, auth(playerA, { method: "GET", url: `/api/v1/cities/${cityA.id}/agent-credentials` }), 200);
     await json(app, auth(playerA, { method: "DELETE", url: `/api/v1/cities/${cityA.id}/agent-credentials/${credentials[0].id}` }), 200);
     assert.equal((await app.inject(auth(agent, { method: "GET", url: `/api/v1/cities/${cityA.id}/snapshot` }))).statusCode, 401);
@@ -229,6 +339,6 @@ function produceRequest(version, lotId, name) {
     site: { lot_id: lotId, footprint: "1x1", entrance: "south" },
     program: { archetype: "moon_residence", purpose: "residential", name, attributes: { coinOutput: 7 } },
     design: { district_style: "willow_magic", patterns: ["quiet_front_garden"], creative_brief: "A narrow magical London brick home surrounded by restrained moonflowers." },
-    asset: { mode: "produce", spec: { archetype: "moon_residence", footprint: "1x1", district_style: "willow_magic", creative_brief: "A moonflower residence." } }
+    asset: { mode: "produce", spec: { archetype: "moon_residence", footprint: "1x1", district_style: "willow_magic", guide_volume: "1x1x2", creative_brief: "A moonflower residence." } }
   };
 }

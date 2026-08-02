@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   CORNER_FACADE_MODE_IDS,
+  VOXEL_BUILDING_PRESETS,
   VOXEL_PARCEL,
   VOXEL_SIZE,
   VoxelInstanceBuffer,
   createVoxelBuildingLab,
+  createVoxelBuildingLodLevels,
   getVoxelBuildingContract,
   normalizeVoxelBuildingConfig,
   planPitchedRoof,
@@ -145,6 +147,41 @@ test("side facades add real shopfront voxels while blank sides remain plain", ()
   assert.ok(corner.materialCounts.warmWindow > plain.materialCounts.warmWindow);
 });
 
+test("semantic shop sign preset renders three distinct material-bound 4x4 emblems", () => {
+  const lab = createVoxelBuildingLab(VOXEL_BUILDING_PRESETS.semanticShopSigns);
+  const diagnostics = lab.userData.diagnostics;
+  assert.equal(diagnostics.buildingCount, 3);
+  assert.equal(diagnostics.decorationCount, 3);
+  assert.equal(diagnostics.semanticGridSignCount, 3);
+  const signs = ["potion-sign", "broom-sign", "wand-sign"].map((id) => lab.getObjectByName(`DesignDecoration-${id}`));
+  assert.ok(signs.every(Boolean));
+  assert.deepEqual(signs.map((sign) => sign.userData.semanticGridSign.emissiveMaterial), ["tealMagic", "warmWindow", "violetMagic"]);
+  assert.deepEqual(signs.map((sign) => sign.userData.semanticGridSign.frameMaterial), ["patinaMetal", "iron", "sandstone"]);
+  assert.ok(signs.every((sign) => sign.userData.semanticGridSign.grid.length === 4));
+  assert.ok(signs.every((sign) => sign.userData.semanticGridSign.mount === "projecting"));
+  assert.ok(signs.every((sign) => sign.userData.semanticGridSign.microVoxelSize === VOXEL_SIZE / 2));
+  assert.ok(signs.every((sign) => sign.userData.semanticGridSign.buildingVoxelRatio === 0.5));
+  assert.ok(signs.every((sign) => sign.userData.semanticGridSign.panelSize < 0.5));
+  assert.ok(signs.every((sign) => sign.userData.semanticGridSign.doubleSided));
+  assert.ok(signs.every((sign) => sign.userData.semanticGridSign.facadeClearanceVoxels === 1));
+  assert.ok(signs.every((sign) => sign.userData.semanticGridSign.placement === "entrance-side-lintel-clear"));
+  assert.ok(signs.every((sign) => sign.userData.semanticGridSign.lintelClearanceVoxels === 1));
+  signs.forEach((sign) => {
+    const signData = sign.userData.semanticGridSign;
+    const anchor = sign.userData.anchorGeometry;
+    const outerHalf = signData.panelSize / 2 + signData.microVoxelSize * 0.52 / 2;
+    const signBottom = sign.position.y - outerHalf;
+    const lintelTop = anchor.lintelTopYVoxels * VOXEL_SIZE;
+    assert.ok(signBottom >= lintelTop + VOXEL_SIZE - 1e-9);
+  });
+  assert.ok(lab.userData.contract.agentControl.semanticGridSign.frameMaterials.includes("timber"));
+  assert.deepEqual(lab.userData.contract.agentControl.semanticGridSign.microVoxelSize, {
+    fixed: VOXEL_SIZE / 2,
+    buildingVoxelRatio: 0.5,
+    unit: "world_meter"
+  });
+});
+
 test("adding floors changes only the selected building and regenerates its roof base", () => {
   const before = planVoxelStreet({ seed: "vertical-expansion", buildingCount: 3, floors: 3, expansionFloors: 0 });
   const after = planVoxelStreet({ seed: "vertical-expansion", buildingCount: 3, floors: 3, expansionFloors: 1 });
@@ -207,6 +244,37 @@ test("semantic voxel priorities reject lower-phase writes but preserve equal-pha
   assert.equal(buffer.getMaterialAt(1, 2, 3), "limestone");
 });
 
+test("voxel mip LOD aggregates fixed 2x2x2 and 3x3x3 blocks without changing world scale", () => {
+  const buffer = new VoxelInstanceBuffer("voxel-mip-test");
+  buffer.addBox("brickRed", 0, 0, 0, 6, 6, 6, 0, { priority: VOXEL_WRITE_PRIORITIES.structure });
+  const lod2 = buffer.createDownsampled(2);
+  const lod3 = buffer.createDownsampled(3);
+
+  assert.equal(lod2.voxelSize, VOXEL_SIZE * 2);
+  assert.equal(lod3.voxelSize, VOXEL_SIZE * 3);
+  assert.equal(lod2.occupiedVoxelCount, 27);
+  assert.equal(lod3.occupiedVoxelCount, 8);
+  assert.equal(lod2.getMaterialAt(0, 0, 0), "brickRed");
+  assert.equal(lod3.getMaterialAt(1, 1, 1), "brickRed");
+  assert.equal(lod2.downsampleDiagnostics.materialRule, "majority count, then semantic write priority");
+});
+
+test("building mip levels share one generated plan and retain all buildings", () => {
+  const lod = createVoxelBuildingLodLevels({
+    seed: "stable-building-mip",
+    buildingCount: 3,
+    includeStreetBase: false,
+    includeStreetLamps: false,
+    renderStrategy: "greedy"
+  });
+
+  assert.equal(lod.plan.buildings.length, 3);
+  assert.deepEqual(lod.levels.map((level) => level.factor), [1, 2, 3]);
+  assert.deepEqual(lod.levels.map((level) => level.diagnostics.voxelSize), [VOXEL_SIZE, VOXEL_SIZE * 2, VOXEL_SIZE * 3]);
+  assert.ok(lod.levels[0].diagnostics.occupiedVoxels > lod.levels[1].diagnostics.occupiedVoxels);
+  assert.ok(lod.levels[1].diagnostics.occupiedVoxels > lod.levels[2].diagnostics.occupiedVoxels);
+});
+
 test("BuildingSpec v0.2 produces bounded facade bays and stable lower-floor sub-seeds", () => {
   const before = createBuildingSpec({
     id: "stable-magic-shop",
@@ -242,6 +310,13 @@ test("BuildingSpec v0.2 produces bounded facade bays and stable lower-floor sub-
   });
 
   assert.equal(before.specVersion, BUILDING_SPEC_VERSION);
+  assert.equal(before.massing.specVersion, "0.1");
+  assert.equal(before.massing.masses.length, 1);
+  assert.equal(before.massing.masses[0].type, "solid");
+  assert.deepEqual(before.massing.masses[0].dimensionsVoxels, {
+    width: before.footprint.widthVoxels,
+    depth: before.footprint.depthVoxels
+  });
   assert.deepEqual(after.facade.floors.slice(0, before.floors), before.facade.floors);
   assert.deepEqual(after.materials, before.materials);
   assert.equal(after.roof.type, before.roof.type);

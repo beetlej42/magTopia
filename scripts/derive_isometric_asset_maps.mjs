@@ -17,11 +17,14 @@ fs.mkdirSync(outDir, { recursive: true });
 
 const key = sampleBorderKey(source);
 const matte = createMatte(source, key);
+const baseAnchorsUv = detectBaseAnchors(matte, source.width, source.height);
+const subjectBoundsUv = normalizedAlphaBounds(matte, source.width, source.height);
 const rgb = applyMatte(source, matte);
 const pixelRgb = pixelateImage(rgb, 320);
 const mask = createMask(source.width, source.height, matte);
 const depth = createDepth(source, matte);
 const normal = createNormal(depth, matte);
+const emissive = createEmissive(rgb, matte);
 const atlas = createAtlas([
   { label: "RGB", image: rgb },
   { label: "DEPTH", image: depth },
@@ -40,6 +43,7 @@ writePng(path.join(outDir, "rgb-pixel.png"), pixelRgb);
 writePng(path.join(outDir, "depth.png"), depth);
 writePng(path.join(outDir, "normal.png"), normal);
 writePng(path.join(outDir, "mask.png"), mask);
+writePng(path.join(outDir, "emissive.png"), emissive);
 writePng(path.join(outDir, "atlas-rgb-depth-normal-mask.png"), atlas);
 writePng(path.join(outDir, "atlas-pixel-depth-normal-mask.png"), pixelAtlas);
 fs.writeFileSync(
@@ -50,16 +54,34 @@ fs.writeFileSync(
       width: source.width,
       height: source.height,
       keyColor: `#${hex(key.r)}${hex(key.g)}${hex(key.b)}`,
+      dimensions: { length: 4, width: 4, height: 4, unit: "world" },
+      guideplate: {
+        dimensions: { length: 4, width: 4, height: 4, unit: "world" },
+        camera: { yaw: 45, elevation: 55, roll: 0, projection: "orthographic" },
+        baseAnchorContract: "guideplate-visible-triangle-v1",
+        baseAnchorsUv: {
+          left: [0.22666666666666663, 0.35632478632478637],
+          near: [0.5, 0.2301709401709402],
+          right: [0.7733333333333334, 0.35632478632478637]
+        }
+      },
+      baseAnchorContract: "guideplate-visible-triangle-v1",
+      baseAnchorSource: "derived-visible-matte-extrema-v1",
+      baseAnchorsUv,
+      subjectBoundsUv,
       maps: {
         rgb: "rgb.png",
         pixelRgb: "rgb-pixel.png",
         depth: "depth.png",
         normal: "normal.png",
         mask: "mask.png",
+        emissive: "emissive.png",
         atlas: "atlas-rgb-depth-normal-mask.png",
         pixelAtlas: "atlas-pixel-depth-normal-mask.png"
       },
       pixelGrid: 320,
+      nightProfile: "derived-warm-windows",
+      emissiveNote: "Warm amber, sufficiently bright pixels inside the building matte are isolated for restrained night lighting.",
       depthNote:
         "Approximate local depth derived from alpha coverage, vertical isometric height, luminance, and edge lift. Replace with model depth when available."
     },
@@ -67,6 +89,16 @@ fs.writeFileSync(
     2
   )}\n`
 );
+
+function normalizedAlphaBounds(matte, width, height) {
+  const bounds = alphaBounds(width, height, matte);
+  return {
+    left: bounds.left / width,
+    right: (bounds.left + bounds.width - 1) / width,
+    bottom: 1 - (bounds.top + bounds.height - 1) / height,
+    top: 1 - bounds.top / height
+  };
+}
 
 function readPng(filePath) {
   const bytes = fs.readFileSync(filePath);
@@ -203,10 +235,118 @@ function createMatte(image, key) {
     const dg = image.data[idx + 1] - key.g;
     const db = image.data[idx + 2] - key.b;
     const distance = Math.sqrt(dr * dr + dg * dg + db * db);
-    matte[i] = smoothstep(24, 138, distance);
+    const r = image.data[idx];
+    const g = image.data[idx + 1];
+    const b = image.data[idx + 2];
+    const magentaDominance = Math.min(r, b) - g;
+    const blueRedRatio = b / Math.max(r, 1);
+    const chromaStrength =
+      smoothstep(24, 72, magentaDominance) *
+      smoothstep(0.68, 0.9, blueRedRatio) *
+      smoothstep(62, 148, Math.max(r, b));
+    const sourceAlpha = image.data[idx + 3] / 255;
+    matte[i] = Math.min(sourceAlpha, smoothstep(24, 138, distance), 1 - chromaStrength);
   }
 
+  removeSmallMatteComponents(matte, image.width, image.height);
+  removeLowerGuideArtifacts(image, matte);
   return softenMatte(contractMatte(matte, image.width, image.height), image.width, image.height);
+}
+
+function removeLowerGuideArtifacts(image, matte) {
+  for (let y = Math.floor(image.height * 0.78); y < image.height; y += 1) {
+    for (let x = 0; x < image.width; x += 1) {
+      const i = y * image.width + x;
+      const idx = i * 4;
+      const r = image.data[idx];
+      const g = image.data[idx + 1];
+      const b = image.data[idx + 2];
+      if (r > 170 && g > 135 && b < 105) matte[i] = 0;
+    }
+  }
+}
+
+function removeSmallMatteComponents(matte, width, height) {
+  const visited = new Uint8Array(matte.length);
+  const queue = new Int32Array(matte.length);
+  const minimumPixels = Math.max(256, Math.round(width * height * 0.00025));
+  for (let start = 0; start < matte.length; start += 1) {
+    if (visited[start] || matte[start] <= 0.08) continue;
+    const component = [];
+    let touchesCore = false;
+    let head = 0;
+    let tail = 0;
+    visited[start] = 1;
+    queue[tail++] = start;
+    while (head < tail) {
+      const i = queue[head++];
+      component.push(i);
+      const x = i % width;
+      const y = Math.floor(i / width);
+      if (x >= width * 0.16 && x <= width * 0.84 && y >= height * 0.06 && y <= height * 0.78) touchesCore = true;
+      for (const neighbor of [
+        x > 0 ? i - 1 : -1,
+        x + 1 < width ? i + 1 : -1,
+        y > 0 ? i - width : -1,
+        y + 1 < height ? i + width : -1
+      ]) {
+        if (neighbor < 0 || visited[neighbor] || matte[neighbor] <= 0.08) continue;
+        visited[neighbor] = 1;
+        queue[tail++] = neighbor;
+      }
+    }
+    if (component.length < minimumPixels || !touchesCore) {
+      for (const i of component) matte[i] = 0;
+    }
+  }
+}
+
+function detectBaseAnchors(matte, width, height) {
+  const threshold = 0.45;
+  const minimumY = Math.floor(height * 0.5);
+  let leftX = width;
+  let rightX = -1;
+  let bottomY = -1;
+  for (let y = minimumY; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (matte[y * width + x] < threshold) continue;
+      leftX = Math.min(leftX, x);
+      rightX = Math.max(rightX, x);
+      bottomY = Math.max(bottomY, y);
+    }
+  }
+  if (rightX < 0 || bottomY < 0) {
+    return {
+      left: [0.22666666666666663, 0.35632478632478637],
+      near: [0.5, 0.2301709401709402],
+      right: [0.7733333333333334, 0.35632478632478637]
+    };
+  }
+  const leftPoints = [];
+  const rightPoints = [];
+  const nearPoints = [];
+  for (let y = minimumY; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (matte[y * width + x] < threshold) continue;
+      if (x <= leftX + 3) leftPoints.push([x, y]);
+      if (x >= rightX - 3) rightPoints.push([x, y]);
+      if (y >= bottomY - 3) nearPoints.push([x, y]);
+    }
+  }
+  return {
+    left: pointSetToUv(leftPoints, width, height),
+    near: pointSetToUv(nearPoints, width, height),
+    right: pointSetToUv(rightPoints, width, height)
+  };
+}
+
+function pointSetToUv(points, width, height) {
+  const [sumX, sumY] = points.reduce(([x, y], point) => [x + point[0], y + point[1]], [0, 0]);
+  const count = Math.max(1, points.length);
+  return [
+    clamp01(sumX / count / Math.max(1, width - 1)),
+    clamp01(1 - sumY / count / Math.max(1, height - 1))
+  ];
 }
 
 function applyMatte(image, matte) {
@@ -216,7 +356,7 @@ function applyMatte(image, matte) {
     const idx = i * 4;
     const alphaFloat = clamp01(matte[i]);
     const alpha = Math.round(alphaFloat * 255);
-    if (alpha < 12) {
+    if (alpha < 36) {
       data[idx] = 0;
       data[idx + 1] = 0;
       data[idx + 2] = 0;
@@ -390,6 +530,27 @@ function createNormal(depth, matte) {
     }
   }
 
+  return { width, height, data };
+}
+
+function createEmissive(image, matte) {
+  const { width, height } = image;
+  const data = Buffer.alloc(width * height * 4);
+  for (let i = 0; i < width * height; i += 1) {
+    const idx = i * 4;
+    const r = image.data[idx] / 255;
+    const g = image.data[idx + 1] / 255;
+    const b = image.data[idx + 2] / 255;
+    const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    const warm = smoothstep(0.08, 0.34, Math.min(r - b, g - b));
+    const bright = smoothstep(0.38, 0.78, luminance);
+    const yellowBalance = smoothstep(0.52, 0.82, g / Math.max(r, 0.001));
+    const strength = clamp01(matte[i] * warm * bright * yellowBalance);
+    data[idx] = 255;
+    data[idx + 1] = 191;
+    data[idx + 2] = 92;
+    data[idx + 3] = Math.round(strength * 255);
+  }
   return { width, height, data };
 }
 

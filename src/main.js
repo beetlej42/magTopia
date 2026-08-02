@@ -1,6 +1,10 @@
 import "./style.css";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { BokehPass } from "three/examples/jsm/postprocessing/BokehPass.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import {
   ISOMETRIC_ASSET_PRESETS,
   ISOMETRIC_DEVELOPMENT_PRESETS,
@@ -35,6 +39,7 @@ import {
   CORNER_FACADE_MODE_IDS,
   VOXEL_BUILDING_PRESETS,
   createVoxelBuildingLab,
+  createVoxelMassingLab,
   getVoxelBuildingContract,
   normalizeVoxelBuildingConfig,
   voxelDaylightStyle
@@ -48,29 +53,99 @@ import {
   VOXEL_STYLE_KITS,
   createBuildingSpec
 } from "./generators/voxelBuildingGrammar.js";
+import {
+  VOXEL_MASSING_PRESETS,
+  createUrbanMassingSpec,
+  getUrbanMassingCatalog,
+  normalizeVoxelMassingConfig
+} from "./generators/voxelMassingGrammar.js";
+import {
+  createExplorerRandomMassingConfig,
+  createVoxelMassingExplorer
+} from "./generators/voxelMassingExplorer.js";
+import {
+  adaptBuildingIntentToMassingConfig,
+  adaptBuildingIntentToStreetConfig,
+  getBuildingIntentCatalog,
+  normalizeBuildingIntent
+} from "./generators/buildingIntent.js";
+import {
+  VOXEL_INTENT_DISTRICT_PRESETS,
+  createRandomVoxelIntentDistrictConfig,
+  createVoxelIntentDistrict,
+  getVoxelSphereFrame,
+  normalizeVoxelIntentDistrictConfig
+} from "./generators/voxelIntentDistrict.js";
 import { createCityState } from "./city/state.js";
 import { createCityWorkbench } from "./city/workbench.js";
 import { createStarterCityWorkbench } from "./city/scenarios.js";
 import { findAssetCandidates, getAssetRegistry, resolveAsset } from "./city/assets.js";
 import { getModelOrientationPreviewUrls } from "./generators/modelOrientation.js";
+import { createAgentAcceptanceCity } from "./generators/agentAcceptanceCity.js";
 
 const app = document.querySelector("#app");
 const scene = new THREE.Scene();
 scene.background = new THREE.Color("#fff3f8");
 
-let currentMode = "map";
+const startupParams = new URLSearchParams(window.location.search);
+const startupMode = startupParams.get("mode");
+if (startupParams.get("view") === "1") document.documentElement.dataset.magicTownPresentation = "true";
+let currentMode = ["map", "district", "agentcity"].includes(startupMode) ? startupMode : "map";
 let camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 2200);
 camera.position.set(7.8, 5.5, 9.5);
 
+const mobilePerformanceProfile = window.matchMedia("(pointer: coarse)").matches
+  || Math.min(window.innerWidth, window.innerHeight) <= 820;
+const renderQuality = {
+  mobile: mobilePerformanceProfile,
+  minPixelRatio: 1,
+  maxPixelRatio: mobilePerformanceProfile ? 1.75 : 2,
+  pixelRatio: Math.min(window.devicePixelRatio, mobilePerformanceProfile ? 1.5 : 1.75),
+  averageFrameMs: 16.67,
+  stableFrames: 0,
+  lastAdjustmentMs: 0
+};
 const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setPixelRatio(renderQuality.pixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.info.autoReset = false;
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = mobilePerformanceProfile ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
 app.appendChild(renderer.domElement);
 
+const composer = new EffectComposer(renderer);
+const renderPass = new RenderPass(scene, camera);
+const districtBokehDefaults = {
+  aperture: mobilePerformanceProfile ? 0.0002 : 0.00028,
+  maxblur: mobilePerformanceProfile ? 0.004 : 0.006
+};
+const districtDepthOfField = new BokehPass(scene, camera, {
+  focus: 60,
+  aperture: districtBokehDefaults.aperture,
+  maxblur: districtBokehDefaults.maxblur
+});
+const outputPass = new OutputPass();
+composer.addPass(renderPass);
+composer.addPass(districtDepthOfField);
+composer.addPass(outputPass);
+composer.setPixelRatio(renderQuality.pixelRatio);
+
 const edgePanPointer = { x: 0, y: 0, active: false };
+const districtSurfacePointer = { id: null, x: 0, y: 0, startX: 0, startY: 0, moved: false, pointerType: "" };
+const districtViewGesture = { lastTapTime: 0, lastTapX: 0, lastTapY: 0, lastTouchToggleAt: 0 };
+const districtSurfaceNavigation = {
+  initialized: false,
+  flatX: 2.5,
+  flatZ: -5,
+  radius: null,
+  radialDistance: null,
+  cameraScale: 1,
+  nearScale: 1,
+  farScale: 1.9,
+  targetCameraScale: 1,
+  viewMode: "near"
+};
 
 let controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
@@ -262,6 +337,46 @@ const MODES = {
       ...createVoxelFloorControlDefinitions()
     ]
   },
+  massing: {
+    label: "Voxel Massing Grammar",
+    presets: VOXEL_MASSING_PRESETS,
+    defaultPreset: "minimumCapabilityStudy",
+    normalize: normalizeVoxelMassingConfig,
+    randomize: (seed) => createExplorerRandomMassingConfig(seed, {}, "all"),
+    sliders: [
+      { key: "sunTime", label: "Sun Time", min: 0, max: 1, step: 0.01 },
+      { key: "nightLighting", label: "Night Lights", min: 0, max: 1, step: 0.01 }
+    ]
+  },
+  district: {
+    label: "Agent Intent District",
+    presets: VOXEL_INTENT_DISTRICT_PRESETS,
+    defaultPreset: "agentQuarterDay",
+    normalize: normalizeVoxelIntentDistrictConfig,
+    randomize: (seed) => createRandomVoxelIntentDistrictConfig(seed, configsByMode.district),
+    sliders: [
+      { key: "sunTime", label: "Sun Time", min: 0, max: 1, step: 0.01 },
+      { key: "nightLighting", label: "Night Lights", min: 0, max: 1, step: 0.01 },
+      { key: "bokehStrength", label: "Focus Falloff", min: 0, max: 4, step: 0.01, live: true },
+      { key: "bokehBlur", label: "Miniature Blur", min: 0, max: 6, step: 0.01, live: true },
+      { key: "magicBias", label: "District Magic", min: -0.35, max: 0.35, step: 0.01 },
+      { key: "planetRadius", label: "Voxel Planet Radius", min: 30, max: 480, step: 1 },
+      { key: "vegetationDensity", label: "Voxel Vegetation", min: 0, max: 1, step: 0.01 }
+    ]
+  },
+  agentcity: {
+    label: "Agent City Visual Acceptance",
+    presets: VOXEL_INTENT_DISTRICT_PRESETS,
+    defaultPreset: "agentQuarterDay",
+    normalize: normalizeVoxelIntentDistrictConfig,
+    randomize: (seed) => normalizeVoxelIntentDistrictConfig({ ...configsByMode.agentcity, seed, acceptanceSeed: seed }),
+    sliders: [
+      { key: "sunTime", label: "Sun Time", min: 0, max: 1, step: 0.01 },
+      { key: "nightLighting", label: "Night Lights", min: 0, max: 1, step: 0.01 },
+      { key: "bokehStrength", label: "Focus Falloff", min: 0, max: 4, step: 0.01, live: true },
+      { key: "bokehBlur", label: "Miniature Blur", min: 0, max: 6, step: 0.01, live: true }
+    ]
+  },
   parcel: {
     label: "Parcel Blueprint",
     presets: PARCEL_BLUEPRINT_PRESETS,
@@ -292,12 +407,19 @@ const presetLabels = {
   herbalistMetricIndoorSmallVsHunyuan: "Herbalist · Metric Indoor Small vs 3D",
   workshopDepthVsHunyuan: "Workshop · Depth vs 3D",
   herbalistDepthVsHunyuan: "Herbalist · Depth vs 3D",
+  semanticShopSigns: "Grammar · Semantic Shop Signs",
   connectedTerraceDay: "Voxel Terrace · Day",
   connectedTerraceNight: "Voxel Terrace · Night",
   addFloorStudy: "Voxel Terrace · Add Floor",
   grammarTownhouses: "Grammar · Townhouses",
   grammarMagicShops: "Grammar · Magic Shops",
   grammarWorkshops: "Grammar · Workshops",
+  minimumCapabilityStudy: "Massing · Minimum Capability Study",
+  towerCourtyard: "Massing · Tower Courtyard",
+  greenhouseArcade: "Massing · White Greenhouse",
+  civicDome: "Massing · Civic Dome",
+  agentQuarterDay: "Intent District · Day",
+  agentQuarterEvening: "Intent District · Evening",
   cottage: "1 × 1 Cottage",
   shop: "1 × 2 Shop",
   tower: "1 × 3 Tower",
@@ -319,6 +441,8 @@ const apiPill = document.querySelector("#api-pill code");
 const mapPanel = document.querySelector("#map-panel");
 const mapPreviewRoot = document.querySelector("#map-previews");
 const pipelineNote = document.querySelector("#pipeline-note");
+const massingExplorerRoot = document.querySelector("#massing-explorer");
+const intentDistrictSummary = document.querySelector("#intent-district-summary");
 const panelTitle = document.querySelector("#panel-title");
 const cityViewerPanel = document.querySelector("#city-viewer-panel");
 const cityViewerStatus = document.querySelector("#city-viewer-status");
@@ -339,23 +463,43 @@ if (cityViewerContext) document.documentElement.dataset.magicTownViewer = "loadi
 
 let activeObject = null;
 let activePipeline = null;
+let activeAnimationObjects = [];
 const configsByMode = {
   map: normalizeIsometricDevelopmentConfig(ISOMETRIC_DEVELOPMENT_PRESETS.magicLondonRiverfront),
   asset: normalizeIsometricAssetConfig(ISOMETRIC_ASSET_PRESETS.londonShopDepthAnything),
   vanishing: normalizeVanishingPointConfig(VANISHING_POINT_PRESETS.twoPointCuboid),
   comparison: normalizeAssetComparisonConfig(ASSET_COMPARISON_PRESETS.cottageMetricIndoorSmallVsHunyuan),
   voxel: normalizeVoxelBuildingConfig(VOXEL_BUILDING_PRESETS.connectedTerraceDay),
+  massing: normalizeVoxelMassingConfig(VOXEL_MASSING_PRESETS.civicDome),
+  district: normalizeVoxelIntentDistrictConfig(VOXEL_INTENT_DISTRICT_PRESETS.agentQuarterDay),
+  agentcity: normalizeVoxelIntentDistrictConfig({
+    ...(startupParams.get("time") === "evening"
+      ? VOXEL_INTENT_DISTRICT_PRESETS.agentQuarterEvening
+      : VOXEL_INTENT_DISTRICT_PRESETS.agentQuarterDay),
+    seed: startupParams.get("seed") ?? "agent-district-test"
+  }),
   parcel: normalizeParcelBlueprintConfig(PARCEL_BLUEPRINT_PRESETS.shop)
 };
 let currentConfig = configsByMode[currentMode];
+const massingExplorer = createVoxelMassingExplorer({
+  root: massingExplorerRoot,
+  onApply: (config) => rebuildActive(config),
+  onRandomize: (scope) => {
+    const seed = `massing-${scope}-${Math.floor(Math.random() * 99999).toString().padStart(5, "0")}`;
+    rebuildActive(createExplorerRandomMassingConfig(seed, currentConfig, scope));
+  }
+});
 const initialCityScenario = createStarterCityWorkbench(getIsometricDevelopmentContract(configsByMode.map), { mapSeed: configsByMode.map.seed });
 let cityWorkbench = initialCityScenario.workbench;
+let cityViewerAssets = [];
 let citySeed = configsByMode.map.seed;
 let rebuildVersion = 0;
 let cityViewerLoadedVersion = null;
 let cityViewerLoading = false;
 let cityViewerRefreshTimer = null;
+let cityViewerRuntimeState = null;
 const clock = new THREE.Clock();
+let lastRuntimeDiagnosticsAt = 0;
 
 initializeUi();
 bindUi();
@@ -394,7 +538,11 @@ async function rebuildActive(config) {
 
   activePipeline = null;
   if (currentMode === "map") {
-    activeObject = createIsometricDevelopmentWorld({ ...currentConfig, cityState: cityWorkbench.getState() });
+    activeObject = createIsometricDevelopmentWorld({
+      ...currentConfig,
+      cityState: cityWorkbench.getState(),
+      assetRegistry: cityViewerAssets
+    });
   } else if (currentMode === "asset") {
     activePipeline = await createIsometricAssetRelief(currentConfig);
     if (version !== rebuildVersion) {
@@ -413,24 +561,42 @@ async function rebuildActive(config) {
     activeObject = createAssetComparisonLab(currentConfig);
   } else if (currentMode === "voxel") {
     activeObject = createVoxelBuildingLab(currentConfig);
+  } else if (currentMode === "massing") {
+    activeObject = createVoxelMassingLab(currentConfig);
+  } else if (currentMode === "district") {
+    activeObject = createVoxelIntentDistrict(currentConfig);
+  } else if (currentMode === "agentcity") {
+    activeObject = createAgentAcceptanceCity({
+      ...currentConfig,
+      acceptanceSeed: currentConfig.seed,
+      cityState: cityViewerRuntimeState,
+      assetRegistry: cityViewerAssets,
+      useHunyuanModels: 0
+    });
   } else {
     activeObject = createParcelBlueprint(currentConfig);
   }
 
   scene.add(activeObject);
+  activeAnimationObjects = collectAnimationObjects(activeObject);
   applyWorldLighting(currentConfig.sunTime);
+  applyDistrictBokeh(currentConfig.bokehStrength ?? 1, currentConfig.bokehBlur ?? 1);
   configureCameraForViewport();
   document.documentElement.dataset.magicTownMode = currentMode;
   document.documentElement.dataset.magicTownConfig = JSON.stringify(currentConfig);
-  document.documentElement.dataset.magicTownCityBuildings = currentMode === "map" ? String(Object.keys(cityWorkbench.getState().buildings).length) : "0";
-  document.documentElement.dataset.magicTownCityRoads = currentMode === "map" ? String(Object.values(cityWorkbench.getState().cells).filter((cell) => cell.infrastructure === "road").length) : "0";
+  document.documentElement.dataset.magicTownCityBuildings = currentMode === "map"
+    ? String(Object.keys(cityWorkbench.getState().buildings).length)
+    : currentMode === "agentcity" ? String(activeObject.userData.diagnostics?.buildings ?? 0) : "0";
+  document.documentElement.dataset.magicTownCityRoads = currentMode === "map"
+    ? String(Object.values(cityWorkbench.getState().cells).filter((cell) => cell.infrastructure === "road").length)
+    : currentMode === "agentcity" ? String(activeObject.userData.diagnostics?.roads ?? 0) : "0";
   document.documentElement.dataset.magicTownRenderedAssets = currentMode === "map" ? String(activeObject.userData.starterDistrictContract?.placements?.length ?? 0) : "0";
   document.documentElement.dataset.magicTownStarterDebug = currentMode === "map" ? JSON.stringify(activeObject.userData.starterDistrictContract ?? {}) : "{}";
   document.documentElement.dataset.magicTownHunyuanModels = currentMode === "map" ? JSON.stringify(activeObject.userData.getModelDiagnostics?.() ?? []) : "[]";
   document.documentElement.dataset.magicTownComparison = currentMode === "comparison"
     ? JSON.stringify(activeObject.userData.getComparisonDiagnostics?.() ?? {})
     : "{}";
-  document.documentElement.dataset.magicTownVoxel = currentMode === "voxel"
+  document.documentElement.dataset.magicTownVoxel = currentMode === "voxel" || currentMode === "massing" || currentMode === "district" || currentMode === "agentcity"
     ? JSON.stringify(activeObject.userData.getVoxelDiagnostics?.() ?? {})
     : "{}";
   document.documentElement.dataset.magicTownVanishingError = currentMode === "vanishing"
@@ -464,7 +630,8 @@ function addLights(targetScene) {
   const key = new THREE.DirectionalLight("#fff3c7", 3.1);
   key.position.set(4, 8, 5);
   key.castShadow = true;
-  key.shadow.mapSize.set(2048, 2048);
+  const shadowSize = mobilePerformanceProfile ? 1024 : 2048;
+  key.shadow.mapSize.set(shadowSize, shadowSize);
   key.shadow.camera.left = -9;
   key.shadow.camera.right = 9;
   key.shadow.camera.top = 9;
@@ -478,13 +645,16 @@ function addLights(targetScene) {
 }
 
 function applyWorldLighting(sunTime = 0.52) {
-  const style = currentMode === "voxel" ? voxelDaylightStyle(sunTime) : getDaylightStyle(sunTime);
+  const style = currentMode === "voxel" || currentMode === "massing" || currentMode === "district" || currentMode === "agentcity"
+    ? voxelDaylightStyle(sunTime)
+    : getDaylightStyle(sunTime);
   scene.background.copy(style.skyColor);
   worldLights.ambient.color.copy(style.ambientSky);
   worldLights.ambient.groundColor.copy(style.ambientGround);
-  worldLights.ambient.intensity = style.ambientIntensity;
+  const massingContrast = currentMode === "massing";
+  worldLights.ambient.intensity = style.ambientIntensity * (massingContrast ? 0.72 : 1);
   worldLights.key.color.copy(style.sunColor);
-  worldLights.key.intensity = style.sunIntensity;
+  worldLights.key.intensity = style.sunIntensity * (massingContrast ? 1.2 : 1);
   worldLights.key.position.copy(style.sunPosition);
   worldLights.rim.color.copy(style.rgbTint);
   worldLights.rim.intensity = style.rimIntensity;
@@ -546,6 +716,16 @@ function buildSliderUi() {
         if (activeObject?.userData.config) activeObject.userData.config.sunTime = currentConfig.sunTime;
         document.documentElement.dataset.magicTownConfig = JSON.stringify(currentConfig);
         applyWorldLighting(currentConfig.sunTime);
+        syncUi();
+        syncApiPill();
+        return;
+      }
+      if (["bokehStrength", "bokehBlur"].includes(definition.key) && isSurfaceVoxelWorld()) {
+        currentConfig = { ...currentConfig, [definition.key]: Number(input.value) };
+        configsByMode[currentMode] = currentConfig;
+        if (activeObject?.userData?.config) activeObject.userData.config[definition.key] = currentConfig[definition.key];
+        document.documentElement.dataset.magicTownConfig = JSON.stringify(currentConfig);
+        applyDistrictBokeh(currentConfig.bokehStrength, currentConfig.bokehBlur);
         syncUi();
         syncApiPill();
         return;
@@ -629,6 +809,48 @@ function bindUi() {
     edgePanPointer.x = (event.clientX - rect.left) / rect.width;
     edgePanPointer.y = (event.clientY - rect.top) / rect.height;
     edgePanPointer.active = true;
+    updateDistrictSurfacePointer(event, rect);
+  });
+  renderer.domElement.addEventListener("pointerdown", (event) => {
+    if (!isSurfaceVoxelWorld() || districtSurfacePointer.id != null) return;
+    districtSurfacePointer.id = event.pointerId;
+    districtSurfacePointer.x = event.clientX;
+    districtSurfacePointer.y = event.clientY;
+    districtSurfacePointer.startX = event.clientX;
+    districtSurfacePointer.startY = event.clientY;
+    districtSurfacePointer.moved = false;
+    districtSurfacePointer.pointerType = event.pointerType;
+    renderer.domElement.setPointerCapture?.(event.pointerId);
+  });
+  const releaseDistrictPointer = (event) => {
+    if (districtSurfacePointer.id !== event.pointerId) return;
+    renderer.domElement.releasePointerCapture?.(event.pointerId);
+    if (event.type === "pointerup" && districtSurfacePointer.pointerType === "touch" && !districtSurfacePointer.moved) {
+      const now = performance.now();
+      const closeInTime = now - districtViewGesture.lastTapTime <= 360;
+      const closeOnScreen = Math.hypot(
+        event.clientX - districtViewGesture.lastTapX,
+        event.clientY - districtViewGesture.lastTapY
+      ) <= 28;
+      if (closeInTime && closeOnScreen) {
+        event.preventDefault();
+        toggleDistrictViewDistance();
+        districtViewGesture.lastTouchToggleAt = now;
+        districtViewGesture.lastTapTime = 0;
+      } else {
+        districtViewGesture.lastTapTime = now;
+        districtViewGesture.lastTapX = event.clientX;
+        districtViewGesture.lastTapY = event.clientY;
+      }
+    }
+    districtSurfacePointer.id = null;
+  };
+  renderer.domElement.addEventListener("pointerup", releaseDistrictPointer);
+  renderer.domElement.addEventListener("pointercancel", releaseDistrictPointer);
+  renderer.domElement.addEventListener("dblclick", (event) => {
+    if (!isSurfaceVoxelWorld() || performance.now() - districtViewGesture.lastTouchToggleAt < 500) return;
+    event.preventDefault();
+    toggleDistrictViewDistance();
   });
   renderer.domElement.addEventListener("pointerleave", () => {
     edgePanPointer.active = false;
@@ -683,19 +905,23 @@ async function loadCityViewerState({ force = false } = {}) {
     const payload = await response.json();
     if (!response.ok) throw new Error(`${payload.code ?? response.status}: ${payload.message ?? "无法读取城市"}`);
     if (force || payload.city_version !== cityViewerLoadedVersion) {
+      cityViewerAssets = Array.isArray(payload.assets) ? payload.assets : [];
       cityWorkbench = createCityWorkbench(payload.state);
-      citySeed = payload.state.mapSeed ?? configsByMode.map.seed;
-      const viewerConfig = normalizeIsometricDevelopmentConfig({
-        ...ISOMETRIC_DEVELOPMENT_PRESETS.magicLondonRiverfront,
+      cityViewerRuntimeState = payload.state;
+      citySeed = payload.state.mapSeed ?? configsByMode.agentcity.seed;
+      const viewerConfig = normalizeVoxelIntentDistrictConfig({
+        ...VOXEL_INTENT_DISTRICT_PRESETS.agentQuarterDay,
         seed: citySeed,
-        mapCurvature: 0,
-        perspective: 0,
-        useHunyuanModels: 0,
-        buildingParallaxStrength: 0.12,
-        cameraMode: "play"
+        worldColumns: payload.state.world?.grid?.columns ?? 50,
+        worldRows: payload.state.world?.grid?.rows ?? 50,
+        bokehStrength: VOXEL_INTENT_DISTRICT_PRESETS.agentQuarterDay.bokehStrength,
+        bokehBlur: VOXEL_INTENT_DISTRICT_PRESETS.agentQuarterDay.bokehBlur
       });
-      configsByMode.map = viewerConfig;
-      currentMode = "map";
+      configsByMode.agentcity = viewerConfig;
+      currentMode = "agentcity";
+      modeControl.value = currentMode;
+      rebuildPresetOptions();
+      buildSliderUi();
       await rebuildActive(viewerConfig);
       cityViewerLoadedVersion = payload.city_version;
     }
@@ -758,6 +984,44 @@ function syncUi() {
         : formatSliderValue(value, input.step);
     }
   });
+  const massingMode = currentMode === "massing";
+  massingExplorer.setVisible(massingMode);
+  if (massingMode) {
+    massingExplorer.sync(
+      currentConfig,
+      activeObject?.userData?.getVoxelDiagnostics?.() ?? null
+    );
+  }
+  syncIntentDistrictSummary();
+}
+
+function syncIntentDistrictSummary() {
+  const districtMode = currentMode === "district";
+  intentDistrictSummary.hidden = !districtMode;
+  intentDistrictSummary.replaceChildren();
+  if (!districtMode) return;
+  const heading = document.createElement("div");
+  heading.className = "intent-district-heading";
+  const eyebrow = document.createElement("p");
+  eyebrow.className = "eyebrow";
+  eyebrow.textContent = "Agent-authored semantics";
+  const title = document.createElement("h2");
+  title.textContent = "Building intents";
+  heading.append(eyebrow, title);
+  const cards = document.createElement("div");
+  cards.className = "intent-district-cards";
+  Object.values(currentConfig.intents ?? {}).forEach((intent) => {
+    const card = document.createElement("article");
+    const name = document.createElement("strong");
+    name.textContent = intent.name;
+    const purpose = document.createElement("p");
+    purpose.textContent = intent.purpose;
+    const traits = document.createElement("small");
+    traits.textContent = `${intent.frontage} · ${intent.access} · ${intent.composition}`;
+    card.append(name, purpose, traits);
+    cards.append(card);
+  });
+  intentDistrictSummary.append(heading, cards);
 }
 
 function syncMapPreview() {
@@ -798,6 +1062,10 @@ function syncApiPill() {
     apiPill.textContent = "MagicTown.compareAssetRepresentations({ depthStrength, comparisonYaw, showBounds, depthWireframe })";
   } else if (currentMode === "voxel") {
     apiPill.textContent = "MagicTown.generateVoxelStreet({ floorPrograms: [{ purpose: 'shop', windowRatio: 0.86 }, { purpose: 'home', windowRatio: 0.32 }], cornerFacades: 'both', roofForm: 'hip' })";
+  } else if (currentMode === "massing") {
+    apiPill.textContent = `Massing Explorer · ${currentConfig.masses.length} nodes · ${currentConfig.relations.length} relations · MagicTown.getObject().userData.getVoxelDiagnostics()`;
+  } else if (currentMode === "district") {
+    apiPill.textContent = "BuildingIntent → Street + Massing adapters · MagicTown.generateIntentDistrict({ intents })";
   } else {
     apiPill.textContent = `MagicTown.previewParcel({ footprint: '${currentConfig.footprint}', floors: ${currentConfig.floors}, maxHeight: ${currentConfig.maxHeight} })`;
   }
@@ -812,6 +1080,8 @@ function exposeAgentApi() {
       vanishing: VANISHING_POINT_PRESETS,
       comparison: ASSET_COMPARISON_PRESETS,
       voxel: VOXEL_BUILDING_PRESETS,
+      massing: VOXEL_MASSING_PRESETS,
+      district: VOXEL_INTENT_DISTRICT_PRESETS,
       parcel: PARCEL_BLUEPRINT_PRESETS
     },
     setMode(mode) {
@@ -850,6 +1120,46 @@ function exposeAgentApi() {
       setMode("voxel", { ...configsByMode.voxel, ...config });
       return this.getParams();
     },
+    generateVoxelMassing(config = {}) {
+      setMode("massing", { ...VOXEL_MASSING_PRESETS.minimumCapabilityStudy, ...config });
+      return this.getParams();
+    },
+    randomizeVoxelMassing(scope = "all", seed = Date.now()) {
+      setMode("massing", createExplorerRandomMassingConfig(seed, configsByMode.massing, scope));
+      return this.getParams();
+    },
+    generateIntentDistrict(config = {}) {
+      setMode("district", { ...configsByMode.district, ...config });
+      return this.getParams();
+    },
+    generateAgentAcceptanceCity(config = {}) {
+      setMode("agentcity", { ...configsByMode.agentcity, ...config });
+      return this.getParams();
+    },
+    getAgentAcceptanceReport() {
+      return structuredClone(activeObject?.userData?.acceptanceReport ?? null);
+    },
+    setCameraView({ position, target, zoom } = {}) {
+      if (Array.isArray(position) && position.length === 3) camera.position.set(...position.map(Number));
+      if (Array.isArray(target) && target.length === 3) controls.target.set(...target.map(Number));
+      if (camera.isOrthographicCamera && Number.isFinite(Number(zoom))) camera.zoom = Number(zoom);
+      camera.lookAt(controls.target);
+      camera.updateProjectionMatrix();
+      controls.update();
+      return { position: camera.position.toArray(), target: controls.target.toArray(), zoom: camera.zoom ?? 1 };
+    },
+    createBuildingIntent(input = {}) {
+      return normalizeBuildingIntent(input);
+    },
+    adaptBuildingIntentToStreet(input = {}, overrides = {}) {
+      return adaptBuildingIntentToStreetConfig(input, overrides);
+    },
+    adaptBuildingIntentToMassing(input = {}, overrides = {}) {
+      return adaptBuildingIntentToMassingConfig(input, overrides);
+    },
+    getBuildingIntentCatalog() {
+      return getBuildingIntentCatalog();
+    },
     previewParcel(config = {}) {
       setMode("parcel", { ...configsByMode.parcel, ...config });
       return this.getParams();
@@ -866,9 +1176,13 @@ function exposeAgentApi() {
             ? "comparison"
             : MODES.voxel.presets[name]
               ? "voxel"
-              : MODES.parcel.presets[name]
-                ? "parcel"
-                : currentMode;
+              : MODES.massing.presets[name]
+                ? "massing"
+                : MODES.district.presets[name]
+                  ? "district"
+                  : MODES.parcel.presets[name]
+                    ? "parcel"
+                    : currentMode;
       const preset = MODES[mode].presets[name] ?? MODES[mode].presets[MODES[mode].defaultPreset];
       setMode(mode, { ...preset, ...overrides });
       return this.getParams();
@@ -916,6 +1230,12 @@ function exposeAgentApi() {
     createVoxelBuildingSpec(options = {}) {
       return createBuildingSpec(options);
     },
+    createUrbanMassingSpec(options = {}) {
+      return createUrbanMassingSpec(options);
+    },
+    createVoxelMassingObject(options = {}) {
+      return createVoxelMassingLab(options);
+    },
     getVoxelGrammarCatalog() {
       return {
         specVersion: BUILDING_SPEC_VERSION,
@@ -926,7 +1246,8 @@ function exposeAgentApi() {
         roofForms: [...ROOF_FORM_IDS],
         cornerFacadeModes: [...CORNER_FACADE_MODE_IDS],
         floorWindowRatioRange: [0.15, 0.9],
-        ridgePositionRange: [0, 1]
+        ridgePositionRange: [0, 1],
+        massing: getUrbanMassingCatalog()
       };
     },
     getWorldContract(config = configsByMode.map) {
@@ -989,8 +1310,11 @@ function exposeAgentApi() {
 
 function animate() {
   requestAnimationFrame(animate);
+  renderer.info.reset();
   const delta = clock.getDelta();
   const elapsed = clock.elapsedTime;
+  const refreshRuntimeDiagnostics = elapsed - lastRuntimeDiagnosticsAt >= 0.5;
+  if (refreshRuntimeDiagnostics) lastRuntimeDiagnosticsAt = elapsed;
 
   updatePlayCamera(delta);
 
@@ -999,7 +1323,7 @@ function animate() {
     if (activeObject.userData?.updateParallax) {
       activeObject.userData.updateParallax(camera);
     }
-    activeObject.traverse((object) => {
+    activeAnimationObjects.forEach((object) => {
       if (!object.userData) return;
       if (object.userData.spin) {
         object.rotation.y += object.userData.spin * 0.01;
@@ -1018,15 +1342,23 @@ function animate() {
     });
   }
 
-  if (currentMode === "map") {
+  if (refreshRuntimeDiagnostics && currentMode === "map") {
     document.documentElement.dataset.magicTownHunyuanModels = JSON.stringify(activeObject?.userData?.getModelDiagnostics?.() ?? []);
-  } else if (currentMode === "comparison") {
+  } else if (refreshRuntimeDiagnostics && currentMode === "comparison") {
     document.documentElement.dataset.magicTownComparison = JSON.stringify(activeObject?.userData?.getComparisonDiagnostics?.() ?? {});
   }
 
   controls.update();
   conformPlayCameraToTerrain();
+  if (isSurfaceVoxelWorld()) {
+    updateDistrictViewTransition(delta);
+    configureDistrictSurfaceCamera();
+  }
   camera.updateMatrixWorld();
+  activeObject?.userData?.updateView?.(camera, renderQuality.mobile ? 4 : 8, {
+    width: renderer.domElement.clientWidth,
+    height: renderer.domElement.clientHeight
+  });
   const baseFitDiagnostics = activeObject?.userData?.updateBaseFit?.(
     camera,
     currentMode === "map" && currentConfig?.cameraMode === "play",
@@ -1036,7 +1368,7 @@ function animate() {
       focusWorld: controls.target.toArray()
     }
   );
-  if (baseFitDiagnostics) {
+  if (baseFitDiagnostics && refreshRuntimeDiagnostics) {
     document.documentElement.dataset.magicTownBaseFitEnabled = String(baseFitDiagnostics.enabled);
     document.documentElement.dataset.magicTownBaseFitErrorPx = baseFitDiagnostics.maxAnchorErrorPx.toFixed(6);
     document.documentElement.dataset.magicTownBaseFitSprites = String(baseFitDiagnostics.spriteCount);
@@ -1045,7 +1377,9 @@ function animate() {
     document.documentElement.dataset.magicTownParallaxViewOffset = baseFitDiagnostics.maxParallaxViewOffset.toFixed(6);
     document.documentElement.dataset.magicTownParallaxUvShift = baseFitDiagnostics.maxParallaxUvShift.toFixed(6);
     document.documentElement.dataset.magicTownUprightScaleRange = baseFitDiagnostics.uprightScaleRatioRange.map((value) => value.toFixed(4)).join(",");
-  } else {
+    document.documentElement.dataset.magicTownBuildingSortRule = baseFitDiagnostics.buildingSortRule ?? "";
+    document.documentElement.dataset.magicTownBuildingRenderOrders = JSON.stringify(baseFitDiagnostics.entries.map((entry) => ({ assetId: entry.assetId, renderOrder: entry.renderOrder })));
+  } else if (!baseFitDiagnostics && refreshRuntimeDiagnostics) {
     delete document.documentElement.dataset.magicTownBaseFitEnabled;
     delete document.documentElement.dataset.magicTownBaseFitErrorPx;
     delete document.documentElement.dataset.magicTownBaseFitSprites;
@@ -1054,21 +1388,96 @@ function animate() {
     delete document.documentElement.dataset.magicTownParallaxViewOffset;
     delete document.documentElement.dataset.magicTownParallaxUvShift;
     delete document.documentElement.dataset.magicTownUprightScaleRange;
+    delete document.documentElement.dataset.magicTownBuildingSortRule;
+    delete document.documentElement.dataset.magicTownBuildingRenderOrders;
   }
-  renderer.render(scene, camera);
+  if (isSurfaceVoxelWorld()) {
+    renderPass.camera = camera;
+    districtDepthOfField.camera = camera;
+    districtDepthOfField.uniforms.focus.value = camera.position.distanceTo(controls.target);
+    districtDepthOfField.enabled = (currentConfig?.bokehStrength ?? 1) * (currentConfig?.bokehBlur ?? 1) > 0.001;
+    composer.render();
+  } else {
+    districtDepthOfField.enabled = false;
+    renderer.render(scene, camera);
+  }
+  updateDynamicResolution(delta, elapsed);
+  if (refreshRuntimeDiagnostics) publishRenderDiagnostics();
+}
+
+function applyDistrictBokeh(strength = 1, blur = 1) {
+  const normalizedStrength = THREE.MathUtils.clamp(Number(strength) || 0, 0, 4);
+  const normalizedBlur = THREE.MathUtils.clamp(Number(blur) || 0, 0, 6);
+  districtDepthOfField.uniforms.aperture.value = districtBokehDefaults.aperture * normalizedStrength;
+  districtDepthOfField.uniforms.maxblur.value = districtBokehDefaults.maxblur * normalizedBlur;
+}
+
+function collectAnimationObjects(root) {
+  const objects = [];
+  root?.traverse((object) => {
+    if (object.userData?.spin || object.userData?.float || object.userData?.waterWave) objects.push(object);
+  });
+  return objects;
+}
+
+function updateDynamicResolution(delta, elapsed) {
+  if (!Number.isFinite(delta) || delta <= 0 || delta > 0.25) return;
+  const frameMs = delta * 1000;
+  renderQuality.averageFrameMs += (frameMs - renderQuality.averageFrameMs) * 0.05;
+  renderQuality.stableFrames += 1;
+  if (elapsed * 1000 - renderQuality.lastAdjustmentMs < 1500) return;
+  let nextPixelRatio = renderQuality.pixelRatio;
+  if (renderQuality.averageFrameMs > 18.25 && renderQuality.stableFrames >= 24) {
+    nextPixelRatio -= 0.1;
+  } else if (renderQuality.averageFrameMs < 14.25 && renderQuality.stableFrames >= 150) {
+    nextPixelRatio += 0.1;
+  } else {
+    return;
+  }
+  nextPixelRatio = THREE.MathUtils.clamp(
+    Number(nextPixelRatio.toFixed(2)),
+    renderQuality.minPixelRatio,
+    Math.min(renderQuality.maxPixelRatio, window.devicePixelRatio)
+  );
+  renderQuality.stableFrames = 0;
+  renderQuality.lastAdjustmentMs = elapsed * 1000;
+  if (Math.abs(nextPixelRatio - renderQuality.pixelRatio) < 0.01) return;
+  renderQuality.pixelRatio = nextPixelRatio;
+  renderer.setPixelRatio(nextPixelRatio);
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+  composer.setPixelRatio(nextPixelRatio);
+  composer.setSize(window.innerWidth, window.innerHeight);
+}
+
+function publishRenderDiagnostics() {
+  document.documentElement.dataset.magicTownPixelRatio = renderQuality.pixelRatio.toFixed(2);
+  document.documentElement.dataset.magicTownFrameMs = renderQuality.averageFrameMs.toFixed(2);
+  document.documentElement.dataset.magicTownDrawCalls = String(renderer.info.render.calls);
+  document.documentElement.dataset.magicTownTriangles = String(renderer.info.render.triangles);
+  document.documentElement.dataset.magicTownDistrictCamera = isSurfaceVoxelWorld()
+    ? JSON.stringify(camera.userData.districtSurface ?? {})
+    : "{}";
+  document.documentElement.dataset.magicTownPrefabLod = currentMode === "district"
+    ? JSON.stringify(activeObject?.userData?.getPrefabLodDiagnostics?.() ?? {})
+    : "{}";
 }
 
 function onResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
   configureCameraForViewport();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  composer.setSize(window.innerWidth, window.innerHeight);
 }
 
 function configureCameraForViewport() {
   const isMap = currentMode === "map";
   const isParcel = currentMode === "parcel";
   const isVanishing = currentMode === "vanishing";
-  const isVoxel = currentMode === "voxel";
+  const isMassing = currentMode === "massing";
+  const isDistrict = currentMode === "district";
+  const isAgentCity = currentMode === "agentcity";
+  const isSurfaceWorld = isDistrict || isAgentCity;
+  const isVoxel = currentMode === "voxel" || currentMode === "massing";
   const perspective = isMap ? currentConfig?.perspective ?? 0 : 0;
   if (isParcel || isVanishing || isVoxel || (isMap && perspective <= 0.001)) {
     const aspect = window.innerWidth / window.innerHeight;
@@ -1078,6 +1487,7 @@ function configureCameraForViewport() {
         ? 10
         : isVoxel
           ? Math.max(15, (currentConfig?.buildingCount ?? 3) * 4 + 8)
+            * (isMassing ? currentConfig?.viewFraming?.zoom ?? 1.12 : 1)
           : Math.max(currentConfig?.columns ?? 1, currentConfig?.rows ?? 2) * 4 + 8;
     if (!camera.isOrthographicCamera) {
       controls.dispose();
@@ -1095,8 +1505,12 @@ function configureCameraForViewport() {
       camera.position.set(-3, 0, 30);
       controls.target.set(-3, 0, 0);
     } else if (isVoxel) {
-      camera.position.set(18, 14.5, 22);
-      controls.target.set(0, 5.4, 0.4);
+      const framingOffset = isMassing
+        ? new THREE.Vector3(0.774, 0, -0.633)
+          .multiplyScalar(currentConfig?.viewFraming?.horizontalOffset ?? 1.75)
+        : new THREE.Vector3();
+      camera.position.set(18, 14.5, 22).add(framingOffset);
+      controls.target.set(0, 5.4, 0.4).add(framingOffset);
     } else {
       camera.position.set(isMap ? 124 : 11, isMap ? groundY + 152 : 22.2, isMap ? 124 : 11);
       controls.target.set(0, groundY, isMap ? -1 : 0);
@@ -1142,6 +1556,28 @@ function configureCameraForViewport() {
   const narrow = window.innerWidth <= 720;
   const assetPreview = currentMode === "asset";
   const comparisonPreview = currentMode === "comparison";
+  if (isSurfaceWorld) {
+    const institutionWidth = currentConfig?.institutionFootprint?.widthCells ?? 5;
+    const institutionDepth = currentConfig?.institutionFootprint?.depthCells ?? 3;
+    const districtScale = 1
+      + Math.max(0, institutionWidth - 5) * 0.08
+      + Math.max(0, institutionDepth - 3) * 0.1;
+    camera.fov = narrow ? 40 : 34;
+    camera.near = 0.1;
+    camera.far = 320;
+    districtSurfaceNavigation.nearScale = districtScale;
+    districtSurfaceNavigation.farScale = districtScale * 1.9;
+    districtSurfaceNavigation.targetCameraScale = districtSurfaceNavigation.viewMode === "far"
+      ? districtSurfaceNavigation.farScale
+      : districtSurfaceNavigation.nearScale;
+    if (!districtSurfaceNavigation.initialized) {
+      districtSurfaceNavigation.cameraScale = districtSurfaceNavigation.targetCameraScale;
+    }
+    configureDistrictSurfaceCamera(districtSurfaceNavigation.cameraScale);
+    syncCameraInteraction();
+    camera.updateProjectionMatrix();
+    return;
+  }
   camera.fov = comparisonPreview ? (narrow ? 52 : 42) : narrow ? 48 : 38;
   camera.position.set(
     comparisonPreview ? (narrow ? 10.5 : 11.5) : narrow ? (assetPreview ? 19 : 48) : assetPreview ? 24 : 55,
@@ -1158,12 +1594,132 @@ function configureCameraForViewport() {
 function syncCameraInteraction() {
   const playMode = currentMode === "map" && currentConfig?.cameraMode === "play";
   const flatProjectionLab = currentMode === "vanishing";
-  controls.enableRotate = !playMode && !flatProjectionLab;
-  controls.enablePan = true;
-  controls.enableZoom = true;
-  controls.enableDamping = !playMode;
+  const surfaceDistrict = isSurfaceVoxelWorld();
+  controls.enabled = !surfaceDistrict;
+  controls.enableRotate = !playMode && !flatProjectionLab && !surfaceDistrict;
+  controls.enablePan = !surfaceDistrict;
+  controls.enableZoom = !surfaceDistrict;
+  controls.enableDamping = !playMode && !surfaceDistrict;
   controls.mouseButtons.LEFT = playMode ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
   controls.mouseButtons.RIGHT = THREE.MOUSE.PAN;
+}
+
+function configureDistrictSurfaceCamera(scale = districtSurfaceNavigation.cameraScale) {
+  const navigation = activeObject?.userData?.surfaceNavigation ?? {
+    radius: currentConfig?.planetRadius ?? 44,
+    bounds: { minX: -18, maxX: 18, minZ: -14, maxZ: 14 },
+    yawDegrees: 45,
+    elevationDegrees: 35.264,
+    cameraDistance: 58,
+    targetHeight: 4.8
+  };
+  if (!districtSurfaceNavigation.initialized || districtSurfaceNavigation.radius !== navigation.radius) {
+    districtSurfaceNavigation.initialized = true;
+    districtSurfaceNavigation.flatX = THREE.MathUtils.clamp(2.5, navigation.bounds.minX, navigation.bounds.maxX);
+    districtSurfaceNavigation.flatZ = THREE.MathUtils.clamp(-5, navigation.bounds.minZ, navigation.bounds.maxZ);
+    districtSurfaceNavigation.radius = navigation.radius;
+  }
+  districtSurfaceNavigation.cameraScale = scale;
+  const frame = getVoxelSphereFrame(
+    districtSurfaceNavigation.flatX,
+    districtSurfaceNavigation.flatZ,
+    navigation.radius
+  );
+  const yaw = THREE.MathUtils.degToRad(navigation.yawDegrees);
+  const elevation = THREE.MathUtils.degToRad(navigation.elevationDegrees);
+  const distance = navigation.cameraDistance * scale;
+  const horizontal = frame.tangentX.clone().multiplyScalar(Math.cos(yaw))
+    .addScaledVector(frame.tangentZ, Math.sin(yaw))
+    .normalize();
+  const focus = frame.surface.clone().addScaledVector(frame.normal, navigation.targetHeight);
+  camera.position.copy(focus)
+    .addScaledVector(horizontal, distance * Math.cos(elevation))
+    .addScaledVector(frame.normal, distance * Math.sin(elevation));
+  camera.up.copy(frame.normal);
+  camera.lookAt(focus);
+  controls.target.copy(focus);
+  districtSurfaceNavigation.radialDistance = camera.position.distanceTo(new THREE.Vector3(0, -navigation.radius, 0));
+  camera.userData.districtSurface = {
+    flatX: districtSurfaceNavigation.flatX,
+    flatZ: districtSurfaceNavigation.flatZ,
+    radialDistance: districtSurfaceNavigation.radialDistance,
+    yawDegrees: navigation.yawDegrees,
+    elevationDegrees: navigation.elevationDegrees,
+    viewMode: districtSurfaceNavigation.viewMode,
+    cameraScale: districtSurfaceNavigation.cameraScale,
+    targetCameraScale: districtSurfaceNavigation.targetCameraScale
+  };
+  document.documentElement.dataset.magicTownDistrictView = districtSurfaceNavigation.viewMode;
+}
+
+function toggleDistrictViewDistance() {
+  if (!isSurfaceVoxelWorld()) return;
+  districtSurfaceNavigation.viewMode = districtSurfaceNavigation.viewMode === "near" ? "far" : "near";
+  districtSurfaceNavigation.targetCameraScale = districtSurfaceNavigation.viewMode === "far"
+    ? districtSurfaceNavigation.farScale
+    : districtSurfaceNavigation.nearScale;
+  document.documentElement.dataset.magicTownDistrictView = districtSurfaceNavigation.viewMode;
+}
+
+function updateDistrictViewTransition(delta) {
+  const target = districtSurfaceNavigation.targetCameraScale;
+  const alpha = 1 - Math.exp(-Math.max(0, delta) * 7);
+  districtSurfaceNavigation.cameraScale = THREE.MathUtils.lerp(
+    districtSurfaceNavigation.cameraScale,
+    target,
+    alpha
+  );
+  if (Math.abs(districtSurfaceNavigation.cameraScale - target) < 0.0005) {
+    districtSurfaceNavigation.cameraScale = target;
+  }
+}
+
+function updateDistrictSurfacePointer(event, rect) {
+  if (!isSurfaceVoxelWorld() || districtSurfacePointer.id !== event.pointerId) return;
+  const dx = event.clientX - districtSurfacePointer.x;
+  const dy = event.clientY - districtSurfacePointer.y;
+  if (Math.hypot(
+    event.clientX - districtSurfacePointer.startX,
+    event.clientY - districtSurfacePointer.startY
+  ) > 6) districtSurfacePointer.moved = true;
+  districtSurfacePointer.x = event.clientX;
+  districtSurfacePointer.y = event.clientY;
+  if (dx === 0 && dy === 0) return;
+  const navigation = activeObject?.userData?.surfaceNavigation;
+  if (!navigation) return;
+  const frame = getVoxelSphereFrame(
+    districtSurfaceNavigation.flatX,
+    districtSurfaceNavigation.flatZ,
+    navigation.radius
+  );
+  const yaw = THREE.MathUtils.degToRad(navigation.yawDegrees);
+  const elevation = THREE.MathUtils.degToRad(navigation.elevationDegrees);
+  const horizontal = frame.tangentX.clone().multiplyScalar(Math.cos(yaw))
+    .addScaledVector(frame.tangentZ, Math.sin(yaw))
+    .normalize();
+  const viewDirection = horizontal.clone().multiplyScalar(-Math.cos(elevation))
+    .addScaledVector(frame.normal, -Math.sin(elevation));
+  const screenRight = new THREE.Vector3().crossVectors(viewDirection, frame.normal).normalize();
+  const visibleHeight = 2 * navigation.cameraDistance * districtSurfaceNavigation.cameraScale
+    * Math.tan(THREE.MathUtils.degToRad(camera.fov) * 0.5);
+  const unitsPerPixel = visibleHeight / Math.max(1, rect.height);
+  const movement = screenRight.multiplyScalar(-dx * unitsPerPixel)
+    .addScaledVector(horizontal, -dy * unitsPerPixel / Math.max(0.45, Math.sin(elevation)));
+  districtSurfaceNavigation.flatX = THREE.MathUtils.clamp(
+    districtSurfaceNavigation.flatX + movement.dot(frame.tangentX),
+    navigation.bounds.minX,
+    navigation.bounds.maxX
+  );
+  districtSurfaceNavigation.flatZ = THREE.MathUtils.clamp(
+    districtSurfaceNavigation.flatZ + movement.dot(frame.tangentZ),
+    navigation.bounds.minZ,
+    navigation.bounds.maxZ
+  );
+  configureDistrictSurfaceCamera();
+}
+
+function isSurfaceVoxelWorld() {
+  return currentMode === "district" || currentMode === "agentcity";
 }
 
 function getMapGroundHeight(x, z) {
@@ -1231,6 +1787,8 @@ function createCopyPayload() {
   if (currentMode === "vanishing") return getVanishingPointWarpContract(currentConfig);
   if (currentMode === "comparison") return getAssetComparisonContract(currentConfig);
   if (currentMode === "voxel") return getVoxelBuildingContract(currentConfig);
+  if (currentMode === "massing") return activeObject?.userData?.getVoxelContract?.() ?? currentConfig;
+  if (currentMode === "district" || currentMode === "agentcity") return activeObject?.userData?.getVoxelContract?.() ?? currentConfig;
   return {
     mode: currentMode,
     config: currentConfig
@@ -1239,6 +1797,8 @@ function createCopyPayload() {
 
 function inferMode(config) {
   if (config.mode && MODES[config.mode]) return config.mode;
+  if ("intents" in config && ("magicBias" in config || config.id?.includes("quarter"))) return "district";
+  if ("masses" in config || config.specVersion === getUrbanMassingCatalog().specVersion) return "massing";
   if ("mapId" in config || "developmentColumns" in config || "developmentRows" in config || "cameraMode" in config || "perspective" in config || "showGrid" in config || "trainSpeed" in config) return "map";
   if ("leftVanishingDistance" in config || "rightVanishingDistance" in config || "footprintWidth" in config || "footprintDepth" in config) return "vanishing";
   if ("comparisonYaw" in config || "depthStrength" in config || "depthWireframe" in config || "showBounds" in config) return "comparison";

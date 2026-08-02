@@ -144,6 +144,25 @@ export function getAssetRegistry() {
   return structuredClone(ASSETS);
 }
 
+export function mergeAssetRegistry(runtimeDefinitions = []) {
+  const assets = new Map(ASSETS.map((asset) => [asset.assetId, asset]));
+  for (const definition of Array.isArray(runtimeDefinitions) ? runtimeDefinitions : []) {
+    const manifest = definition?.manifest ?? definition;
+    const assetId = definition?.id ?? definition?.assetId ?? manifest?.assetId;
+    if (!assetId || !manifest?.maps?.rgb || !manifest?.maps?.depth || !manifest?.maps?.normal) continue;
+    assets.set(assetId, {
+      ...manifest,
+      assetId,
+      archetype: definition?.archetype ?? manifest.archetype,
+      footprint: definition?.footprint ?? manifest.footprint,
+      tags: definition?.tags ?? manifest.tags ?? [],
+      source: definition?.source ?? manifest.source,
+      ownerPlayerId: definition?.owner_player_id ?? manifest.ownerPlayerId ?? null
+    });
+  }
+  return structuredClone([...assets.values()]);
+}
+
 export function findAssetCandidates(criteria = {}) {
   const requiredTags = new Set(criteria.tags ?? []);
   return ASSETS.filter((asset) => {

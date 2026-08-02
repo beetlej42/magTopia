@@ -12,7 +12,9 @@
     "worker": "node --env-file-if-exists=.env apps/server/worker-start.js",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
+    "agent:lan": "node scripts/start-agent-api-acceptance.mjs",
     "test": "node --test",
+    "test:agent-build": "node --test test/agentDistrictSimulation.test.js",
     "hunyuan3d": "node scripts/hunyuan3d.mjs"
   },
   "dependencies": {

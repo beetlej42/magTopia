@@ -17,6 +17,7 @@ export function createEngineContext(options = {}) {
 export function executeCityCommand(currentState, input, context = createEngineContext()) {
   switch (input.type) {
     case "construct_building": return constructBuilding(currentState, input, context);
+    case "upgrade_building": return upgradeBuilding(currentState, input, context);
     case "connect": return connect(currentState, input, context);
     case "reserve_construction": return reserveConstruction(currentState, input, context);
     case "complete_reserved_construction": return completeReservedConstruction(currentState, input, context);
@@ -24,6 +25,51 @@ export function executeCityCommand(currentState, input, context = createEngineCo
     case "advance_time": return advanceTime(currentState, input, context);
     default: return rejected(currentState, "UNSUPPORTED_COMMAND", `Unsupported city command: ${input.type}`);
   }
+}
+
+function upgradeBuilding(currentState, input, context) {
+  const building = currentState.buildings?.[input.buildingId];
+  if (!building) return rejected(currentState, "BUILDING_NOT_FOUND", `Unknown building ${input.buildingId}`);
+  const design = input.voxelDesign;
+  if (!design?.generation?.sourceSpec) return rejected(currentState, "INVALID_BUILDING_DESIGN", "Upgrade requires a versioned voxel design");
+  if (design.source?.buildingId !== building.id) return rejected(currentState, "BUILDING_DESIGN_TARGET_MISMATCH", "Upgrade design targets a different building");
+  if (design.source?.baseDesignId && (
+    building.voxelDesign?.id !== design.source.baseDesignId
+    || building.voxelDesign?.revision !== design.source.baseDesignRevision
+  )) {
+    return rejected(currentState, "BUILDING_DESIGN_BASE_CONFLICT", "Building changed after this upgrade design was created");
+  }
+  if (design.site?.lotId !== building.site?.lotId || design.site?.footprint !== building.site?.footprint) {
+    return rejected(currentState, "UPGRADE_FOOTPRINT_CHANGE_UNSUPPORTED", "The first upgrade version must preserve the existing footprint");
+  }
+  const next = cloneCityState(currentState);
+  const prior = next.buildings[building.id];
+  next.buildings[building.id] = {
+    ...prior,
+    program: {
+      ...prior.program,
+      name: design.intent?.name ?? prior.program?.name,
+      purpose: design.intent?.purpose ?? prior.program?.purpose,
+      description: design.intent?.description ?? prior.program?.description
+    },
+    voxelDesign: structuredClone(design),
+    designRevision: design.revision,
+    designHistory: [
+      ...(prior.designHistory ?? []),
+      prior.voxelDesign ? { designId: prior.voxelDesign.id, revision: prior.voxelDesign.revision, specHash: prior.voxelDesign.specHash } : null
+    ].filter(Boolean),
+    updatedAtTurn: next.turn + 1
+  };
+  bump(next);
+  appendEvent(next, {
+    type: "building_upgraded",
+    actor: input.actor ?? "agent:unknown",
+    buildingId: building.id,
+    designId: design.id,
+    designRevision: design.revision,
+    summary: `${next.buildings[building.id].program.name} was upgraded.`
+  }, context);
+  return accepted(currentState, next, { building: structuredClone(next.buildings[building.id]) });
 }
 
 function constructBuilding(currentState, input, context) {
@@ -166,6 +212,7 @@ function applyCompletedBuilding(next, { proposal, preview, buildingId, assetId, 
     assetId: assetId ?? null,
     assetPrompt: completeAssetPrompt(proposal),
     footprintCells: preview.footprintCells,
+    gradingPlan: structuredClone(preview.gradingPlan ?? null),
     createdAtTurn: next.turn
   };
   bump(next);

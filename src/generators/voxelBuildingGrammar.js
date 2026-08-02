@@ -1,4 +1,5 @@
 import { createRng } from "../utils/random.js";
+import { createLegacyBuildingMassingSpec } from "./voxelMassingGrammar.js";
 
 export const BUILDING_SPEC_VERSION = "0.2";
 export const FLOOR_USE_IDS = Object.freeze(["shop", "home", "workshop", "storage"]);
@@ -170,7 +171,7 @@ export function createBuildingSpec(options = {}) {
     detailDensity: options.detailDensity
   });
 
-  return {
+  const spec = {
     specVersion: BUILDING_SPEC_VERSION,
     id,
     index: Math.max(0, Math.round(options.index ?? 0)),
@@ -197,6 +198,8 @@ export function createBuildingSpec(options = {}) {
     materials,
     decorations,
     adjacency,
+    ...(options.intent ? { intent: structuredClone(options.intent) } : {}),
+    ...(options.metadata ? { metadata: structuredClone(options.metadata) } : {}),
     ports: {
       entrance: {
         face: "south",
@@ -224,6 +227,8 @@ export function createBuildingSpec(options = {}) {
       rightPartyWall: Boolean(adjacency.right)
     }
   };
+  spec.massing = createLegacyBuildingMassingSpec(spec);
+  return spec;
 }
 
 export function planFacadeGrammar(options = {}) {

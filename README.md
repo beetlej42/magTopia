@@ -11,11 +11,15 @@ and a city that looks like a coherent miniature model rather than a cinematic
 render or pixel-art sprite sheet.
 
 - Product and system direction: [docs/PROJECT_GUIDE.md](docs/PROJECT_GUIDE.md)
+- Core gameplay design: [docs/CORE_GAMEPLAY_DESIGN.md](docs/CORE_GAMEPLAY_DESIGN.md)
 - Agent network service architecture: [docs/AGENT_CITY_SERVICE.md](docs/AGENT_CITY_SERVICE.md)
 - Visual north star: [docs/VISUAL_TARGET.md](docs/VISUAL_TARGET.md)
 - Art, camera, palette, and asset contract: [docs/ART_DIRECTION.md](docs/ART_DIRECTION.md)
+- Player UI visual and interaction framework: [docs/UI_DIRECTION.md](docs/UI_DIRECTION.md)
 - Experimental procedural voxel vertical slice: [docs/VOXEL_BUILDING_SPIKE.md](docs/VOXEL_BUILDING_SPIKE.md)
 - Voxel `BuildingSpec v0.2`: [docs/VOXEL_BUILDING_SPEC_V0.2.md](docs/VOXEL_BUILDING_SPEC_V0.2.md)
+- General voxel `UrbanMassingSpec v0.1`: [docs/VOXEL_MASSING_SPEC_V0.1.md](docs/VOXEL_MASSING_SPEC_V0.1.md)
+- Unified two-stage Agent building design and upgrade API: [docs/BUILDING_DESIGN_API_V1.md](docs/BUILDING_DESIGN_API_V1.md)
 
 ## Run
 
@@ -47,17 +51,29 @@ Open `http://127.0.0.1:4183/` for the Agent discovery page, or `/dashboard` for 
 - `/agent/playbook.md`
 - `/openapi.json`
 
-Asset production chooses one of two providers:
+Asset production chooses one of three providers:
 
-- `qwen-image`: calls Alibaba Cloud Model Studio's native DashScope multimodal-generation endpoint with `qwen-image-2.0`, immediately downloads the temporary result, then derives RGB, mask, depth, and normal maps before publishing the asset;
+- `hunyuan-image` (production default): submits a geometry guide plus the Magic London style concept to `hy-image-v3.0`, generates a daylight lights-off base, performs a second structure-locked lights-on edit, then derives an aligned additive emissive map before publishing RGB, mask, depth, normal, and night-light assets;
+- `qwen-image`: retained as a legacy/fallback DashScope provider;
 - `codex-manual`: publishes the constrained prompt on the asset job and waits for a Codex/ChatGPT-generated PNG through the artifact endpoint.
 
-Set `DASHSCOPE_API_KEY` to enable automatic generation. `DASHSCOPE_BASE_URL` defaults to `https://dashscope.aliyuncs.com/api/v1` and can be replaced with the workspace-specific Beijing or Singapore endpoint assigned by Alibaba Cloud. The manual provider remains the automatic fallback when no DashScope key is configured.
+Set `HUNYUAN_IMAGE_API_KEY` (or `TENCENT_TOKENHUB_API_KEY`) and `MAGICTOWN_ASSET_PROVIDER=hunyuan-image` to enable production generation. The Hunyuan path is portable across macOS and Linux: it does not use Apple Vision or `xcrun`; paired-light extraction uses Python, NumPy, Pillow, and SciPy from `requirements-assets.txt`. Set `HUNYUAN_PYTHON_PATH` when the server's virtual environment is not `.venv`. Qwen remains available when `DASHSCOPE_API_KEY` is configured, and `codex-manual` remains the no-key fallback.
 
 Run PostgreSQL integration coverage with an isolated test database:
 
 ```bash
 MAGICTOWN_TEST_DATABASE_URL=postgres://localhost:5432/magictown_test pnpm test
+```
+
+For a disposable LAN-accessible Agent construction sandbox, first build the
+viewer and then start the in-memory acceptance service. It listens on all local
+interfaces, advertises the detected LAN IPv4 address, seeds each resource at
+JavaScript's maximum safe integer, and prints both a one-time Agent connection
+URL and a spherical voxel viewer URL with Bokeh depth of field and no UI:
+
+```bash
+pnpm run build
+pnpm run agent:lan
 ```
 
 ## Magic London Development Terrain
@@ -102,6 +118,12 @@ four-unit parcel is 32 voxels wide (`0.125` world unit per voxel). The demo
 supports one to three automatically joined terrace buildings, two to five base
 floors, vertical expansion, three roof forms, material schemes, decoration
 density, and functional day/night emissive lighting.
+
+The `Grammar · Semantic Shop Signs` preset adds three Agent-authored 4×4
+street emblems for potion, broom, and wand shops. The logical grid renders as
+micro-voxels fixed at half the building voxel size, and signs project sideways
+from lintel-safe entrance-side anchors by default. Existing frame, board, and
+emissive material IDs are reused; no purpose-specific prop model is required.
 
 ```js
 MagicTown.generateVoxelStreet({
@@ -154,6 +176,105 @@ last-write-wins. Hidden interior voxels are culled and visible cells are batched
 by material. Party-wall exposure is derived from both neighbouring roof
 envelopes. The production target remains a chunked greedy surface mesh rather
 than one draw call per voxel.
+
+## General voxel massing grammar
+
+`UrbanMassingSpec v0.1` adds the type-independent construction layer under the
+existing house grammar. A composition uses an edge-connected cell mask inside
+a 3 × 3 site and combines solid, framed, open, and ground masses. Each mass
+independently selects its plan shape, vertical profile, standard voids, cap,
+materials, and facade intent.
+
+Relations are typed as `separate`, `adjoin`, `portal`, or `stacked`; the source
+data never reduces future connection behavior to one boolean. `BuildingSpec
+v0.2` automatically exposes one derived solid mass, so the existing procedural
+street remains compatible.
+
+```js
+MagicTown.generateVoxelMassing({
+  widthCells: 2,
+  depthCells: 2,
+  masses: [
+    {
+      id: "main-hall",
+      type: "solid",
+      cells: [[0, 0]],
+      heightVoxels: 32,
+      cap: { type: "mansard", heightVoxels: 8 }
+    },
+    {
+      id: "slender-tower",
+      type: "solid",
+      cells: [[0, 0]],
+      placement: {
+        setbacksVoxels: { north: 6, east: 6, south: 6, west: 6 }
+      },
+      heightVoxels: 42,
+      planShape: "octagonal",
+      cap: { type: "spire", heightVoxels: 22 }
+    },
+    {
+      id: "glass-hall",
+      type: "framed",
+      cells: [[1, 0]],
+      heightVoxels: 22,
+      cap: { type: "glass_ridge", heightVoxels: 8 }
+    }
+  ],
+  relations: [
+    { type: "portal", from: "main-hall", to: "glass-hall" },
+    { type: "stacked", from: "main-hall", to: "slender-tower" }
+  ]
+});
+
+MagicTown.getVoxelGrammarCatalog().massing;
+```
+
+Select `Voxel Massing Grammar` in Studio to open the Massing Explorer. It provides
+four deterministic study modes—`Layout`, `Form`, `Detail`, and `Everything`—plus
+an editable 3x3 site grid, mass-node tabs, relation controls, JSON round-tripping,
+and live validation diagnostics. The regular `Random` button now generates a full
+composition, while the focused Explorer buttons keep unrelated design decisions
+stable for controlled comparison.
+
+`Massing · Civic Dome` is the first concept-quality baseline. Its coordinated
+classical facade order derives a continuous base course, floor strings, cornices,
+corner piers, entrance pediment, roofline chimneys, dome drum, and lantern from
+the same massing spec. Complete random studies also share one palette and facade
+order across their solid masses so generated buildings read as one composition.
+
+The same workflow is available from the console:
+
+```js
+MagicTown.randomizeVoxelMassing("layout", "site-study-01");
+MagicTown.randomizeVoxelMassing("form", "silhouette-study-01");
+MagicTown.randomizeVoxelMassing("detail", "facade-study-01");
+MagicTown.randomizeVoxelMassing("all", "option-01");
+```
+
+Framed masses default to white limestone members with a light translucent
+`lightGlass` panel. `framing` independently controls bay spacing, frame width,
+floor-beam spacing, and projected frame relief; the same rhythm continues over
+the glass ridge. Solid masses derive door and window bays only from long,
+flat principal facades; openings keep clear of chamfered and octagonal corners
+and receive layered stone surrounds, deep sills, contrasting inner sashes,
+mullions, transoms, fanlights, entrance steps, canopies, and emphasized paired
+columns. A one-cell mass can use
+`dimensionsVoxels` to stay logically 1 × 1 while occupying a slimmer physical
+plan inside that cell. `placement.setbacksVoxels` supplies independent
+north/east/south/west setbacks and `placement.offsetVoxels` supports
+asymmetric placement.
+
+`portal` relations derive aligned stone jambs, lintels, and thresholds on both
+sides of the cut. `stacked` relations derive a child base course and a host-roof
+apron so towers and drums meet their support cleanly. Ground masses expose
+`plain`, `bordered`, `courtyard`, and `garden` treatments with deterministic
+curbs, paving axes, and planters.
+
+Open masses expose `enclosure.sides` independently on all four facades. Each
+side accepts `auto`, `columns`, `open`, or `wall`, while column spacing, column
+width, beam height, and plinth height remain numeric controls. `auto` removes
+the side structure when its actual facade touches another non-ground mass.
 
 `cornerFacades` accepts `none`, `left`, `right`, or `both`. Only exposed ends
 of a terrace receive the additional facade; shared party walls remain closed.

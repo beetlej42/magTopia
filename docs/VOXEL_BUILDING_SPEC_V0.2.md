@@ -182,7 +182,9 @@ effect 60
 ## 当前边界
 
 - 退台目前只沿临街深度方向，尚未支持左右收分或独立侧翼。
-- 主体仍是矩形 floor stack；塔楼、L 形体块和屋面交谷留给后续版本。
+- `BuildingSpec` 主体仍是矩形 floor stack；塔楼、L 形体块和多体量组合由上层 `UrbanMassingSpec v0.1` 表达。
 - 后立面和内院尚未使用 bay grammar。
 - BuildingSpec 尚未写入服务端城市存档。
 - 生产网格目标仍是 chunked greedy mesh。
+
+每个 `BuildingSpec v0.2` 会自动附带一个派生的兼容 `solid` 体量。这不改变旧渲染路径，只让现有住宅/店铺语法可以作为通用体量系统中的单节点继续组合。

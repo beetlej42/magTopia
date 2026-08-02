@@ -1,4 +1,6 @@
-const FOOTPRINTS = new Set(["1x1", "1x2", "1x3", "2x2", "4x1", "4x2"]);
+const FOOTPRINTS = new Set(Array.from({ length: 6 }, (_, columnIndex) => (
+  Array.from({ length: 6 }, (_, rowIndex) => `${columnIndex + 1}x${rowIndex + 1}`)
+)).flat());
 const ENTRANCES = new Set(["north", "east", "south", "west"]);
 
 export function normalizeFootprint(value = "1x1") {
@@ -20,7 +22,12 @@ export function normalizeConstructionProposal(input = {}, context = {}) {
     id: input.id ?? context.createId?.("proposal") ?? `proposal-${Date.now()}`,
     actor: input.actor ?? "agent:unknown",
     type: "construct_building",
-    site: { lotId: String(input.site.lotId), footprint: footprint.id, entrance },
+    site: {
+      lotId: String(input.site.lotId),
+      footprint: footprint.id,
+      entrance,
+      entranceCellId: input.site.entranceCellId ?? input.site.entrance_cell_id ?? input.voxelDesign?.ports?.find((port) => port.type === "primary_entrance")?.frontageCellId ?? null
+    },
     program: {
       archetype: String(input.program.archetype),
       assetId: input.program.assetId ?? null,
@@ -34,7 +41,8 @@ export function normalizeConstructionProposal(input = {}, context = {}) {
       patterns: [...(input.design.patterns ?? [])],
       prompt: String(input.design.prompt).trim()
     },
-    connectionRequest: input.connectionRequest ?? null
+    connectionRequest: input.connectionRequest ?? null,
+    voxelDesign: input.voxelDesign ? structuredClone(input.voxelDesign) : null
   };
 }
 

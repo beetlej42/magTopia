@@ -1,4 +1,4 @@
-import { buildAssetPrompt, failAssetJob, finalizeAssetJob, generateAssetImage, prepareAssetMaps } from "./asset-production.js";
+import { ASSET_PROMPT_VERSION, buildAssetPrompt, failAssetJob, finalizeAssetJob, generateAssetBundle, prepareAssetMaps, resolveAssetGuideplate, resolveStyleReferences } from "./asset-production.js";
 
 export function createWorker({ repository, config, logger = console }) {
   const db = repository.database;
@@ -14,26 +14,50 @@ export function createWorker({ repository, config, logger = console }) {
       const row = jobResult.rows[0];
       const job = normalizeJob(row);
       if (job.provider === "codex-manual") {
+        const [guideplate, stylePack] = await Promise.all([
+          resolveAssetGuideplate(job.spec, config),
+          resolveStyleReferences(config)
+        ]);
         await db.query(
           "UPDATE asset_jobs SET status = 'awaiting_codex', attempts = attempts + 1, output_jsonb = $1, updated_at = now() WHERE id = $2",
-          [JSON.stringify({ prompt: buildAssetPrompt(job.spec), artifact_endpoint: `/api/v1/asset-jobs/${job.id}/artifacts` }), job.id]
+          [JSON.stringify({
+            prompt: buildAssetPrompt(job.spec, { usesStyleReference: true }),
+            prompt_version: ASSET_PROMPT_VERSION,
+            guide_volume: guideplate.volume.id,
+            guide_image_url: guideplate.publicPath,
+            style_reference_id: stylePack.id,
+            style_references: stylePack.references.map((reference) => ({ role: reference.role, url: reference.publicPath })),
+            artifact_endpoint: `/api/v1/asset-jobs/${job.id}/artifacts`
+          }), job.id]
         );
         await completeOutbox(db, outbox.id);
         return true;
       }
       await db.query("UPDATE asset_jobs SET status = 'generating', attempts = attempts + 1, updated_at = now() WHERE id = $1", [job.id]);
-      const source = await generateAssetImage(job, config);
-      const manifest = await prepareAssetMaps(job.id, source, { assetOutputRoot: config.assetOutputRoot });
+      const productionBundle = await generateAssetBundle(job, config);
+      const manifest = await prepareAssetMaps(job.id, productionBundle.sourceBytes, {
+        assetOutputRoot: config.assetOutputRoot,
+        spec: job.spec,
+        config,
+        productionBundle
+      });
       const principal = { kind: "agent", id: "system-asset-worker", cityId: job.city_id, scopes: ["city:build", "asset:request"] };
       await finalizeAssetJob({ repository, principal, job, manifest, idempotencyKey: `worker-complete-${job.id}` });
       await completeOutbox(db, outbox.id);
       return true;
     } catch (error) {
-      logger.error?.("Asset outbox job failed", { outboxId: outbox.id, error: error.message });
+      logger.error?.("Asset outbox job failed", { outboxId: outbox.id, error: error.message, code: error.code, details: error.details });
       const attempts = Number(outbox.attempts);
       const terminal = !error.retryable || attempts >= 3;
       const jobResult = await db.query("SELECT * FROM asset_jobs WHERE id = $1", [outbox.payload_jsonb.asset_job_id]);
-      if (jobResult.rowCount) await failAssetJob({ repository, job: normalizeJob(jobResult.rows[0]), message: error.message, terminal });
+      if (jobResult.rowCount) await failAssetJob({
+        repository,
+        job: normalizeJob(jobResult.rows[0]),
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        terminal
+      });
       if (terminal) await failOutbox(db, outbox.id, error.message);
       else await retryOutbox(db, outbox.id, error.message, attempts);
       return true;

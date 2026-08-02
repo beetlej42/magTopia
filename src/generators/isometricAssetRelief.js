@@ -243,8 +243,10 @@ export function createIsometricDevelopmentWorld(config = {}) {
     grid: terrain.grid,
     sampleGroundHeight,
     cityState: params.cityState,
+    assetRegistry: params.assetRegistry,
     parallaxStrength: params.buildingParallaxStrength,
-    useHunyuanModels: params.useHunyuanModels
+    useHunyuanModels: params.useHunyuanModels,
+    nightLighting: params.nightLighting
   });
   root.add(starterDistrict);
 
@@ -257,7 +259,10 @@ export function createIsometricDevelopmentWorld(config = {}) {
   root.userData.updateBaseFit = (camera, enabled, viewport) => starterDistrict.userData.updateBaseFit?.(camera, enabled, viewport);
   root.userData.getBaseFitDiagnostics = () => starterDistrict.userData.baseFitDiagnostics ?? null;
   root.userData.getModelDiagnostics = () => starterDistrict.userData.getModelDiagnostics?.() ?? [];
-  root.userData.updateDaylight = (style) => baseTiles.userData.updateDaylight?.(style, params.nightLighting);
+  root.userData.updateDaylight = (style) => {
+    baseTiles.userData.updateDaylight?.(style, params.nightLighting);
+    starterDistrict.userData.updateDaylight?.(style);
+  };
   root.userData.updateDaylight(getDaylightStyle(params.sunTime));
   root.userData.maps = { previews: [["Development terrain", terrain.canvas]] };
   return root;

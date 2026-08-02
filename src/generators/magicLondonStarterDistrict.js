@@ -1,7 +1,8 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { getAssetRegistry } from "../city/assets.js";
+import { mergeAssetRegistry } from "../city/assets.js";
 import { resolveAutomaticModelOrientation } from "./modelOrientation.js";
+import { createVoxelBuildingFromSpec, createVoxelMassingLab } from "./voxelBuildingLab.js";
 
 const BUILDING_BASE_ELEVATION = 0.105;
 const FALLBACK_BASE_ANCHORS_UV = Object.freeze({
@@ -11,28 +12,56 @@ const FALLBACK_BASE_ANCHORS_UV = Object.freeze({
 });
 const DEPTH_MESH_SUBDIVISIONS = 96;
 const GROUND_SEAM_HEIGHT_RATIO = 0.08;
+const EMISSIVE_STRENGTHS = Object.freeze({
+  "starter-cottage-001": 1.35,
+  "starter-workshop-001": 1.55,
+  "starter-herbalist-001": 1.42
+});
 
-export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cityState, parallaxStrength = 0.12, useHunyuanModels = 1 }) {
+export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cityState, assetRegistry = [], parallaxStrength = 0.12, useHunyuanModels = 1, nightLighting = 0 }) {
   const root = new THREE.Group();
   root.name = "MagicLondonStarterDistrict";
   const cells = new Map(grid.cells.map((cell) => [cell.id, cell]));
-  const assets = new Map(getAssetRegistry().map((asset) => [asset.assetId, asset]));
+  const assets = new Map(mergeAssetRegistry(assetRegistry).map((asset) => [asset.assetId, asset]));
   const tileSize = grid.cellWorldSize;
   const placements = [];
   const skipped = [];
-  const depthMeshControllers = [];
+  const baseFitControllers = [];
 
   Object.values(cityState?.buildings ?? {}).forEach((building, index) => {
-    const asset = assets.get(building.program.assetId);
+    const buildingAssetId = building.assetId ?? building.program?.assetId;
+    const asset = assets.get(buildingAssetId);
     const footprintCellIds = building.footprintCells?.length ? building.footprintCells : [building.site.lotId];
     const renderCells = footprintCellIds.map((cellId) => resolveRenderCell(cells, cellId)).filter(Boolean);
+    if (building.voxelDesign?.generation?.sourceSpec) {
+      if (!renderCells.length) {
+        skipped.push({ buildingId: building.id, assetId: null, cellId: building.footprintCells?.[0] ?? building.site.lotId, assetFound: true, cellFound: false, representation: "voxel" });
+        return;
+      }
+      const buildingObject = createRuntimeVoxelBuilding(building, renderCells, sampleGroundHeight, nightLighting);
+      placements.push({
+        assetId: null,
+        label: building.program.name,
+        cellId: renderCells[0].id,
+        footprintCells: renderCells.map((cell) => cell.id),
+        entrance: building.site.entrance,
+        entranceFrontageCell: getNeighborCellId(renderCells, building.site.entrance),
+        buildingId: building.id,
+        representation: buildingObject.userData.representation,
+        designId: building.voxelDesign.id,
+        designRevision: building.voxelDesign.revision,
+        generationMode: building.voxelDesign.generation.mode
+      });
+      root.add(buildingObject);
+      return;
+    }
     if (!asset || !renderCells.length) {
-      skipped.push({ buildingId: building.id, assetId: building.program.assetId, cellId: building.footprintCells?.[0] ?? building.site.lotId, assetFound: Boolean(asset), cellFound: renderCells.length > 0 });
+      skipped.push({ buildingId: building.id, assetId: buildingAssetId, cellId: building.footprintCells?.[0] ?? building.site.lotId, assetFound: Boolean(asset), cellFound: renderCells.length > 0 });
       return;
     }
     const useModel = Boolean(useHunyuanModels && asset.model?.glb);
     const buildingObject = createStarterBuilding(asset, building.program.name, renderCells, tileSize, sampleGroundHeight, index, building.site.entrance, parallaxStrength, useModel);
-    if (buildingObject.userData.depthMeshController) depthMeshControllers.push(buildingObject.userData.depthMeshController);
+    if (buildingObject.userData.baseFitController) baseFitControllers.push(buildingObject.userData.baseFitController);
     placements.push({
       assetId: asset.assetId,
       label: building.program.name,
@@ -51,14 +80,15 @@ export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cit
     assets: placements.map(({ assetId }) => assetId),
     placements,
     cityBuildings: Object.keys(cityState?.buildings ?? {}).length,
+    runtimeAssets: assetRegistry.length,
     validGridCells: cells.size,
     skipped,
     roads: Object.values(cityState?.cells ?? {}).filter((cell) => cell.infrastructure === "road").length,
     assetGroundRule: "Building assets provide their own visible ground treatment; the runtime adds no parcel foundation, entrance apron, or steps.",
-    guideplateRule: "Every asset shares one immutable three-corner guideplate contract for its screen-plane frame. View depth is decoded only by the global linear fit, with no spatial anchor correction.",
-    baseFitRule: "Building bodies are rigid local depth meshes. Only a narrow ground seam conforms to terrain; no screen-space or per-pixel depth correction runs in Isometric Play.",
-    depthParallaxRule: "Depth Anything drives actual mesh relief. Camera perspective comes from the scene camera rather than a position-dependent UV shift.",
-    modelRule: "Assets with a runtime GLB may replace their rigid depth mesh. The model is normalized to its parcel, grounded on the sampled terrain, and lit by the shared world lights.",
+    guideplateRule: "Every image asset uses its immutable left, near, and right base UV anchors as the screen-space fit contract.",
+    baseFitRule: "The three base anchors are projected onto the matching parcel corners every frame; the image remains a stable camera-facing plane instead of becoming a per-pixel depth mesh.",
+    depthParallaxRule: "Depth drives a limited fragment-space parallax lookup while RGB geometry remains undistorted. Emissive maps add restrained night window light.",
+    modelRule: "Assets with a runtime GLB may replace their image-based parallax representation. The model is normalized to its parcel, grounded on the sampled terrain, and lit by the shared world lights.",
     modelOrientationRule: "Runtime GLBs are rendered from the immutable guide camera at 0, 90, 180, and 270 degrees. Foreground-normalized facade RGB and edge similarity selects the yaw; only confidence below four percent requests review.",
     entranceRule: "Starter assets expose their visible door on the north grid facade (world +Z); entrance direction remains a logical routing contract only.",
     rule: "Starter assets are rendered only from construction events in CityState."
@@ -72,29 +102,33 @@ export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cit
       worldBounds: child.userData.worldBounds ?? null,
       orientation: child.userData.orientation ?? null
     }));
-  root.userData.updateBaseFit = () => {
-    const entries = depthMeshControllers.map((controller) => ({
+  root.userData.updateBaseFit = (camera) => {
+    const entries = baseFitControllers.map((controller) => {
+      controller.update(camera);
+      return {
       assetId: controller.assetId,
-      representation: "rigid-local-depth-mesh",
-      screenSpaceWarpEnabled: false,
-      depthReliefEnabled: true,
-      depthStrength: controller.depthStrength,
-      groundSeamHeight: controller.groundSeamHeight,
+      representation: "three-corner-parallax-sprite",
+      screenSpaceWarpEnabled: true,
+      depthReliefEnabled: false,
+      depthParallaxEnabled: true,
       maxAnchorErrorPx: 0,
       uprightDeviationDegrees: 0,
       uprightScaleRatio: 1,
-      parallaxViewOffset: [0, 0],
-      parallaxUvShiftEstimate: 0
-    }));
+      parallaxViewOffset: controller.viewOffset.toArray(),
+      parallaxUvShiftEstimate: controller.viewOffset.length() * controller.parallaxStrength,
+      renderOrder: controller.renderOrder
+    };
+    });
     const diagnostics = {
-      enabled: false,
-      contract: "rigid-local-depth-mesh-v1",
+      enabled: entries.length > 0,
+      contract: "three-corner-screen-fit-parallax-v1",
+      buildingSortRule: "lower-screen-y-then-right-screen-x",
       spriteCount: entries.length,
       maxAnchorErrorPx: 0,
       maxUprightDeviationDegrees: 0,
       depthParallaxEnabled: entries.length > 0,
-      maxParallaxViewOffset: 0,
-      maxParallaxUvShift: 0,
+      maxParallaxViewOffset: Math.max(0, ...entries.map((entry) => Math.hypot(...entry.parallaxViewOffset))),
+      maxParallaxUvShift: Math.max(0, ...entries.map((entry) => entry.parallaxUvShiftEstimate)),
       uprightReferenceScale: 1,
       uprightScaleRatioRange: [1, 1],
       entries
@@ -102,12 +136,42 @@ export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cit
     root.userData.baseFitDiagnostics = diagnostics;
     return diagnostics;
   };
+  root.userData.updateDaylight = (style) => {
+    baseFitControllers.forEach((controller) => controller.updateDaylight(style, nightLighting));
+    root.children.forEach((child) => child.userData?.updateDaylight?.(style));
+  };
   return root;
+}
+
+function createRuntimeVoxelBuilding(building, renderCells, sampleGroundHeight, nightLighting) {
+  const design = building.voxelDesign;
+  const object = design.generation.mode === "urban_massing"
+    ? createVoxelMassingLab({ spec: design.generation.sourceSpec, decorations: design.decorations, nightLighting, renderStrategy: "greedy" })
+    : createVoxelBuildingFromSpec(design.generation.sourceSpec, { decorations: design.decorations, nightLighting, renderStrategy: "greedy" });
+  const center = renderCells.reduce((sum, cell) => ({ x: sum.x + cell.center.x, z: sum.z + cell.center.z }), { x: 0, z: 0 });
+  center.x /= renderCells.length;
+  center.z /= renderCells.length;
+  object.position.set(center.x, sampleGroundHeight(center.x, center.z) + BUILDING_BASE_ELEVATION, center.z);
+  object.rotation.y = {
+    north: 0,
+    east: Math.PI / 2,
+    south: Math.PI,
+    west: -Math.PI / 2
+  }[building.site.entrance] ?? Math.PI;
+  object.name = `RuntimeVoxelBuilding-${building.id}`;
+  object.userData = {
+    ...object.userData,
+    buildingId: building.id,
+    designId: design.id,
+    designRevision: design.revision,
+    representation: `voxel-${design.generation.mode}`
+  };
+  return object;
 }
 
 function createStarterBuilding(asset, label, cells, tileSize, sampleGroundHeight, index, entrance = "south", parallaxStrength = 0.12, useModel = false) {
   if (useModel) return createStarterModelBuilding(asset, label, cells, tileSize, sampleGroundHeight, entrance);
-  return createStarterSpriteBuilding(asset, label, cells, tileSize, sampleGroundHeight, index, entrance, parallaxStrength);
+  return createThreeCornerParallaxBuilding(asset, label, cells, tileSize, sampleGroundHeight, index, entrance, parallaxStrength);
 }
 
 export function createStandaloneStarterAsset(asset, {
@@ -131,7 +195,7 @@ export function createStandaloneStarterAsset(asset, {
   const depthAsset = variant
     ? { ...asset, maps: { ...asset.maps, depth: variant.depth, normal: variant.normal }, depthEncoding: variant.depthEncoding }
     : asset;
-  const object = createStarterSpriteBuilding(depthAsset, label, [cell], parcelSize, sampleGroundHeight, 0, "south", 0.12 * depthStrength);
+  const object = createRigidDepthMeshBuilding(depthAsset, label, [cell], parcelSize, sampleGroundHeight, 0, "south", 0.12 * depthStrength);
   object.userData.depthFitSurfaces = variant?.fitSurfaces ?? "all";
   return object;
 }
@@ -219,7 +283,240 @@ function createStarterModelBuilding(asset, label, cells, tileSize, sampleGroundH
   return group;
 }
 
-function createStarterSpriteBuilding(asset, label, cells, tileSize, sampleGroundHeight, index, entrance = "south", parallaxStrength = 0.12) {
+function createThreeCornerParallaxBuilding(asset, label, cells, tileSize, sampleGroundHeight, index, entrance = "south", parallaxStrength = 0.12) {
+  const group = new THREE.Group();
+  group.name = `${asset.assetId}-${label}`;
+  const parcel = getParcelBounds(cells, tileSize);
+  const anchors = normalizeBaseAnchors(asset.baseAnchorsUv ?? asset.guideplate?.baseAnchorsUv);
+  const colorTexture = loadAssetTexture(asset.maps.rgb, true);
+  const depthTexture = loadAssetTexture(asset.maps.depth, false);
+  const normalTexture = loadAssetTexture(asset.maps.normal, false);
+  const emissiveTexture = asset.maps.emissive ? loadAssetTexture(asset.maps.emissive, true) : createTransparentTexture();
+  const material = createThreeCornerParallaxMaterial({
+    anchors,
+    colorTexture,
+    depthTexture,
+    normalTexture,
+    emissiveTexture,
+    parallaxStrength
+  });
+  const mesh = new THREE.Mesh(createScreenFitQuadGeometry(anchors), material);
+  mesh.name = `${asset.assetId}-ThreeCornerParallaxSprite`;
+  mesh.renderOrder = 1000 + index;
+  mesh.frustumCulled = false;
+  mesh.userData.textures = [colorTexture, depthTexture, normalTexture, emissiveTexture];
+  group.add(mesh);
+
+  const targetWorld = {
+    left: new THREE.Vector3(parcel.minX, sampleGroundHeight(parcel.minX, parcel.maxZ) + BUILDING_BASE_ELEVATION, parcel.maxZ),
+    near: new THREE.Vector3(parcel.maxX, sampleGroundHeight(parcel.maxX, parcel.maxZ) + BUILDING_BASE_ELEVATION, parcel.maxZ),
+    right: new THREE.Vector3(parcel.maxX, sampleGroundHeight(parcel.maxX, parcel.minZ) + BUILDING_BASE_ELEVATION, parcel.minZ)
+  };
+  const viewOffset = new THREE.Vector2();
+  let restDirection = null;
+  const controller = {
+    assetId: asset.assetId,
+    parallaxStrength,
+    viewOffset,
+    get renderOrder() { return mesh.renderOrder; },
+    update(camera) {
+      if (!camera) return;
+      camera.updateMatrixWorld();
+      material.uniforms.targetLeft.value.copy(targetWorld.left).project(camera);
+      material.uniforms.targetNear.value.copy(targetWorld.near).project(camera);
+      material.uniforms.targetRight.value.copy(targetWorld.right).project(camera);
+      mesh.renderOrder = getScreenSpaceBuildingRenderOrder(material.uniforms.targetNear.value);
+      mesh.userData.screenSpaceRenderOrder = mesh.renderOrder;
+      const direction = camera.getWorldDirection(new THREE.Vector3()).normalize();
+      if (!restDirection) restDirection = direction.clone();
+      const cameraRight = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+      const cameraUp = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1).normalize();
+      const delta = direction.clone().sub(restDirection);
+      viewOffset.set(
+        THREE.MathUtils.clamp(delta.dot(cameraRight) * 2.25, -1, 1),
+        THREE.MathUtils.clamp(delta.dot(cameraUp) * 2.25, -1, 1)
+      );
+      material.uniforms.cameraViewOffset.value.copy(viewOffset);
+    },
+    updateDaylight(style, manualNightLighting = 0) {
+      material.uniforms.globalLightColor.value.copy(style.rgbTint ?? new THREE.Color("#ffffff"));
+      material.uniforms.globalLightStrength.value = style.rgbStrength ?? 1;
+      material.uniforms.nightEmission.value = getStarterNightEmission(
+        style,
+        manualNightLighting,
+        EMISSIVE_STRENGTHS[asset.assetId] ?? 1.4
+      );
+    }
+  };
+
+  group.userData = {
+    assetId: asset.assetId,
+    cellId: cells[0].id,
+    footprintCells: cells.map((cell) => cell.id),
+    entrance,
+    label,
+    representation: "three-corner-parallax-sprite",
+    parcel: {
+      cellSize: tileSize,
+      width: parcel.width,
+      depth: parcel.depth,
+      worldDimensions: asset.dimensions ?? asset.guideplate?.dimensions ?? { length: 4, width: 4, height: 4, unit: "world" }
+    },
+    guideplate: asset.guideplate ?? null,
+    baseFitController: controller
+  };
+  return group;
+}
+
+function createScreenFitQuadGeometry(anchors) {
+  const geometry = new THREE.BufferGeometry();
+  const divisions = 24;
+  const values = Array.from({ length: divisions + 1 }, (_, index) => index / divisions);
+  const xCoordinates = uniqueSorted([...values, anchors.left[0], anchors.near[0], anchors.right[0]]);
+  const yCoordinates = uniqueSorted([...values, anchors.left[1], anchors.near[1], anchors.right[1]]);
+  const positions = [];
+  const uvs = [];
+  const indices = [];
+  for (const y of yCoordinates) {
+    for (const x of xCoordinates) {
+      positions.push(0, 0, 0);
+      uvs.push(x, y);
+    }
+  }
+  const columns = xCoordinates.length;
+  for (let row = 0; row < yCoordinates.length - 1; row += 1) {
+    for (let column = 0; column < columns - 1; column += 1) {
+      const northwest = row * columns + column;
+      const northeast = northwest + 1;
+      const southwest = northwest + columns;
+      const southeast = southwest + 1;
+      indices.push(northwest, southeast, northeast, northwest, southwest, southeast);
+    }
+  }
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  return geometry;
+}
+
+export function getScreenSpaceBuildingRenderOrder(point = {}) {
+  const x = THREE.MathUtils.clamp(Number(point.x ?? 0), -2, 2);
+  const y = THREE.MathUtils.clamp(Number(point.y ?? 0), -2, 2);
+  const verticalBucket = Math.round((2 - y) * 1_000_000);
+  const horizontalBucket = Math.round((x + 2) * 1_000);
+  return 1000 + verticalBucket * 10_000 + horizontalBucket;
+}
+
+function createThreeCornerParallaxMaterial({ anchors, colorTexture, depthTexture, normalTexture, emissiveTexture, parallaxStrength }) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      colorMap: { value: colorTexture },
+      depthMap: { value: depthTexture },
+      normalMap: { value: normalTexture },
+      emissiveMap: { value: emissiveTexture },
+      sourceLeft: { value: new THREE.Vector2(...anchors.left) },
+      sourceNear: { value: new THREE.Vector2(...anchors.near) },
+      sourceRight: { value: new THREE.Vector2(...anchors.right) },
+      targetLeft: { value: new THREE.Vector3() },
+      targetNear: { value: new THREE.Vector3() },
+      targetRight: { value: new THREE.Vector3() },
+      cameraViewOffset: { value: new THREE.Vector2() },
+      parallaxStrength: { value: parallaxStrength },
+      globalLightColor: { value: new THREE.Color("#ffffff") },
+      globalLightStrength: { value: 1 },
+      nightEmission: { value: 0 }
+    },
+    vertexShader: `
+      uniform vec2 sourceLeft;
+      uniform vec2 sourceNear;
+      uniform vec2 sourceRight;
+      uniform vec3 targetLeft;
+      uniform vec3 targetNear;
+      uniform vec3 targetRight;
+      varying vec2 vUv;
+
+      vec3 triangleWeights(vec2 point) {
+        vec2 nearAxis = sourceNear - sourceLeft;
+        vec2 rightAxis = sourceRight - sourceLeft;
+        vec2 offset = point - sourceLeft;
+        float determinant = nearAxis.x * rightAxis.y - nearAxis.y * rightAxis.x;
+        float nearWeight = (offset.x * rightAxis.y - offset.y * rightAxis.x) / determinant;
+        float rightWeight = (nearAxis.x * offset.y - nearAxis.y * offset.x) / determinant;
+        return vec3(1.0 - nearWeight - rightWeight, nearWeight, rightWeight);
+      }
+
+      void main() {
+        vUv = uv;
+        vec3 weights = triangleWeights(uv);
+        vec3 ndc = weights.x * targetLeft + weights.y * targetNear + weights.z * targetRight;
+        gl_Position = vec4(ndc.xy, ndc.z - 0.00025, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform sampler2D colorMap;
+      uniform sampler2D depthMap;
+      uniform sampler2D normalMap;
+      uniform sampler2D emissiveMap;
+      uniform vec2 cameraViewOffset;
+      uniform float parallaxStrength;
+      uniform vec3 globalLightColor;
+      uniform float globalLightStrength;
+      uniform float nightEmission;
+      varying vec2 vUv;
+
+      vec2 parallaxUv(vec2 uv) {
+        const int steps = 10;
+        float layerDepth = 0.0;
+        float layerStep = 1.0 / float(steps);
+        vec2 delta = -clamp(cameraViewOffset, vec2(-1.0), vec2(1.0)) * parallaxStrength * layerStep;
+        vec2 currentUv = uv;
+        for (int i = 0; i < steps; i++) {
+          float sampledDepth = texture2D(depthMap, clamp(currentUv, vec2(0.001), vec2(0.999))).r;
+          if (layerDepth >= sampledDepth) break;
+          currentUv -= delta;
+          layerDepth += layerStep;
+        }
+        return currentUv;
+      }
+
+      void main() {
+        vec4 silhouette = texture2D(colorMap, vUv);
+        if (silhouette.a < 0.08) discard;
+        vec2 sampleUv = parallaxUv(vUv);
+        if (sampleUv.x < 0.0 || sampleUv.x > 1.0 || sampleUv.y < 0.0 || sampleUv.y > 1.0) discard;
+        vec4 color = texture2D(colorMap, sampleUv);
+        if (color.a < 0.08) color = silhouette;
+        vec3 reliefNormal = normalize(texture2D(normalMap, sampleUv).rgb * 2.0 - 1.0);
+        float normalLight = max(dot(reliefNormal, normalize(vec3(-0.3, 0.42, 0.86))), 0.0);
+        color.rgb *= globalLightColor * globalLightStrength * (0.94 + normalLight * 0.1);
+        vec4 emission = texture2D(emissiveMap, sampleUv);
+        color.rgb += emission.rgb * emission.a * nightEmission;
+        gl_FragColor = color;
+        #include <colorspace_fragment>
+      }
+    `,
+    transparent: true,
+    alphaTest: 0.08,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    depthTest: true,
+    toneMapped: false
+  });
+}
+
+function createTransparentTexture() {
+  const texture = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1, THREE.RGBAFormat);
+  texture.needsUpdate = true;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+export function getStarterNightEmission(style = {}, manualNightLighting = 0, emissiveStrength = 1.4) {
+  const night = THREE.MathUtils.clamp(Math.max(Number(style.nightFactor ?? 0), Number(manualNightLighting ?? 0)), 0, 1);
+  return night * Number(emissiveStrength ?? 0);
+}
+
+function createRigidDepthMeshBuilding(asset, label, cells, tileSize, sampleGroundHeight, index, entrance = "south", parallaxStrength = 0.12) {
   const group = new THREE.Group();
   group.name = `${asset.assetId}-${label}`;
   const parcel = getParcelBounds(cells, tileSize);
@@ -564,6 +861,9 @@ function getNeighborCellId(cells, entrance) {
   const offsets = { north: [0, -1], east: [1, 0], south: [0, 1], west: [-1, 0] };
   const [dx, dy] = offsets[entrance] ?? offsets.south;
   const footprintIds = new Set(cells.map((cell) => cell.id));
-  const edge = cells.find((cell) => !footprintIds.has(`cell-${cell.column + dx}-${cell.row + dy}`));
+  const edgeCells = cells.filter((cell) => !footprintIds.has(`cell-${cell.column + dx}-${cell.row + dy}`));
+  const axis = entrance === "north" || entrance === "south" ? "column" : "row";
+  edgeCells.sort((left, right) => left[axis] - right[axis] || left.id.localeCompare(right.id));
+  const edge = edgeCells[Math.floor((edgeCells.length - 1) / 2)];
   return edge ? `cell-${edge.column + dx}-${edge.row + dy}` : null;
 }

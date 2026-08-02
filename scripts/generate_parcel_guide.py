@@ -9,6 +9,7 @@ from PIL import Image, ImageDraw
 
 CAMERA = {"yaw": 45, "elevation": 55, "roll": 0, "projection": "orthographic"}
 KEY = "#ff00ff"
+CAMERA_FACING_FRONT = "south"
 
 
 def main() -> None:
@@ -21,21 +22,36 @@ def main() -> None:
     args = parser.parse_args()
 
     length, width, height = parse_dimensions(args.dimensions)
-    image, base_anchors_uv = draw_guideplate(length, width, height, args.entrance, args.grid_unit, args.size)
+    image, base_anchors_uv, envelope_bounds_uv = draw_guideplate(length, width, height, args.entrance, args.grid_unit, args.size)
     output = Path(args.out)
     output.parent.mkdir(parents=True, exist_ok=True)
     image.save(output)
     output.with_suffix(".json").write_text(json.dumps({
         "kind": "magic-town-parcel-guideplate",
+        "guideVersion": "absolute-scale-v4",
         "dimensions": {"length": length, "width": width, "height": height, "unit": "world"},
         "gridUnit": args.grid_unit,
+        "scaleContract": {
+            "horizontalUnitMeaning": "one city footprint cell",
+            "heightUnit": args.grid_unit,
+            "heightUnitMeaning": "one normal above-ground storey",
+            "referenceDoor": {"width": 0.9, "height": 2.2, "unit": "world"},
+            "guideMarks": "Translucent storey divisions and the amber reference door are scale guides only and must not appear in the generated asset."
+        },
         "camera": CAMERA,
         "entrance": args.entrance,
+        "facadeContract": {
+            "cameraFacingFront": CAMERA_FACING_FRONT,
+            "referenceDoorFace": CAMERA_FACING_FRONT,
+            "referenceDoorIsOnCameraFacingFront": True,
+            "productionEntranceMustMatchReferenceDoor": args.entrance == CAMERA_FACING_FRONT
+        },
         "safeMargin": 0.32,
         "baseAnchorContract": "guideplate-visible-triangle-v1",
         "baseAnchorsUv": base_anchors_uv,
+        "envelopeBoundsUv": envelope_bounds_uv,
         "keyColor": KEY,
-        "instruction": "The dark base is immutable. Replace only the translucent blue envelope with one building that remains fully inside its outline."
+        "instruction": "The dark base is immutable. Replace only the translucent blue envelope with one correctly scaled building. The amber reference door is on the camera-facing south/front facade: put the real main entrance there. Use the storey divisions and reference door for absolute scale, then remove all guide marks."
     }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
@@ -49,7 +65,7 @@ def parse_dimensions(value: str) -> tuple[float, float, float]:
     return dimensions
 
 
-def draw_guideplate(length: float, width: float, height: float, entrance: str, grid_unit: float, size: int) -> tuple[Image.Image, dict[str, list[float]]]:
+def draw_guideplate(length: float, width: float, height: float, entrance: str, grid_unit: float, size: int) -> tuple[Image.Image, dict[str, list[float]], dict[str, float]]:
     pad = size * 0.09
     def raw_point(x: float, y: float, z: float) -> tuple[float, float]:
         return ((x - z) * 0.78, -(x + z) * 0.36 - y * 0.82)
@@ -85,8 +101,11 @@ def draw_guideplate(length: float, width: float, height: float, entrance: str, g
 
     bottom = safe_corners
     top = [(x, height, z) for x, _, z in safe_corners]
-    front_face = [point(*bottom[index]) for index in (2, 3)] + [point(*top[index]) for index in (3, 2)]
-    side_face = [point(*bottom[index]) for index in (1, 2)] + [point(*top[index]) for index in (2, 1)]
+    # The camera-facing walls share the near corner (index 0). The previous
+    # implementation used the opposite x+/z+ walls, which placed scale marks
+    # visually behind the building envelope.
+    front_face = [point(*bottom[index]) for index in (3, 0)] + [point(*top[index]) for index in (0, 3)]
+    side_face = [point(*bottom[index]) for index in (0, 1)] + [point(*top[index]) for index in (1, 0)]
     roof_face = [point(*corner) for corner in top]
     draw.polygon(front_face, fill=(101, 135, 177, 78))
     draw.polygon(side_face, fill=(76, 110, 154, 92))
@@ -96,6 +115,27 @@ def draw_guideplate(length: float, width: float, height: float, entrance: str, g
     for edge in envelope_edges:
         draw.line(edge, fill="#c5ddf4", width=max(2, round(scale * 0.02)))
 
+    # A height unit is a normal occupied storey. Horizontal bands prevent an
+    # image model from squeezing several miniature facade levels into one unit.
+    for storey_y in storey_divisions(height, grid_unit):
+        front_band = [point(-length / 2 + margin, storey_y, width / 2 - margin), point(-length / 2 + margin, storey_y, -width / 2 + margin)]
+        side_band = [point(-length / 2 + margin, storey_y, -width / 2 + margin), point(length / 2 - margin, storey_y, -width / 2 + margin)]
+        draw.line(front_band, fill=(245, 201, 106, 205), width=max(2, round(scale * 0.018)))
+        draw.line(side_band, fill=(245, 201, 106, 170), width=max(2, round(scale * 0.018)))
+
+    # A standard 0.9 m × 2.2 m ghost door fixes human scale across differently
+    # sized envelopes. It is a guide mark, not an element to copy verbatim.
+    door_width = min(0.9, max(0.35, length - margin * 2))
+    door_height = min(2.2, max(0.5, height * 0.82))
+    door_x = -length / 2 + margin + 0.015
+    door = [
+        point(door_x, 0.025, -door_width / 2),
+        point(door_x, 0.025, door_width / 2),
+        point(door_x, door_height, door_width / 2),
+        point(door_x, door_height, -door_width / 2)
+    ]
+    draw.polygon(door, fill=(245, 201, 106, 72), outline=(255, 226, 150, 230), width=max(2, round(scale * 0.018)))
+
     start, end = entrance_arrow(entrance, length, width)
     draw.line([point(*start), point(*end)], fill="#f5c96a", width=max(2, round(scale * 0.035)))
     arrow_head(draw, point(*start), point(*end), max(7, round(scale * 0.12)), "#f5c96a")
@@ -103,11 +143,19 @@ def draw_guideplate(length: float, width: float, height: float, entrance: str, g
         x, y = base[index]
         return [x / size, 1 - y / size]
 
+    envelope_points = base + [point(*corner) for corner in top]
+    envelope_bounds_uv = {
+        "left": min(x for x, _ in envelope_points) / size,
+        "right": max(x for x, _ in envelope_points) / size,
+        "bottom": 1 - max(y for _, y in envelope_points) / size,
+        "top": 1 - min(y for _, y in envelope_points) / size
+    }
+
     return image, {
         "left": uv(3),
         "near": uv(0),
         "right": uv(1)
-    }
+    }, envelope_bounds_uv
 
 
 def grid_lines(span: float, unit: float) -> list[float]:
@@ -115,8 +163,12 @@ def grid_lines(span: float, unit: float) -> list[float]:
     return [-span / 2 + index * unit for index in range(1, count)]
 
 
+def storey_divisions(height: float, unit: float) -> list[float]:
+    return [index * unit for index in range(1, int(height // unit) + 1) if index * unit < height - 1e-6]
+
+
 def entrance_arrow(entrance: str, length: float, width: float) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
-    offsets = {"north": (0, 0, -1), "east": (1, 0, 0), "south": (0, 0, 1), "west": (-1, 0, 0)}
+    offsets = {"north": (1, 0, 0), "east": (0, 0, -1), "south": (-1, 0, 0), "west": (0, 0, 1)}
     dx, _, dz = offsets[entrance]
     edge_x = dx * length / 2
     edge_z = dz * width / 2

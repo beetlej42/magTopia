@@ -14,3 +14,14 @@ __pycache__/
 public/generated/**/*.npy
 public/generated/hunyuan3d/**/obj-*.zip
 public/generated/hunyuan3d/**/glb-[0-9].glb
+
+# Local visual QA and model-provider probe output. Keep deliberate documentation
+# concepts under docs/concept-images and force-add only stable test fixtures.
+artifacts/
+/agent-intent-district-*.png
+public/generated/agent-assets/
+public/generated/asset-guides/
+public/generated/hunyuan-experiments/
+public/generated/qwen-experiments/
+public/generated/style-probes/
+public/generated/wan-experiments/

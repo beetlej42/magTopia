@@ -14,7 +14,7 @@ Never expose the token in logs, prose, asset prompts, or another URL.
 ## Recommended decision loop
 
 1. `GET /api/v1/cities/{city_id}/snapshot?view=agent`.
-2. Read `city_version`, resources, production, needs, recent changes, and pending orders.
+2. Read `city_version`, resources, `world` coordinates/construction datum, production, needs, recent changes, and pending orders.
 3. Query only the relevant area with `/spatial`; do not repeatedly download every cell.
 4. Search `/buildings` and `/assets` before proposing construction.
 5. Use `/site-searches`, then preview construction or a connection.
@@ -23,6 +23,18 @@ Never expose the token in logs, prose, asset prompts, or another URL.
 8. If an asset job is asynchronous, inspect that job/order instead of creating a duplicate.
 9. Read `/events?after_version=...` and record what actually happened.
 
+## Procedural voxel design loop
+
+For a new procedural voxel building, use the versioned two-stage design flow instead of sending a complete asset prompt:
+
+1. `POST /cities/{city_id}/building-designs` with a site, semantic intent, and `generation_mode: auto`.
+2. Inspect the recommended `floor_stack` or `urban_massing` source spec, primary entrance port, and `availableOperations`. Unsupported intent enums and decoration types are rejected rather than silently changed.
+3. Create immutable revisions through `/building-designs/{design_id}/revisions`. Use stable decoration anchors; do not submit raw voxel snapshots.
+4. Lock the chosen revision through `/building-designs/{design_id}/confirm`. Confirmation headlessly compiles the exact voxel spec; require `compileDiagnostics.status = compiled` and `occupiedVoxels > 0` before construction.
+5. Preview and submit construction with the confirmed `design_id`, `design_revision`, and `design_hash`.
+
+To add a floor later, create `/buildings/{building_id}/upgrade-designs`, revise and confirm it, then submit it through the same construction endpoints. An upgrade keeps the building id and rejects stale base revisions. Read `/agent/building-design-api-v1.md` for the operation catalog and complete request examples.
+
 ## Budget behavior
 
 You may spend the city's entire currently available budget without player approval. Resources recover when city time advances, based on the productive buildings already operating in the city. Do not treat future income as currently spendable.
@@ -30,6 +42,10 @@ You may spend the city's entire currently available budget without player approv
 ## Reuse versus production
 
 Prefer `asset.mode = reuse` when an existing validated asset matches archetype, footprint, and city style. Choose `produce` only when the existing registry cannot express an important city intention. New production freezes the site and estimated cost until it completes, fails, or is cancelled.
+
+Choose scale deliberately. `footprint` controls occupied city cells and currently supports rectangular bases up to 3×3. For a new asset, `asset.spec.guide_volume` is an integer `width×depth×storeys` scale contract; its base must match `footprint`. One vertical unit always means one normal occupied storey with consistent human-scale doors and windows. Therefore `1x1x1` is always a small one-storey detached building, never a compressed two-storey house; use `1x1x2` for a substantial two-storey one-cell house. The generated guide image contains storey divisions and a standard door reference, and the production prompt repeats this contract. The runtime never rescales a finished building.
+
+The automatic Hunyuan provider composes three prompt blocks: immutable Magic London world/art direction, the agent's concrete building brief, and the geometry/render contract. Its first generation uses the guideplate as the geometry/scale/front-door edit target and the city concept as a style-only reference. A second edit changes only the existing windows to a lights-on state. A portable paired-image differ derives the aligned emissive contribution; no Apple Vision step is part of the service. The finished manifest records model, seed, input roles, prompt/light-pipeline versions, provider request IDs, pair alignment, and saved review artifacts.
 
 Use the exact construction envelope below for both `/construction-previews` and `/construction-orders`. A site search returns `lotId`; pass that value as `site.lot_id` (`site.lotId` is accepted as an alias).
 
@@ -62,6 +78,7 @@ To produce a new asset, keep the site/program fields and provide a complete prod
       "footprint": "1x1",
       "district_style": "willow_magic",
       "patterns": ["moonflower_garden"],
+      "guide_volume": "1x1x2",
       "creative_brief": "A moonflower residence."
     }
   }
@@ -73,8 +90,11 @@ Preview first. For the order request, reuse the same body with the latest `expec
 ## Construction principles
 
 - Buildings need legal footprints and routeable entrances.
+- The blank voxel world exposes water cells explicitly. Never build on `buildable: false` or `strictBuildable: false`; roads crossing `bridgeRequired: true` cells are returned as bridges.
+- Use `site-searches.bounds` to keep a district inside a planned rectangle. `near` preserves building/node/cell ids and distance, while `prefer` and `avoid` influence scoring.
 - Prefer coherent districts and existing roads over isolated structures.
 - Use the server's site scores and route solver; do not submit a hand-drawn cell path.
+- Treat the confirmed design's `primary_entrance.frontageCellId` as the authoritative road port. A successful connected district must place every entrance port in the road/bridge component reachable from `old_town_entry`.
 - Add a short factual `actor_note` explaining the city need behind each command.
 - A rejected preview changes nothing and spends nothing.
 

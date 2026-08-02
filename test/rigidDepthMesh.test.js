@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 import {
   createOrthographicCameraBasis,
+  getScreenSpaceBuildingRenderOrder,
+  getStarterNightEmission,
   mapPointThroughBaseFit,
   reconstructRigidDepthPoint
 } from "../src/generators/magicLondonStarterDistrict.js";
@@ -50,6 +52,20 @@ test("triangle mapping still pins the three guideplate anchors", () => {
   for (const key of Object.keys(targets)) {
     assert.deepEqual(mapPointThroughBaseFit(anchors[key], anchors, targets), targets[key]);
   }
+});
+
+test("building painter order puts lower rows over upper rows and right columns over left columns", () => {
+  const upperLeft = getScreenSpaceBuildingRenderOrder({ x: -0.5, y: 0.5 });
+  const lowerLeft = getScreenSpaceBuildingRenderOrder({ x: -0.5, y: -0.5 });
+  const upperRight = getScreenSpaceBuildingRenderOrder({ x: 0.5, y: 0.5 });
+  assert.ok(lowerLeft > upperLeft);
+  assert.ok(upperRight > upperLeft);
+});
+
+test("starter emissive lighting follows the stronger night source", () => {
+  assert.ok(Math.abs(getStarterNightEmission({ nightFactor: 0.1 }, 0.4, 1.5) - 0.6) < 1e-12);
+  assert.ok(Math.abs(getStarterNightEmission({ nightFactor: 0.8 }, 0.2, 1.5) - 1.2) < 1e-12);
+  assert.equal(getStarterNightEmission({ nightFactor: 0 }, 0, 1.5), 0);
 });
 
 test("exported camera contract reports the projection actually selected by Perspective", () => {

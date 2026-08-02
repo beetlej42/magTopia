@@ -42,15 +42,117 @@ export function createOpenApiDocument(baseUrl) {
                   required: ["archetype", "footprint", "district_style", "creative_brief"],
                   properties: {
                     archetype: { type: "string" },
-                    footprint: { enum: ["1x1", "1x2", "1x3", "2x2", "4x1", "4x2"] },
+                    footprint: { enum: ["1x1", "1x2", "1x3", "2x1", "2x2", "2x3", "3x1", "3x2", "3x3"] },
                     district_style: { type: "string" },
                     patterns: { type: "array", items: { type: "string" } },
+                    guide_volume: { type: "string", pattern: "^[1-9][0-9]*x[1-9][0-9]*x[1-9][0-9]*$", description: "Exact integer width×depth×storeys scale contract. Base must match footprint and be at most 3×3. 1x1x1 always means a small one-storey detached building; 1x1x2 means the same parcel with exactly two occupied storeys." },
                     creative_brief: { type: "string", minLength: 1 }
                   }
                 }
               }
+            },
+            {
+              type: "object",
+              required: ["mode"],
+              properties: {
+                mode: { const: "voxel", description: "Resolved by the service from a confirmed BuildingDesign; clients do not submit this mode directly." }
+              }
             }
           ]
+        },
+        BuildingDesignConstructionRequest: {
+          type: "object",
+          required: ["expected_city_version", "design_id", "design_revision", "design_hash"],
+          properties: {
+            expected_city_version: { type: "integer", minimum: 0 },
+            design_id: { type: "string" },
+            design_revision: { type: "integer", minimum: 1 },
+            design_hash: { type: "string", description: "Exact hash returned when the design revision was confirmed" },
+            actor_note: { type: "string" }
+          }
+        },
+        Site: {
+          type: "object",
+          required: ["lot_id", "footprint", "entrance"],
+          properties: {
+            lot_id: { type: "string", description: "lotId returned by POST /site-searches" },
+            footprint: { enum: ["1x1", "1x2", "1x3", "2x1", "2x2", "2x3", "3x1", "3x2", "3x3"] },
+            entrance: { enum: ["north", "east", "south", "west"] }
+          }
+        },
+        BuildingIntent: {
+          type: "object",
+          required: ["name", "purpose"],
+          properties: {
+            name: { type: "string", minLength: 1 },
+            purpose: { type: "string", minLength: 1 },
+            description: { type: "string" },
+            sign_text: { type: "string" },
+            composition: { enum: ["street", "court", "hall", "tower", "yard"] },
+            frontage: { enum: ["residential", "display", "workshop", "institutional", "large_bay"] },
+            access: { enum: ["private", "public", "service", "ceremonial"] },
+            style: { enum: ["victorian_domestic", "victorian_gothic", "civic_classical", "industrial_iron"] },
+            prominence: { enum: ["ordinary", "important", "landmark"] },
+            magic_level: { type: "number", minimum: 0, maximum: 1 }
+          }
+        },
+        Decoration: {
+          type: "object",
+          required: ["id", "type", "anchor"],
+          properties: {
+            id: { type: "string" },
+            type: { enum: ["hanging_sign", "facade_lamp", "magic_lamp", "roof_finial"] },
+            anchor: { type: "string", description: "Use an anchor pattern returned in availableOperations" },
+            parameters: json
+          }
+        },
+        BuildingDesignCreateRequest: {
+          type: "object",
+          required: ["generation_mode", "site", "intent"],
+          properties: {
+            generation_mode: { enum: ["auto", "floor_stack", "urban_massing"] },
+            site: { $ref: "#/components/schemas/Site" },
+            intent: { $ref: "#/components/schemas/BuildingIntent" },
+            requirements: { type: "object", properties: { preferred_floors: { type: "integer", minimum: 1 } } },
+            decorations: { type: "object", properties: { items: { type: "array", items: { $ref: "#/components/schemas/Decoration" } } } },
+            locks: { type: "array", items: { type: "string" } }
+          }
+        },
+        BuildingDesignRevisionRequest: {
+          type: "object",
+          required: ["expected_revision", "operations"],
+          properties: {
+            expected_revision: { type: "integer", minimum: 1 },
+            operations: { type: "array", minItems: 1, items: { type: "object", required: ["op"], properties: { op: { enum: ["set_intent", "set_roof", "set_material", "add_decoration", "update_decoration", "remove_decoration", "add_floor", "set_floor_program", "add_mass", "update_mass", "remove_mass"] }, decoration: { $ref: "#/components/schemas/Decoration" } }, additionalProperties: true } }
+          }
+        },
+        BuildingDesignConfirmRequest: {
+          type: "object",
+          required: ["expected_revision"],
+          properties: { expected_revision: { type: "integer", minimum: 1 } }
+        },
+        SiteSearchRequest: {
+          type: "object",
+          required: ["footprint"],
+          properties: {
+            footprint: { enum: ["1x1", "1x2", "1x3", "2x1", "2x2", "2x3", "3x1", "3x2", "3x3"] },
+            bounds: { type: "object", required: ["minColumn", "minRow", "maxColumn", "maxRow"], properties: { minColumn: { type: "integer" }, minRow: { type: "integer" }, maxColumn: { type: "integer" }, maxRow: { type: "integer" } } },
+            near: { type: "array", items: { $ref: "#/components/schemas/Endpoint" } },
+            prefer: { type: "array", items: { type: "string" } },
+            avoid: { type: "array", items: { type: "string" } },
+            limit: { type: "integer", minimum: 1, maximum: 100 }
+          }
+        },
+        ConnectionRequest: {
+          type: "object",
+          required: ["from", "to"],
+          properties: {
+            expected_city_version: { type: "integer", minimum: 0 },
+            from: { $ref: "#/components/schemas/Endpoint" },
+            to: { $ref: "#/components/schemas/Endpoint" },
+            mode: { const: "road" },
+            actor_note: { type: "string" }
+          }
         },
         ConstructionRequest: {
           type: "object",
@@ -63,7 +165,7 @@ export function createOpenApiDocument(baseUrl) {
               required: ["lot_id", "footprint", "entrance"],
               properties: {
                 lot_id: { type: "string", description: "lotId returned by POST /site-searches; site.lotId is also accepted" },
-                footprint: { enum: ["1x1", "1x2", "1x3", "2x2", "4x1", "4x2"] },
+                footprint: { enum: ["1x1", "1x2", "1x3", "2x1", "2x2", "2x3", "3x1", "3x2", "3x3"] },
                 entrance: { enum: ["north", "east", "south", "west"] }
               }
             },
@@ -111,14 +213,22 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}/events": { get: operation("Read incremental city events", "queries") },
       "/cities/{city_id}/spatial": { get: operation("Query cells and occupants in a bounded grid rectangle", "queries") },
       "/cities/{city_id}/buildings": { get: operation("Find buildings by name, archetype, purpose, or bounding box", "queries") },
-      "/cities/{city_id}/site-searches": { post: operation("Rank legal construction sites with score explanations", "construction", json) },
+      "/cities/{city_id}/building-designs": {
+        get: operation("List versioned building designs", "building-designs"),
+        post: operation("Create a recommended editable design using floor-stack or urban-massing generation", "building-designs", { $ref: "#/components/schemas/BuildingDesignCreateRequest" })
+      },
+      "/cities/{city_id}/building-designs/{design_id}": { get: operation("Read the current building design revision", "building-designs") },
+      "/cities/{city_id}/building-designs/{design_id}/revisions": { post: operation("Apply structured operations and create an immutable design revision", "building-designs", { $ref: "#/components/schemas/BuildingDesignRevisionRequest" }) },
+      "/cities/{city_id}/building-designs/{design_id}/confirm": { post: operation("Lock the current design revision for construction", "building-designs", { $ref: "#/components/schemas/BuildingDesignConfirmRequest" }) },
+      "/cities/{city_id}/buildings/{building_id}/upgrade-designs": { post: operation("Create an editable upgrade design from a built voxel design", "building-designs", json) },
+      "/cities/{city_id}/site-searches": { post: operation("Rank legal construction sites with score explanations", "construction", { $ref: "#/components/schemas/SiteSearchRequest" }) },
       "/assets": { get: operation("Search validated reusable assets", "assets") },
-      "/cities/{city_id}/construction-previews": { post: operation("Preview cost, footprint, route, and asset compatibility", "construction", { $ref: "#/components/schemas/ConstructionRequest" }) },
-      "/cities/{city_id}/construction-orders": { post: commandOperation("Submit an idempotent reuse or production construction order", "construction", { $ref: "#/components/schemas/ConstructionRequest" }) },
+      "/cities/{city_id}/construction-previews": { post: operation("Preview a legacy asset request or confirmed voxel design", "construction", { oneOf: [{ $ref: "#/components/schemas/ConstructionRequest" }, { $ref: "#/components/schemas/BuildingDesignConstructionRequest" }] }) },
+      "/cities/{city_id}/construction-orders": { post: commandOperation("Submit an idempotent asset or confirmed voxel-design construction order", "construction", { oneOf: [{ $ref: "#/components/schemas/ConstructionRequest" }, { $ref: "#/components/schemas/BuildingDesignConstructionRequest" }] }) },
       "/cities/{city_id}/construction-orders/{order_id}": { get: operation("Read a construction order", "construction") },
       "/cities/{city_id}/construction-orders/{order_id}/cancel": { post: commandOperation("Cancel an asset-waiting construction order and release its site and frozen resources", "construction") },
-      "/cities/{city_id}/connection-previews": { post: operation("Preview a building/cell/node road connection", "roads", json) },
-      "/cities/{city_id}/connections": { post: commandOperation("Submit an idempotent road connection", "roads") },
+      "/cities/{city_id}/connection-previews": { post: operation("Preview a building/cell/node road connection", "roads", { $ref: "#/components/schemas/ConnectionRequest" }) },
+      "/cities/{city_id}/connections": { post: commandOperation("Submit an idempotent road connection", "roads", { $ref: "#/components/schemas/ConnectionRequest" }) },
       "/cities/{city_id}/time-advances": { post: commandOperation("Advance city time and recover output-based resources", "simulation") },
       "/cities/{city_id}/agent-links": { post: operation("Create a one-time Agent connection link", "credentials", json) },
       "/cities/{city_id}/agent-credentials": { get: operation("List Agent credentials", "credentials") },

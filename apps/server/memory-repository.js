@@ -1,0 +1,223 @@
+import { createCityState } from "../../src/city/state.js";
+import { getAssetRegistry } from "../../src/city/assets.js";
+import { createServiceWorldContract } from "./world.js";
+import { createId, createSecret, hashRequest } from "./ids.js";
+import { ServiceError } from "./errors.js";
+
+// A process-local repository for black-box API acceptance and demos. The HTTP
+// handlers, domain engine, solver, auth scopes, optimistic concurrency, and
+// idempotency rules remain the production ones; only persistence is replaced.
+export function createMemoryRepository(config) {
+  const players = new Map();
+  const credentials = new Map();
+  const capabilities = new Map();
+  const cities = new Map();
+  const designs = new Map();
+  const orders = new Map();
+  const receipts = new Map();
+  const assets = new Map(getAssetRegistry().map((asset) => [asset.assetId, asset]));
+
+  const repository = {
+    async createPlayer(displayName) {
+      const id = createId("player");
+      const token = createSecret("mtp");
+      players.set(token, { id, displayName });
+      return { id, display_name: displayName, access_token: token, token_type: "Bearer" };
+    },
+
+    async authenticate(token) {
+      if (!token) throw new ServiceError(401, "AUTHENTICATION_REQUIRED", "Bearer token is required");
+      const player = players.get(token);
+      if (player) return { kind: "player", id: player.id, displayName: player.displayName, scopes: ["*"] };
+      const credential = credentials.get(token);
+      if (!credential || credential.revoked) throw new ServiceError(401, "INVALID_CREDENTIAL", "Credential is invalid or revoked");
+      return { kind: "agent", id: credential.id, cityId: credential.cityId, scopes: credential.scopes, limits: credential.limits };
+    },
+
+    async createCity(principal, input = {}) {
+      requirePlayer(principal);
+      const id = createId("city");
+      const mapSeed = input.map_seed ?? "external-agent-acceptance";
+      const world = createServiceWorldContract({
+        mapId: input.map_id,
+        seed: mapSeed,
+        columns: input.world_columns,
+        rows: input.world_rows
+      });
+      const state = createCityState(world, {
+        cityId: id,
+        mapSeed,
+        resources: input.resources ?? { coins: 100000, timber: 100000, stone: 100000 },
+        rulesetVersion: "magic-london-mvp@1"
+      });
+      const row = {
+        id,
+        owner_player_id: principal.id,
+        name: input.name ?? "External Agent Acceptance City",
+        visibility: "private",
+        ruleset_version: state.rulesetVersion,
+        city_version: state.version,
+        state_jsonb: state
+      };
+      cities.set(id, row);
+      return citySummary(row);
+    },
+
+    async listCities(principal) {
+      requirePlayer(principal);
+      return [...cities.values()].filter((row) => row.owner_player_id === principal.id).map(citySummary);
+    },
+
+    async getCity(principal, cityId) {
+      const row = cities.get(cityId);
+      if (!row || !canAccess(principal, row)) throw new ServiceError(404, "CITY_NOT_FOUND", "City not found");
+      return { row, state: row.state_jsonb };
+    },
+
+    async getEvents(principal, cityId, afterVersion = 0, limit = 100) {
+      const { state } = await this.getCity(principal, cityId);
+      return (state.events ?? []).filter((event) => Number(event.cityVersion ?? 0) > afterVersion).slice(0, Math.min(200, limit));
+    },
+
+    async createCapability(principal, cityId, options = {}) {
+      requirePlayer(principal);
+      await this.getCity(principal, cityId);
+      const secret = createSecret("mtc");
+      const scopes = options.scopes?.length ? [...new Set(options.scopes)] : ["city:read", "city:build", "city:connect", "asset:request"];
+      const id = createId("cap");
+      const expiresAt = new Date(Date.now() + 30 * 60_000);
+      capabilities.set(secret, { id, cityId, scopes, expiresAt, consumed: false });
+      return { id, city_id: cityId, connect_url: `${config.publicBaseUrl}/connect/${secret}`, scopes, expires_at: expiresAt.toISOString() };
+    },
+
+    async exchangeCapability(secret) {
+      const capability = capabilities.get(secret);
+      if (!capability) throw new ServiceError(404, "CAPABILITY_NOT_FOUND", "Agent connection link is invalid");
+      if (capability.consumed) throw new ServiceError(410, "CAPABILITY_CONSUMED", "Agent connection link was already used");
+      if (capability.expiresAt <= new Date()) throw new ServiceError(410, "CAPABILITY_EXPIRED", "Agent connection link expired");
+      capability.consumed = true;
+      const token = createSecret("mta");
+      const id = createId("credential");
+      credentials.set(token, { id, cityId: capability.cityId, scopes: capability.scopes, limits: { asset_jobs_per_day: 3 }, revoked: false });
+      return {
+        credential_id: id,
+        city_id: capability.cityId,
+        access_token: token,
+        token_type: "Bearer",
+        scopes: capability.scopes,
+        expires_at: new Date(Date.now() + 90 * 86_400_000).toISOString(),
+        api_base_url: `${config.publicBaseUrl}/api/v1`,
+        playbook_url: `${config.publicBaseUrl}/agent/playbook.md`,
+        openapi_url: `${config.publicBaseUrl}/openapi.json`
+      };
+    },
+
+    async listCredentials(principal, cityId) {
+      requirePlayer(principal);
+      await this.getCity(principal, cityId);
+      return [...credentials.values()].filter((item) => item.cityId === cityId).map((item) => ({ id: item.id, scopes: item.scopes, revoked_at: item.revoked ? new Date().toISOString() : null }));
+    },
+
+    async revokeCredential(principal, cityId, credentialId) {
+      requirePlayer(principal);
+      await this.getCity(principal, cityId);
+      const found = [...credentials.values()].find((item) => item.id === credentialId && item.cityId === cityId);
+      if (!found) throw new ServiceError(404, "CREDENTIAL_NOT_FOUND", "Credential not found");
+      found.revoked = true;
+      return { id: credentialId, revoked: true };
+    },
+
+    async searchAssets(_principal, criteria = {}) {
+      return [...assets.values()].filter((asset) => (!criteria.archetype || asset.archetype === criteria.archetype) && (!criteria.footprint || asset.footprint === criteria.footprint)).slice(0, Number(criteria.limit ?? 20)).map(assetResponse);
+    },
+    async getAsset(_principal, assetId) { return assets.has(assetId) ? assetResponse(assets.get(assetId)) : null; },
+    async getAssetsForCity(principal, cityId, assetIds = []) { await this.getCity(principal, cityId); return assetIds.filter((id) => assets.has(id)).map((id) => assetResponse(assets.get(id))); },
+
+    async createBuildingDesign(principal, cityId, design) {
+      await this.getCity(principal, cityId);
+      const now = new Date().toISOString();
+      const value = { ...structuredClone(design), cityId, buildingId: design.source?.buildingId ?? null, status: design.status, confirmedRevision: null, createdAt: now, updatedAt: now };
+      designs.set(design.id, value);
+      return structuredClone(value);
+    },
+    async getBuildingDesign(principal, cityId, designId) {
+      await this.getCity(principal, cityId);
+      const design = designs.get(designId);
+      if (!design || design.cityId !== cityId) throw new ServiceError(404, "BUILDING_DESIGN_NOT_FOUND", "Building design not found");
+      return structuredClone(design);
+    },
+    async listBuildingDesigns(principal, cityId) { await this.getCity(principal, cityId); return [...designs.values()].filter((design) => design.cityId === cityId).map((design) => structuredClone(design)); },
+    async appendBuildingDesignRevision(principal, cityId, design, expectedRevision) {
+      const current = await this.getBuildingDesign(principal, cityId, design.id);
+      if (current.status !== "editable") throw new ServiceError(409, "BUILDING_DESIGN_LOCKED", `Building design is ${current.status}`);
+      if (Number(current.revision) !== Number(expectedRevision)) throw new ServiceError(409, "BUILDING_DESIGN_REVISION_CONFLICT", "Building design changed since it was read");
+      const value = { ...structuredClone(design), cityId, buildingId: current.buildingId, status: "editable", confirmedRevision: null, createdAt: current.createdAt, updatedAt: new Date().toISOString() };
+      designs.set(design.id, value);
+      return structuredClone(value);
+    },
+    async confirmBuildingDesign(principal, cityId, design, expectedRevision) {
+      const current = await this.getBuildingDesign(principal, cityId, design.id);
+      if (Number(current.revision) !== Number(expectedRevision)) throw new ServiceError(409, "BUILDING_DESIGN_REVISION_CONFLICT", "Building design changed since it was read");
+      const value = { ...structuredClone(design), cityId, buildingId: current.buildingId, status: "confirmed", confirmedRevision: design.revision, createdAt: current.createdAt, updatedAt: new Date().toISOString() };
+      designs.set(design.id, value);
+      return structuredClone(value);
+    },
+
+    async getOrder(principal, cityId, orderId) { await this.getCity(principal, cityId); const order = orders.get(orderId); if (!order || order.city_id !== cityId) throw new ServiceError(404, "ORDER_NOT_FOUND", "Order not found"); return structuredClone(order); },
+    async listOrders(principal, cityId) { await this.getCity(principal, cityId); return [...orders.values()].filter((order) => order.city_id === cityId).map((order) => structuredClone(order)); },
+
+    async transactCity({ principal, cityId, endpoint, idempotencyKey, requestBody, expectedVersion }, handler) {
+      if (!idempotencyKey) throw new ServiceError(400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key header is required");
+      const receiptKey = `${principal.kind}:${principal.id}:${endpoint}:${idempotencyKey}`;
+      const requestHash = hashRequest(requestBody);
+      const prior = receipts.get(receiptKey);
+      if (prior) {
+        if (prior.hash !== requestHash) throw new ServiceError(409, "IDEMPOTENCY_KEY_REUSED", "Idempotency key was already used with a different request");
+        return { ...structuredClone(prior.response), idempotent_replay: true };
+      }
+      const { row, state } = await this.getCity(principal, cityId);
+      if (expectedVersion !== undefined && Number(expectedVersion) !== Number(state.version)) throw new ServiceError(409, "CITY_VERSION_CONFLICT", "City changed since the preview", { expected: Number(expectedVersion), actual: Number(state.version) });
+      const client = memoryClient({ cityId, row, designs, orders });
+      const handled = await handler({ client, state, city: row });
+      if (handled.nextState) {
+        row.state_jsonb = handled.nextState;
+        row.city_version = handled.nextState.version;
+      }
+      receipts.set(receiptKey, { hash: requestHash, response: structuredClone(handled.response) });
+      return handled.response;
+    },
+
+    async getAssetJob() { throw new ServiceError(404, "ASSET_JOB_NOT_FOUND", "Asset job not found"); }
+  };
+  return repository;
+}
+
+function memoryClient({ cityId, row, designs, orders }) {
+  return {
+    async query(sql, params = []) {
+      const normalized = sql.replace(/\s+/g, " ").trim();
+      if (normalized.startsWith("SELECT status, current_revision, confirmed_revision FROM building_designs")) {
+        const design = designs.get(params[0]);
+        return design && design.cityId === params[1]
+          ? { rowCount: 1, rows: [{ status: design.status, current_revision: design.revision, confirmed_revision: design.confirmedRevision }] }
+          : { rowCount: 0, rows: [] };
+      }
+      if (normalized.startsWith("INSERT INTO construction_orders")) {
+        orders.set(params[0], { id: params[0], city_id: cityId, status: "completed", asset: { mode: "voxel" }, request: JSON.parse(params[2]), created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+        return { rowCount: 1, rows: [] };
+      }
+      if (normalized.startsWith("UPDATE building_designs SET status = 'built'")) {
+        const design = designs.get(params[1]);
+        if (design) designs.set(params[1], { ...design, status: "built", buildingId: params[0], updatedAt: new Date().toISOString() });
+        return { rowCount: design ? 1 : 0, rows: [] };
+      }
+      if (normalized.startsWith("SELECT * FROM cities WHERE id = $1 FOR UPDATE")) return { rowCount: 1, rows: [row] };
+      throw new Error(`Memory repository does not implement SQL used by this route: ${normalized}`);
+    }
+  };
+}
+
+function canAccess(principal, row) { return principal?.kind === "agent" ? principal.cityId === row.id : principal?.id === row.owner_player_id; }
+function requirePlayer(principal) { if (principal?.kind !== "player") throw new ServiceError(403, "PLAYER_CREDENTIAL_REQUIRED", "This action requires a player credential"); }
+function citySummary(row) { return { id: row.id, name: row.name, visibility: row.visibility, ruleset_version: row.ruleset_version, city_version: Number(row.city_version), turn: row.state_jsonb.turn, resources: row.state_jsonb.resources, counts: { buildings: Object.keys(row.state_jsonb.buildings ?? {}).length, roads: Object.values(row.state_jsonb.cells).filter((cell) => cell.infrastructure === "road").length, pending_orders: 0 } }; }
+function assetResponse(asset) { return { id: asset.assetId, owner_player_id: null, archetype: asset.archetype, footprint: asset.footprint, district_style: "london_common", tags: asset.tags, status: "validated", source: "builtin", manifest: asset, match: { score: 1, exact: true, differences: [], recommendation: "reuse" } }; }
