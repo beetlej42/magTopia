@@ -6,6 +6,7 @@ dist/
 .venv/
 .uv-cache/
 .tools/
+.magictown/
 __pycache__/
 *.py[cod]
 

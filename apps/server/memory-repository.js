@@ -1,13 +1,16 @@
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { createCityState } from "../../src/city/state.js";
 import { getAssetRegistry } from "../../src/city/assets.js";
 import { createServiceWorldContract } from "./world.js";
 import { createId, createSecret, hashRequest } from "./ids.js";
 import { ServiceError } from "./errors.js";
 
-// A process-local repository for black-box API acceptance and demos. The HTTP
-// handlers, domain engine, solver, auth scopes, optimistic concurrency, and
-// idempotency rules remain the production ones; only persistence is replaced.
-export function createMemoryRepository(config) {
+// A lightweight repository for black-box API acceptance and LAN demos. With a
+// storagePath it atomically snapshots every mutation and survives restarts;
+// without one it remains an isolated process-local repository for tests.
+export function createMemoryRepository(config, options = {}) {
+  const storagePath = options.storagePath ? path.resolve(options.storagePath) : null;
   const players = new Map();
   const credentials = new Map();
   const capabilities = new Map();
@@ -16,12 +19,16 @@ export function createMemoryRepository(config) {
   const orders = new Map();
   const receipts = new Map();
   const assets = new Map(getAssetRegistry().map((asset) => [asset.assetId, asset]));
+  hydratePersistentState(storagePath, { players, credentials, capabilities, cities, designs, orders, receipts });
+
+  const persist = () => persistState(storagePath, { players, credentials, capabilities, cities, designs, orders, receipts });
 
   const repository = {
     async createPlayer(displayName) {
       const id = createId("player");
       const token = createSecret("mtp");
       players.set(token, { id, displayName });
+      persist();
       return { id, display_name: displayName, access_token: token, token_type: "Bearer" };
     },
 
@@ -60,6 +67,7 @@ export function createMemoryRepository(config) {
         state_jsonb: state
       };
       cities.set(id, row);
+      persist();
       return citySummary(row);
     },
 
@@ -87,6 +95,7 @@ export function createMemoryRepository(config) {
       const id = createId("cap");
       const expiresAt = new Date(Date.now() + 30 * 60_000);
       capabilities.set(secret, { id, cityId, scopes, expiresAt, consumed: false });
+      persist();
       return { id, city_id: cityId, connect_url: `${config.publicBaseUrl}/connect/${secret}`, scopes, expires_at: expiresAt.toISOString() };
     },
 
@@ -99,6 +108,7 @@ export function createMemoryRepository(config) {
       const token = createSecret("mta");
       const id = createId("credential");
       credentials.set(token, { id, cityId: capability.cityId, scopes: capability.scopes, limits: { asset_jobs_per_day: 3 }, revoked: false });
+      persist();
       return {
         credential_id: id,
         city_id: capability.cityId,
@@ -124,6 +134,7 @@ export function createMemoryRepository(config) {
       const found = [...credentials.values()].find((item) => item.id === credentialId && item.cityId === cityId);
       if (!found) throw new ServiceError(404, "CREDENTIAL_NOT_FOUND", "Credential not found");
       found.revoked = true;
+      persist();
       return { id: credentialId, revoked: true };
     },
 
@@ -138,6 +149,7 @@ export function createMemoryRepository(config) {
       const now = new Date().toISOString();
       const value = { ...structuredClone(design), cityId, buildingId: design.source?.buildingId ?? null, status: design.status, confirmedRevision: null, createdAt: now, updatedAt: now };
       designs.set(design.id, value);
+      persist();
       return structuredClone(value);
     },
     async getBuildingDesign(principal, cityId, designId) {
@@ -153,6 +165,7 @@ export function createMemoryRepository(config) {
       if (Number(current.revision) !== Number(expectedRevision)) throw new ServiceError(409, "BUILDING_DESIGN_REVISION_CONFLICT", "Building design changed since it was read");
       const value = { ...structuredClone(design), cityId, buildingId: current.buildingId, status: "editable", confirmedRevision: null, createdAt: current.createdAt, updatedAt: new Date().toISOString() };
       designs.set(design.id, value);
+      persist();
       return structuredClone(value);
     },
     async confirmBuildingDesign(principal, cityId, design, expectedRevision) {
@@ -160,6 +173,7 @@ export function createMemoryRepository(config) {
       if (Number(current.revision) !== Number(expectedRevision)) throw new ServiceError(409, "BUILDING_DESIGN_REVISION_CONFLICT", "Building design changed since it was read");
       const value = { ...structuredClone(design), cityId, buildingId: current.buildingId, status: "confirmed", confirmedRevision: design.revision, createdAt: current.createdAt, updatedAt: new Date().toISOString() };
       designs.set(design.id, value);
+      persist();
       return structuredClone(value);
     },
 
@@ -184,8 +198,44 @@ export function createMemoryRepository(config) {
         row.city_version = handled.nextState.version;
       }
       receipts.set(receiptKey, { hash: requestHash, response: structuredClone(handled.response) });
+      persist();
       return handled.response;
     },
+
+    async ensureSandbox({ displayName, cityInput, scopes }) {
+      let playerEntry = [...players.entries()].find(([, player]) => player.displayName === displayName);
+      if (!playerEntry) {
+        const created = await this.createPlayer(displayName);
+        playerEntry = [created.access_token, players.get(created.access_token)];
+      }
+      const [accessToken, player] = playerEntry;
+      const principal = await this.authenticate(accessToken);
+      let city = [...cities.values()].find((row) => row.owner_player_id === player.id && row.name === cityInput.name);
+      if (!city) {
+        const created = await this.createCity(principal, cityInput);
+        city = cities.get(created.id);
+      }
+      const link = await this.createCapability(principal, city.id, { scopes });
+      return {
+        player: { id: player.id, display_name: player.displayName, access_token: accessToken, token_type: "Bearer" },
+        city: citySummary(city),
+        link
+      };
+    },
+
+    listLocalCityAccess() {
+      const playerTokensById = new Map([...players.entries()].map(([token, player]) => [player.id, token]));
+      const agentTokensByCity = new Map();
+      for (const [token, credential] of credentials) {
+        if (!credential.revoked) agentTokensByCity.set(credential.cityId, token);
+      }
+      return [...cities.values()].map((row) => ({
+        ...citySummary(row),
+        access_token: agentTokensByCity.get(row.id) ?? playerTokensById.get(row.owner_player_id) ?? null
+      }));
+    },
+
+    persistence: { enabled: Boolean(storagePath), storagePath },
 
     async getAssetJob() { throw new ServiceError(404, "ASSET_JOB_NOT_FOUND", "Asset job not found"); }
   };
@@ -221,3 +271,42 @@ function canAccess(principal, row) { return principal?.kind === "agent" ? princi
 function requirePlayer(principal) { if (principal?.kind !== "player") throw new ServiceError(403, "PLAYER_CREDENTIAL_REQUIRED", "This action requires a player credential"); }
 function citySummary(row) { return { id: row.id, name: row.name, visibility: row.visibility, ruleset_version: row.ruleset_version, city_version: Number(row.city_version), turn: row.state_jsonb.turn, resources: row.state_jsonb.resources, counts: { buildings: Object.keys(row.state_jsonb.buildings ?? {}).length, roads: Object.values(row.state_jsonb.cells).filter((cell) => cell.infrastructure === "road").length, pending_orders: 0 } }; }
 function assetResponse(asset) { return { id: asset.assetId, owner_player_id: null, archetype: asset.archetype, footprint: asset.footprint, district_style: "london_common", tags: asset.tags, status: "validated", source: "builtin", manifest: asset, match: { score: 1, exact: true, differences: [], recommendation: "reuse" } }; }
+
+function hydratePersistentState(storagePath, stores) {
+  if (!storagePath || !existsSync(storagePath)) return;
+  let snapshot;
+  try {
+    snapshot = JSON.parse(readFileSync(storagePath, "utf8"));
+  } catch (error) {
+    throw new Error(`Failed to read persistent Agent LAN state at ${storagePath}: ${error.message}`);
+  }
+  if (snapshot.schemaVersion !== 1) throw new Error(`Unsupported Agent LAN state schema: ${snapshot.schemaVersion}`);
+  for (const name of ["players", "credentials", "cities", "designs", "orders", "receipts"]) {
+    for (const [key, value] of snapshot[name] ?? []) stores[name].set(key, value);
+  }
+  for (const [key, value] of snapshot.capabilities ?? []) {
+    stores.capabilities.set(key, { ...value, expiresAt: new Date(value.expiresAt) });
+  }
+}
+
+function persistState(storagePath, stores) {
+  if (!storagePath) return;
+  mkdirSync(path.dirname(storagePath), { recursive: true });
+  const snapshot = {
+    schemaVersion: 1,
+    writtenAt: new Date().toISOString(),
+    players: [...stores.players],
+    credentials: [...stores.credentials],
+    capabilities: [...stores.capabilities].map(([key, value]) => [key, {
+      ...value,
+      expiresAt: value.expiresAt instanceof Date ? value.expiresAt.toISOString() : value.expiresAt
+    }]),
+    cities: [...stores.cities],
+    designs: [...stores.designs],
+    orders: [...stores.orders],
+    receipts: [...stores.receipts]
+  };
+  const temporaryPath = `${storagePath}.${process.pid}.tmp`;
+  writeFileSync(temporaryPath, `${JSON.stringify(snapshot)}\n`, { mode: 0o600 });
+  renameSync(temporaryPath, storagePath);
+}

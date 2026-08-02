@@ -65,8 +65,8 @@ Run PostgreSQL integration coverage with an isolated test database:
 MAGICTOWN_TEST_DATABASE_URL=postgres://localhost:5432/magictown_test pnpm test
 ```
 
-For a disposable LAN-accessible Agent construction sandbox, first build the
-viewer and then start the in-memory acceptance service. It listens on all local
+For a LAN-accessible Agent construction sandbox, first build the viewer and
+then start the persistent acceptance service. It listens on all local
 interfaces, advertises the detected LAN IPv4 address, seeds each resource at
 JavaScript's maximum safe integer, and prints both a one-time Agent connection
 URL and a spherical voxel viewer URL with Bokeh depth of field and no UI:
@@ -75,6 +75,11 @@ URL and a spherical voxel viewer URL with Bokeh depth of field and no UI:
 pnpm run build
 pnpm run agent:lan
 ```
+
+The LAN sandbox persists all players, credentials, cities, designs, orders,
+idempotency receipts, and city state in `.magictown/agent-lan-state.json` using
+atomic file replacement. Restarting `agent:lan` reopens the same bootstrap city
+and writes the current connection metadata to `.magictown/agent-lan-info.json`.
 
 ## Magic London Development Terrain
 
