@@ -3,7 +3,7 @@ import test from "node:test";
 import { createCityState } from "../src/city/state.js";
 import { createEngineContext, executeCityCommand } from "../src/city/engine.js";
 import { confirmBuildingDesign, createBuildingDesignDraft, createBuildingUpgradeDraft } from "../src/city/building-design.js";
-import { previewConnectionBetween } from "../src/city/solver.js";
+import { findCandidateParcels, previewConnectionBetween } from "../src/city/solver.js";
 
 function world(columns = 12, rows = 12) {
   const cells = [];
@@ -32,6 +32,38 @@ test("city engine is deterministic with injected ids and time", () => {
   assert.deepEqual(a, b);
   assert.equal(a.state.events[0].at, "2026-07-22T12:00:00.000Z");
   assert.equal(a.cityVersionAfter, 1);
+});
+
+test("named districts persist simple intent while site search returns facts without scores", () => {
+  const initial = createCityState(world(), { resources: { coins: 9999, timber: 9999, stone: 9999 } });
+  const defined = executeCityCommand(initial, {
+    type: "define_district",
+    id: "district-lantern",
+    name: "Lantern Row",
+    purpose: "residential and shopping street",
+    bounds: { minColumn: 2, maxColumn: 8, minRow: 2, maxRow: 8 },
+    actor: "agent:test"
+  }, context());
+  assert.equal(defined.accepted, true);
+  assert.equal(defined.state.districts["district-lantern"].name, "Lantern Row");
+  const road = executeCityCommand(defined.state, {
+    type: "connect",
+    from: { kind: "cell", id: "cell-2-5" },
+    to: { kind: "cell", id: "cell-8-5" },
+    mode: "road",
+    actor: "agent:test"
+  }, context());
+  assert.equal(road.accepted, true);
+  const candidates = findCandidateParcels(road.state, {
+    footprint: "1x1",
+    districtId: "district-lantern",
+    bounds: defined.district.bounds,
+    limit: 100
+  });
+  assert.ok(candidates.length > 0);
+  assert.ok(candidates.some((candidate) => candidate.context.adjacentRoad));
+  assert.ok(candidates.every((candidate) => candidate.context.districtId === "district-lantern"));
+  assert.ok(candidates.every((candidate) => !("score" in candidate) && !("scoreExplanation" in candidate)));
 });
 
 test("production reservation freezes and failure refunds the exact cost", () => {

@@ -65,6 +65,7 @@ export function createOpenApiDocument(baseUrl) {
           required: ["expected_city_version", "design_id", "design_revision", "design_hash"],
           properties: {
             expected_city_version: { type: "integer", minimum: 0 },
+            district_id: { type: "string", description: "Named development district this building contributes to" },
             design_id: { type: "string" },
             design_revision: { type: "integer", minimum: 1 },
             design_hash: { type: "string", description: "Exact hash returned when the design revision was confirmed" },
@@ -131,15 +132,32 @@ export function createOpenApiDocument(baseUrl) {
           required: ["expected_revision"],
           properties: { expected_revision: { type: "integer", minimum: 1 } }
         },
+        DistrictCreateRequest: {
+          type: "object",
+          required: ["expected_city_version", "name", "purpose", "bounds"],
+          properties: {
+            expected_city_version: { type: "integer", minimum: 0 },
+            name: { type: "string", minLength: 1, maxLength: 80 },
+            purpose: { type: "string", minLength: 1, maxLength: 160 },
+            actor_note: { type: "string" },
+            bounds: {
+              type: "object",
+              required: ["minColumn", "minRow", "maxColumn", "maxRow"],
+              properties: {
+                minColumn: { type: "integer" },
+                minRow: { type: "integer" },
+                maxColumn: { type: "integer" },
+                maxRow: { type: "integer" }
+              }
+            }
+          }
+        },
         SiteSearchRequest: {
           type: "object",
           required: ["footprint"],
           properties: {
             footprint: { enum: ["1x1", "1x2", "1x3", "2x1", "2x2", "2x3", "3x1", "3x2", "3x3"] },
-            bounds: { type: "object", required: ["minColumn", "minRow", "maxColumn", "maxRow"], properties: { minColumn: { type: "integer" }, minRow: { type: "integer" }, maxColumn: { type: "integer" }, maxRow: { type: "integer" } } },
-            near: { type: "array", items: { $ref: "#/components/schemas/Endpoint" } },
-            prefer: { type: "array", items: { type: "string" } },
-            avoid: { type: "array", items: { type: "string" } },
+            district_id: { type: "string", description: "Use the persisted bounds of this named development district" },
             limit: { type: "integer", minimum: 1, maximum: 100 }
           }
         },
@@ -159,6 +177,7 @@ export function createOpenApiDocument(baseUrl) {
           required: ["expected_city_version", "site", "program", "design", "asset"],
           properties: {
             expected_city_version: { type: "integer", minimum: 0, description: "Version from the latest snapshot or preview" },
+            district_id: { type: "string", description: "Named development district this building contributes to" },
             actor_note: { type: "string", description: "Short factual reason for this construction" },
             site: {
               type: "object",
@@ -213,6 +232,10 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}/events": { get: operation("Read incremental city events", "queries") },
       "/cities/{city_id}/spatial": { get: operation("Query cells and occupants in a bounded grid rectangle", "queries") },
       "/cities/{city_id}/buildings": { get: operation("Find buildings by name, archetype, purpose, or bounding box", "queries") },
+      "/cities/{city_id}/districts": {
+        get: operation("List named development districts with road and building progress", "districts"),
+        post: commandOperation("Name and designate a rectangular development district", "districts", { $ref: "#/components/schemas/DistrictCreateRequest" })
+      },
       "/cities/{city_id}/building-designs": {
         get: operation("List versioned building designs", "building-designs"),
         post: operation("Create a recommended editable design using floor-stack or urban-massing generation", "building-designs", { $ref: "#/components/schemas/BuildingDesignCreateRequest" })
@@ -221,7 +244,7 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}/building-designs/{design_id}/revisions": { post: operation("Apply structured operations and create an immutable design revision", "building-designs", { $ref: "#/components/schemas/BuildingDesignRevisionRequest" }) },
       "/cities/{city_id}/building-designs/{design_id}/confirm": { post: operation("Lock the current design revision for construction", "building-designs", { $ref: "#/components/schemas/BuildingDesignConfirmRequest" }) },
       "/cities/{city_id}/buildings/{building_id}/upgrade-designs": { post: operation("Create an editable upgrade design from a built voxel design", "building-designs", json) },
-      "/cities/{city_id}/site-searches": { post: operation("Rank legal construction sites with score explanations", "construction", { $ref: "#/components/schemas/SiteSearchRequest" }) },
+      "/cities/{city_id}/site-searches": { post: operation("List legal construction sites and objective road-frontage facts inside a named district", "construction", { $ref: "#/components/schemas/SiteSearchRequest" }) },
       "/assets": { get: operation("Search validated reusable assets", "assets") },
       "/cities/{city_id}/construction-previews": { post: operation("Preview a legacy asset request or confirmed voxel design", "construction", { oneOf: [{ $ref: "#/components/schemas/ConstructionRequest" }, { $ref: "#/components/schemas/BuildingDesignConstructionRequest" }] }) },
       "/cities/{city_id}/construction-orders": { post: commandOperation("Submit an idempotent asset or confirmed voxel-design construction order", "construction", { oneOf: [{ $ref: "#/components/schemas/ConstructionRequest" }, { $ref: "#/components/schemas/BuildingDesignConstructionRequest" }] }) },

@@ -20,23 +20,29 @@ export function findCandidateParcels(state, criteria = {}) {
     if (!footprintWithinBounds(state, occupancy.cells, criteria.bounds)) continue;
     const entranceDirections = allowedEntrances(state, occupancy.cells);
     if (!entranceDirections.length) continue;
-    const scoreExplanation = scoreLot(state, lot, criteria, true);
+    const roadFrontageDirections = entranceDirections.filter((direction) => adjacentRoad(state, occupancy.cells, direction));
+    const roadDistance = nearestRoadDistance(state, lot);
     candidates.push({
       lotId: lot.id,
       footprintCells: occupancy.cells,
       center: lot.center,
       entranceDirections,
-      score: scoreExplanation.total,
-      scoreExplanation,
       terrainSummary: summarizeTerrain(state, occupancy.cells),
       context: {
-        adjacentRoad: entranceDirections.some((direction) => adjacentRoad(state, occupancy.cells, direction)),
+        districtId: criteria.districtId ?? null,
+        adjacentRoad: roadFrontageDirections.length > 0,
+        roadFrontageDirections,
+        nearestRoadDistance: Number.isFinite(roadDistance) ? roadDistance : null,
         scenic: isNearWater(state, lot, 3) ? "waterfront" : "urban",
         boundsMatched: Boolean(criteria.bounds)
       }
     });
   }
-  return candidates.sort((a, b) => b.score - a.score).slice(0, criteria.limit ?? 24);
+  return candidates
+    .sort((left, right) => state.cells[left.lotId].row - state.cells[right.lotId].row
+      || state.cells[left.lotId].column - state.cells[right.lotId].column
+      || left.lotId.localeCompare(right.lotId))
+    .slice(0, criteria.limit ?? 24);
 }
 
 export function previewConstruction(state, proposal) {
@@ -64,6 +70,7 @@ export function previewConstruction(state, proposal) {
     gradingPlan: createGradingPlan(state, occupancy.cells),
     allowedEntrances: availableEntrances,
     connectionPlan: route,
+    guidance: constructionGuidance(state, proposal, occupancy.cells),
     cost,
     resourcesAfter,
     warnings: route.bridgeCells.length ? [`Bridge required across ${route.bridgeCells.length} water cell(s).`] : []
@@ -174,22 +181,43 @@ function firstRouteableDirection(state, cellId) {
 
 function emptyRoute() { return { feasible: true, route: [], roadCells: [], bridgeCells: [], cost: { coins: 0, timber: 0, stone: 0 } }; }
 function allowedEntrances(state, cells) { return DIRECTIONS.filter((direction) => getEntranceFrontageCells(state, cells, direction).length > 0); }
-function adjacentRoad(state, cells, direction) { return cells.some((id) => state.cells[neighborId(state.cells[id], direction)]?.infrastructure === "road"); }
+function adjacentRoad(state, cells, direction) {
+  return getEntranceFrontageCells(state, cells, direction).some((cellId) => (
+    state.cells[cellId]?.infrastructure === "road" || state.infrastructure[cellId]?.type === "bridge"
+  ));
+}
 function neighborId(cell, direction) { const [x, y] = DIRECTION_OFFSETS[direction]; return `cell-${cell.column + x}-${cell.row + y}`; }
-function scoreLot(state, lot, criteria, explain = false) {
-  const nearEntries = Array.isArray(criteria.near) ? criteria.near : [];
-  const wantsWaterfront = nearEntries.some((entry) => (entry?.kind ?? entry) === "riverfront" || (entry?.kind ?? entry) === "waterfront");
-  const roadDistance = nearestRoadDistance(state, lot);
-  const road = roadDistance < 4 ? 12 - roadDistance : 0;
-  const water = wantsWaterfront && isNearWater(state, lot, 4) ? 20 : 0;
-  const endpoint = nearEntries.reduce((score, entry) => score + endpointProximityScore(state, lot, entry), 0);
-  const prefer = preferenceScore(state, lot, criteria.prefer);
-  const avoid = preferenceScore(state, lot, criteria.avoid);
-  const centerRow = ((state.world?.grid?.rows ?? 50) - 1) / 2;
-  const centrality = -Math.abs(lot.row - centerRow) * 0.1;
-  const result = { waterfront: water, roadProximity: road, endpointProximity: endpoint, preferences: prefer, avoidPenalty: -avoid, centrality };
-  result.total = Object.values(result).reduce((sum, value) => sum + value, 0);
-  return explain ? result : result.total;
+
+function constructionGuidance(state, proposal, footprintCells) {
+  const guidance = [];
+  const districts = state.districts ?? {};
+  const district = proposal.districtId ? districts[proposal.districtId] : null;
+  if (!Object.keys(districts).length) {
+    guidance.push({ code: "define_development_district_first", message: "Name and designate a development district before starting a new building cluster." });
+    return guidance;
+  }
+  if (!proposal.districtId) {
+    guidance.push({ code: "choose_development_district", message: "Associate this building with a named development district so later actions share one spatial intention." });
+    return guidance;
+  }
+  if (!district) {
+    guidance.push({ code: "district_not_found", message: `The referenced district ${proposal.districtId} does not exist.` });
+    return guidance;
+  }
+  if (!footprintWithinBounds(state, footprintCells, district.bounds)) {
+    guidance.push({ code: "site_outside_district", message: `${proposal.program.name} is outside the bounds of ${district.name}.` });
+  }
+  const districtHasRoads = Object.values(state.cells).some((cell) => (
+    cell.column >= district.bounds.minColumn && cell.column <= district.bounds.maxColumn
+    && cell.row >= district.bounds.minRow && cell.row <= district.bounds.maxRow
+    && (cell.infrastructure === "road" || state.infrastructure[cell.id]?.type === "bridge")
+  ));
+  if (!districtHasRoads) {
+    guidance.push({ code: "district_has_no_roads", message: `${district.name} has no road network yet; establish its streets before placing buildings.` });
+  } else if (!adjacentRoad(state, footprintCells, proposal.site.entrance)) {
+    guidance.push({ code: "entrance_not_on_existing_road", message: `The ${proposal.site.entrance} entrance does not face an existing road in ${district.name}.` });
+  }
+  return guidance;
 }
 
 export function getEntranceFrontageCells(state, footprintCells, direction) {
@@ -295,31 +323,6 @@ function isNearWater(state, lot, radius) {
     }
   }
   return false;
-}
-
-function endpointProximityScore(state, lot, entry) {
-  if (!entry || typeof entry !== "object") return 0;
-  let target = null;
-  if (entry.kind === "building") {
-    const building = state.buildings[entry.id];
-    target = building ? state.cells[building.footprintCells?.[0] ?? building.site?.lotId] : null;
-  } else if (entry.kind === "node") target = state.cells[state.nodes[entry.id]?.cellId];
-  else if (entry.kind === "cell") target = state.cells[entry.id];
-  if (!target) return 0;
-  const distance = Math.abs(target.column - lot.column) + Math.abs(target.row - lot.row);
-  const maximum = Number(entry.max_distance ?? entry.maxDistance ?? 12);
-  return distance <= maximum ? Math.max(0, 16 - distance) : -20;
-}
-
-function preferenceScore(state, lot, entries) {
-  const values = Array.isArray(entries) ? entries : entries ? [entries] : [];
-  return values.reduce((score, entry) => {
-    const kind = entry?.kind ?? entry;
-    if (["waterfront", "riverfront"].includes(kind)) return score + (isNearWater(state, lot, 4) ? 6 : 0);
-    if (["road", "existing_road"].includes(kind)) return score + (nearestRoadDistance(state, lot) < 4 ? 6 : 0);
-    if (kind === "flat_terrain") return score + (Number(lot.surface?.heightRangeVoxels ?? 0) <= 1 ? 4 : 0);
-    return score;
-  }, 0);
 }
 
 function pushRouteCandidate(heap, candidate) {

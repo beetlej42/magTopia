@@ -45,6 +45,16 @@ POST /api/v1/cities/{city_id}/building-designs
 
 `auto` 会将普通 1×1 街屋推荐为 `floor_stack`；多格占地、institutional frontage、landmark，或 `court / hall / tower / yard` composition 会推荐为 `urban_massing`。
 
+公共建筑的 `style` 不再只替换墙色，而会选择完整的体量、屋顶、立面节奏和受限材质语法：
+
+- `civic_classical`：横向对称大厅、柱廊与仪式入口，可用少量 `gildedMetal` 强调穹顶或冠部；
+- `industrial_iron`：非对称厂房、`sawtooth` 锯齿顶、大跨窗、装卸雨棚与烟囱群，材质以深砖和铁为主；
+- `victorian_gothic`：窄高窗、`gothic` 尖拱立面、陡坡屋顶、扶壁和细长尖塔；
+- `alchemical_glass`：实验楼、铜绿框架、`tealGlass` 玻璃长厅、拱形温室顶和蒸馏塔；
+- `victorian_domestic`：窄地块单元、错落退进、交替山墙/曼萨屋顶与变化的烟囱线。
+
+Agent 仍选择语义风格和功能，编译器负责把风格约束落实到通用 mass、cap、facade 和 material 原语，不需要为工厂、学院或研究院准备专用模型。未显式提供公共建筑风格时，`institutional` frontage 或 `landmark` prominence 默认使用 `civic_classical`；普通建筑仍默认 `victorian_domestic`。
+
 响应包含生成模式、完整 `sourceSpec`、独立 `DecorationSpec`、稳定的 `primary_entrance` port、revision、`specHash`、设计锁，以及共同和模式专属的 `availableOperations`。`availableOperations` 同时列出合法 decoration type 和 anchor pattern；未知枚举会明确报错，不会静默替换 Agent 输入。第一版 `floor_stack` 限定为 1×1 逻辑地块；更大的建筑使用 `urban_massing`，避免逐层原型静默越出地块。
 
 ## 2. 创建设计 revision

@@ -15,6 +15,7 @@ const DISTRICT_PROGRAM = Object.freeze([
   {
     id: "lantern-row",
     name: "Lantern Row",
+    purpose: "compact residential and shopping street",
     bounds: { minColumn: 42, maxColumn: 47, minRow: 18, maxRow: 25 },
     buildings: [
       { name: "Lantern House", footprint: "1x1", entrance: "south", purpose: "residential", style: "victorian_domestic", frontage: "residential", floors: 2 },
@@ -25,6 +26,7 @@ const DISTRICT_PROGRAM = Object.freeze([
   {
     id: "market-court",
     name: "Market Court",
+    purpose: "market, guild and workshop quarter",
     bounds: { minColumn: 27, maxColumn: 38, minRow: 23, maxRow: 31 },
     buildings: [
       { name: "Mercury Market Hall", footprint: "3x2", entrance: "east", purpose: "covered market", style: "victorian_gothic", composition: "hall", frontage: "large_bay", prominence: "important" },
@@ -35,6 +37,7 @@ const DISTRICT_PROGRAM = Object.freeze([
   {
     id: "west-bank",
     name: "West Bank",
+    purpose: "riverside residential and civic quarter",
     bounds: { minColumn: 1, maxColumn: 5, minRow: 20, maxRow: 30 },
     buildings: [
       { name: "Bridgekeeper Cottage", footprint: "1x1", entrance: "east", purpose: "residential", style: "victorian_domestic", frontage: "residential", floors: 2 },
@@ -59,8 +62,48 @@ export function runNonVisualAgentBuildScenario(options = {}) {
   const actions = [];
   const failures = [];
   const districtResults = [];
-  let connectionTarget = { to: "old_town_entry" };
   let designSequence = 0;
+
+  for (const district of DISTRICT_PROGRAM) {
+    const result = executeCityCommand(state, {
+      type: "define_district",
+      id: district.id,
+      name: district.name,
+      purpose: district.purpose,
+      bounds: district.bounds,
+      actor: "agent:district-builder"
+    }, engineContext);
+    actions.push({ type: "define_district", districtId: district.id, accepted: result.accepted });
+    if (!result.accepted) failures.push({ stage: "district_definition", districtId: district.id, error: result.errors?.[0], code: result.code });
+    else state = result.state;
+  }
+
+  const roadTarget = pickRoadTarget(state, DISTRICT_PROGRAM.at(-1).bounds);
+  const roadResult = roadTarget ? executeCityCommand(state, {
+    type: "connect",
+    from: { kind: "node", id: "old_town_entry" },
+    to: { kind: "cell", id: roadTarget },
+    mode: "road",
+    actor: "agent:district-builder"
+  }, engineContext) : { accepted: false, code: "NO_ROAD_TARGET", errors: ["No routeable western road target"] };
+  actions.push({ type: "connect", purpose: "district_spine", accepted: roadResult.accepted, target: roadTarget, plan: roadResult.plan ?? null });
+  if (!roadResult.accepted) failures.push({ stage: "district_roads", error: roadResult.errors?.[0], code: roadResult.code });
+  else state = roadResult.state;
+
+  for (const district of DISTRICT_PROGRAM) {
+    const branch = pickDistrictRoadBranch(state, district.bounds);
+    if (!branch) continue;
+    const result = executeCityCommand(state, {
+      type: "connect",
+      from: { kind: "cell", id: branch.from },
+      to: { kind: "cell", id: branch.to },
+      mode: "road",
+      actor: "agent:district-builder"
+    }, engineContext);
+    actions.push({ type: "connect", purpose: "district_branch", districtId: district.id, accepted: result.accepted, ...branch, plan: result.plan ?? null });
+    if (!result.accepted) failures.push({ stage: "district_roads", districtId: district.id, error: result.errors?.[0], code: result.code });
+    else state = result.state;
+  }
 
   for (const district of DISTRICT_PROGRAM) {
     const buildingIds = [];
@@ -68,16 +111,18 @@ export function runNonVisualAgentBuildScenario(options = {}) {
       const candidates = findCandidateParcels(state, {
         footprint: definition.footprint,
         bounds: district.bounds,
-        near: connectionTarget.toBuildingId ? [{ kind: "building", id: connectionTarget.toBuildingId, maxDistance: 30 }] : [],
-        prefer: ["existing_road", "flat_terrain"],
+        districtId: district.id,
         limit: 100
       });
-      const site = candidates.find((candidate) => candidate.entranceDirections.includes(definition.entrance)) ?? candidates[0];
+      const site = candidates.find((candidate) => candidate.context.roadFrontageDirections.includes(definition.entrance))
+        ?? candidates.find((candidate) => candidate.context.adjacentRoad);
       if (!site) {
-        failures.push({ stage: "site_search", districtId: district.id, building: definition.name, error: "No legal parcel" });
+        failures.push({ stage: "site_search", districtId: district.id, building: definition.name, error: "No road-fronting legal parcel" });
         continue;
       }
-      const entrance = site.entranceDirections.includes(definition.entrance) ? definition.entrance : site.entranceDirections[0];
+      const entrance = site.context.roadFrontageDirections.includes(definition.entrance)
+        ? definition.entrance
+        : site.context.roadFrontageDirections[0];
       designSequence += 1;
       const designContext = {
         id: `design-${designSequence}`,
@@ -114,6 +159,7 @@ export function runNonVisualAgentBuildScenario(options = {}) {
         const proposal = {
           id: `proposal-${designSequence}`,
           actor: "agent:district-builder",
+          districtId: district.id,
           site: {
             lotId: confirmed.site.lotId,
             footprint: confirmed.site.footprint,
@@ -128,7 +174,6 @@ export function runNonVisualAgentBuildScenario(options = {}) {
             attributes: { districtId: district.id }
           },
           design: { districtStyle: definition.style, patterns: [], prompt: `${definition.name}, ${definition.style}, ${definition.purpose}` },
-          connectionRequest: { ...connectionTarget, mode: "road" },
           voxelDesign: confirmed
         };
         const result = executeCityCommand(state, { type: "construct_building", proposal }, engineContext);
@@ -151,7 +196,6 @@ export function runNonVisualAgentBuildScenario(options = {}) {
         }
         state = result.state;
         buildingIds.push(result.building.id);
-        connectionTarget = { toBuildingId: result.building.id };
       } catch (error) {
         failures.push({ stage: "design", districtId: district.id, building: definition.name, error: error.message });
       }
@@ -174,7 +218,7 @@ export function runNonVisualAgentBuildScenario(options = {}) {
     }
   }
 
-  const diagnostics = diagnoseAgentBuild(state, districtResults, actions);
+  const diagnostics = diagnoseAgentBuild(state, actions);
   return {
     world,
     state,
@@ -191,8 +235,9 @@ export function runNonVisualAgentBuildScenario(options = {}) {
   };
 }
 
-export function diagnoseAgentBuild(state, districts, actions = []) {
+export function diagnoseAgentBuild(state, actions = []) {
   const buildings = Object.values(state.buildings);
+  const districts = Object.values(state.districts ?? {});
   const roadIds = new Set(Object.values(state.cells).filter((cell) => cell.infrastructure === "road").map((cell) => cell.id));
   const bridgeIds = new Set(Object.entries(state.infrastructure).filter(([, infrastructure]) => infrastructure.type === "bridge").map(([cellId]) => cellId));
   const networkIds = new Set([...roadIds, ...bridgeIds]);
@@ -205,7 +250,11 @@ export function diagnoseAgentBuild(state, districts, actions = []) {
   const footprintTypes = [...new Set(buildings.map((building) => building.site.footprint))];
   const styles = [...new Set(buildings.map((building) => building.voxelDesign?.intent?.style).filter(Boolean))];
   const checks = {
-    atLeastThreeDistricts: districts.filter((district) => district.buildingIds.length > 0).length >= 3,
+    atLeastThreeDistricts: districts.length >= 3,
+    districtsPersistedInCityState: districts.every((district) => district.name && district.purpose && district.bounds),
+    roadsBuiltBeforeBuildings: actions.findIndex((action) => action.type === "connect" && action.accepted) >= 0
+      && actions.findIndex((action) => action.type === "connect" && action.accepted) < actions.findIndex((action) => action.type === "construct_building" && action.accepted),
+    allBuildingsBelongToDistrict: buildings.every((building) => state.districts?.[building.districtId]),
     atLeastEightBuildings: buildings.length >= 8,
     bothGenerationModes: modes.includes("floor_stack") && modes.includes("urban_massing"),
     diverseFootprints: footprintTypes.length >= 3,
@@ -221,7 +270,7 @@ export function diagnoseAgentBuild(state, districts, actions = []) {
   };
   return {
     buildingCount: buildings.length,
-    districtCount: districts.filter((district) => district.buildingIds.length > 0).length,
+    districtCount: districts.length,
     roadCellCount: roadIds.size,
     bridgeCellCount: bridgeIds.size,
     generationModes: modes,
@@ -232,6 +281,30 @@ export function diagnoseAgentBuild(state, districts, actions = []) {
     checks,
     allChecksPassed: Object.values(checks).every(Boolean)
   };
+}
+
+function pickRoadTarget(state, bounds) {
+  const centerRow = (bounds.minRow + bounds.maxRow) / 2;
+  return Object.values(state.cells)
+    .filter((cell) => cell.column >= bounds.minColumn && cell.column <= bounds.maxColumn
+      && cell.row >= bounds.minRow && cell.row <= bounds.maxRow
+      && cell.buildable !== false && cell.strictBuildable !== false && !cell.node)
+    .sort((left, right) => left.column - right.column || Math.abs(left.row - centerRow) - Math.abs(right.row - centerRow) || left.id.localeCompare(right.id))[0]?.id ?? null;
+}
+
+function pickDistrictRoadBranch(state, bounds) {
+  const inBounds = (cell) => cell.column >= bounds.minColumn && cell.column <= bounds.maxColumn
+    && cell.row >= bounds.minRow && cell.row <= bounds.maxRow;
+  const from = Object.values(state.cells).filter((cell) => inBounds(cell) && cell.infrastructure === "road")[0];
+  if (!from) return null;
+  const to = Object.values(state.cells)
+    .filter((cell) => inBounds(cell) && cell.buildable !== false && cell.strictBuildable !== false && !cell.node && !cell.infrastructure)
+    .sort((left, right) => (
+      Math.abs(right.column - from.column) + Math.abs(right.row - from.row)
+      - Math.abs(left.column - from.column) - Math.abs(left.row - from.row)
+      || left.id.localeCompare(right.id)
+    ))[0];
+  return to ? { from: from.id, to: to.id } : null;
 }
 
 function floodRoadNetwork(state, startId, networkIds) {

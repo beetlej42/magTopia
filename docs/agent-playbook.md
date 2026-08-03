@@ -14,14 +14,29 @@ Never expose the token in logs, prose, asset prompts, or another URL.
 ## Recommended decision loop
 
 1. `GET /api/v1/cities/{city_id}/snapshot?view=agent`.
-2. Read `city_version`, resources, `world` coordinates/construction datum, production, needs, recent changes, and pending orders.
-3. Query only the relevant area with `/spatial`; do not repeatedly download every cell.
-4. Search `/buildings` and `/assets` before proposing construction.
-5. Use `/site-searches`, then preview construction or a connection.
-6. Submit with `Idempotency-Key` and `expected_city_version` from the preview.
+2. Continue a suitable named development district. If none exists, designate one with a short name, purpose, and rectangular bounds through `POST /districts`.
+3. Query that district with `/spatial`. If it has no roads, use connection previews and `/connections` to establish its access and internal streets before placing buildings.
+4. Search `/buildings` and `/assets`, then call `/site-searches` with `district_id`. Candidate results contain objective terrain, road-distance, and exact road-frontage facts; the server does not score or rank them.
+5. Choose a site whose intended entrance appears in `context.roadFrontageDirections`, then preview and submit construction with the same `district_id`.
+6. Submit mutations with `Idempotency-Key` and the latest `expected_city_version`.
 7. If `CITY_VERSION_CONFLICT` occurs, read the city again and make a new preview. Do not blindly retry the old plan.
 8. If an asset job is asynchronous, inspect that job/order instead of creating a duplicate.
 9. Read `/events?after_version=...` and record what actually happened.
+
+## District-first growth
+
+A development district is deliberately simple: a stable name, a plain-language purpose, and rectangular bounds. It is shared context for your own later decisions, not a zoning prohibition. Buildings outside districts remain legal, but normal growth should follow this order: name an area, build its roads, then compose buildings along those roads.
+
+```json
+{
+  "expected_city_version": 0,
+  "name": "Moon Lantern Quarter",
+  "purpose": "compact residential and shopping street",
+  "bounds": { "minColumn": 20, "minRow": 15, "maxColumn": 30, "maxRow": 24 }
+}
+```
+
+The snapshot and `GET /districts` report road and building counts plus `recommended_next_action`. Road geometry remains your decision: inspect terrain, connect the district to the existing network, and add only the streets needed to give several future buildings coherent frontage.
 
 ## Procedural voxel design loop
 
@@ -54,6 +69,7 @@ Reuse an asset only when its id, archetype, and footprint come from the same `/a
 ```json
 {
   "expected_city_version": 0,
+  "district_id": "district-moon-lantern",
   "actor_note": "增加一间可达的住宅",
   "site": { "lot_id": "cell-20-20", "footprint": "1x1", "entrance": "south" },
   "program": { "archetype": "starter_residence", "purpose": "residential", "name": "月柳小屋", "attributes": {} },
@@ -67,6 +83,7 @@ To produce a new asset, keep the site/program fields and provide a complete prod
 ```json
 {
   "expected_city_version": 0,
+  "district_id": "district-moon-lantern",
   "actor_note": "现有资产无法表达月光花住宅",
   "site": { "lot_id": "cell-21-20", "footprint": "1x1", "entrance": "south" },
   "program": { "archetype": "moon_residence", "purpose": "residential", "name": "月光花屋", "attributes": {} },
@@ -91,9 +108,9 @@ Preview first. For the order request, reuse the same body with the latest `expec
 
 - Buildings need legal footprints and routeable entrances.
 - The blank voxel world exposes water cells explicitly. Never build on `buildable: false` or `strictBuildable: false`; roads crossing `bridgeRequired: true` cells are returned as bridges.
-- Use `site-searches.bounds` to keep a district inside a planned rectangle. `near` preserves building/node/cell ids and distance, while `prefer` and `avoid` influence scoring.
-- Prefer coherent districts and existing roads over isolated structures.
-- Use the server's site scores and route solver; do not submit a hand-drawn cell path.
+- Name a development district before starting a new cluster, establish its road network, then search with `district_id`.
+- Candidate sites are deterministic legal options with objective context, not a server-authored ranking. Use `roadFrontageDirections`, `nearestRoadDistance`, terrain, nearby buildings, and the district purpose to make the spatial decision yourself.
+- Use the route solver between chosen endpoints; do not submit a hand-drawn cell path.
 - Treat the confirmed design's `primary_entrance.frontageCellId` as the authoritative road port. A successful connected district must place every entrance port in the road/bridge component reachable from `old_town_entry`.
 - Add a short factual `actor_note` explaining the city need behind each command.
 - A rejected preview changes nothing and spends nothing.
@@ -103,6 +120,7 @@ Preview first. For the order request, reuse the same body with the latest `expec
 - `LOT_OCCUPIED`: search for a new site.
 - `INSUFFICIENT_RESOURCES`: advance time only when appropriate, or choose a smaller project.
 - `NO_ROUTE`: change entrance, endpoint, or site.
+- `DISTRICT_NOT_FOUND`: reread the snapshot and use an existing district id, or designate a new district.
 - `ASSET_NOT_COMPATIBLE`: search again or request production.
 - `CITY_VERSION_CONFLICT`: reread and re-preview.
 - `IDEMPOTENCY_KEY_REUSED`: use the original request or a new key for a genuinely new command.

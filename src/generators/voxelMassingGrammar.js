@@ -15,6 +15,7 @@ export const MASS_CAP_IDS = Object.freeze([
   "mansard",
   "glass_ridge",
   "glass_barrel",
+  "sawtooth",
   "dome",
   "spire"
 ]);
@@ -24,7 +25,7 @@ export const SITE_CELL_USE_IDS = Object.freeze(["mass", "ground", "reserved"]);
 export const CARDINAL_DIRECTION_IDS = Object.freeze(["north", "east", "south", "west"]);
 export const OPEN_SIDE_MODE_IDS = Object.freeze(["auto", "columns", "open", "wall"]);
 export const GROUND_TREATMENT_IDS = Object.freeze(["plain", "bordered", "courtyard", "garden"]);
-export const MASS_FACADE_ORDER_IDS = Object.freeze(["plain", "classical", "industrial"]);
+export const MASS_FACADE_ORDER_IDS = Object.freeze(["plain", "classical", "industrial", "gothic"]);
 
 const DEFAULT_MATERIALS = Object.freeze({
   wall: "brickRed",
@@ -1087,7 +1088,8 @@ function normalizeCap(source = {}, massType) {
     ringCount: clampInteger(source.ringCount ?? 0, 0, 6),
     dormerCount: clampInteger(source.dormerCount ?? 0, 0, 6),
     finialHeightVoxels: clampInteger(source.finialHeightVoxels ?? 0, 0, 12),
-    ridgeRailHeightVoxels: clampInteger(source.ridgeRailHeightVoxels ?? 0, 0, 4)
+    ridgeRailHeightVoxels: clampInteger(source.ridgeRailHeightVoxels ?? 0, 0, 4),
+    toothCount: clampInteger(source.toothCount ?? 4, 2, 8)
   };
 }
 

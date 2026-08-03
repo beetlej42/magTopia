@@ -1,4 +1,5 @@
 import { VOXEL_MASSING_PRESETS } from "./voxelMassingGrammar.js";
+import { createPublicBuildingStylePreset } from "./publicBuildingStyleComparison.js";
 
 export const BUILDING_INTENT_VERSION = "0.1";
 export const BUILDING_COMPOSITION_IDS = Object.freeze(["street", "court", "hall", "tower", "yard"]);
@@ -15,7 +16,8 @@ export const BUILDING_STYLE_IDS = Object.freeze([
   "victorian_domestic",
   "victorian_gothic",
   "civic_classical",
-  "industrial_iron"
+  "industrial_iron",
+  "alchemical_glass"
 ]);
 
 export const BUILDING_SITE_PROFILES = Object.freeze({
@@ -28,11 +30,25 @@ const STREET_STYLE_BY_INTENT = Object.freeze({
   victorian_domestic: "london_brick",
   victorian_gothic: "violet_alchemist",
   civic_classical: "london_brick",
-  industrial_iron: "forest_craft"
+  industrial_iron: "forest_craft",
+  alchemical_glass: "violet_alchemist"
+});
+
+const MASSING_PALETTE_BY_STYLE = Object.freeze({
+  victorian_domestic: Object.freeze({ wall: "brickRed", trim: "sandstone", roof: "slate", frame: "timber", window: "warmWindow", door: "timber" }),
+  victorian_gothic: Object.freeze({ wall: "brickBrown", trim: "sandstone", roof: "slate", frame: "iron", window: "violetMagic", door: "timber" }),
+  civic_classical: Object.freeze({ wall: "sandstone", trim: "limestone", roof: "slate", frame: "limestone", window: "warmWindow", door: "timber" }),
+  industrial_iron: Object.freeze({ wall: "brickBrown", trim: "iron", roof: "iron", frame: "iron", window: "lightGlass", door: "iron" }),
+  alchemical_glass: Object.freeze({ wall: "brickBrown", trim: "patinaMetal", roof: "slate", frame: "patinaMetal", window: "tealMagic", door: "iron" })
 });
 
 export function normalizeBuildingIntent(input = {}) {
   const purpose = text(input.purpose, "mixed use");
+  const frontage = enumValue(BUILDING_FRONTAGE_IDS, input.frontage, "residential");
+  const prominence = enumValue(BUILDING_PROMINENCE_IDS, input.prominence, "ordinary");
+  const defaultStyle = frontage === "institutional" || prominence === "landmark"
+    ? "civic_classical"
+    : "victorian_domestic";
   return {
     intentVersion: BUILDING_INTENT_VERSION,
     name: text(input.name, titleFromPurpose(purpose)),
@@ -40,10 +56,10 @@ export function normalizeBuildingIntent(input = {}) {
     description: text(input.description, ""),
     signText: text(input.signText, ""),
     composition: enumValue(BUILDING_COMPOSITION_IDS, input.composition, "street"),
-    frontage: enumValue(BUILDING_FRONTAGE_IDS, input.frontage, "residential"),
+    frontage,
     access: enumValue(BUILDING_ACCESS_IDS, input.access, "private"),
-    style: enumValue(BUILDING_STYLE_IDS, input.style, "victorian_domestic"),
-    prominence: enumValue(BUILDING_PROMINENCE_IDS, input.prominence, "ordinary"),
+    style: enumValue(BUILDING_STYLE_IDS, input.style, defaultStyle),
+    prominence,
     magicLevel: clampNumber(input.magicLevel ?? 0.35, 0, 1)
   };
 }
@@ -100,17 +116,14 @@ export function adaptBuildingIntentToStreetConfig(input = {}, overrides = {}) {
 export function adaptBuildingIntentToMassingConfig(input = {}, overrides = {}) {
   const intent = normalizeBuildingIntent(input);
   const preset = structuredClone(resolveMassingPreset(intent, overrides));
-  const wall = intent.style === "industrial_iron" ? "brickBrown" : "brickRed";
-  const trim = intent.style === "victorian_gothic" ? "sandstone" : "limestone";
+  const palette = MASSING_PALETTE_BY_STYLE[intent.style];
   preset.masses = preset.masses.map((mass) => {
     if (mass.type === "solid") {
       return {
         ...mass,
         materials: {
-          ...(mass.materials ?? {}),
-          wall,
-          trim,
-          window: intent.magicLevel >= 0.65 ? "violetMagic" : "warmWindow"
+          ...palette,
+          ...(mass.materials ?? {})
         },
         facade: {
           ...(mass.facade ?? {}),
@@ -124,7 +137,7 @@ export function adaptBuildingIntentToMassingConfig(input = {}, overrides = {}) {
     if (mass.type === "framed") {
       return {
         ...mass,
-        materials: { ...(mass.materials ?? {}), frame: "limestone", trim: "limestone", panel: "lightGlass" }
+        materials: { frame: palette.frame, trim: palette.trim, panel: intent.style === "alchemical_glass" ? "tealGlass" : "lightGlass", ...(mass.materials ?? {}) }
       };
     }
     return mass;
@@ -161,6 +174,14 @@ export function getBuildingIntentCatalog() {
 }
 
 function resolveMassingPreset(intent, overrides = {}) {
+  if (["industrial_iron", "victorian_gothic", "alchemical_glass", "victorian_domestic"].includes(intent.style)) {
+    return createPublicBuildingStylePreset(intent.style, {
+      widthCells: overrides.widthCells,
+      depthCells: overrides.depthCells,
+      id: `${slug(intent.name)}-${intent.style}`,
+      seed: overrides.seed ?? `${slug(intent.name)}-${intent.style}`
+    });
+  }
   if (intent.frontage === "institutional" || intent.prominence === "landmark") {
     return createInstitutionalCampusPreset(intent, overrides);
   }

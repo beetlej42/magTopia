@@ -82,6 +82,11 @@ import { createStarterCityWorkbench } from "./city/scenarios.js";
 import { findAssetCandidates, getAssetRegistry, resolveAsset } from "./city/assets.js";
 import { getModelOrientationPreviewUrls } from "./generators/modelOrientation.js";
 import { createAgentAcceptanceCity } from "./generators/agentAcceptanceCity.js";
+import {
+  PUBLIC_BUILDING_STYLE_COMPARISON_PRESETS,
+  createPublicBuildingStyleComparison,
+  normalizePublicBuildingStyleComparisonConfig
+} from "./generators/publicBuildingStyleComparison.js";
 
 const app = document.querySelector("#app");
 const scene = new THREE.Scene();
@@ -90,7 +95,7 @@ scene.background = new THREE.Color("#fff3f8");
 const startupParams = new URLSearchParams(window.location.search);
 const startupMode = startupParams.get("mode");
 if (startupParams.get("view") === "1") document.documentElement.dataset.magicTownPresentation = "true";
-let currentMode = ["map", "district", "agentcity"].includes(startupMode) ? startupMode : "map";
+let currentMode = ["map", "district", "agentcity", "styles"].includes(startupMode) ? startupMode : "map";
 let camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 2200);
 camera.position.set(7.8, 5.5, 9.5);
 
@@ -348,6 +353,20 @@ const MODES = {
       { key: "nightLighting", label: "Night Lights", min: 0, max: 1, step: 0.01 }
     ]
   },
+  styles: {
+    label: "Public Building Style Comparison",
+    presets: PUBLIC_BUILDING_STYLE_COMPARISON_PRESETS,
+    defaultPreset: "fiveStyleDay",
+    normalize: normalizePublicBuildingStyleComparisonConfig,
+    randomize: (seed) => normalizePublicBuildingStyleComparisonConfig({ ...configsByMode.styles, seed }),
+    sliders: [
+      { key: "sunTime", label: "Sun Time", min: 0, max: 1, step: 0.01 },
+      { key: "nightLighting", label: "Night Lights", min: 0, max: 1, step: 0.01 },
+      { key: "showLabels", label: "Style Labels", min: 0, max: 1, step: 1 },
+      { key: "spacing", label: "Building Spacing", min: 10, max: 16, step: 0.1 },
+      { key: "scale", label: "Study Scale", min: 0.58, max: 0.9, step: 0.01 }
+    ]
+  },
   district: {
     label: "Agent Intent District",
     presets: VOXEL_INTENT_DISTRICT_PRESETS,
@@ -471,6 +490,11 @@ const configsByMode = {
   comparison: normalizeAssetComparisonConfig(ASSET_COMPARISON_PRESETS.cottageMetricIndoorSmallVsHunyuan),
   voxel: normalizeVoxelBuildingConfig(VOXEL_BUILDING_PRESETS.connectedTerraceDay),
   massing: normalizeVoxelMassingConfig(VOXEL_MASSING_PRESETS.civicDome),
+  styles: normalizePublicBuildingStyleComparisonConfig(
+    startupParams.get("time") === "evening"
+      ? PUBLIC_BUILDING_STYLE_COMPARISON_PRESETS.fiveStyleEvening
+      : PUBLIC_BUILDING_STYLE_COMPARISON_PRESETS.fiveStyleDay
+  ),
   district: normalizeVoxelIntentDistrictConfig(VOXEL_INTENT_DISTRICT_PRESETS.agentQuarterDay),
   agentcity: normalizeVoxelIntentDistrictConfig({
     ...(startupParams.get("time") === "evening"
@@ -563,6 +587,8 @@ async function rebuildActive(config) {
     activeObject = createVoxelBuildingLab(currentConfig);
   } else if (currentMode === "massing") {
     activeObject = createVoxelMassingLab(currentConfig);
+  } else if (currentMode === "styles") {
+    activeObject = createPublicBuildingStyleComparison(currentConfig);
   } else if (currentMode === "district") {
     activeObject = createVoxelIntentDistrict(currentConfig);
   } else if (currentMode === "agentcity") {
@@ -596,7 +622,7 @@ async function rebuildActive(config) {
   document.documentElement.dataset.magicTownComparison = currentMode === "comparison"
     ? JSON.stringify(activeObject.userData.getComparisonDiagnostics?.() ?? {})
     : "{}";
-  document.documentElement.dataset.magicTownVoxel = currentMode === "voxel" || currentMode === "massing" || currentMode === "district" || currentMode === "agentcity"
+  document.documentElement.dataset.magicTownVoxel = currentMode === "voxel" || currentMode === "massing" || currentMode === "styles" || currentMode === "district" || currentMode === "agentcity"
     ? JSON.stringify(activeObject.userData.getVoxelDiagnostics?.() ?? {})
     : "{}";
   document.documentElement.dataset.magicTownVanishingError = currentMode === "vanishing"
@@ -645,13 +671,13 @@ function addLights(targetScene) {
 }
 
 function applyWorldLighting(sunTime = 0.52) {
-  const style = currentMode === "voxel" || currentMode === "massing" || currentMode === "district" || currentMode === "agentcity"
+  const style = currentMode === "voxel" || currentMode === "massing" || currentMode === "styles" || currentMode === "district" || currentMode === "agentcity"
     ? voxelDaylightStyle(sunTime)
     : getDaylightStyle(sunTime);
   scene.background.copy(style.skyColor);
   worldLights.ambient.color.copy(style.ambientSky);
   worldLights.ambient.groundColor.copy(style.ambientGround);
-  const massingContrast = currentMode === "massing";
+  const massingContrast = currentMode === "massing" || currentMode === "styles";
   worldLights.ambient.intensity = style.ambientIntensity * (massingContrast ? 0.72 : 1);
   worldLights.key.color.copy(style.sunColor);
   worldLights.key.intensity = style.sunIntensity * (massingContrast ? 1.2 : 1);
@@ -1064,6 +1090,8 @@ function syncApiPill() {
     apiPill.textContent = "MagicTown.generateVoxelStreet({ floorPrograms: [{ purpose: 'shop', windowRatio: 0.86 }, { purpose: 'home', windowRatio: 0.32 }], cornerFacades: 'both', roofForm: 'hip' })";
   } else if (currentMode === "massing") {
     apiPill.textContent = `Massing Explorer · ${currentConfig.masses.length} nodes · ${currentConfig.relations.length} relations · MagicTown.getObject().userData.getVoxelDiagnostics()`;
+  } else if (currentMode === "styles") {
+    apiPill.textContent = "Five bounded public-building style grammars · silhouette + facade + material identity";
   } else if (currentMode === "district") {
     apiPill.textContent = "BuildingIntent → Street + Massing adapters · MagicTown.generateIntentDistrict({ intents })";
   } else {
@@ -1081,6 +1109,7 @@ function exposeAgentApi() {
       comparison: ASSET_COMPARISON_PRESETS,
       voxel: VOXEL_BUILDING_PRESETS,
       massing: VOXEL_MASSING_PRESETS,
+      styles: PUBLIC_BUILDING_STYLE_COMPARISON_PRESETS,
       district: VOXEL_INTENT_DISTRICT_PRESETS,
       parcel: PARCEL_BLUEPRINT_PRESETS
     },
@@ -1122,6 +1151,10 @@ function exposeAgentApi() {
     },
     generateVoxelMassing(config = {}) {
       setMode("massing", { ...VOXEL_MASSING_PRESETS.minimumCapabilityStudy, ...config });
+      return this.getParams();
+    },
+    comparePublicBuildingStyles(config = {}) {
+      setMode("styles", { ...configsByMode.styles, ...config });
       return this.getParams();
     },
     randomizeVoxelMassing(scope = "all", seed = Date.now()) {
@@ -1178,6 +1211,8 @@ function exposeAgentApi() {
               ? "voxel"
               : MODES.massing.presets[name]
                 ? "massing"
+                : MODES.styles.presets[name]
+                  ? "styles"
                 : MODES.district.presets[name]
                   ? "district"
                   : MODES.parcel.presets[name]
@@ -1474,10 +1509,11 @@ function configureCameraForViewport() {
   const isParcel = currentMode === "parcel";
   const isVanishing = currentMode === "vanishing";
   const isMassing = currentMode === "massing";
+  const isStyles = currentMode === "styles";
   const isDistrict = currentMode === "district";
   const isAgentCity = currentMode === "agentcity";
   const isSurfaceWorld = isDistrict || isAgentCity;
-  const isVoxel = currentMode === "voxel" || currentMode === "massing";
+  const isVoxel = currentMode === "voxel" || currentMode === "massing" || isStyles;
   const perspective = isMap ? currentConfig?.perspective ?? 0 : 0;
   if (isParcel || isVanishing || isVoxel || (isMap && perspective <= 0.001)) {
     const aspect = window.innerWidth / window.innerHeight;
@@ -1485,9 +1521,11 @@ function configureCameraForViewport() {
       ? Math.max(150, (currentConfig?.mapSize ?? 180) * 1.12)
       : isVanishing
         ? 10
-        : isVoxel
-          ? Math.max(15, (currentConfig?.buildingCount ?? 3) * 4 + 8)
-            * (isMassing ? currentConfig?.viewFraming?.zoom ?? 1.12 : 1)
+        : isStyles
+          ? 38
+          : isVoxel
+            ? Math.max(15, (currentConfig?.buildingCount ?? 3) * 4 + 8)
+              * (isMassing ? currentConfig?.viewFraming?.zoom ?? 1.12 : 1)
           : Math.max(currentConfig?.columns ?? 1, currentConfig?.rows ?? 2) * 4 + 8;
     if (!camera.isOrthographicCamera) {
       controls.dispose();
@@ -1509,8 +1547,8 @@ function configureCameraForViewport() {
         ? new THREE.Vector3(0.774, 0, -0.633)
           .multiplyScalar(currentConfig?.viewFraming?.horizontalOffset ?? 1.75)
         : new THREE.Vector3();
-      camera.position.set(18, 14.5, 22).add(framingOffset);
-      controls.target.set(0, 5.4, 0.4).add(framingOffset);
+      camera.position.set(isStyles ? 22 : 18, isStyles ? 16 : 14.5, isStyles ? 32 : 22).add(framingOffset);
+      controls.target.set(0, isStyles ? 4.8 : 5.4, 0.4).add(framingOffset);
     } else {
       camera.position.set(isMap ? 124 : 11, isMap ? groundY + 152 : 22.2, isMap ? 124 : 11);
       controls.target.set(0, groundY, isMap ? -1 : 0);

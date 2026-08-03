@@ -167,10 +167,11 @@ test("the public massing catalog exposes the complete minimum capability set", (
   assert.deepEqual(catalog.verticalProfiles, ["uniform", "stepped", "tapered", "stacked"]);
   assert.ok(catalog.caps.includes("dome"));
   assert.ok(catalog.caps.includes("spire"));
+  assert.ok(catalog.caps.includes("sawtooth"));
   assert.deepEqual(catalog.voids, ["courtyard", "passage", "recess", "arch"]);
   assert.deepEqual(catalog.relations, ["separate", "adjoin", "portal", "stacked"]);
   assert.deepEqual(catalog.openSideModes, ["auto", "columns", "open", "wall"]);
-  assert.deepEqual(catalog.facadeOrders, ["plain", "classical", "industrial"]);
+  assert.deepEqual(catalog.facadeOrders, ["plain", "classical", "industrial", "gothic"]);
   assert.equal(catalog.singleCellDimensions.parameter, "dimensionsVoxels");
   assert.equal(catalog.singleCellDimensions.logicalCellVoxels, 32);
   assert.deepEqual(catalog.placement.controls, ["setbacksVoxels", "offsetVoxels"]);

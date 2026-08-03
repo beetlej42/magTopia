@@ -415,7 +415,7 @@ function citySummary(row) {
     city_version: Number(row.city_version),
     turn: state.turn,
     resources: state.resources,
-    counts: { buildings: Object.keys(state.buildings ?? {}).length, roads: Object.values(state.cells ?? {}).filter((cell) => cell.infrastructure === "road").length, pending_orders: Object.keys(state.reservations ?? {}).length }
+    counts: { districts: Object.keys(state.districts ?? {}).length, buildings: Object.keys(state.buildings ?? {}).length, roads: Object.values(state.cells ?? {}).filter((cell) => cell.infrastructure === "road").length, pending_orders: Object.keys(state.reservations ?? {}).length }
   };
 }
 

@@ -24,7 +24,7 @@ pnpm test:agent-build
 
 ## 固定验收场景
 
-场景创建三个街区、八栋建筑：
+场景先在城市状态中命名并划定三个发展片区，再从 `old_town_entry` 建设贯穿片区的主干路和片区支路，最后沿已有道路建设八栋建筑：
 
 | 街区 | 数量 | 主要类型 |
 |---|---:|---|
@@ -43,9 +43,9 @@ compileDiagnostics.meshCount > 0
 decorationCount >= 1
 ```
 
-路网验收从 `old_town_entry` 对 road/bridge cells 做 BFS，并要求每栋建筑的精确入口 port 都在同一可达分量内。道路不得穿过 building footprint 或 reservation；显式水格只能作为 bridge，已有桥再次使用时增量桥成本为零。
+路网验收从 `old_town_entry` 对 road/bridge cells 做 BFS，并要求所有道路动作早于第一栋建筑、每栋建筑属于持久化片区、精确入口 port 已经位于同一可达道路分量内。道路不得穿过 building footprint 或 reservation；显式水格只能作为 bridge，已有桥再次使用时增量桥成本为零。
 
-## 2026-08-02 独立子 Agent 复测
+## 2026-08-03 道路优先复测
 
 独立建造 Agent 对默认 seed 的结果：
 
@@ -53,7 +53,7 @@ decorationCount >= 1
 success=true, failures=[]
 districts=3, buildings=8
 floor_stack=4, urban_massing=4
-roads=57, bridges=3, reachable network cells=60
+roads=76, bridges=3, reachable network cells=79
 all structural checks=true
 ```
 
@@ -63,7 +63,7 @@ all structural checks=true
 9099, 12237, 6285, 50888, 43413, 32512, 9083, 69422
 ```
 
-替代 seed 同样通过，另抽样八个 seed 也全部成功；道路数为 58–65，桥梁数为 2–3。升级后的第一栋建筑保持 ID 和占地不变，2→3 层并记录旧 design revision。
+替代 seed 同样通过，另抽样八个 seed 也全部成功；道路数为 72–76，桥梁数均为 3。升级后的第一栋建筑保持 ID 和占地不变，2→3 层并记录旧 design revision。
 
 ## 已修复的失败
 
@@ -71,7 +71,7 @@ all structural checks=true
 - `canOccupyFootprint` 曾忽略 buildable；现在 water/shore 均不可作为建筑 parcel。
 - A* 曾穿过 reservation；现在选入口和路由都拒绝 reservation。
 - 已有桥曾重复收费；现在只计算新增 bridge cells。
-- site search 曾忽略 bounds、near id、prefer 和 avoid；现在这些输入参与筛选或评分，并返回真实 score explanation 与 terrain summary。
+- site search 原先替 Agent 计算地块分数；现在只按命名片区范围筛选合法地块，并返回临路方向、道路距离和地形等客观事实。
 - `2x2 hall + large_bay` 推荐曾产生越界 mass；现在合法 parcel 总能得到可编译的 parcel-fitted fallback。
 - 非正方形 massing 的东西入口曾在 viewer 旋转后越界；现在 source dimension 与坐标变换一致。
 - 道路曾在宽立面任意选角落；现在设计保存稳定的 primary entrance frontage cell。

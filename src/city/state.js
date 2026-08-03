@@ -6,7 +6,7 @@ export function createCityState(worldContract, options = {}) {
   const gateway = pickEasternGateway(Object.values(cells), worldContract.grid.rows);
   cells[gateway.id].node = "old_town_entry";
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     version: 0,
     cityId: options.cityId ?? null,
     rulesetVersion: options.rulesetVersion ?? "magic-london-mvp@1",
@@ -30,6 +30,7 @@ export function createCityState(worldContract, options = {}) {
     resources: { coins: 600, timber: 120, stone: 120, ...(options.resources ?? {}) },
     economy: { lastIncome: { coins: 0, timber: 0, stone: 0 }, lifetimeIncome: { coins: 0, timber: 0, stone: 0 } },
     cells,
+    districts: {},
     buildings: {},
     infrastructure: {},
     nodes: { old_town_entry: { id: "old_town_entry", type: "external_gateway", cellId: gateway.id } },
@@ -41,8 +42,10 @@ export function createCityState(worldContract, options = {}) {
 export function cloneCityState(state) {
   return {
     ...state,
+    schemaVersion: Math.max(3, Number(state.schemaVersion ?? 0)),
     resources: { ...state.resources },
     cells: Object.fromEntries(Object.entries(state.cells).map(([id, cell]) => [id, { ...cell }])),
+    districts: structuredClone(state.districts ?? {}),
     buildings: { ...state.buildings },
     infrastructure: { ...state.infrastructure },
     nodes: { ...state.nodes },

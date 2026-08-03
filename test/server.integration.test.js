@@ -69,6 +69,51 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
     assert.equal((await app.inject(auth(agent, { method: "GET", url: `/api/v1/cities/${cityB.id}/snapshot` }))).statusCode, 403);
     assert.equal((await app.inject(auth(playerB, { method: "GET", url: `/api/v1/cities/${cityA.id}/snapshot` }))).statusCode, 404);
 
+    const cityBRender = await json(app, auth(agentB, { method: "GET", url: `/api/v1/cities/${cityB.id}/render-state` }), 200);
+    const cityBGateway = cityBRender.state.cells[cityBRender.state.nodes.old_town_entry.cellId];
+    const roadTarget = Object.values(cityBRender.state.cells)
+      .filter((cell) => cell.id !== cityBGateway.id && cell.buildable !== false && cell.strictBuildable !== false)
+      .filter((cell) => Math.abs(cell.column - cityBGateway.column) + Math.abs(cell.row - cityBGateway.row) >= 5)
+      .sort((left, right) => Math.abs(left.row - cityBGateway.row) - Math.abs(right.row - cityBGateway.row) || right.column - left.column)[0];
+    const district = await json(app, auth(agentB, {
+      method: "POST",
+      url: `/api/v1/cities/${cityB.id}/districts`,
+      headers: { "idempotency-key": "district-1" },
+      payload: {
+        expected_city_version: 0,
+        name: "月灯坊",
+        purpose: "商业住宅混合区",
+        bounds: {
+          minColumn: Math.max(0, Math.min(cityBGateway.column, roadTarget.column) - 2),
+          minRow: Math.max(0, Math.min(cityBGateway.row, roadTarget.row) - 2),
+          maxColumn: Math.min(cityBRender.state.world.grid.columns - 1, Math.max(cityBGateway.column, roadTarget.column) + 2),
+          maxRow: Math.min(cityBRender.state.world.grid.rows - 1, Math.max(cityBGateway.row, roadTarget.row) + 2)
+        }
+      }
+    }), 201);
+    assert.equal(district.resource.district.recommended_next_action, "build_district_roads");
+    const districtRoad = await json(app, auth(agentB, {
+      method: "POST",
+      url: `/api/v1/cities/${cityB.id}/connections`,
+      headers: { "idempotency-key": "district-road-1" },
+      payload: {
+        expected_city_version: district.city_version_after,
+        from: { kind: "node", id: "old_town_entry" },
+        to: { kind: "cell", id: roadTarget.id },
+        mode: "road"
+      }
+    }), 201);
+    const districtSites = await json(app, auth(agentB, {
+      method: "POST",
+      url: `/api/v1/cities/${cityB.id}/site-searches`,
+      payload: { district_id: district.resource.id, footprint: "1x1", limit: 100 }
+    }), 200);
+    assert.equal(districtSites.district.counts.roads > 0, true);
+    assert.equal(districtSites.district.recommended_next_action, "build_along_district_roads");
+    assert.ok(districtSites.data.some((candidate) => candidate.context.adjacentRoad));
+    assert.ok(districtSites.data.every((candidate) => !("score" in candidate) && !("score_explanation" in candidate)));
+    assert.equal(districtRoad.city_version_after, 2);
+
     const candidates = await json(app, auth(agent, { method: "POST", url: `/api/v1/cities/${cityA.id}/site-searches`, payload: { footprint: "1x1", limit: 8 } }), 200);
     const site1 = candidates.data[0];
     const build1 = buildRequest(cityA.city_version, site1.lotId, "Rose Cottage");

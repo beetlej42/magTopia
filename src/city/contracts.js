@@ -22,6 +22,7 @@ export function normalizeConstructionProposal(input = {}, context = {}) {
     id: input.id ?? context.createId?.("proposal") ?? `proposal-${Date.now()}`,
     actor: input.actor ?? "agent:unknown",
     type: "construct_building",
+    districtId: input.districtId ?? input.district_id ?? input.program?.attributes?.districtId ?? null,
     site: {
       lotId: String(input.site.lotId),
       footprint: footprint.id,
@@ -66,6 +67,34 @@ export function normalizeConnectionRequest(input = {}) {
     priority: input.priority ?? "normal",
     actor: input.actor ?? "agent:unknown"
   };
+}
+
+export function normalizeDistrictDefinition(input = {}, context = {}) {
+  const name = String(input.name ?? "").trim();
+  const purpose = String(input.purpose ?? "").trim();
+  if (!name || name.length > 80) throw new Error("District name must contain 1–80 characters");
+  if (!purpose || purpose.length > 160) throw new Error("District purpose must contain 1–160 characters");
+  const sourceBounds = input.bounds ?? {};
+  const bounds = {
+    minColumn: integerBound(sourceBounds.minColumn ?? sourceBounds.min_column, "minColumn"),
+    maxColumn: integerBound(sourceBounds.maxColumn ?? sourceBounds.max_column, "maxColumn"),
+    minRow: integerBound(sourceBounds.minRow ?? sourceBounds.min_row, "minRow"),
+    maxRow: integerBound(sourceBounds.maxRow ?? sourceBounds.max_row, "maxRow")
+  };
+  if (bounds.minColumn > bounds.maxColumn || bounds.minRow > bounds.maxRow) throw new Error("District bounds are reversed");
+  return {
+    id: input.id ?? context.createId?.("district") ?? `district-${Date.now()}`,
+    name,
+    purpose,
+    bounds,
+    actor: input.actor ?? "agent:unknown"
+  };
+}
+
+function integerBound(value, label) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) throw new Error(`District bounds.${label} must be an integer`);
+  return parsed;
 }
 
 export function completeAssetPrompt(proposal) {

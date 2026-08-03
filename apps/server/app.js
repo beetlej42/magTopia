@@ -149,6 +149,46 @@ export async function createApp({ repository, config, logger = false }) {
     return { data: searchBuildings(state, request.query) };
   });
 
+  app.get("/api/v1/cities/:cityId/districts", async (request) => {
+    const principal = await authenticate(repository, request, "city:read");
+    const { state } = await repository.getCity(principal, request.params.cityId);
+    return { city_version: state.version, data: Object.values(state.districts ?? {}).map((district) => districtResponse(state, district)) };
+  });
+
+  app.post("/api/v1/cities/:cityId/districts", async (request, reply) => {
+    const principal = await authenticate(repository, request, "city:build");
+    const body = request.body ?? {};
+    const response = await repository.transactCity({
+      principal,
+      cityId: request.params.cityId,
+      endpoint: "districts",
+      idempotencyKey: request.headers["idempotency-key"],
+      requestBody: body,
+      expectedVersion: expectedCityVersion(request, body),
+      action: "define_district",
+      reason: body.actor_note
+    }, async ({ state }) => {
+      const result = executeCityCommand(state, {
+        type: "define_district",
+        name: body.name,
+        purpose: body.purpose,
+        bounds: body.bounds,
+        actor: actorId(principal)
+      }, engineContext());
+      if (!result.accepted) return rejectedCommand(result);
+      return {
+        nextState: result.state,
+        response: commandEnvelope(result.district.id, result, {
+          kind: "district",
+          id: result.district.id,
+          status: "completed",
+          district: districtResponse(result.state, result.district)
+        })
+      };
+    });
+    return reply.code(response.status === "rejected" ? 422 : 201).send(response);
+  });
+
   app.get("/api/v1/cities/:cityId/buildings/:buildingId", async (request) => {
     const principal = await authenticate(repository, request, "city:read");
     const { state } = await repository.getCity(principal, request.params.cityId);
@@ -207,15 +247,20 @@ export async function createApp({ repository, config, logger = false }) {
     const principal = await authenticate(repository, request, "city:read");
     const { state } = await repository.getCity(principal, request.params.cityId);
     const input = request.body ?? {};
+    const districtId = input.district_id ?? input.districtId ?? null;
+    const district = districtId ? state.districts?.[districtId] : null;
+    if (districtId && !district) throw new ServiceError(404, "DISTRICT_NOT_FOUND", `District ${districtId} was not found`);
     const candidates = findCandidateParcels(state, {
       footprint: input.footprint,
-      near: input.near ?? [],
-      prefer: input.prefer ?? [],
-      avoid: input.avoid ?? [],
-      bounds: input.bounds ?? null,
+      districtId,
+      bounds: district?.bounds ?? input.bounds ?? null,
       limit: Math.min(Number(input.limit ?? 12), 100)
     });
-    return { city_version: state.version, data: candidates.map(explainCandidate) };
+    return {
+      city_version: state.version,
+      district: district ? districtResponse(state, district) : null,
+      data: candidates
+    };
   });
 
   app.get("/api/v1/assets", async (request) => {
@@ -513,6 +558,7 @@ function proposalFromBody(body, principal, asset) {
     return normalizeConstructionProposal({
       id: body.proposal_id,
       actor: actorId(principal),
+      districtId: body.district_id,
       site: {
         lotId: body.site?.lot_id,
         footprint: body.site?.footprint,
@@ -548,6 +594,7 @@ function normalizeConstructionBody(input = {}) {
   return {
     ...input,
     expected_city_version: input.expected_city_version ?? input.expectedCityVersion,
+    district_id: input.district_id ?? input.districtId,
     proposal_id: input.proposal_id ?? input.proposalId,
     actor_note: input.actor_note ?? input.actorNote,
     site: {
@@ -733,9 +780,21 @@ function buildingResponse(state, building) {
 }
 
 function compactBuilding(building) { return building ? { id: building.id, name: building.program?.name, archetype: building.program?.archetype, status: building.status ?? "completed" } : null; }
-function explainCandidate(candidate) {
-  const { scoreExplanation, ...rest } = candidate;
-  return { ...rest, score_explanation: scoreExplanation };
+
+function districtResponse(state, district) {
+  const cells = Object.values(state.cells).filter((cell) => (
+    cell.column >= district.bounds.minColumn && cell.column <= district.bounds.maxColumn
+    && cell.row >= district.bounds.minRow && cell.row <= district.bounds.maxRow
+  ));
+  const buildingIds = new Set(Object.values(state.buildings)
+    .filter((building) => building.districtId === district.id || building.program?.attributes?.districtId === district.id)
+    .map((building) => building.id));
+  const roadCells = cells.filter((cell) => cell.infrastructure === "road" || state.infrastructure[cell.id]?.type === "bridge").length;
+  return {
+    ...district,
+    counts: { buildings: buildingIds.size, roads: roadCells },
+    recommended_next_action: roadCells === 0 ? "build_district_roads" : buildingIds.size === 0 ? "build_along_district_roads" : "continue_district"
+  };
 }
 function numberParam(value, fallback) { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : fallback; }
 function subtract(a, b) { return { coins: a.coins - b.coins, timber: a.timber - b.timber, stone: a.stone - b.stone }; }
@@ -751,7 +810,7 @@ function agentSnapshot(row, state, events, orders, config) {
   const buildings = Object.values(state.buildings);
   const residential = buildings.filter((building) => building.program?.purpose === "residential").length;
   const services = buildings.length - residential;
-  const districtIds = new Set(buildings.map((building) => building.program?.attributes?.districtId).filter(Boolean));
+  const districts = Object.values(state.districts ?? {}).map((district) => districtResponse(state, district));
   const bridgeCount = Object.values(state.infrastructure ?? {}).filter((item) => item.type === "bridge").length;
   return {
     city_id: row.id,
@@ -766,15 +825,16 @@ function agentSnapshot(row, state, events, orders, config) {
     daily_production: dailyProduction,
     counts: {
       buildings: buildings.length,
-      districts: districtIds.size,
+      districts: districts.length,
       roads: Object.values(state.cells).filter((cell) => cell.infrastructure === "road").length,
       bridges: bridgeCount,
       pending_orders: orders.filter((order) => !["completed", "failed", "cancelled"].includes(order.status)).length
     },
     needs: [{ kind: "residential", pressure: Math.max(0, Math.min(1, (services - residential) / 5)), reason: "service capacity compared with nearby housing" }],
     recent_changes: events,
+    districts,
     pending_orders: orders.filter((order) => !["completed", "failed", "cancelled"].includes(order.status)),
-    available_actions: { construct: true, connect: true, request_asset: true, spend_full_current_budget: true },
+    available_actions: { define_district: true, construct: true, connect: true, request_asset: true, spend_full_current_budget: true },
     links: {
       playbook: `${config.publicBaseUrl}/agent/playbook.md`,
       spatial_query: `${config.publicBaseUrl}/api/v1/cities/${row.id}/spatial`,

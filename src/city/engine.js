@@ -1,4 +1,4 @@
-import { completeAssetPrompt, normalizeConnectionRequest, normalizeConstructionProposal } from "./contracts.js";
+import { completeAssetPrompt, normalizeConnectionRequest, normalizeConstructionProposal, normalizeDistrictDefinition } from "./contracts.js";
 import { appendEvent, cloneCityState } from "./state.js";
 import { previewConnectionBetween, previewConstruction } from "./solver.js";
 
@@ -16,6 +16,7 @@ export function createEngineContext(options = {}) {
 
 export function executeCityCommand(currentState, input, context = createEngineContext()) {
   switch (input.type) {
+    case "define_district": return defineDistrict(currentState, input, context);
     case "construct_building": return constructBuilding(currentState, input, context);
     case "upgrade_building": return upgradeBuilding(currentState, input, context);
     case "connect": return connect(currentState, input, context);
@@ -25,6 +26,35 @@ export function executeCityCommand(currentState, input, context = createEngineCo
     case "advance_time": return advanceTime(currentState, input, context);
     default: return rejected(currentState, "UNSUPPORTED_COMMAND", `Unsupported city command: ${input.type}`);
   }
+}
+
+function defineDistrict(currentState, input, context) {
+  let district;
+  try { district = normalizeDistrictDefinition(input.district ?? input, context); }
+  catch (error) { return rejected(currentState, "INVALID_DISTRICT", error.message); }
+  const corners = [
+    `cell-${district.bounds.minColumn}-${district.bounds.minRow}`,
+    `cell-${district.bounds.maxColumn}-${district.bounds.minRow}`,
+    `cell-${district.bounds.minColumn}-${district.bounds.maxRow}`,
+    `cell-${district.bounds.maxColumn}-${district.bounds.maxRow}`
+  ];
+  if (!corners.every((cellId) => currentState.cells[cellId])) {
+    return rejected(currentState, "DISTRICT_OUT_OF_BOUNDS", "District bounds must stay inside the city grid");
+  }
+  if (currentState.districts?.[district.id]) return rejected(currentState, "DISTRICT_ID_CONFLICT", `District ${district.id} already exists`);
+  const next = cloneCityState(currentState);
+  next.districts[district.id] = { ...district, createdAtTurn: next.turn };
+  bump(next);
+  appendEvent(next, {
+    type: "district_defined",
+    actor: district.actor,
+    districtId: district.id,
+    name: district.name,
+    purpose: district.purpose,
+    bounds: district.bounds,
+    summary: `${district.name} was designated for ${district.purpose}.`
+  }, context);
+  return accepted(currentState, next, { district: structuredClone(next.districts[district.id]) });
 }
 
 function upgradeBuilding(currentState, input, context) {

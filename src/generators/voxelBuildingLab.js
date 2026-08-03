@@ -161,6 +161,19 @@ const MATERIAL_LIBRARY = Object.freeze({
     roughness: 0.76,
     metalness: 0.2
   },
+  gildedMetal: {
+    colors: ["#c59a3a", "#ddb854", "#a87824", "#edcf73"],
+    roughness: 0.48,
+    metalness: 0.58
+  },
+  tealGlass: {
+    colors: ["#5b9c9a", "#74b8ae", "#417d80"],
+    roughness: 0.3,
+    metalness: 0.04,
+    opacity: 0.58,
+    emissive: "#3b8f8a",
+    emissiveIntensity: 0.12
+  },
   pavement: {
     colors: ["#aaa49a", "#b9b2a6", "#96938e"],
     roughness: 1
@@ -3255,6 +3268,25 @@ function addMassingFacadeFeatureOrnaments(buffer, mass, feature, box, shade, wri
         write
       );
     }
+  } else if (mass.facade.order === "gothic" && detail >= 0.5) {
+    const peakHeight = Math.max(3, Math.min(7, Math.round(openingWidth * 0.7)));
+    for (let rise = 0; rise < peakHeight; rise += 1) {
+      const halfWidth = Math.max(0, Math.round((peakHeight - rise) * openingWidth / (peakHeight * 2)));
+      for (const along of new Set([alongCenter - halfWidth, alongCenter + halfWidth])) {
+        const [x, z] = massingFacadeCoordinate(feature.face, feature.plane, along, 4);
+        buffer.addBox(
+          mass.materials.trim,
+          x,
+          box.y + box.height + rise,
+          z,
+          1,
+          2,
+          1,
+          shade + 100 + rise + along,
+          write
+        );
+      }
+    }
   } else if (detail >= 0.58) {
     if (box.northSouth) {
       const crownZ = feature.plane + (positiveFace ? 1 : -4);
@@ -4152,7 +4184,9 @@ function addMassingCap(buffer, spec, mass, plan, exclusions = new Set(), occlude
         || positiveModulo(z, mass.framing.baySpacingVoxels) < mass.framing.frameWidthVoxels)
           ? mass.materials.frame
           : mass.materials.panel)
-      : mass.materials.roof;
+      : mass.cap.type === "sawtooth" && sawtoothGlazingContains(mass.cap, x, z, bounds)
+        ? mass.materials.window
+        : mass.materials.roof;
     const roofMaterial = massingCapHeroDetailContains(mass.cap, x, z, rise, bounds)
       ? mass.materials.trim
       : baseRoofMaterial;
@@ -4598,6 +4632,11 @@ function massingCapRise(cap, x, z, bounds) {
       cap.heightVoxels * Math.sqrt(Math.max(0, 1 - normalized ** 2))
     );
   }
+  if (cap.type === "sawtooth") {
+    const position = cap.orientation === "north_south" ? nx : nz;
+    const phase = positiveModulo(position * cap.toothCount, 1);
+    return Math.round(cap.heightVoxels * phase);
+  }
   const edgeDistance = Math.min(nx, 1 - nx, nz, 1 - nz);
   if (cap.type === "hip") return Math.round(cap.heightVoxels * clamp(edgeDistance * 2, 0, 1));
   if (cap.type === "mansard") return Math.round(cap.heightVoxels * clamp(edgeDistance * 4, 0, 1));
@@ -4610,6 +4649,15 @@ function massingCapRise(cap, x, z, bounds) {
     return Math.round(cap.heightVoxels * Math.max(0, 1 - squareRadius));
   }
   return 0;
+}
+
+function sawtoothGlazingContains(cap, x, z, bounds) {
+  const width = Math.max(1, bounds.maxX - bounds.minX);
+  const depth = Math.max(1, bounds.maxZ - bounds.minZ);
+  const position = cap.orientation === "north_south"
+    ? (x - bounds.minX) / width
+    : (z - bounds.minZ) / depth;
+  return positiveModulo(position * cap.toothCount, 1) < 0.12;
 }
 
 function planMassingRelationCuts(spec, origin) {

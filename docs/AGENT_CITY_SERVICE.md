@@ -281,21 +281,27 @@ GET /api/v1/cities/{city_id}/buildings/{building_id}
 
 ### 6.4 查询候选地块
 
+Agent 开始一组新建设前，先创建一个只有名字、用途和矩形范围的轻量发展片区：
+
+```http
+POST /api/v1/cities/{city_id}/districts
+```
+
+片区不是用途禁令；它只是让 Agent 在后续轮次保持同一个空间意图。正常循环是“划片 → 用现有 `/connections` 先修路 → 沿片区道路选址建房”。
+
 ```http
 POST /api/v1/cities/{city_id}/site-searches
 ```
 
 ```json
 {
+  "district_id": "district_123",
   "footprint": "1x2",
-  "near": [{ "kind": "building", "id": "building_123", "max_distance": 8 }],
-  "prefer": ["riverfront", "existing_road"],
-  "avoid": ["high_magic_risk"],
-  "limit": 12
+  "limit": 100
 }
 ```
 
-这是现有 `findCandidateParcels` 的服务化版本。响应要给出可解释评分分解，而不只是一个总分，避免 Agent 猜测求解器偏好。
+这是现有 `findCandidateParcels` 的服务化版本。服务只筛选合法占地并使用片区的持久化范围，不再计算或返回地块分数。每个候选返回客观事实，包括合法入口方向、精确临路方向、最近道路距离和地形摘要，由 Agent 自己做组合与取舍。
 
 ### 6.5 资产搜索与生产决策
 

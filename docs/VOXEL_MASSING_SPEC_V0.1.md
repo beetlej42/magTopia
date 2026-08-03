@@ -110,10 +110,12 @@ placement: {
 - `hip`
 - `mansard`
 - `glass_ridge`
+- `glass_barrel`
+- `sawtooth`
 - `dome`
 - `spire`
 
-顶部独立于围合体量。`glass_ridge` 使用框架与玻璃面板，`dome` 和 `spire` 使用低多边形体素轮廓。顶部在结构体量之后写入；叠放子体量覆盖的宿主顶部区域会被省略。
+顶部独立于围合体量。`glass_ridge / glass_barrel` 使用框架与玻璃面板；`sawtooth` 通过受限的 `toothCount` 生成工业锯齿顶，并在陡直齿面使用窗材质形成连续采光；`dome` 和 `spire` 使用低多边形体素轮廓。顶部在结构体量之后写入；叠放子体量覆盖的宿主顶部区域会被省略。
 
 所有坡面会补齐相邻高度列之间的竖向阶梯，因此陡峭尖顶和穹顶仍保持六面连通，不会在跳高处出现可见空缺。
 
@@ -226,7 +228,7 @@ groundTreatment: {
 - `floorHeightVoxels`
 - `bayWidthVoxels`
 - `entranceFace`
-- `order`：`plain | classical | industrial`
+- `order`：`plain | classical | industrial | gothic`
 - `baseCourseHeightVoxels`
 - `stringCourseHeightVoxels`
 - `corniceHeightVoxels`
@@ -235,7 +237,7 @@ groundTreatment: {
 - `pedimentWidthVoxels`
 - `rooflineOrnaments`
 
-通用编译器用这些属性派生入口和基础窗列。较高的 `entranceEmphasis` 会同步增加门宽、入口台阶、雨棚出挑和成对门柱，而不再只改变门洞尺寸。`classical` order 会沿同一立面开间生成石质基座、层间线脚、檐口、转角壁柱、入口山花与屋顶烟囱；这些构件只派生装饰体素，不改变场地和体量占用。
+通用编译器用这些属性派生入口和基础窗列。较高的 `entranceEmphasis` 会同步增加门宽、入口台阶、雨棚出挑和成对门柱，而不再只改变门洞尺寸。`classical` order 会沿同一立面开间生成石质基座、层间线脚、檐口、转角壁柱和入口山花；`industrial` 使用更宽的结构开间、较少水平线脚和金属框架；`gothic` 使用窄高开间、尖拱窗冠、强化转角支撑并压低水平檐口。这些构件只派生装饰体素，不改变场地和体量占用。
 
 ## 稳定性与扩建
 

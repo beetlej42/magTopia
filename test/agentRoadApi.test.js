@@ -51,12 +51,30 @@ test("Agent API roads render with shared voxel assets and derive reciprocal dire
       ))[0];
     assert.ok(target);
 
+    const district = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/districts`,
+      headers: { "idempotency-key": "voxel-road-district-1" },
+      payload: {
+        expected_city_version: initial.city_version,
+        name: "Lantern Row",
+        purpose: "compact residential and shopping street",
+        bounds: {
+          minColumn: Math.max(0, Math.min(gateway.column, target.column) - 2),
+          minRow: Math.max(0, Math.min(gateway.row, target.row) - 2),
+          maxColumn: Math.min(initial.state.world.grid.columns - 1, Math.max(gateway.column, target.column) + 2),
+          maxRow: Math.min(initial.state.world.grid.rows - 1, Math.max(gateway.row, target.row) + 2)
+        }
+      }
+    }), 201);
+    assert.equal(district.resource.district.recommended_next_action, "build_district_roads");
+
     await json(app, auth(agent, {
       method: "POST",
       url: `/api/v1/cities/${city.id}/connections`,
       headers: { "idempotency-key": "voxel-road-connection-1" },
       payload: {
-        expected_city_version: initial.city_version,
+        expected_city_version: district.city_version_after,
         from: { kind: "node", id: "old_town_entry" },
         to: { kind: "cell", id: target.id },
         mode: "road"
@@ -67,6 +85,15 @@ test("Agent API roads render with shared voxel assets and derive reciprocal dire
     const roadIds = new Set(Object.values(rendered.state.cells).filter((cell) => cell.infrastructure === "road").map((cell) => cell.id));
     Object.entries(rendered.state.infrastructure).forEach(([cellId, item]) => { if (item.type === "bridge") roadIds.add(cellId); });
     assert.ok(roadIds.size > 0);
+
+    const sites = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/site-searches`,
+      payload: { district_id: district.resource.id, footprint: "1x1", limit: 100 }
+    }), 200);
+    assert.equal(sites.district.recommended_next_action, "build_along_district_roads");
+    assert.ok(sites.data.some((candidate) => candidate.context.adjacentRoad));
+    assert.ok(sites.data.every((candidate) => !("score" in candidate) && !("score_explanation" in candidate)));
 
     const opposite = { north: "south", east: "west", south: "north", west: "east" };
     for (const cellId of roadIds) {
