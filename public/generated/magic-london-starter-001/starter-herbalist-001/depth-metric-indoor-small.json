@@ -1,0 +1,31 @@
+{
+  "model": "depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf",
+  "input": "rgb.png",
+  "device": "mps",
+  "depthEstimationType": "metric",
+  "trainingDomain": "indoor-hypersim",
+  "metricDistance": "depth-metric-indoor-small-meters.npy",
+  "viewDepth": "depth-metric-indoor-small-view.npy",
+  "depth": "depth-metric-indoor-small.png",
+  "normal": "normal-metric-indoor-small.png",
+  "conversion": {
+    "formula": "viewDepth = viewOffset - metricDistanceMeters",
+    "viewOffset": 7.855167865753174,
+    "scale": 1.0,
+    "alignment": "single global translation from median base-anchor residual",
+    "anchorResiduals": {
+      "left": 0.04988908767700184,
+      "near": -0.6284851319832798,
+      "right": 1.1102230246251565e-16
+    }
+  },
+  "encoding": {
+    "file": "depth-metric-indoor-small.png",
+    "minimumViewDepth": -3.115739345550537,
+    "maximumViewDepth": 2.6028542518615723,
+    "bits": 8,
+    "clamped": false
+  },
+  "guide": "public/generated/magic-london-starter-001/guide-4x4x4.json",
+  "note": "Metric distance is preserved at unit scale. Only one global view-axis translation is applied; no linear rescaling or spatial correction is used."
+}

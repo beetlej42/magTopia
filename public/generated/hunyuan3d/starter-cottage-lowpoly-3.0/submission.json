@@ -1,0 +1,12 @@
+{
+  "jobId": "1470269658174840832",
+  "sourceImage": "public/generated/magic-london-starter-001/starter-cottage-001/model/triposr-input.png",
+  "submittedAt": "2026-07-19T04:06:42.786Z",
+  "parameters": {
+    "Model": "3.0",
+    "GenerateType": "LowPoly",
+    "PolygonType": "triangle",
+    "EnablePBR": false
+  },
+  "requestId": "25c7b984-1885-415e-8808-7733d7c4f4bc"
+}

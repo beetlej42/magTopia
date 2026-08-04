@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width">
+  <title>MagicTown 城市状态</title>
+  <style>
+    body{max-width:980px;margin:40px auto;padding:0 20px;background:#14201c;color:#edf2df;font:16px/1.5 system-ui}a{color:#b9e39f}input,button{font:inherit;padding:10px;border-radius:8px;border:1px solid #586d60;background:#203129;color:inherit}input{width:min(100%,420px)}button{cursor:pointer;background:#486d4f}.row{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}.card{border:1px solid #496153;border-radius:12px;padding:16px;background:#192a23}.status{display:inline-block;padding:3px 8px;border-radius:99px;background:#42574a}.completed{background:#326242}.failed{background:#763e42}.awaiting_asset,.awaiting_codex,.queued,.generating{background:#75612f}code{overflow-wrap:anywhere}small{color:#aebcaf}
+  </style>
+</head>
+<body>
+  <p><a href="/">← MagicTown Agent Service</a></p>
+  <h1>城市与资产管线状态</h1>
+  <p>凭证只保存在当前浏览器的 sessionStorage，关闭标签页后清除。</p>
+  <div class="row"><input id="city" placeholder="city_id"><input id="token" type="password" placeholder="Player / Agent bearer token"><button id="load">读取城市</button></div>
+  <p id="message"></p>
+  <section id="summary"></section>
+  <h2>建设订单</h2><div id="orders" class="cards"></div>
+  <script type="module">
+    const city=document.querySelector('#city'),token=document.querySelector('#token'),message=document.querySelector('#message'),summary=document.querySelector('#summary'),orders=document.querySelector('#orders');
+    city.value=new URLSearchParams(location.search).get('city_id')||sessionStorage.mtCity||'';token.value=sessionStorage.mtToken||'';
+    document.querySelector('#load').onclick=load;
+    async function request(path){const response=await fetch(path,{headers:{Authorization:`Bearer ${token.value}`}});const body=await response.json();if(!response.ok)throw new Error(`${body.code}: ${body.message}`);return body}
+    async function load(){try{message.textContent='读取中…';sessionStorage.mtCity=city.value;sessionStorage.mtToken=token.value;const [snap,list]=await Promise.all([request(`/api/v1/cities/${city.value}/snapshot`),request(`/api/v1/cities/${city.value}/construction-orders`)]);const viewer=`/cities/${encodeURIComponent(city.value)}#token=${encodeURIComponent(token.value)}`;summary.innerHTML=`<div class="cards"><div class="card"><b>${escape(snap.name)}</b><p>version ${snap.city_version} · turn ${snap.turn}</p><p><a href="${viewer}">打开可视城市 →</a></p></div><div class="card"><b>资源</b><p>${Object.entries(snap.resources).map(([k,v])=>`${k}: ${v}`).join(' · ')}</p></div><div class="card"><b>日产值</b><p>${Object.entries(snap.daily_production).map(([k,v])=>`${k}: +${v}`).join(' · ')}</p></div></div>`;orders.innerHTML=list.data.map(orderCard).join('')||'<p>暂无建设订单。</p>';message.textContent='';}catch(error){message.textContent=error.message}}
+    function orderCard(o){return `<article class="card"><span class="status ${o.status}">${o.status}</span><h3>${escape(o.request?.program?.name||o.id)}</h3><small>${o.asset.mode}${o.asset.asset_id?` · ${escape(o.asset.asset_id)}`:''}</small>${o.asset.job_id?`<p><code>${escape(o.asset.job_id)}</code></p>`:''}${o.error?`<p>${escape(JSON.stringify(o.error))}</p>`:''}</article>`}
+    function escape(value){return String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+  </script>
+</body>
+</html>

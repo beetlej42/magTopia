@@ -1,0 +1,286 @@
+import { completeAssetPrompt, normalizeConnectionRequest, normalizeConstructionProposal, normalizeDistrictDefinition } from "./contracts.js";
+import { appendEvent, cloneCityState } from "./state.js";
+import { previewConnectionBetween, previewConstruction } from "./solver.js";
+
+export function createEngineContext(options = {}) {
+  const sequences = new Map();
+  return {
+    now: options.now ?? (() => new Date().toISOString()),
+    createId: options.createId ?? ((prefix) => {
+      const sequence = (sequences.get(prefix) ?? 0) + 1;
+      sequences.set(prefix, sequence);
+      return `${prefix}-${sequence}`;
+    })
+  };
+}
+
+export function executeCityCommand(currentState, input, context = createEngineContext()) {
+  switch (input.type) {
+    case "define_district": return defineDistrict(currentState, input, context);
+    case "construct_building": return constructBuilding(currentState, input, context);
+    case "upgrade_building": return upgradeBuilding(currentState, input, context);
+    case "connect": return connect(currentState, input, context);
+    case "reserve_construction": return reserveConstruction(currentState, input, context);
+    case "complete_reserved_construction": return completeReservedConstruction(currentState, input, context);
+    case "cancel_construction_reservation": return cancelConstructionReservation(currentState, input, context);
+    case "advance_time": return advanceTime(currentState, input, context);
+    default: return rejected(currentState, "UNSUPPORTED_COMMAND", `Unsupported city command: ${input.type}`);
+  }
+}
+
+function defineDistrict(currentState, input, context) {
+  let district;
+  try { district = normalizeDistrictDefinition(input.district ?? input, context); }
+  catch (error) { return rejected(currentState, "INVALID_DISTRICT", error.message); }
+  const corners = [
+    `cell-${district.bounds.minColumn}-${district.bounds.minRow}`,
+    `cell-${district.bounds.maxColumn}-${district.bounds.minRow}`,
+    `cell-${district.bounds.minColumn}-${district.bounds.maxRow}`,
+    `cell-${district.bounds.maxColumn}-${district.bounds.maxRow}`
+  ];
+  if (!corners.every((cellId) => currentState.cells[cellId])) {
+    return rejected(currentState, "DISTRICT_OUT_OF_BOUNDS", "District bounds must stay inside the city grid");
+  }
+  if (currentState.districts?.[district.id]) return rejected(currentState, "DISTRICT_ID_CONFLICT", `District ${district.id} already exists`);
+  const next = cloneCityState(currentState);
+  next.districts[district.id] = { ...district, createdAtTurn: next.turn };
+  bump(next);
+  appendEvent(next, {
+    type: "district_defined",
+    actor: district.actor,
+    districtId: district.id,
+    name: district.name,
+    purpose: district.purpose,
+    bounds: district.bounds,
+    summary: `${district.name} was designated for ${district.purpose}.`
+  }, context);
+  return accepted(currentState, next, { district: structuredClone(next.districts[district.id]) });
+}
+
+function upgradeBuilding(currentState, input, context) {
+  const building = currentState.buildings?.[input.buildingId];
+  if (!building) return rejected(currentState, "BUILDING_NOT_FOUND", `Unknown building ${input.buildingId}`);
+  const design = input.voxelDesign;
+  if (!design?.generation?.sourceSpec) return rejected(currentState, "INVALID_BUILDING_DESIGN", "Upgrade requires a versioned voxel design");
+  if (design.source?.buildingId !== building.id) return rejected(currentState, "BUILDING_DESIGN_TARGET_MISMATCH", "Upgrade design targets a different building");
+  if (design.source?.baseDesignId && (
+    building.voxelDesign?.id !== design.source.baseDesignId
+    || building.voxelDesign?.revision !== design.source.baseDesignRevision
+  )) {
+    return rejected(currentState, "BUILDING_DESIGN_BASE_CONFLICT", "Building changed after this upgrade design was created");
+  }
+  if (design.site?.lotId !== building.site?.lotId || design.site?.footprint !== building.site?.footprint) {
+    return rejected(currentState, "UPGRADE_FOOTPRINT_CHANGE_UNSUPPORTED", "The first upgrade version must preserve the existing footprint");
+  }
+  const next = cloneCityState(currentState);
+  const prior = next.buildings[building.id];
+  next.buildings[building.id] = {
+    ...prior,
+    program: {
+      ...prior.program,
+      name: design.intent?.name ?? prior.program?.name,
+      purpose: design.intent?.purpose ?? prior.program?.purpose,
+      description: design.intent?.description ?? prior.program?.description
+    },
+    voxelDesign: structuredClone(design),
+    designRevision: design.revision,
+    designHistory: [
+      ...(prior.designHistory ?? []),
+      prior.voxelDesign ? { designId: prior.voxelDesign.id, revision: prior.voxelDesign.revision, specHash: prior.voxelDesign.specHash } : null
+    ].filter(Boolean),
+    updatedAtTurn: next.turn + 1
+  };
+  bump(next);
+  appendEvent(next, {
+    type: "building_upgraded",
+    actor: input.actor ?? "agent:unknown",
+    buildingId: building.id,
+    designId: design.id,
+    designRevision: design.revision,
+    summary: `${next.buildings[building.id].program.name} was upgraded.`
+  }, context);
+  return accepted(currentState, next, { building: structuredClone(next.buildings[building.id]) });
+}
+
+function constructBuilding(currentState, input, context) {
+  let proposal;
+  try { proposal = normalizeConstructionProposal(input.proposal ?? input, context); }
+  catch (error) { return rejected(currentState, "INVALID_PROPOSAL", error.message); }
+  const preview = previewConstruction(currentState, proposal);
+  if (!preview.feasible) return rejected(currentState, classifyPreviewError(preview), preview.errors?.[0] ?? "Construction is not feasible", { preview });
+  const next = cloneCityState(currentState);
+  const buildingId = input.buildingId ?? context.createId("building");
+  applyCompletedBuilding(next, { proposal, preview, buildingId, assetId: input.assetId ?? proposal.program.assetId }, context);
+  return accepted(currentState, next, { building: structuredClone(next.buildings[buildingId]), preview });
+}
+
+function connect(currentState, input, context) {
+  let connection;
+  try { connection = normalizeConnectionRequest(input); }
+  catch (error) { return rejected(currentState, "INVALID_CONNECTION", error.message); }
+  if (connection.mode !== "road") return rejected(currentState, "UNSUPPORTED_CONNECTION_MODE", `Unsupported connection mode: ${connection.mode}`);
+  const plan = previewConnectionBetween(currentState, connection.from, connection.to);
+  if (!plan.feasible) return rejected(currentState, "NO_ROUTE", plan.reason, { plan });
+  const resourcesAfter = subtract(currentState.resources, plan.cost);
+  const shortages = negativeKeys(resourcesAfter);
+  if (shortages.length) return rejected(currentState, "INSUFFICIENT_RESOURCES", `Insufficient ${shortages.join(", ")}`, { plan, resourcesAfter });
+  const next = cloneCityState(currentState);
+  applyRoadPlan(next, plan);
+  next.resources = resourcesAfter;
+  bump(next);
+  appendEvent(next, {
+    type: "road_connected",
+    actor: connection.actor,
+    from: connection.from,
+    to: connection.to,
+    cost: plan.cost,
+    summary: `Road connected ${connection.from.kind}:${connection.from.id} to ${connection.to.kind}:${connection.to.id}.`
+  }, context);
+  return accepted(currentState, next, { plan });
+}
+
+function reserveConstruction(currentState, input, context) {
+  let proposal;
+  try { proposal = normalizeConstructionProposal(input.proposal ?? input, context); }
+  catch (error) { return rejected(currentState, "INVALID_PROPOSAL", error.message); }
+  const preview = previewConstruction(currentState, proposal);
+  if (!preview.feasible) return rejected(currentState, classifyPreviewError(preview), preview.errors?.[0] ?? "Construction is not feasible", { preview });
+  const reservationId = input.reservationId ?? context.createId("reservation");
+  const next = cloneCityState(currentState);
+  const reservedCells = [...new Set([...preview.footprintCells, ...preview.connectionPlan.roadCells, ...preview.connectionPlan.bridgeCells])];
+  for (const cellId of reservedCells) {
+    if (next.cells[cellId]) next.cells[cellId].reservation = reservationId;
+  }
+  next.resources = preview.resourcesAfter;
+  next.reservations[reservationId] = {
+    id: reservationId,
+    proposal,
+    preview,
+    reservedCells,
+    frozenCost: preview.cost,
+    actor: proposal.actor,
+    createdAt: context.now()
+  };
+  bump(next);
+  appendEvent(next, { type: "construction_reserved", actor: proposal.actor, reservationId, cost: preview.cost }, context);
+  return accepted(currentState, next, { reservation: structuredClone(next.reservations[reservationId]), preview });
+}
+
+function completeReservedConstruction(currentState, input, context) {
+  const reservation = currentState.reservations?.[input.reservationId];
+  if (!reservation) return rejected(currentState, "RESERVATION_NOT_FOUND", `Unknown reservation ${input.reservationId}`);
+  const next = cloneCityState(currentState);
+  const live = next.reservations[input.reservationId];
+  const buildingId = input.buildingId ?? context.createId("building");
+  clearReservationMarks(next, live);
+  applyCompletedBuilding(next, {
+    proposal: live.proposal,
+    preview: live.preview,
+    buildingId,
+    assetId: input.assetId ?? live.proposal.program.assetId,
+    resourcesAlreadyDebited: true
+  }, context);
+  delete next.reservations[input.reservationId];
+  appendEvent(next, { type: "construction_reservation_completed", reservationId: input.reservationId, buildingId }, context);
+  return accepted(currentState, next, { building: structuredClone(next.buildings[buildingId]) });
+}
+
+function cancelConstructionReservation(currentState, input, context) {
+  const reservation = currentState.reservations?.[input.reservationId];
+  if (!reservation) return rejected(currentState, "RESERVATION_NOT_FOUND", `Unknown reservation ${input.reservationId}`);
+  const next = cloneCityState(currentState);
+  clearReservationMarks(next, reservation);
+  next.resources = add(next.resources, reservation.frozenCost);
+  delete next.reservations[input.reservationId];
+  bump(next);
+  appendEvent(next, { type: "construction_reservation_cancelled", reservationId: input.reservationId, reason: input.reason ?? "cancelled", refund: reservation.frozenCost }, context);
+  return accepted(currentState, next, { refunded: reservation.frozenCost });
+}
+
+function advanceTime(currentState, input, context) {
+  const hours = Number(input.hours ?? 24);
+  if (!Number.isFinite(hours) || hours <= 0 || hours > 24 * 31) return rejected(currentState, "INVALID_TIME_ADVANCE", "hours must be between 0 and 744");
+  const daily = calculateDailyIncome(currentState);
+  const multiplier = hours / 24;
+  const income = Object.fromEntries(Object.entries(daily).map(([key, value]) => [key, Math.floor(value * multiplier)]));
+  const next = cloneCityState(currentState);
+  next.resources = add(next.resources, income);
+  next.elapsedHours = (next.elapsedHours ?? 0) + hours;
+  next.turn += Math.max(1, Math.floor(hours / 24));
+  next.economy.lastIncome = income;
+  next.economy.lifetimeIncome = add(next.economy.lifetimeIncome, income);
+  bump(next, false);
+  appendEvent(next, { type: "city_time_advanced", actor: input.actor ?? "system:clock", hours, income, dailyProduction: daily }, context);
+  return accepted(currentState, next, { hours, income, dailyProduction: daily });
+}
+
+export function calculateDailyIncome(state) {
+  const income = { coins: 24, timber: 4, stone: 4 };
+  for (const building of Object.values(state.buildings)) {
+    const attributes = building.program?.attributes ?? {};
+    income.coins += Number(attributes.coinOutput ?? defaultCoinOutput(building.program?.purpose));
+    income.timber += Number(attributes.timberOutput ?? (/workshop|herbal|garden/.test(building.program?.archetype ?? "") ? 2 : 0));
+    income.stone += Number(attributes.stoneOutput ?? (/workshop|quarry/.test(building.program?.archetype ?? "") ? 1 : 0));
+  }
+  return income;
+}
+
+function defaultCoinOutput(purpose) {
+  if (purpose === "residential") return 6;
+  if (["workshop", "visitor_service", "commercial"].includes(purpose)) return 12;
+  return 4;
+}
+
+function applyCompletedBuilding(next, { proposal, preview, buildingId, assetId, resourcesAlreadyDebited = false }, context) {
+  preview.footprintCells.forEach((cellId) => { next.cells[cellId].occupancy = buildingId; });
+  applyRoadPlan(next, preview.connectionPlan);
+  if (!resourcesAlreadyDebited) next.resources = preview.resourcesAfter;
+  next.buildings[buildingId] = {
+    ...proposal,
+    id: buildingId,
+    status: "completed",
+    assetId: assetId ?? null,
+    assetPrompt: completeAssetPrompt(proposal),
+    footprintCells: preview.footprintCells,
+    gradingPlan: structuredClone(preview.gradingPlan ?? null),
+    createdAtTurn: next.turn
+  };
+  bump(next);
+  appendEvent(next, { type: "building_constructed", actor: proposal.actor, buildingId, proposalId: proposal.id, assetId: assetId ?? null, cost: preview.cost, summary: `${proposal.program.name} was built by ${proposal.actor}.` }, context);
+}
+
+function applyRoadPlan(state, plan) {
+  plan.roadCells.forEach((cellId) => { if (state.cells[cellId] && !state.cells[cellId].occupancy) state.cells[cellId].infrastructure = "road"; });
+  plan.bridgeCells.forEach((cellId) => { state.infrastructure[cellId] = { type: "bridge", cellId }; });
+}
+
+function clearReservationMarks(state, reservation) {
+  for (const cellId of reservation.reservedCells ?? []) {
+    if (state.cells[cellId]?.reservation === reservation.id) state.cells[cellId].reservation = null;
+  }
+}
+
+function bump(state, incrementTurn = true) {
+  state.version = (state.version ?? 0) + 1;
+  if (incrementTurn) state.turn = (state.turn ?? 0) + 1;
+}
+
+function accepted(before, state, result) {
+  return { accepted: true, cityVersionBefore: before.version ?? 0, cityVersionAfter: state.version, state, ...result };
+}
+
+function rejected(state, code, message, extra = {}) {
+  return { accepted: false, code, errors: [message], state, ...extra };
+}
+
+function classifyPreviewError(preview) {
+  const text = preview.errors?.join(" ") ?? "";
+  if (/Insufficient/.test(text)) return "INSUFFICIENT_RESOURCES";
+  if (/occupied|reserved/i.test(text)) return "LOT_OCCUPIED";
+  if (/route|target|entrance/i.test(text)) return "NO_ROUTE";
+  return "CONSTRUCTION_REJECTED";
+}
+
+function negativeKeys(resources) { return Object.entries(resources).filter(([, value]) => value < 0).map(([key]) => key); }
+function add(a = {}, b = {}) { return { coins: (a.coins ?? 0) + (b.coins ?? 0), timber: (a.timber ?? 0) + (b.timber ?? 0), stone: (a.stone ?? 0) + (b.stone ?? 0) }; }
+function subtract(a, b) { return { coins: a.coins - b.coins, timber: a.timber - b.timber, stone: a.stone - b.stone }; }

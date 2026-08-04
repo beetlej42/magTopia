@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Magic Town Builder</title>
+  </head>
+  <body>
+    <main id="app" aria-label="Magic town 3D scene"></main>
+
+    <section class="control-panel" aria-label="MagicTown development controls">
+      <div class="panel-heading">
+        <p class="eyebrow">MagicTown API</p>
+        <h1 id="panel-title">MagicTown Studio</h1>
+      </div>
+
+      <section id="city-viewer-panel" class="city-viewer-panel" hidden>
+        <p id="city-viewer-status" class="city-viewer-status" role="status">正在连接城市存档…</p>
+        <div id="city-viewer-auth" class="city-viewer-auth" hidden>
+          <label class="field">
+            <span>只读访问凭证</span>
+            <input id="city-viewer-token" type="password" autocomplete="off" placeholder="mta_… 或 mtp_…" />
+          </label>
+          <button id="city-viewer-connect" type="button">打开城市</button>
+        </div>
+        <div id="city-viewer-summary" hidden>
+          <div class="city-viewer-metrics">
+            <div><span>版本</span><strong id="city-viewer-version">0</strong></div>
+            <div><span>建筑</span><strong id="city-viewer-buildings">0</strong></div>
+            <div><span>道路</span><strong id="city-viewer-roads">0</strong></div>
+          </div>
+          <div class="city-viewer-resources" id="city-viewer-resources"></div>
+          <div class="city-viewer-actions">
+            <button id="city-viewer-refresh" type="button">立即刷新</button>
+            <a href="/dashboard">状态与订单</a>
+          </div>
+          <p class="city-viewer-note">正交视角 · 世界曲率 0 · 深度视差建筑</p>
+        </div>
+      </section>
+
+      <label class="field">
+        <span>Mode</span>
+        <select id="mode-control"></select>
+      </label>
+
+      <label class="field">
+        <span>Preset</span>
+        <select id="preset-control"></select>
+      </label>
+
+      <label id="camera-mode-field" class="field">
+        <span>Camera</span>
+        <select id="camera-mode-control">
+          <option value="play">Isometric Play</option>
+          <option value="free">Free Debug</option>
+        </select>
+      </label>
+
+      <div class="seed-row">
+        <label class="field seed-field">
+          <span>Seed</span>
+          <input id="seed-control" type="text" value="wand-001" />
+        </label>
+        <button id="randomize-button" type="button">Random</button>
+      </div>
+
+      <div id="slider-controls" class="sliders"></div>
+
+      <section id="massing-explorer" class="massing-explorer" aria-label="Voxel Massing Explorer" hidden></section>
+
+      <section id="intent-district-summary" class="intent-district-summary" aria-label="Agent building intents" hidden></section>
+
+      <div class="actions">
+        <button id="copy-config-button" type="button">Copy Config</button>
+        <span id="copy-status" role="status"></span>
+      </div>
+
+      <p id="pipeline-note" class="pipeline-note">
+        The asset is a depth-map parallax sprite facing the isometric camera. Tune Parallax and View X/Y for the limited-angle 2.5D effect.
+      </p>
+    </section>
+
+    <aside id="map-panel" class="map-panel" aria-label="Generated image maps">
+      <div class="map-panel-heading">
+        <p class="eyebrow">Maps</p>
+        <strong>Asset + Terrain</strong>
+      </div>
+      <div id="map-previews" class="map-previews"></div>
+    </aside>
+
+    <aside id="api-pill" class="api-pill" aria-label="Current API call">
+      <code>MagicTown.generate({ seed, floors, towerCount, greeneryDensity })</code>
+    </aside>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

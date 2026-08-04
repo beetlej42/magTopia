@@ -1,0 +1,27 @@
+{
+  "provider": "triposr",
+  "upstreamCommit": "107cefdc244c39106fa830359024f6a2f1c78871",
+  "model": ".tools/models/triposr",
+  "device": "mps",
+  "mcResolution": 128,
+  "vertices": 15104,
+  "faces": 30204,
+  "elapsedSeconds": 10.142,
+  "normalization": {
+    "sourceExtents": [
+      0.9196403991444932,
+      0.9162507653236389,
+      0.8566505642723856
+    ],
+    "gameExtents": [
+      3.6800000000000006,
+      3.666436163012904,
+      3.427942138530459
+    ],
+    "uniformScale": 4.001564093338402,
+    "yawDegrees": -45.0,
+    "coordinateConversion": "triposr-z-up-to-threejs-y-up"
+  },
+  "input": "triposr-input.png",
+  "output": "triposr.glb"
+}

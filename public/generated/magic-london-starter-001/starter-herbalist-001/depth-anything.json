@@ -1,0 +1,60 @@
+{
+  "model": "/Users/jialinrui/.cache/huggingface/hub/models--depth-anything--Depth-Anything-V2-Small-hf/snapshots/5426e4f0f36572d16453bbda7a8389317b1bef99",
+  "input": "rgb.png",
+  "rawDepth": "depth-anything-raw.npy",
+  "guide": "public/generated/magic-london-starter-001/guide-4x4x4.json",
+  "guideDepth": "depth-guide.npy",
+  "guideDepthPreview": "depth-guide.png",
+  "depth": "depth-anything-linear.png",
+  "calibratedDepth": "depth-anything-linear.npy",
+  "normal": "normal-depth-anything-linear.png",
+  "normalStrength": 9.0,
+  "device": "cpu",
+  "calibration": {
+    "kind": "global-linear-quantile-fit-v1",
+    "formula": "viewDepth = slope * rawDepth + intercept",
+    "slope": 2.3063547097292365,
+    "intercept": -3.6823995881373026,
+    "direction": 1,
+    "rmse": 0.23222664739604432,
+    "rSquared": 0.9518559204939654,
+    "quantiles": {
+      "low": 0.02,
+      "high": 0.98,
+      "count": 97
+    },
+    "ranges": {
+      "raw": [
+        0.04069030284881592,
+        3.9602153301239014
+      ],
+      "guide": [
+        -0.24997998774051666,
+        4.633118152618408
+      ],
+      "calibrated": [
+        -3.5885533165216272,
+        5.45126169003588
+      ]
+    },
+    "anchorDirectionCovariance": 1.6034607673899959,
+    "encoding": {
+      "file": "depth-anything-linear.png",
+      "minimumViewDepth": -3.5885533165216272,
+      "maximumViewDepth": 5.45126169003588,
+      "bits": 8,
+      "clamped": false
+    },
+    "rawAnchorSamples": {
+      "left": 1.697873830795288,
+      "near": 3.1952195167541504,
+      "right": 1.72743821144104
+    },
+    "expectedAnchorDepths": {
+      "left": 1.1102230246251565e-16,
+      "near": 1.6223191506905552,
+      "right": -1.1102230246251565e-16
+    }
+  },
+  "note": "Raw relative depth is converted to guideplate view depth by one global linear quantile fit; no spatial residual is applied."
+}

@@ -1,0 +1,167 @@
+{
+  "assetId": "starter-workshop-001",
+  "archetype": "starter_workshop",
+  "footprint": "1x1",
+  "dimensions": {
+    "length": 4,
+    "width": 4,
+    "height": 4,
+    "unit": "world"
+  },
+  "sourceSheet": "workshop.png",
+  "sheetCell": {
+    "column": 0,
+    "row": 0
+  },
+  "camera": {
+    "yaw": 45,
+    "elevation": 55,
+    "projection": "orthographic"
+  },
+  "baseAnchorContract": "guideplate-visible-triangle-v1",
+  "baseAnchorSource": "legacy-offline-calibration",
+  "baseAnchorsUv": {
+    "left": [
+      0.22807017543859648,
+      0.35566188197767146
+    ],
+    "near": [
+      0.5087719298245614,
+      0.21690590111642738
+    ],
+    "right": [
+      0.7767145135566188,
+      0.35725677830940994
+    ]
+  },
+  "maps": {
+    "source": "source-magenta.png",
+    "rgb": "rgb.png",
+    "mask": "mask.png",
+    "emissive": "emissive.png",
+    "depth": "depth-anything-linear.png",
+    "normal": "normal-depth-anything-linear.png",
+    "emissiveSemanticSource": "emissive-semantic-source.png",
+    "depthRawFloat": "depth-anything-raw.npy",
+    "guideDepthFloat": "depth-guide.npy",
+    "guideDepthPreview": "depth-guide.png",
+    "depthCalibratedFloat": "depth-anything-linear.npy",
+    "depthMetadata": "depth-anything.json"
+  },
+  "nightProfile": "early_shop",
+  "emissiveNote": "Semantic image-model map resized to RGB dimensions and clipped by the original building alpha mask.",
+  "depthProvider": "depth-anything-relative-global-linear-guide-fit",
+  "emissiveProvider": "image-model-semantic-map",
+  "depthCalibration": {
+    "kind": "global-linear-quantile-fit-v1",
+    "formula": "viewDepth = slope * rawDepth + intercept",
+    "slope": 2.3339263424474863,
+    "intercept": -3.9865928694841797,
+    "direction": 1,
+    "rmse": 0.17830085485164765,
+    "rSquared": 0.9715959979029251,
+    "quantiles": {
+      "low": 0.02,
+      "high": 0.98,
+      "count": 97
+    },
+    "ranges": {
+      "raw": [
+        0.2862566411495209,
+        3.916991949081421
+      ],
+      "guide": [
+        -0.25348737835884094,
+        4.637424945831299
+      ],
+      "calibrated": [
+        -3.318490954004776,
+        5.155377823631672
+      ]
+    },
+    "anchorDirectionCovariance": 1.6995163220444613,
+    "encoding": {
+      "file": "depth-anything-linear.png",
+      "minimumViewDepth": -3.318490954004776,
+      "maximumViewDepth": 5.155377823631672,
+      "bits": 8,
+      "clamped": false
+    },
+    "rawAnchorSamples": {
+      "left": 1.7474148273468018,
+      "near": 3.2484350204467773,
+      "right": 1.6067018508911133
+    },
+    "expectedAnchorDepths": {
+      "left": 1.1102230246251565e-16,
+      "near": 1.6223191506905552,
+      "right": -1.1102230246251565e-16
+    }
+  },
+  "depthFitVariants": {
+    "walls-ground": {
+      "depth": "depth-anything-linear-walls-ground.png",
+      "normal": "normal-depth-anything-linear-walls-ground.png",
+      "metadata": "depth-anything-walls-ground.json",
+      "calibration": {
+        "kind": "global-linear-quantile-fit-v1",
+        "formula": "viewDepth = slope * rawDepth + intercept",
+        "slope": 2.8132094646879047,
+        "intercept": -5.110678077007244,
+        "direction": 1,
+        "rmse": 0.15180886674956345,
+        "rSquared": 0.9802273695281858,
+        "quantiles": {
+          "low": 0.02,
+          "high": 0.98,
+          "count": 97
+        },
+        "ranges": {
+          "raw": [
+            0.8484333753585815,
+            3.3997533321380615
+          ],
+          "guide": [
+            -0.25348737835884094,
+            4.63304328918457
+          ],
+          "calibrated": [
+            -2.723857275291377,
+            4.4535401745677925
+          ]
+        },
+        "anchorDirectionCovariance": 1.6995163220444613,
+        "fitSurfaces": "walls-ground",
+        "encoding": {
+          "file": "depth-anything-linear-walls-ground.png",
+          "minimumViewDepth": -2.723857275291377,
+          "maximumViewDepth": 4.4535401745677925,
+          "bits": 8,
+          "clamped": false
+        }
+      }
+    },
+    "metric-indoor-small": {
+      "depth": "depth-metric-indoor-small.png",
+      "normal": "normal-metric-indoor-small.png",
+      "metadata": "depth-metric-indoor-small.json",
+      "depthEncoding": {
+        "kind": "metric-depth-view-translation-v1",
+        "bits": 8,
+        "minimumViewDepth": -2.9797163009643555,
+        "maximumViewDepth": 3.668644905090332
+      },
+      "conversion": {
+        "formula": "viewDepth = viewOffset - metricDistanceMeters",
+        "viewOffset": 9.00978224349451,
+        "scale": 1.0,
+        "alignment": "single global translation from median base-anchor residual",
+        "anchorResiduals": {
+          "left": 0.3819793946785913,
+          "near": -8.881784197001252e-16,
+          "right": -0.30486543106603736
+        }
+      }
+    }
+  }
+}
