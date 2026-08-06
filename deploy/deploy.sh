@@ -48,7 +48,16 @@ if [[ -L "$ROOT/current" ]]; then PREVIOUS="$(readlink -f "$ROOT/current")"; fi
 ln -sfn "$RELEASE" "$ROOT/current"
 systemctl restart magictown.service
 
-if ! curl --fail --silent --show-error --max-time 10 http://127.0.0.1:4184/healthz >/dev/null; then
+HEALTHY=0
+for _ in {1..30}; do
+  if curl --fail --silent --show-error --max-time 2 http://127.0.0.1:4184/healthz >/dev/null; then
+    HEALTHY=1
+    break
+  fi
+  sleep 1
+done
+
+if [[ "$HEALTHY" != "1" ]]; then
   echo "MagicTown health check failed; attempting rollback" >&2
   if [[ -n "$PREVIOUS" && -d "$PREVIOUS" ]]; then
     ln -sfn "$PREVIOUS" "$ROOT/current"
