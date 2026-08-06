@@ -40,6 +40,10 @@ export async function createApp({ repository, config, logger = false }) {
   });
 
   app.get("/", async (_request, reply) => reply.type("text/html; charset=utf-8").send(homePage(config.publicBaseUrl)));
+  app.get("/healthz", async () => {
+    await repository.database.query("SELECT 1");
+    return { status: "ok", service: "magictown", voxel_only: config.voxelOnly };
+  });
   app.get("/agent/playbook.md", async (_request, reply) => reply.type("text/markdown; charset=utf-8").send(await fs.readFile(PLAYBOOK_PATH, "utf8")));
   app.get("/agent/building-design-api-v1.md", async (_request, reply) => reply.type("text/markdown; charset=utf-8").send(await fs.readFile(BUILDING_DESIGN_API_PATH, "utf8")));
   app.get("/style-reference/isometric-magic-london-city.jpg", async (_request, reply) =>
@@ -272,7 +276,7 @@ export async function createApp({ repository, config, logger = false }) {
     const principal = await authenticate(repository, request, "city:build");
     const { state } = await repository.getCity(principal, request.params.cityId, { write: true });
     const { body, linkedDesign } = await resolveConstructionBody(repository, principal, request.params.cityId, request.body ?? {});
-    const asset = await validateAssetChoice(repository, principal, body);
+    const asset = await validateAssetChoice(repository, principal, body, config);
     if (asset.mode === "voxel" && !linkedDesign) throw new ServiceError(400, "BUILDING_DESIGN_REQUIRED", "Voxel construction must reference a confirmed building design");
     if (linkedDesign?.source?.kind === "upgrade") {
       const building = state.buildings[linkedDesign.source.buildingId];
@@ -306,6 +310,7 @@ export async function createApp({ repository, config, logger = false }) {
   app.post("/api/v1/cities/:cityId/construction-orders", async (request, reply) => {
     const principal = await authenticate(repository, request, "city:build");
     const { body, linkedDesign } = await resolveConstructionBody(repository, principal, request.params.cityId, request.body ?? {});
+    if (config.voxelOnly && body.asset?.mode === "produce") throw new ServiceError(409, "VOXEL_ONLY_MODE", "Image asset production is disabled; use asset.mode=voxel");
     if (body.asset?.mode === "produce") requireScope(principal, "asset:request");
     const expectedVersion = expectedCityVersion(request, body);
     const response = await repository.transactCity({
@@ -507,6 +512,7 @@ export async function createApp({ repository, config, logger = false }) {
   app.get("/api/v1/asset-jobs/:jobId", async (request) => repository.getAssetJob(await authenticate(repository, request, "city:read"), request.params.jobId));
 
   app.post("/api/v1/asset-jobs/:jobId/artifacts", async (request, reply) => {
+    if (config.voxelOnly) throw new ServiceError(409, "VOXEL_ONLY_MODE", "Image asset production is disabled in voxel-only mode");
     const principal = await authenticate(repository, request, "asset:request");
     const job = await repository.getAssetJob(principal, request.params.jobId);
     const body = request.body ?? {};
@@ -621,11 +627,12 @@ function normalizeConstructionBody(input = {}) {
   };
 }
 
-async function validateAssetChoice(repository, principal, body) {
+async function validateAssetChoice(repository, principal, body, config) {
   const choice = body.asset;
   if (!choice || !["reuse", "produce", "voxel"].includes(choice.mode)) throw new ServiceError(400, "ASSET_CHOICE_REQUIRED", "asset.mode must be reuse, produce, or voxel");
   if (choice.mode === "voxel") return { mode: "voxel", design_id: body.design_id, design_revision: body.design_revision, design_hash: body.design_hash };
   if (choice.mode === "produce") {
+    if (config.voxelOnly) throw new ServiceError(409, "VOXEL_ONLY_MODE", "Image asset production is disabled; use asset.mode=voxel");
     requireScope(principal, "asset:request");
     return { mode: "produce", spec: normalizeAssetSpec(body), provider: "asynchronous" };
   }

@@ -1,0 +1,5 @@
+# Temporary IP-based HTTP endpoint. Replace this with a domain later for HTTPS.
+http://47.239.243.6:4183 {
+    encode gzip
+    reverse_proxy 127.0.0.1:4184
+}

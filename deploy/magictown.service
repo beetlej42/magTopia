@@ -1,0 +1,22 @@
+[Unit]
+Description=MagicTown voxel Agent API
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=magictown
+Group=magictown
+WorkingDirectory=/opt/magictown/current
+EnvironmentFile=/etc/magictown/magictown.env
+ExecStart=/usr/bin/node apps/server/start.js
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/magictown/current/public/generated /opt/magictown/shared
+
+[Install]
+WantedBy=multi-user.target

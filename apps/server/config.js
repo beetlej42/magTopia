@@ -1,11 +1,13 @@
 export function loadConfig(env = process.env) {
   const hunyuanImageApiKey = env.HUNYUAN_IMAGE_API_KEY ?? env.TENCENT_TOKENHUB_API_KEY ?? null;
+  const voxelOnly = env.MAGICTOWN_VOXEL_ONLY === "1";
   return {
     host: env.MAGICTOWN_HOST ?? "127.0.0.1",
     port: Number(env.MAGICTOWN_PORT ?? 4183),
     databaseUrl: env.MAGICTOWN_DATABASE_URL ?? "postgres://127.0.0.1:5432/magictown",
     publicBaseUrl: env.MAGICTOWN_PUBLIC_BASE_URL ?? `http://${env.MAGICTOWN_HOST ?? "127.0.0.1"}:${env.MAGICTOWN_PORT ?? 4183}`,
-    assetProvider: env.MAGICTOWN_ASSET_PROVIDER ?? (hunyuanImageApiKey ? "hunyuan-image" : env.DASHSCOPE_API_KEY ? "qwen-image" : "codex-manual"),
+    voxelOnly,
+    assetProvider: voxelOnly ? "voxel" : env.MAGICTOWN_ASSET_PROVIDER ?? (hunyuanImageApiKey ? "hunyuan-image" : env.DASHSCOPE_API_KEY ? "qwen-image" : "codex-manual"),
     hunyuanImageApiKey,
     hunyuanImageModel: env.HUNYUAN_IMAGE_MODEL ?? "hy-image-v3.0",
     hunyuanImageResolution: env.HUNYUAN_IMAGE_RESOLUTION ?? "1024:1024",
