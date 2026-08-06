@@ -936,3 +936,152 @@ html[data-magic-town-presentation] .api-pill {
     display: none;
   }
 }
+
+
+.city-info-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  overflow: hidden;
+  pointer-events: none;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.city-info-overlay[aria-hidden="true"] {
+  visibility: hidden;
+}
+
+.city-info-leader {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.city-info-leader-line {
+  stroke: #8068b7;
+  stroke-width: 1.4;
+  stroke-dasharray: 4 5;
+  stroke-linecap: round;
+  opacity: 0.68;
+}
+
+.city-info-target-halo {
+  fill: rgb(128 104 183 / 10%);
+  stroke: #8068b7;
+  stroke-width: 1.5;
+  stroke-dasharray: 5 6;
+  r: 11px;
+}
+
+.city-info-target-dot {
+  fill: #8068b7;
+  stroke: #f3e5c9;
+  stroke-width: 2;
+  r: 4px;
+}
+
+.city-info-card {
+  position: absolute;
+  width: 198px;
+  min-height: 70px;
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  padding: 10px 13px 9px;
+  border: 1px solid #c9b89c;
+  border-radius: 10px;
+  color: #28394d;
+  background:
+    linear-gradient(180deg, rgb(255 248 232 / 98%), rgb(243 229 201 / 96%));
+  box-shadow:
+    0 9px 20px rgb(40 57 77 / 17%),
+    0 1px 0 rgb(255 255 255 / 70%) inset;
+  transform-origin: 50% 100%;
+  text-align: left;
+  pointer-events: auto;
+  cursor: pointer;
+  will-change: left, top, transform, opacity;
+}
+
+.city-info-card:hover {
+  border-color: #8068b7;
+}
+
+.city-info-card.is-parcel {
+  border-color: #be9a57;
+}
+
+.city-info-card.is-parcel .city-info-kicker,
+.city-info-card.is-parcel .city-info-title::before {
+  color: #8a6e33;
+}
+
+.city-info-kicker,
+.city-info-title,
+.city-info-subtitle {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.city-info-kicker {
+  color: #8068b7;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.11em;
+  line-height: 1;
+}
+
+.city-info-title {
+  color: #28394d;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.03rem;
+  line-height: 1.12;
+}
+
+.city-info-subtitle {
+  color: #596477;
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+
+.city-info-card::after {
+  content: "";
+  width: 34px;
+  height: 2px;
+  margin-top: 2px;
+  background: #8068b7;
+  opacity: 0.7;
+}
+
+.city-info-card.is-parcel::after {
+  background: #be9a57;
+}
+
+@media (max-width: 720px) {
+  .city-info-card {
+    width: 178px;
+    min-height: 64px;
+    padding: 9px 11px 8px;
+  }
+
+  .city-info-title {
+    font-size: 0.92rem;
+  }
+
+  .city-info-subtitle {
+    font-size: 0.67rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .city-info-card {
+    transition: none;
+  }
+}
+
