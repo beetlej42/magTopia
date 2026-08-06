@@ -76,9 +76,9 @@ MAGICTOWN_CAPABILITY_TTL_MINUTES=30
 MAGICTOWN_CREDENTIAL_TTL_DAYS=1
 MAGICTOWN_AUTO_MIGRATE=1
 EOF
-  chown root:magictown /etc/magictown/magictown.env
-  chmod 640 /etc/magictown/magictown.env
 fi
+chown root:magictown /etc/magictown/magictown.env
+chmod 640 /etc/magictown/magictown.env
 
 if command -v caddy >/dev/null 2>&1 && [[ -f /etc/caddy/Caddyfile ]] && ! grep -Fq "$MAGICTOWN_CADDY_SITE" /etc/caddy/Caddyfile; then
   printf '\n%s {\n    encode gzip\n    reverse_proxy 127.0.0.1:4184\n}\n' "$MAGICTOWN_CADDY_SITE" >> /etc/caddy/Caddyfile
