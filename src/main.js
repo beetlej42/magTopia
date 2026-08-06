@@ -82,6 +82,7 @@ import { createStarterCityWorkbench } from "./city/scenarios.js";
 import { findAssetCandidates, getAssetRegistry, resolveAsset } from "./city/assets.js";
 import { getModelOrientationPreviewUrls } from "./generators/modelOrientation.js";
 import { createAgentAcceptanceCity } from "./generators/agentAcceptanceCity.js";
+import { createCityInfoOverlay } from "./ui/cityInfoOverlay.js";
 import {
   PUBLIC_BUILDING_STYLE_COMPARISON_PRESETS,
   createPublicBuildingStyleComparison,
@@ -89,6 +90,7 @@ import {
 } from "./generators/publicBuildingStyleComparison.js";
 
 const app = document.querySelector("#app");
+const cityInfoOverlay = createCityInfoOverlay();
 const scene = new THREE.Scene();
 scene.background = new THREE.Color("#fff3f8");
 
@@ -558,6 +560,7 @@ async function rebuildActive(config) {
   }
   configureCameraForViewport();
 
+  cityInfoOverlay.setSceneRoot(null);
   if (activeObject) {
     scene.remove(activeObject);
     disposeObject(activeObject);
@@ -607,6 +610,7 @@ async function rebuildActive(config) {
   }
 
   scene.add(activeObject);
+  cityInfoOverlay.setSceneRoot(currentMode === "agentcity" ? activeObject : null);
   warmupActiveVoxelLod();
   activeAnimationObjects = collectAnimationObjects(activeObject);
   applyWorldLighting(currentConfig.sunTime);
@@ -1433,6 +1437,15 @@ function animate() {
     width: renderer.domElement.clientWidth,
     height: renderer.domElement.clientHeight
   });
+  cityInfoOverlay.update({
+    camera,
+    delta,
+    viewMode: camera.userData?.districtSurface?.viewMode ?? districtSurfaceNavigation.viewMode,
+    viewport: {
+      width: renderer.domElement.clientWidth,
+      height: renderer.domElement.clientHeight
+    }
+  });
   const baseFitDiagnostics = activeObject?.userData?.updateBaseFit?.(
     camera,
     currentMode === "map" && currentConfig?.cameraMode === "play",
@@ -2002,3 +2015,4 @@ function disposeObject(object) {
     }
   });
 }
+
