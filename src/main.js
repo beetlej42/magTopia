@@ -107,6 +107,9 @@ const renderQuality = {
   maxPixelRatio: mobilePerformanceProfile ? 1.75 : 2,
   pixelRatio: Math.min(window.devicePixelRatio, mobilePerformanceProfile ? 1.5 : 1.75),
   averageFrameMs: 16.67,
+  lastFrameMs: 16.67,
+  peakFrameMs: 16.67,
+  peakWindowStartMs: 0,
   stableFrames: 0,
   lastAdjustmentMs: 0
 };
@@ -604,6 +607,7 @@ async function rebuildActive(config) {
   }
 
   scene.add(activeObject);
+  warmupActiveVoxelLod();
   activeAnimationObjects = collectAnimationObjects(activeObject);
   applyWorldLighting(currentConfig.sunTime);
   applyDistrictBokeh(currentConfig.bokehStrength ?? 1, currentConfig.bokehBlur ?? 1);
@@ -637,6 +641,33 @@ async function rebuildActive(config) {
   syncUi();
   syncMapPreview();
   syncApiPill();
+}
+
+function warmupActiveVoxelLod() {
+  if (currentMode !== "agentcity") return;
+  const prepare = activeObject?.userData?.prepareVoxelLodWarmup;
+  if (!prepare) return;
+  const restore = prepare();
+  const warmupTarget = new THREE.WebGLRenderTarget(1, 1, { depthBuffer: false, stencilBuffer: false });
+  const previousTarget = renderer.getRenderTarget();
+  const previousShadowAutoUpdate = renderer.shadowMap.autoUpdate;
+  const previousKeyShadow = worldLights.key.castShadow;
+  try {
+    // Upload hidden near buffers and link their programs without paying the cost
+    // during the first medium -> near visibility transition.
+    renderer.shadowMap.autoUpdate = false;
+    worldLights.key.castShadow = false;
+    renderer.compile(scene, camera);
+    renderer.setRenderTarget(warmupTarget);
+    renderer.clear();
+    renderer.render(scene, camera);
+  } finally {
+    renderer.setRenderTarget(previousTarget);
+    renderer.shadowMap.autoUpdate = previousShadowAutoUpdate;
+    worldLights.key.castShadow = previousKeyShadow;
+    restore();
+    warmupTarget.dispose();
+  }
 }
 
 function setMode(mode, nextConfig = null) {
@@ -1350,6 +1381,14 @@ function animate() {
   const elapsed = clock.elapsedTime;
   const refreshRuntimeDiagnostics = elapsed - lastRuntimeDiagnosticsAt >= 0.5;
   if (refreshRuntimeDiagnostics) lastRuntimeDiagnosticsAt = elapsed;
+  const frameMs = Math.min(1000, Math.max(0, delta * 1000));
+  renderQuality.lastFrameMs = frameMs;
+  if (elapsed * 1000 - renderQuality.peakWindowStartMs >= 1000) {
+    renderQuality.peakWindowStartMs = elapsed * 1000;
+    renderQuality.peakFrameMs = frameMs;
+  } else {
+    renderQuality.peakFrameMs = Math.max(renderQuality.peakFrameMs, frameMs);
+  }
 
   updatePlayCamera(delta);
 
@@ -1486,13 +1525,15 @@ function updateDynamicResolution(delta, elapsed) {
 
 function publishRenderDiagnostics() {
   document.documentElement.dataset.magicTownPixelRatio = renderQuality.pixelRatio.toFixed(2);
+  document.documentElement.dataset.magicTownLastFrameMs = renderQuality.lastFrameMs.toFixed(2);
+  document.documentElement.dataset.magicTownPeakFrameMs = renderQuality.peakFrameMs.toFixed(2);
   document.documentElement.dataset.magicTownFrameMs = renderQuality.averageFrameMs.toFixed(2);
   document.documentElement.dataset.magicTownDrawCalls = String(renderer.info.render.calls);
   document.documentElement.dataset.magicTownTriangles = String(renderer.info.render.triangles);
   document.documentElement.dataset.magicTownDistrictCamera = isSurfaceVoxelWorld()
     ? JSON.stringify(camera.userData.districtSurface ?? {})
     : "{}";
-  document.documentElement.dataset.magicTownPrefabLod = currentMode === "district"
+  document.documentElement.dataset.magicTownPrefabLod = ["district", "agentcity"].includes(currentMode)
     ? JSON.stringify(activeObject?.userData?.getPrefabLodDiagnostics?.() ?? {})
     : "{}";
 }

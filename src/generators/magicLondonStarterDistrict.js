@@ -2,7 +2,13 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeAssetRegistry } from "../city/assets.js";
 import { resolveAutomaticModelOrientation } from "./modelOrientation.js";
-import { createVoxelBuildingFromSpec, createVoxelMassingLab } from "./voxelBuildingLab.js";
+import {
+  VOXEL_SIZE,
+  createVoxelBuildingFromSpec,
+  createVoxelBuildingLodLevelsFromSpec,
+  createVoxelMassingLab,
+  createVoxelMassingLodLevels
+} from "./voxelBuildingLab.js";
 
 const BUILDING_BASE_ELEVATION = 0.105;
 const FALLBACK_BASE_ANCHORS_UV = Object.freeze({
@@ -18,7 +24,7 @@ const EMISSIVE_STRENGTHS = Object.freeze({
   "starter-herbalist-001": 1.42
 });
 
-export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cityState, assetRegistry = [], parallaxStrength = 0.12, useHunyuanModels = 1, nightLighting = 0 }) {
+export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cityState, assetRegistry = [], parallaxStrength = 0.12, useHunyuanModels = 1, nightLighting = 0, enableVoxelLod = false }) {
   const root = new THREE.Group();
   root.name = "MagicLondonStarterDistrict";
   const cells = new Map(grid.cells.map((cell) => [cell.id, cell]));
@@ -27,6 +33,7 @@ export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cit
   const placements = [];
   const skipped = [];
   const baseFitControllers = [];
+  const voxelLods = [];
 
   Object.values(cityState?.buildings ?? {}).forEach((building, index) => {
     const buildingAssetId = building.assetId ?? building.program?.assetId;
@@ -38,7 +45,8 @@ export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cit
         skipped.push({ buildingId: building.id, assetId: null, cellId: building.footprintCells?.[0] ?? building.site.lotId, assetFound: true, cellFound: false, representation: "voxel" });
         return;
       }
-      const buildingObject = createRuntimeVoxelBuilding(building, renderCells, sampleGroundHeight, nightLighting);
+      const buildingObject = createRuntimeVoxelBuilding(building, renderCells, sampleGroundHeight, nightLighting, enableVoxelLod);
+      if (buildingObject.isLOD) voxelLods.push(buildingObject);
       placements.push({
         assetId: null,
         label: building.program.name,
@@ -140,14 +148,53 @@ export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cit
     baseFitControllers.forEach((controller) => controller.updateDaylight(style, nightLighting));
     root.children.forEach((child) => child.userData?.updateDaylight?.(style));
   };
+  root.userData.updateView = (camera, _maxDynamicLights = 4, viewport = {}) => {
+    updateVoxelLods(voxelLods, camera, viewport);
+  };
+  root.userData.prepareVoxelLodWarmup = () => {
+    const states = voxelLods.map((lod) => {
+      const near = lod.levels[0]?.object;
+      const meshes = [];
+      near?.traverse((child) => {
+        if (child.isMesh) meshes.push({ object: child, frustumCulled: child.frustumCulled });
+      });
+      return {
+        levelVisibility: lod.levels.map((level) => level.object.visible),
+        meshes
+      };
+    });
+    voxelLods.forEach((lod) => {
+      lod.levels.forEach((level, index) => {
+        level.object.visible = index === 0;
+      });
+      lod.levels[0]?.object.traverse((child) => {
+        if (child.isMesh) child.frustumCulled = false;
+      });
+    });
+    return () => {
+      voxelLods.forEach((lod, lodIndex) => {
+        const state = states[lodIndex];
+        lod.levels.forEach((level, levelIndex) => {
+          level.object.visible = state.levelVisibility[levelIndex];
+        });
+        state.meshes.forEach(({ object, frustumCulled }) => {
+          object.frustumCulled = frustumCulled;
+        });
+      });
+    };
+  };
+  root.userData.getVoxelLodDiagnostics = () => getVoxelLodDiagnostics(voxelLods);
   return root;
 }
 
-function createRuntimeVoxelBuilding(building, renderCells, sampleGroundHeight, nightLighting) {
+function createRuntimeVoxelBuilding(building, renderCells, sampleGroundHeight, nightLighting, enableVoxelLod = false) {
   const design = building.voxelDesign;
-  const object = design.generation.mode === "urban_massing"
+  const nearObject = design.generation.mode === "urban_massing"
     ? createVoxelMassingLab({ spec: design.generation.sourceSpec, decorations: design.decorations, nightLighting, renderStrategy: "greedy" })
     : createVoxelBuildingFromSpec(design.generation.sourceSpec, { decorations: design.decorations, nightLighting, renderStrategy: "greedy" });
+  const object = enableVoxelLod
+    ? createAgentVoxelBuildingLod(nearObject, design, nightLighting)
+    : nearObject;
   const center = renderCells.reduce((sum, cell) => ({ x: sum.x + cell.center.x, z: sum.z + cell.center.z }), { x: 0, z: 0 });
   center.x /= renderCells.length;
   center.z /= renderCells.length;
@@ -167,6 +214,174 @@ function createRuntimeVoxelBuilding(building, renderCells, sampleGroundHeight, n
     representation: `voxel-${design.generation.mode}`
   };
   return object;
+}
+
+function createAgentVoxelBuildingLod(nearObject, design, nightLighting) {
+  const sourceSpec = design.generation.sourceSpec;
+  const pipeline = design.generation.mode === "urban_massing"
+    ? createVoxelMassingLodLevels({
+      spec: sourceSpec,
+      nightLighting,
+      renderStrategy: "greedy",
+      voxelChunkSize: 128,
+      maxMergeSpanVoxels: 8
+    }, [2, 3])
+    : createVoxelBuildingLodLevelsFromSpec(sourceSpec, {
+      decorations: design.decorations,
+      nightLighting,
+      renderStrategy: "greedy",
+      voxelChunkSize: 128,
+      maxMergeSpanVoxels: 8
+    }, [2, 3]);
+  const lod = new THREE.LOD();
+  lod.name = `${nearObject.name}-LOD`;
+  lod.autoUpdate = false;
+  const nearShadowCasterCount = disableCastShadows(nearObject);
+  const shadowProxy = createShadowProxy(pipeline.levels[0]?.group);
+  lod.userData = {
+    ...nearObject.userData,
+    sphereProjectionRoot: true,
+    currentLevel: null,
+    boundingRadius: getObjectBoundingRadius(nearObject),
+    shadowPolicy: "low-lod-proxy",
+    nearShadowCasterCount: 0,
+    nearShadowCastersDisabled: nearShadowCasterCount,
+    shadowProxyMeshCount: shadowProxy.userData.shadowProxyMeshCount
+  };
+  lod.addLevel(nearObject, 0);
+  pipeline.levels.forEach((level, index) => lod.addLevel(level.group, index + 1));
+  lod.addLevel(new THREE.Group(), 3);
+  // Keep a coarse, color-write-disabled copy active for the directional shadow pass
+  // across LOD transitions. It is cheap to render and avoids promoting the near
+  // building's full-detail meshes into the 2048px shadow map.
+  shadowProxy.visible = true;
+  lod.add(shadowProxy);
+  lod.userData.updateDaylight = (style) => {
+    nearObject.userData.updateDaylight?.(style);
+    pipeline.updateDaylight?.(style);
+  };
+  return lod;
+}
+
+function disableCastShadows(object) {
+  let count = 0;
+  object.traverse((child) => {
+    if (!child.isMesh || !child.castShadow) return;
+    child.castShadow = false;
+    count += 1;
+  });
+  return count;
+}
+
+function createShadowProxy(source) {
+  const proxy = source?.clone(true) ?? new THREE.Group();
+  proxy.name = `${source?.name ?? "VoxelBuilding"}-ShadowProxy`;
+  let meshCount = 0;
+  proxy.traverse((child) => {
+    if (!child.isMesh) return;
+    child.castShadow = true;
+    child.receiveShadow = false;
+    child.userData = { ...child.userData, shadowProxy: true };
+    if (Array.isArray(child.material)) {
+      child.material = child.material.map((material) => {
+        const clone = material.clone();
+        clone.colorWrite = false;
+        clone.depthWrite = false;
+        return clone;
+      });
+    } else if (child.material) {
+      child.material = child.material.clone();
+      child.material.colorWrite = false;
+      child.material.depthWrite = false;
+    }
+    meshCount += 1;
+  });
+  proxy.userData = { ...proxy.userData, shadowProxy: true, shadowProxyMeshCount: meshCount };
+  return proxy;
+}
+
+function getObjectBoundingRadius(object) {
+  object.updateMatrixWorld(true);
+  const bounds = new THREE.Box3().setFromObject(object);
+  const sphere = bounds.getBoundingSphere(new THREE.Sphere());
+  return Math.max(VOXEL_SIZE * 4, sphere.radius);
+}
+
+function updateVoxelLods(lods, camera, viewport = {}) {
+  if (!camera || !lods.length) return;
+  const viewportHeight = Math.max(1, Number(viewport.height) || 720);
+  const projectionView = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  const frustum = new THREE.Frustum().setFromProjectionMatrix(projectionView);
+  lods.forEach((lod) => {
+    const metrics = getVoxelLodScreenMetrics(lod, camera, frustum, viewportHeight);
+    const nextLevel = selectVoxelLodLevel(lod.userData.currentLevel, metrics, 0.08);
+    lod.levels.forEach((level, index) => {
+      level.object.visible = index === nextLevel;
+    });
+    lod.userData.currentLevel = nextLevel;
+    lod.userData.currentMetrics = metrics;
+  });
+}
+
+function getVoxelLodScreenMetrics(lod, camera, frustum, viewportHeight) {
+  const worldPosition = lod.getWorldPosition(new THREE.Vector3());
+  const worldScale = lod.getWorldScale(new THREE.Vector3());
+  const boundingRadius = lod.userData.boundingRadius * Math.max(worldScale.x, worldScale.y, worldScale.z);
+  const visibleInFrustum = frustum.intersectsSphere(new THREE.Sphere(worldPosition, boundingRadius));
+  const viewPosition = worldPosition.clone().applyMatrix4(camera.matrixWorldInverse);
+  const viewDepth = Math.max(0.001, -viewPosition.z);
+  const pixelsPerWorldUnit = camera.isPerspectiveCamera
+    ? viewportHeight / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * viewDepth)
+    : viewportHeight / Math.max(0.001, (camera.top - camera.bottom) / camera.zoom);
+  return {
+    visibleInFrustum: visibleInFrustum && viewPosition.z < 0,
+    projectedVoxelPx: VOXEL_SIZE * pixelsPerWorldUnit,
+    projectedDiameterPx: boundingRadius * 2 * pixelsPerWorldUnit
+  };
+}
+
+function selectVoxelLodLevel(currentLevel, metrics, hysteresis) {
+  if (!metrics.visibleInFrustum) return 3;
+  const projected = metrics.projectedVoxelPx;
+  if (currentLevel == null || currentLevel === 3) {
+    return projected >= 2 ? 0 : projected >= 1 ? 1 : 2;
+  }
+  if (currentLevel === 0) return projected < 2 * (1 - hysteresis) ? 1 : 0;
+  if (currentLevel === 1) {
+    if (projected > 2 * (1 + hysteresis)) return 0;
+    if (projected < 1 * (1 - hysteresis)) return 2;
+    return 1;
+  }
+  return projected > 1 * (1 + hysteresis) ? 1 : 2;
+}
+
+function getVoxelLodDiagnostics(lods) {
+  const currentLevels = lods.map((lod) => ({
+    id: lod.userData.buildingId ?? lod.name,
+    level: ["near", "medium", "far", "culled"][lod.userData.currentLevel] ?? "uninitialized",
+    factor: lod.userData.currentLevel < 3 ? lod.userData.currentLevel + 1 : null,
+    visibleInFrustum: lod.userData.currentMetrics?.visibleInFrustum ?? false,
+    projectedVoxelPx: Number((lod.userData.currentMetrics?.projectedVoxelPx ?? 0).toFixed(3)),
+    projectedDiameterPx: Number((lod.userData.currentMetrics?.projectedDiameterPx ?? 0).toFixed(1)),
+    shadowPolicy: lod.userData.shadowPolicy ?? "near-casts-shadow",
+    nearShadowCasterCount: lod.userData.nearShadowCasterCount ?? 0,
+    nearShadowCastersDisabled: lod.userData.nearShadowCastersDisabled ?? 0,
+    shadowProxyMeshCount: lod.userData.shadowProxyMeshCount ?? 0
+  }));
+  return {
+    renderer: "agentcity-voxel-mip-lod-v1",
+    sourceOfTruth: "Agent City BuildingSpec/UrbanMassingSpec compiled into fixed 2x and 3x macrovoxels",
+    shadowPolicy: "low-lod-proxy",
+    count: lods.length,
+    selection: "camera frustum plus projected base-voxel screen size",
+    projectedVoxelThresholdsPx: { near: 2, medium: 1 },
+    hysteresis: 0.08,
+    currentLevels,
+    levelCounts: currentLevels.reduce((counts, entry) => {
+      counts[entry.level] = (counts[entry.level] ?? 0) + 1;
+      return counts;
+    }, {})
+  };
 }
 
 function createStarterBuilding(asset, label, cells, tileSize, sampleGroundHeight, index, entrance = "south", parallaxStrength = 0.12, useModel = false) {

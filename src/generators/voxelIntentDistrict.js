@@ -2276,10 +2276,19 @@ function createDistrictGridDiagnostics(layout, objects) {
 export function projectDistrictOntoSphere(root, radius) {
   root.updateMatrixWorld(true);
   const leaves = [];
-  root.traverse((object) => {
-    if (object === root) return;
-    if (object.isInstancedMesh || object.isMesh || object.isLight) leaves.push(object);
-  });
+  const collectProjectionLeaves = (object) => {
+    if (object !== root && (
+      object.userData?.sphereProjectionRoot
+      || object.isInstancedMesh
+      || object.isMesh
+      || object.isLight
+    )) {
+      leaves.push(object);
+      return;
+    }
+    object.children.forEach(collectProjectionLeaves);
+  };
+  collectProjectionLeaves(root);
 
   const instanceMatrix = new THREE.Matrix4();
   const flatMatrix = new THREE.Matrix4();

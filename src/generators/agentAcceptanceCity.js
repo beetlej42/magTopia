@@ -45,7 +45,8 @@ export function createAgentAcceptanceCity(config = {}) {
     cityState: state,
     assetRegistry: config.assetRegistry ?? [],
     useHunyuanModels: config.useHunyuanModels ?? 0,
-    nightLighting: params.nightLighting
+    nightLighting: params.nightLighting,
+    enableVoxelLod: true
   });
   buildings.name = "AgentAcceptanceBuildings";
   root.add(buildings);
@@ -107,6 +108,11 @@ export function createAgentAcceptanceCity(config = {}) {
   };
   root.userData.getVoxelDiagnostics = () => structuredClone(root.userData.diagnostics);
   root.userData.getVoxelContract = () => structuredClone(root.userData.contract);
+  root.userData.getPrefabLodDiagnostics = () => buildings.userData.getVoxelLodDiagnostics?.() ?? {};
+  root.userData.updateView = (camera, _maxDynamicLights = 4, viewport = {}) => {
+    buildings.userData.updateView?.(camera, _maxDynamicLights, viewport);
+    vegetation.userData.updateView?.(camera);
+  };
   root.userData.updateDaylight = (style) => {
     roads.userData.updateDaylight?.(style, params.nightLighting);
     buildings.userData.updateDaylight?.(style);

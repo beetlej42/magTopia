@@ -8,6 +8,7 @@ import {
   VoxelInstanceBuffer,
   createVoxelBuildingLab,
   createVoxelBuildingLodLevels,
+  createVoxelBuildingLodLevelsFromSpec,
   getVoxelBuildingContract,
   normalizeVoxelBuildingConfig,
   planPitchedRoof,
@@ -273,6 +274,31 @@ test("building mip levels share one generated plan and retain all buildings", ()
   assert.deepEqual(lod.levels.map((level) => level.diagnostics.voxelSize), [VOXEL_SIZE, VOXEL_SIZE * 2, VOXEL_SIZE * 3]);
   assert.ok(lod.levels[0].diagnostics.occupiedVoxels > lod.levels[1].diagnostics.occupiedVoxels);
   assert.ok(lod.levels[1].diagnostics.occupiedVoxels > lod.levels[2].diagnostics.occupiedVoxels);
+});
+
+test("Agent BuildingSpec mip levels reuse the confirmed source geometry", () => {
+  const sourceSpec = createBuildingSpec({
+    id: "agent-lod-shop",
+    seed: "agent-lod-shop-seed",
+    archetype: "magic_shop",
+    style: "violet_alchemist",
+    widthVoxels: 32,
+    depthVoxels: 36,
+    baseFloors: 2,
+    expandedBy: 0,
+    floorPrograms: [
+      { purpose: "shop", setbackVoxels: 0, balcony: "none" },
+      { purpose: "home", setbackVoxels: 2, balcony: "full" }
+    ],
+    variation: 0.7,
+    detailDensity: 1
+  });
+  const lod = createVoxelBuildingLodLevelsFromSpec(sourceSpec, { renderStrategy: "greedy" }, [2, 3]);
+
+  assert.equal(lod.building.id, sourceSpec.id);
+  assert.deepEqual(lod.levels.map((level) => level.factor), [2, 3]);
+  assert.deepEqual(lod.levels.map((level) => level.diagnostics.voxelSize), [VOXEL_SIZE * 2, VOXEL_SIZE * 3]);
+  assert.ok(lod.levels[0].diagnostics.occupiedVoxels > lod.levels[1].diagnostics.occupiedVoxels);
 });
 
 test("BuildingSpec v0.2 produces bounded facade bays and stable lower-floor sub-seeds", () => {

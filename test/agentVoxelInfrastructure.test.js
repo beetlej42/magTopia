@@ -31,6 +31,13 @@ test("Agent acceptance city renders roads and vegetation entirely as voxel geome
   assert.equal(city.userData.contract.camera.depthOfField, "bokeh retained");
   assert.equal(city.userData.surfaceNavigation.radius, 220);
 
+  const lodDiagnostics = city.userData.getPrefabLodDiagnostics();
+  assert.equal(lodDiagnostics.shadowPolicy, "low-lod-proxy");
+  assert.ok(lodDiagnostics.currentLevels.length > 0);
+  assert.ok(lodDiagnostics.currentLevels.every((entry) => entry.nearShadowCasterCount === 0));
+  assert.ok(lodDiagnostics.currentLevels.every((entry) => entry.nearShadowCastersDisabled > 0));
+  assert.ok(lodDiagnostics.currentLevels.every((entry) => entry.shadowProxyMeshCount > 0));
+
   const roads = city.getObjectByName("AgentAcceptanceRoads");
   const vegetation = city.getObjectByName("AgentAcceptanceVegetation");
   assert.ok(roads.children.every((child) => child.userData.voxelRenderStrategy === "greedy-chunk"));

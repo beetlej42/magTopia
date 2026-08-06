@@ -443,7 +443,8 @@ export function createAgentVoxelVegetationLayer({ state, grid, seed = "agent-veg
     }
   });
 
-  buffer.createMeshes({ strategy: "greedy", chunkSizeVoxels: 128, maxMergeSpanVoxels: 8 }).forEach((mesh) => group.add(mesh));
+  const meshes = buffer.createMeshes({ strategy: "greedy", chunkSizeVoxels: 128, maxMergeSpanVoxels: 8 });
+  meshes.forEach((mesh) => group.add(mesh));
   group.userData.contract = {
     renderer: "state-aware-voxel-vegetation-v1",
     ...counts,
@@ -452,6 +453,16 @@ export function createAgentVoxelVegetationLayer({ state, grid, seed = "agent-veg
     clearsRoadsAndEntrances: true
   };
   group.userData.updateDaylight = () => {};
+  group.userData.updateView = (camera) => {
+    if (!camera || !meshes.length) return;
+    const projectionView = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    const frustum = new THREE.Frustum().setFromProjectionMatrix(projectionView);
+    const viewPosition = new THREE.Vector3();
+    meshes.forEach((mesh) => {
+      viewPosition.setFromMatrixPosition(mesh.matrixWorld).applyMatrix4(camera.matrixWorldInverse);
+      mesh.visible = viewPosition.z < 0 && frustum.intersectsObject(mesh);
+    });
+  };
   return group;
 }
 

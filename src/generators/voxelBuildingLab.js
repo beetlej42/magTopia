@@ -800,31 +800,11 @@ export function createVoxelBuildingLodLevels(config = {}, factors = [1, 2, 3]) {
   const { plan, buffer } = compileVoxelBuilding(params);
   const normalizedFactors = [...new Set(factors.map((factor) => Math.max(1, Math.round(factor))))]
     .sort((left, right) => left - right);
-  const levels = normalizedFactors.map((factor) => {
-    const levelBuffer = factor === 1 ? buffer : buffer.createDownsampled(factor);
-    const group = new THREE.Group();
-    group.name = `VoxelBuildingLOD-${factor}x`;
-    const meshes = levelBuffer.createMeshes({
-      strategy: params.renderStrategy,
-      chunkSizeVoxels: Math.max(8, Math.ceil((params.voxelChunkSize ?? 128) / factor)),
-      maxMergeSpanVoxels: Math.max(1, Math.ceil((params.maxMergeSpanVoxels ?? 8) / factor))
-    });
-    meshes.forEach((mesh) => group.add(mesh));
-    group.userData.lodFactor = factor;
-    return {
-      factor,
-      group,
-      meshes,
-      diagnostics: {
-        factor,
-        voxelSize: levelBuffer.voxelSize,
-        occupiedVoxels: levelBuffer.occupiedVoxelCount,
-        materialCounts: levelBuffer.materialCounts(),
-        renderStats: structuredClone(levelBuffer.renderStats),
-        downsample: structuredClone(levelBuffer.downsampleDiagnostics ?? null)
-      }
-    };
-  });
+  const levels = createVoxelLodGroups(buffer, normalizedFactors, {
+    strategy: params.renderStrategy,
+    chunkSizeVoxels: params.voxelChunkSize,
+    maxMergeSpanVoxels: params.maxMergeSpanVoxels
+  }, "VoxelBuildingLOD");
   const updateDaylight = (style) => {
     const night = clamp(Math.max(style.nightFactor, params.nightLighting), 0, 1);
     levels.flatMap((level) => level.meshes).forEach((mesh) => {
@@ -846,6 +826,117 @@ export function createVoxelBuildingLodLevels(config = {}, factors = [1, 2, 3]) {
   };
 }
 
+export function createVoxelBuildingLodLevelsFromSpec(sourceSpec, options = {}, factors = [1, 2, 3]) {
+  if (!sourceSpec?.specVersion || !sourceSpec?.floorSpecs?.length) {
+    throw new Error("A complete BuildingSpec is required");
+  }
+  const building = structuredClone(sourceSpec);
+  const params = normalizeVoxelBuildingConfig({
+    seed: building.seed,
+    buildingCount: 1,
+    floors: building.floors,
+    floorPrograms: building.floorSpecs.map((floor) => ({
+      purpose: floor.purpose,
+      setbackVoxels: floor.frontSetbackVoxels,
+      balcony: floor.balcony,
+      windowRatio: floor.windowRatio
+    })),
+    style: building.style,
+    roofForm: building.roof.form,
+    ridgePosition: building.roof.ridgeRatio,
+    parcelWidth: building.footprint.widthVoxels,
+    parcelDepth: building.footprint.depthVoxels,
+    includeStreetBase: false,
+    includeStreetLamps: false,
+    renderStrategy: options.renderStrategy ?? "greedy",
+    voxelChunkSize: options.voxelChunkSize ?? 128,
+    maxMergeSpanVoxels: options.maxMergeSpanVoxels ?? 8,
+    nightLighting: options.nightLighting ?? 0
+  });
+  const buffer = new VoxelInstanceBuffer(building.seed);
+  addBuilding(buffer, building, params);
+  const levels = createVoxelLodGroups(buffer, factors, {
+    strategy: params.renderStrategy,
+    chunkSizeVoxels: params.voxelChunkSize,
+    maxMergeSpanVoxels: params.maxMergeSpanVoxels
+  }, `VoxelBuildingSpecLOD-${building.id}`);
+  const updateDaylight = (style) => {
+    const night = clamp(Math.max(style.nightFactor, params.nightLighting), 0, 1);
+    levels.flatMap((level) => level.meshes).forEach((mesh) => {
+      const definition = MATERIAL_LIBRARY[mesh.userData.materialId];
+      if (!definition?.emissive) return;
+      const magic = mesh.userData.materialId === "violetMagic" || mesh.userData.materialId === "tealMagic";
+      mesh.material.emissiveIntensity = (magic ? 0.48 : 0.15) + night * (magic ? 1.55 : 1.8);
+    });
+  };
+  updateDaylight(voxelDaylightStyle(params.sunTime ?? 0.52));
+  return {
+    renderer: "voxel-building-spec-mip-lod-v1",
+    sourceOfTruth: "versioned BuildingSpec compiled into one occupancy field and fixed 2x/3x macrovoxels",
+    params,
+    building,
+    levels,
+    updateDaylight
+  };
+}
+
+export function createVoxelMassingLodLevels(input = {}, factors = [1, 2, 3]) {
+  const source = input.spec ?? input;
+  const spec = createUrbanMassingSpec(source);
+  const compiled = compileVoxelMassing(spec);
+  const levels = createVoxelLodGroups(compiled.buffer, factors, {
+    strategy: input.renderStrategy ?? "greedy",
+    chunkSizeVoxels: input.voxelChunkSize ?? 128,
+    maxMergeSpanVoxels: input.maxMergeSpanVoxels ?? 8
+  }, `VoxelMassingLOD-${spec.id}`);
+  const updateDaylight = (style) => {
+    const night = clamp(Math.max(style.nightFactor, input.nightLighting ?? 0), 0, 1);
+    levels.flatMap((level) => level.meshes).forEach((mesh) => {
+      const definition = MATERIAL_LIBRARY[mesh.userData.materialId];
+      if (!definition?.emissive) return;
+      mesh.material.emissiveIntensity = definition.emissiveIntensity + night * 1.6;
+    });
+  };
+  updateDaylight(voxelDaylightStyle(input.sunTime ?? 0.52));
+  return {
+    renderer: "voxel-massing-mip-lod-v1",
+    sourceOfTruth: "deterministic UrbanMassingSpec compiled into one occupancy field and fixed 2x/3x macrovoxels",
+    spec,
+    levels,
+    updateDaylight
+  };
+}
+
+function createVoxelLodGroups(buffer, factors, options, name) {
+  const normalizedFactors = [...new Set(factors.map((factor) => Math.max(1, Math.round(factor))))]
+    .sort((left, right) => left - right);
+  return normalizedFactors.map((factor) => {
+    const levelBuffer = factor === 1 ? buffer : buffer.createDownsampled(factor);
+    const group = new THREE.Group();
+    group.name = `${name}-${factor}x`;
+    const meshes = levelBuffer.createMeshes({
+      strategy: options.strategy,
+      chunkSizeVoxels: Math.max(8, Math.ceil((options.chunkSizeVoxels ?? 128) / factor)),
+      maxMergeSpanVoxels: Math.max(1, Math.ceil((options.maxMergeSpanVoxels ?? 8) / factor))
+    });
+    meshes.forEach((mesh) => group.add(mesh));
+    group.userData.lodFactor = factor;
+    return {
+      factor,
+      group,
+      meshes,
+      diagnostics: {
+        factor,
+        voxelSize: levelBuffer.voxelSize,
+        occupiedVoxels: levelBuffer.occupiedVoxelCount,
+        materialCounts: levelBuffer.materialCounts(),
+        renderStats: structuredClone(levelBuffer.renderStats),
+        downsample: structuredClone(levelBuffer.downsampleDiagnostics ?? null)
+      }
+    };
+  });
+}
+
 function compileVoxelBuilding(params) {
   const plan = planVoxelStreet(params);
   const buffer = new VoxelInstanceBuffer(params.seed);
@@ -860,61 +951,7 @@ export function createVoxelMassingLab(input = {}) {
   const spec = createUrbanMassingSpec(source);
   const root = new THREE.Group();
   root.name = `VoxelMassingLab-${spec.id}`;
-  const buffer = new VoxelInstanceBuffer(spec.seed);
-  const siteOrigin = {
-    x: -Math.round(spec.footprint.widthCells * MASSING_CELL_VOXELS / 2),
-    z: -Math.round(spec.footprint.depthCells * MASSING_CELL_VOXELS / 2)
-  };
-  addMassingSiteBase(buffer, spec, siteOrigin);
-  const relationCuts = planMassingRelationCuts(spec, siteOrigin);
-  const basePlansById = new Map(spec.masses.map((mass) => [
-    mass.id,
-    planMassingBase(mass, siteOrigin)
-  ]));
-  const compiledMasses = spec.masses.map((mass) => addMassingNode(
-    buffer,
-    spec,
-    mass,
-    siteOrigin,
-    relationCuts.filter((cut) => cut.massId === mass.id),
-    basePlansById.get(mass.id),
-    spec.masses
-      .filter((candidate) => candidate.id !== mass.id && candidate.type !== "ground")
-      .map((candidate) => ({ mass: candidate, plan: basePlansById.get(candidate.id) }))
-  ));
-  const groundDetails = compiledMasses
-    .filter((compiled) => compiled.mass.type === "ground")
-    .map((compiled) => addMassingGroundDetails(buffer, spec, compiled.mass, compiled.basePlan));
-  const relationFinishes = addMassingRelationFinishes(
-    buffer,
-    spec,
-    relationCuts,
-    compiledMasses
-  );
-  const capPlans = compiledMasses.map((compiled) => {
-    const stackedChildren = spec.relations
-      .filter((relation) => relation.type === "stacked" && relation.from === compiled.mass.id)
-      .map((relation) => compiledMasses.find((candidate) => candidate.mass.id === relation.to))
-      .filter(Boolean);
-    const bodyTopY = compiled.mass.baseYVoxels + compiled.mass.heightVoxels;
-    const capExclusions = new Set(stackedChildren
-      .filter((child) => child.mass.baseYVoxels <= bodyTopY + 1)
-      .flatMap((child) => [...child.basePlan]));
-    const capOccluders = spec.masses
-      .filter((candidate) => candidate.id !== compiled.mass.id && candidate.type !== "ground")
-      .map((candidate) => ({ mass: candidate, plan: basePlansById.get(candidate.id) }));
-    return {
-      id: compiled.mass.id,
-      ...addMassingCap(
-        buffer,
-        spec,
-        compiled.mass,
-        compiled.topPlan,
-        capExclusions,
-        capOccluders
-      )
-    };
-  });
+  const { buffer, relationCuts, compiledMasses, groundDetails, relationFinishes, capPlans } = compileVoxelMassing(spec);
   const massPlans = compiledMasses.map((compiled) => compiled.diagnostics);
   const materialMeshes = buffer.createMeshes({
     strategy: input.renderStrategy,
@@ -988,6 +1025,53 @@ export function createVoxelMassingLab(input = {}) {
   };
   root.userData.updateDaylight(voxelDaylightStyle(input.sunTime ?? 0.52));
   return root;
+}
+
+function compileVoxelMassing(spec) {
+  const buffer = new VoxelInstanceBuffer(spec.seed);
+  const siteOrigin = {
+    x: -Math.round(spec.footprint.widthCells * MASSING_CELL_VOXELS / 2),
+    z: -Math.round(spec.footprint.depthCells * MASSING_CELL_VOXELS / 2)
+  };
+  addMassingSiteBase(buffer, spec, siteOrigin);
+  const relationCuts = planMassingRelationCuts(spec, siteOrigin);
+  const basePlansById = new Map(spec.masses.map((mass) => [
+    mass.id,
+    planMassingBase(mass, siteOrigin)
+  ]));
+  const compiledMasses = spec.masses.map((mass) => addMassingNode(
+    buffer,
+    spec,
+    mass,
+    siteOrigin,
+    relationCuts.filter((cut) => cut.massId === mass.id),
+    basePlansById.get(mass.id),
+    spec.masses
+      .filter((candidate) => candidate.id !== mass.id && candidate.type !== "ground")
+      .map((candidate) => ({ mass: candidate, plan: basePlansById.get(candidate.id) }))
+  ));
+  const groundDetails = compiledMasses
+    .filter((compiled) => compiled.mass.type === "ground")
+    .map((compiled) => addMassingGroundDetails(buffer, spec, compiled.mass, compiled.basePlan));
+  const relationFinishes = addMassingRelationFinishes(buffer, spec, relationCuts, compiledMasses);
+  const capPlans = compiledMasses.map((compiled) => {
+    const stackedChildren = spec.relations
+      .filter((relation) => relation.type === "stacked" && relation.from === compiled.mass.id)
+      .map((relation) => compiledMasses.find((candidate) => candidate.mass.id === relation.to))
+      .filter(Boolean);
+    const bodyTopY = compiled.mass.baseYVoxels + compiled.mass.heightVoxels;
+    const capExclusions = new Set(stackedChildren
+      .filter((child) => child.mass.baseYVoxels <= bodyTopY + 1)
+      .flatMap((child) => [...child.basePlan]));
+    const capOccluders = spec.masses
+      .filter((candidate) => candidate.id !== compiled.mass.id && candidate.type !== "ground")
+      .map((candidate) => ({ mass: candidate, plan: basePlansById.get(candidate.id) }));
+    return {
+      id: compiled.mass.id,
+      ...addMassingCap(buffer, spec, compiled.mass, compiled.topPlan, capExclusions, capOccluders)
+    };
+  });
+  return { buffer, relationCuts, compiledMasses, groundDetails, relationFinishes, capPlans };
 }
 
 function addFloorStackDesignDecorations(root, building, items) {
