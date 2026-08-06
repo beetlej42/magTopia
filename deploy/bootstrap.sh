@@ -20,6 +20,14 @@ if [[ "$MAGICTOWN_PUBLIC_BASE_URL" == *YOUR_SERVER_IP* ]]; then
 fi
 MAGICTOWN_CADDY_SITE="${MAGICTOWN_CADDY_SITE:-$MAGICTOWN_PUBLIC_BASE_URL}"
 
+if [[ ! -f /swapfile ]]; then
+  fallocate -l 2G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+fi
+swapon /swapfile 2>/dev/null || true
+grep -q '^/swapfile ' /etc/fstab || printf '/swapfile none swap sw 0 0\n' >> /etc/fstab
+
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git build-essential openssl
 

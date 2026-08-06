@@ -16,20 +16,6 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout exact commit
-        uses: actions/checkout@v4
-
-      - name: Package source
-        env:
-          GIT_SHA: ${{ github.sha }}
-        run: |
-          tar --exclude='./.git' \
-            --exclude='./node_modules' \
-            --exclude='./.venv' \
-            --exclude='./.tools' \
-            --exclude='./.pnpm-store' \
-            -czf "/tmp/magictown-${GIT_SHA}.tgz" .
-
       - name: Configure SSH
         env:
           ECS_HOST: ${{ secrets.ECS_HOST }}
@@ -48,15 +34,6 @@ jobs:
           ECS_USER: ${{ secrets.ECS_USER }}
           GIT_SHA: ${{ github.sha }}
         run: |
-          ssh -i "$HOME/.ssh/magictown_deploy" \
-            -p "${ECS_PORT:-22}" \
-            -o BatchMode=yes \
-            "${ECS_USER:-root}@${ECS_HOST}" \
-            "install -d -m 0755 /opt/magictown/incoming"
-          scp -i "$HOME/.ssh/magictown_deploy" \
-            -P "${ECS_PORT:-22}" \
-            "/tmp/magictown-${GIT_SHA}.tgz" \
-            "${ECS_USER:-root}@${ECS_HOST}:/opt/magictown/incoming/${GIT_SHA}.tgz"
           ssh -i "$HOME/.ssh/magictown_deploy" \
             -p "${ECS_PORT:-22}" \
             -o BatchMode=yes \
