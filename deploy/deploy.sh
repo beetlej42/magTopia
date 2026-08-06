@@ -41,12 +41,11 @@ cd "$RELEASE"
 pnpm install --frozen-lockfile
 pnpm run build
 pnpm run db:migrate
-chown -R magictown:magictown "$RELEASE"
 
 PREVIOUS=""
 if [[ -L "$ROOT/current" ]]; then PREVIOUS="$(readlink -f "$ROOT/current")"; fi
 ln -sfn "$RELEASE" "$ROOT/current"
-systemctl restart magictown.service
+sudo -n systemctl restart magictown.service
 
 HEALTHY=0
 for _ in {1..30}; do
@@ -61,7 +60,7 @@ if [[ "$HEALTHY" != "1" ]]; then
   echo "MagicTown health check failed; attempting rollback" >&2
   if [[ -n "$PREVIOUS" && -d "$PREVIOUS" ]]; then
     ln -sfn "$PREVIOUS" "$ROOT/current"
-    systemctl restart magictown.service
+    sudo -n systemctl restart magictown.service
   fi
   exit 1
 fi

@@ -39,7 +39,16 @@ corepack enable
 corepack prepare pnpm@11.7.0 --activate
 
 id -u magictown >/dev/null 2>&1 || useradd --system --home /opt/magictown --shell /usr/sbin/nologin magictown
-install -d -o magictown -g magictown /opt/magictown/releases /opt/magictown/shared /etc/magictown
+id -u magictown-deploy >/dev/null 2>&1 || useradd --home-dir /opt/magictown --shell /bin/bash magictown-deploy
+usermod -a -G magictown magictown-deploy
+install -d -o magictown-deploy -g magictown /opt/magictown/releases /opt/magictown/shared
+install -d -o root -g magictown -m 0750 /etc/magictown
+
+cat > /etc/sudoers.d/magictown-deploy <<'EOF'
+magictown-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart magictown.service
+EOF
+chmod 0440 /etc/sudoers.d/magictown-deploy
+visudo -cf /etc/sudoers.d/magictown-deploy
 
 if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='magictown'" | grep -q 1; then
   DB_PASSWORD="$(openssl rand -hex 24)"
@@ -67,7 +76,8 @@ MAGICTOWN_CAPABILITY_TTL_MINUTES=30
 MAGICTOWN_CREDENTIAL_TTL_DAYS=1
 MAGICTOWN_AUTO_MIGRATE=1
 EOF
-  chmod 600 /etc/magictown/magictown.env
+  chown root:magictown /etc/magictown/magictown.env
+  chmod 640 /etc/magictown/magictown.env
 fi
 
 if command -v caddy >/dev/null 2>&1 && [[ -f /etc/caddy/Caddyfile ]] && ! grep -Fq "$MAGICTOWN_CADDY_SITE" /etc/caddy/Caddyfile; then
