@@ -14,6 +14,7 @@ REPO_URL="${MAGICTOWN_REPO_URL:-https://github.com/beetlej42/magTopia.git}"
 BRANCH="${MAGICTOWN_BRANCH:-main}"
 KEEP="${MAGICTOWN_RELEASES_TO_KEEP:-3}"
 REQUESTED_SHA="${1:-}"
+INCOMING="$ROOT/incoming/$REQUESTED_SHA.tgz"
 
 mkdir -p "$ROOT/releases" "$ROOT/shared"
 
@@ -28,11 +29,18 @@ if [[ ! "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
 fi
 
 RELEASE="$ROOT/releases/$SHA"
-if [[ ! -d "$RELEASE/.git" ]]; then
+if [[ ! -f "$RELEASE/.magictown-release" ]]; then
   rm -rf "$RELEASE"
-  git clone --depth=1 --branch "$BRANCH" "$REPO_URL" "$RELEASE"
-  git -C "$RELEASE" fetch --depth=1 origin "$SHA"
-  git -C "$RELEASE" checkout --detach "$SHA"
+  if [[ -f "$INCOMING" ]]; then
+    mkdir -p "$RELEASE"
+    tar -xzf "$INCOMING" -C "$RELEASE"
+    rm -f "$INCOMING"
+  else
+    git clone --depth=1 --branch "$BRANCH" "$REPO_URL" "$RELEASE"
+    git -C "$RELEASE" fetch --depth=1 origin "$SHA"
+    git -C "$RELEASE" checkout --detach "$SHA"
+  fi
+  printf '%s\n' "$SHA" > "$RELEASE/.magictown-release"
 fi
 
 ln -sfn /etc/magictown/magictown.env "$RELEASE/.env"
