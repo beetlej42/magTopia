@@ -43,6 +43,8 @@ id -u magictown-deploy >/dev/null 2>&1 || useradd --home-dir /opt/magictown --sh
 usermod -a -G magictown magictown-deploy
 install -d -o magictown-deploy -g magictown /opt/magictown/releases /opt/magictown/shared
 install -d -o root -g magictown -m 0750 /etc/magictown
+chown magictown-deploy:magictown /opt/magictown
+chown -R magictown-deploy:magictown /opt/magictown/releases /opt/magictown/shared
 
 cat > /etc/sudoers.d/magictown-deploy <<'EOF'
 magictown-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart magictown.service
