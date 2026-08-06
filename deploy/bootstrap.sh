@@ -31,8 +31,8 @@ grep -q '^/swapfile ' /etc/fstab || printf '/swapfile none swap sw 0 0\n' >> /et
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git build-essential openssl
 
-if ! command -v node >/dev/null 2>&1; then
-  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+if ! command -v node >/dev/null 2>&1 || [[ "$(node -p 'process.versions.node.split(".")[0]')" -lt 22 ]]; then
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   apt-get install -y nodejs
 fi
 corepack enable
