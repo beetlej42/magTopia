@@ -1,5 +1,6 @@
-# Temporary IP-based HTTP endpoint. Replace this with a domain later for HTTPS.
-http://47.239.243.6:4183 {
+# Temporary HTTP endpoint. Replace YOUR_SERVER_IP with a server-local value,
+# or replace this whole site with a real domain later for HTTPS.
+http://YOUR_SERVER_IP:4183 {
     encode gzip
     reverse_proxy 127.0.0.1:4184
 }

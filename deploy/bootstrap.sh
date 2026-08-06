@@ -6,6 +6,20 @@ if [[ "$(id -u)" != "0" ]]; then
   exit 1
 fi
 
+BOOTSTRAP_ENV="${MAGICTOWN_BOOTSTRAP_ENV:-/etc/magictown/bootstrap.env}"
+if [[ -f "$BOOTSTRAP_ENV" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$BOOTSTRAP_ENV"
+  set +a
+fi
+: "${MAGICTOWN_PUBLIC_BASE_URL:?Create /etc/magictown/bootstrap.env with MAGICTOWN_PUBLIC_BASE_URL before running bootstrap}"
+if [[ "$MAGICTOWN_PUBLIC_BASE_URL" == *YOUR_SERVER_IP* ]]; then
+  echo "MAGICTOWN_PUBLIC_BASE_URL still contains the placeholder YOUR_SERVER_IP" >&2
+  exit 1
+fi
+MAGICTOWN_CADDY_SITE="${MAGICTOWN_CADDY_SITE:-$MAGICTOWN_PUBLIC_BASE_URL}"
+
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git build-essential openssl
 
@@ -37,7 +51,7 @@ if [[ ! -f /etc/magictown/magictown.env ]]; then
   cat > /etc/magictown/magictown.env <<EOF
 MAGICTOWN_HOST=127.0.0.1
 MAGICTOWN_PORT=4184
-MAGICTOWN_PUBLIC_BASE_URL=http://47.239.243.6:4183
+MAGICTOWN_PUBLIC_BASE_URL=${MAGICTOWN_PUBLIC_BASE_URL}
 MAGICTOWN_DATABASE_URL=postgres://magictown:${DB_PASSWORD}@127.0.0.1:5432/magictown
 MAGICTOWN_VOXEL_ONLY=1
 MAGICTOWN_ASSET_PROVIDER=voxel
@@ -48,8 +62,8 @@ EOF
   chmod 600 /etc/magictown/magictown.env
 fi
 
-if command -v caddy >/dev/null 2>&1 && [[ -f /etc/caddy/Caddyfile ]] && ! grep -q "47.239.243.6:4183" /etc/caddy/Caddyfile; then
-  cat deploy/Caddyfile.snippet >> /etc/caddy/Caddyfile
+if command -v caddy >/dev/null 2>&1 && [[ -f /etc/caddy/Caddyfile ]] && ! grep -Fq "$MAGICTOWN_CADDY_SITE" /etc/caddy/Caddyfile; then
+  printf '\n%s {\n    encode gzip\n    reverse_proxy 127.0.0.1:4184\n}\n' "$MAGICTOWN_CADDY_SITE" >> /etc/caddy/Caddyfile
   caddy validate --config /etc/caddy/Caddyfile
   systemctl reload caddy
 fi
