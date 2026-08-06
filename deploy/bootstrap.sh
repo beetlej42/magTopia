@@ -39,7 +39,9 @@ corepack enable
 corepack prepare pnpm@11.7.0 --activate
 
 id -u magictown >/dev/null 2>&1 || useradd --system --home /opt/magictown --shell /usr/sbin/nologin magictown
-id -u magictown-deploy >/dev/null 2>&1 || useradd --home-dir /opt/magictown --shell /bin/bash magictown-deploy
+id -u magictown-deploy >/dev/null 2>&1 || useradd --home-dir /home/magictown-deploy --shell /bin/bash magictown-deploy
+usermod -d /home/magictown-deploy magictown-deploy
+install -d -o magictown-deploy -g magictown-deploy -m 0750 /home/magictown-deploy
 usermod -a -G magictown magictown-deploy
 install -d -o magictown-deploy -g magictown /opt/magictown/releases /opt/magictown/shared
 install -d -o root -g magictown -m 0750 /etc/magictown
@@ -51,6 +53,12 @@ magictown-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart magictown.servi
 EOF
 chmod 0440 /etc/sudoers.d/magictown-deploy
 visudo -cf /etc/sudoers.d/magictown-deploy
+
+cat > /etc/ssh/sshd_config.d/magictown-deploy.conf <<'EOF'
+AllowUsers root magictown-deploy
+EOF
+sshd -t
+systemctl reload ssh
 
 if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='magictown'" | grep -q 1; then
   DB_PASSWORD="$(openssl rand -hex 24)"
