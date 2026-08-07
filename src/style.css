@@ -980,21 +980,6 @@ html[data-magic-town-presentation] .api-pill {
   opacity: 0.68;
 }
 
-.city-info-target-halo {
-  fill: rgb(128 104 183 / 10%);
-  stroke: #8068b7;
-  stroke-width: 1.5;
-  stroke-dasharray: 5 6;
-  r: 11px;
-}
-
-.city-info-target-dot {
-  fill: #8068b7;
-  stroke: #f3e5c9;
-  stroke-width: 2;
-  r: 4px;
-}
-
 .city-info-card {
   position: absolute;
   width: 198px;
@@ -1026,8 +1011,17 @@ html[data-magic-town-presentation] .api-pill {
   border-color: #be9a57;
 }
 
+.city-info-card.is-block {
+  border-color: #be9a57;
+}
+
 .city-info-card.is-parcel .city-info-kicker,
 .city-info-card.is-parcel .city-info-title::before {
+  color: #8a6e33;
+}
+
+.city-info-card.is-block .city-info-kicker,
+.city-info-card.is-block .city-info-title::before {
   color: #8a6e33;
 }
 
@@ -1072,6 +1066,10 @@ html[data-magic-town-presentation] .api-pill {
 }
 
 .city-info-card.is-parcel::after {
+  background: #be9a57;
+}
+
+.city-info-card.is-block::after {
   background: #be9a57;
 }
 
