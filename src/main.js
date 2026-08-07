@@ -550,7 +550,7 @@ let lastRuntimeDiagnosticsAt = 0;
 initializeUi();
 bindUi();
 rebuildActive(currentConfig);
-exposeAgentApi();
+if (frontendSurface === "studio") exposeAgentApi();
 animate();
 if (cityViewerContext) initializeCityViewer();
 
