@@ -38,17 +38,17 @@
         </div>
       </section>
 
-      <label class="field">
+      <label class="field studio-only">
         <span>Mode</span>
         <select id="mode-control"></select>
       </label>
 
-      <label class="field">
+      <label class="field studio-only">
         <span>Preset</span>
         <select id="preset-control"></select>
       </label>
 
-      <label id="camera-mode-field" class="field">
+      <label id="camera-mode-field" class="field studio-only">
         <span>Camera</span>
         <select id="camera-mode-control">
           <option value="play">Isometric Play</option>
@@ -56,7 +56,7 @@
         </select>
       </label>
 
-      <div class="seed-row">
+      <div class="seed-row studio-only">
         <label class="field seed-field">
           <span>Seed</span>
           <input id="seed-control" type="text" value="wand-001" />
@@ -64,23 +64,23 @@
         <button id="randomize-button" type="button">Random</button>
       </div>
 
-      <div id="slider-controls" class="sliders"></div>
+      <div id="slider-controls" class="sliders studio-only"></div>
 
-      <section id="massing-explorer" class="massing-explorer" aria-label="Voxel Massing Explorer" hidden></section>
+      <section id="massing-explorer" class="massing-explorer studio-only" aria-label="Voxel Massing Explorer" hidden></section>
 
-      <section id="intent-district-summary" class="intent-district-summary" aria-label="Agent building intents" hidden></section>
+      <section id="intent-district-summary" class="intent-district-summary studio-only" aria-label="Agent building intents" hidden></section>
 
-      <div class="actions">
+      <div class="actions studio-only">
         <button id="copy-config-button" type="button">Copy Config</button>
         <span id="copy-status" role="status"></span>
       </div>
 
-      <p id="pipeline-note" class="pipeline-note">
+      <p id="pipeline-note" class="pipeline-note studio-only">
         The asset is a depth-map parallax sprite facing the isometric camera. Tune Parallax and View X/Y for the limited-angle 2.5D effect.
       </p>
     </section>
 
-    <aside id="map-panel" class="map-panel" aria-label="Generated image maps">
+    <aside id="map-panel" class="map-panel studio-only" aria-label="Generated image maps">
       <div class="map-panel-heading">
         <p class="eyebrow">Maps</p>
         <strong>Asset + Terrain</strong>
@@ -88,7 +88,7 @@
       <div id="map-previews" class="map-previews"></div>
     </aside>
 
-    <aside id="api-pill" class="api-pill" aria-label="Current API call">
+    <aside id="api-pill" class="api-pill studio-only" aria-label="Current API call">
       <code>MAGTOPIA.generate({ seed, floors, towerCount, greeneryDensity })</code>
     </aside>
 
