@@ -49,6 +49,63 @@ test("institutional and multi-cell designs use the urban massing strategy", () =
   assert.ok(design.availableOperations.modeSpecific.includes("add_mass"));
 });
 
+test("public designs choose seed-stable functional variants and expose an architecture review", () => {
+  const input = {
+    site: { lot_id: "cell-5-5", footprint: "3x2", entrance: "south" },
+    intent: { name: "North Archive", purpose: "public library and reading rooms", frontage: "institutional", access: "public", prominence: "important" }
+  };
+  const variants = ["a", "b", "c", "d"].map((seed) => createBuildingDesignDraft({ ...input, seed }, { ...context, id: `design-${seed}` }));
+  assert.ok(new Set(variants.map((design) => design.generation.sourceSpec.metadata.variantId)).size > 1);
+  assert.ok(variants.every((design) => design.actualArchitecture?.features?.publicEntrance));
+  assert.ok(variants.every((design) => design.architectureReview?.program === "library"));
+  assert.ok(variants.every((design) => design.agentGuidance.some((guidance) => guidance.code === "public_architecture_review_required")));
+});
+
+test("public architecture review reports an intentional library greenhouse conflict", () => {
+  const design = createBuildingDesignDraft({
+    site: { lot_id: "cell-5-5", footprint: "3x2", entrance: "south" },
+    intent: { name: "Botanical Archive", purpose: "library", frontage: "institutional", access: "public", prominence: "important", style: "alchemical_glass" },
+    seed: "library-glass-review"
+  }, { ...context, id: "library-glass-review" });
+  assert.equal(design.actualArchitecture.features.greenhouse, true);
+  assert.ok(design.architectureReview.conflicts.some((conflict) => conflict.code === "unexpected_greenhouse"));
+});
+
+test("greenhouse programs receive a framed glass volume under the default public style", () => {
+  const design = createBuildingDesignDraft({
+    site: { lot_id: "cell-5-6", footprint: "3x2", entrance: "south" },
+    intent: { name: "Moon Conservatory", purpose: "public greenhouse", frontage: "institutional", access: "public", prominence: "important" },
+    seed: "default-greenhouse"
+  }, { ...context, id: "default-greenhouse" });
+  assert.equal(design.actualArchitecture.features.greenhouse, true);
+  assert.equal(design.architectureReview.conflicts.length, 0);
+});
+
+test("residential designs receive district alignment guidance and can regenerate from revised intent", () => {
+  const draft = createBuildingDesignDraft({
+    site: { lot_id: "cell-6-6", entrance: "south" },
+    district_context: {
+      id: "district-lantern",
+      style: "riverside_victorian",
+      preserve: ["brick_material", "two_floor_height"],
+      vary: ["corner_condition"]
+    },
+    intent: { name: "Lantern Corner House", purpose: "residential", frontage: "residential", variation_intent: "narrow_corner_house" }
+  }, { ...context, id: "residential-guidance" });
+  assert.equal(draft.districtContext.style, "riverside_victorian");
+  assert.equal(draft.agentGuidance[0].code, "district_architecture_alignment");
+  const revised = reviseBuildingDesign(draft, {
+    expected_revision: 1,
+    operations: [{
+      op: "regenerate_from_intent",
+      intent: { purpose: "public library", frontage: "institutional", access: "public", prominence: "important" }
+    }]
+  }, context);
+  assert.equal(revised.generation.mode, "urban_massing");
+  assert.equal(revised.architectureReview.program, "library");
+  assert.deepEqual(revised.decorations.items, []);
+});
+
 test("parcel-fitted recommendations compile formerly invalid 2x2 halls and rotated 3x2 sites", () => {
   const compactHall = createBuildingDesignDraft({
     site: { lot_id: "cell-8-8", footprint: "2x2", entrance: "south" },

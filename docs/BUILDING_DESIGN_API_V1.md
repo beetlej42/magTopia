@@ -55,7 +55,34 @@ POST /api/v1/cities/{city_id}/building-designs
 
 Agent 仍选择语义风格和功能，编译器负责把风格约束落实到通用 mass、cap、facade 和 material 原语，不需要为工厂、学院或研究院准备专用模型。未显式提供公共建筑风格时，`institutional` frontage 或 `landmark` prominence 默认使用 `civic_classical`；普通建筑仍默认 `victorian_domestic`。
 
-响应包含生成模式、完整 `sourceSpec`、独立 `DecorationSpec`、稳定的 `primary_entrance` port、revision、`specHash`、设计锁，以及共同和模式专属的 `availableOperations`。`availableOperations` 同时列出合法 decoration type 和 anchor pattern；未知枚举会明确报错，不会静默替换 Agent 输入。第一版 `floor_stack` 限定为 1×1 逻辑地块；更大的建筑使用 `urban_massing`，避免逐层原型静默越出地块。
+### 方案变化与街区语境
+
+公共建筑不会再只按同一套校园体量初始化。系统先从 `purpose` 推断功能族（`library`、`academy`、`greenhouse`、`workshop`、`civic`），再由 `seed` 在该功能族的合法方案中选择 `variantId`。例如图书馆可得到 `reading_hall`、`courtyard_archive`、`clocktower_library` 或 `winged_archive`；这些变化会作用于冠部是否存在、侧翼是否保留、塔楼、屋顶和高度节奏，而不只是换墙色。Agent 也可以在 `requirements.variant_id` 中指定响应里返回的 variant。
+
+住宅不做全局逐栋去重。创建 `floor_stack` 住宅时，如果 Agent 已从城市 snapshot 了解当前街区，可以把语境传回设计请求：
+
+```json
+{
+  "district_context": {
+    "id": "district-moon-lantern",
+    "name": "Moon Lantern Quarter",
+    "style": "riverside_victorian",
+    "character": "quiet two-storey brick frontage with small gardens",
+    "preserve": ["brick_material", "two_floor_height", "street_setback"],
+    "vary": ["roof_orientation", "corner_condition"]
+  },
+  "intent": {
+    "name": "月柳住宅",
+    "purpose": "residential",
+    "frontage": "residential",
+    "variation_intent": "narrow_corner_house"
+  }
+}
+```
+
+返回的 `agentGuidance` 会提醒 Agent 保留街区共同语汇，只改变一两个结构线索。这样同一街区可以相近，街区之间仍然可以有明显身份差异。
+
+响应包含生成模式、完整 `sourceSpec`、独立 `DecorationSpec`、稳定的 `primary_entrance` port、revision、`specHash`、设计锁，以及共同和模式专属的 `availableOperations`。响应还包含 `actualArchitecture` 与 `architectureReview`：前者是编译前源规格的体量、屋顶、入口、庭院、塔楼和玻璃体量摘要，后者把它与 Agent 的功能意图进行对照。公共建筑会收到非阻塞的 `public_architecture_review_required` 指导；有冲突时会明确指出，例如图书馆出现温室体量。第一版 `floor_stack` 限定为 1×1 逻辑地块；更大的建筑使用 `urban_massing`，避免逐层原型静默越出地块。
 
 ## 2. 创建设计 revision
 
@@ -82,7 +109,11 @@ POST /api/v1/cities/{city_id}/building-designs/{design_id}/revisions
 }
 ```
 
-共同操作：`set_intent`、`set_roof`、`set_material`、`add_decoration`、`update_decoration`、`remove_decoration`。
+共同操作：`set_intent`、`regenerate_from_intent`、`set_roof`、`set_material`、`add_decoration`、`update_decoration`、`remove_decoration`。
+
+`regenerate_from_intent` 会保留地块和入口，按新的功能意图重新选择合法方案；默认清除旧的装饰锚点，避免原装饰指向已经不存在的 mass。若确实希望保留装饰，可显式传 `preserve_decorations: true`，然后根据新的 `availableOperations.anchorPatterns` 检查它们。
+
+公共建筑的最小审查循环是：读取 `actualArchitecture` → 对照 `architectureReview` → 对单个体量使用 `update_mass`，或整体使用 `regenerate_from_intent` → 再次检查 → 确认。
 
 ### 4×4 语义纹章店招
 
