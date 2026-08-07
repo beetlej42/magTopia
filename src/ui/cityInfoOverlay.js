@@ -62,8 +62,7 @@ export function createCityInfoOverlay() {
     opacity: 0,
     blockOverlayOpacity: 0,
     lastBlockKey: null,
-    lastBlockCellTiles: [],
-    lastBlockBuildingObjects: [],
+    lastBlockBoundaryEdges: [],
     detailTarget: null
   };
 
@@ -85,8 +84,7 @@ export function createCityInfoOverlay() {
     state.opacity = 0;
     state.blockOverlayOpacity = 0;
     state.lastBlockKey = null;
-    state.lastBlockCellTiles = [];
-    state.lastBlockBuildingObjects = [];
+    state.lastBlockBoundaryEdges = [];
     overlay.classList.toggle("is-enabled", Boolean(root));
     overlay.setAttribute("aria-hidden", root ? "false" : "true");
   }
@@ -115,8 +113,7 @@ export function createCityInfoOverlay() {
         if (selection) {
           if (selection.kind === "block") {
             state.lastBlockKey = selection.key;
-            state.lastBlockCellTiles = selection.cellTiles ?? [];
-            state.lastBlockBuildingObjects = selection.buildingObjects ?? [];
+            state.lastBlockBoundaryEdges = selection.boundaryEdges ?? [];
           }
           updateCardContent(selection);
           card.classList.toggle("is-parcel", selection.kind === "parcel");
@@ -135,7 +132,7 @@ export function createCityInfoOverlay() {
       delta,
       blockShouldShow ? 13 : 16
     );
-    const hasBlockVisual = state.lastBlockCellTiles.length > 0 && state.blockOverlayOpacity > 0.001;
+    const hasBlockVisual = state.lastBlockBoundaryEdges.length > 0 && state.blockOverlayOpacity > 0.001;
     const planetCenter = context.planetCenter;
 
     if (state.active) {
@@ -146,13 +143,11 @@ export function createCityInfoOverlay() {
         state.blockOverlayOpacity = approach(state.blockOverlayOpacity, 0, delta, 16);
         worldLayer.update({
           geometryKey: state.lastBlockKey,
-          cellTiles: state.lastBlockCellTiles,
-          buildingObjects: state.lastBlockBuildingObjects,
-          buildingLift: 0.08,
+          boundaryEdges: state.lastBlockBoundaryEdges,
           planetCenter,
           opacity: state.blockOverlayOpacity,
           targetOpacity: 0,
-          parcelsVisible: hasBlockVisual,
+          frameVisible: hasBlockVisual,
           targetVisible: false
         });
       } else {
@@ -171,15 +166,13 @@ export function createCityInfoOverlay() {
 
         worldLayer.update({
           geometryKey: state.lastBlockKey,
-          cellTiles: state.lastBlockCellTiles,
-          buildingObjects: state.lastBlockBuildingObjects,
-          buildingLift: 0.08,
+          boundaryEdges: state.lastBlockBoundaryEdges,
           targetWorld: state.active.targetWorld ?? state.active.anchorWorld,
           targetNormal: state.active.targetNormal,
           planetCenter,
           opacity: state.blockOverlayOpacity,
           targetOpacity: state.opacity,
-          parcelsVisible: hasBlockVisual,
+          frameVisible: hasBlockVisual,
           targetVisible: shouldShow
         });
       }
@@ -188,13 +181,11 @@ export function createCityInfoOverlay() {
     if (!state.active || !shouldShow) {
       worldLayer.update({
         geometryKey: state.lastBlockKey,
-        cellTiles: state.lastBlockCellTiles,
-        buildingObjects: state.lastBlockBuildingObjects,
-        buildingLift: 0.08,
+        boundaryEdges: state.lastBlockBoundaryEdges,
         planetCenter,
         opacity: state.blockOverlayOpacity,
         targetOpacity: 0,
-        parcelsVisible: hasBlockVisual,
+        frameVisible: hasBlockVisual,
         targetVisible: false
       });
     }
@@ -312,8 +303,7 @@ function resolveSelection(context, camera, viewMode) {
       anchorWorld: getBlockAnchor(block, context),
       targetWorld: getBlockTarget(block, context),
       targetNormal: getBlockTargetNormal(block, context),
-      ...getBlockParcelTiles(block, context),
-      buildingObjects: getBlockBuildingObjects(block, context),
+      ...getBlockBoundary(block, context),
       detailTarget: {
         kind: "block",
         id: block.id,
@@ -408,73 +398,43 @@ function getBlockTargetNormal(block, context) {
   return getVoxelSphereFrame(center.x, center.z, context.radius).normal;
 }
 
-function getBlockParcelTiles(block, context) {
-  const sourceCells = context.gridCells;
+function getBlockBoundary(block, context) {
   const cellWorldSize = Number(context.grid.cellWorldSize ?? 4);
-  const inset = Math.min(0.22, cellWorldSize * 0.08);
-  const lift = 0.08;
-  const halfSize = Math.max(0.25, cellWorldSize * 0.5 - inset);
-  const cellTiles = sourceCells
-    .map((cell) => context.state.cells?.[cell.id] ?? cell)
-    .filter((cell) => isCellWithinBlock(cell, block.bounds)
-      && cell.buildable !== false
-      && cell.strictBuildable !== false
-      && cell.infrastructure !== "road"
-      && context.state.infrastructure?.[cell.id]?.type !== "bridge")
-    .map((cell) => {
-      const center = cellCenter(cell, context.grid.columns, context.grid.rows, cellWorldSize);
-      const corners = [
-        { x: center.x - halfSize, z: center.z - halfSize },
-        { x: center.x + halfSize, z: center.z - halfSize },
-        { x: center.x + halfSize, z: center.z + halfSize },
-        { x: center.x - halfSize, z: center.z + halfSize }
-      ];
-      return {
-        id: cell.id,
-        base: corners.map(({ x, z }) => getCellSurfacePoint(cell, x, z, context, 0)),
-        top: corners.map(({ x, z }) => getCellSurfacePoint(cell, x, z, context, lift))
-      };
-    });
-  return { cellTiles };
+  const inset = Math.min(0.18, cellWorldSize * 0.06);
+  const bounds = getBlockWorldBounds(block, context);
+  const minX = bounds.minX + inset;
+  const maxX = bounds.maxX - inset;
+  const minZ = bounds.minZ + inset;
+  const maxZ = bounds.maxZ - inset;
+  return {
+    boundaryEdges: [
+      sampleBlockEdge(minX, minZ, maxX, minZ, context),
+      sampleBlockEdge(maxX, minZ, maxX, maxZ, context),
+      sampleBlockEdge(maxX, maxZ, minX, maxZ, context),
+      sampleBlockEdge(minX, maxZ, minX, minZ, context)
+    ]
+  };
 }
 
-function getBlockBuildingObjects(block, context) {
-  return context.buildings
-    .filter((entry) => entry.object && (
-      entry.building?.districtId === block.id
-      || (entry.placement.footprintCells ?? entry.building?.footprintCells ?? [])
-        .some((cellId) => isCellWithinBlock(context.state.cells?.[cellId] ?? {}, block.bounds))
-    ))
-    .map((entry) => entry.object);
+function sampleBlockEdge(startX, startZ, endX, endZ, context) {
+  const cellWorldSize = Number(context.grid.cellWorldSize ?? 4);
+  const length = Math.hypot(endX - startX, endZ - startZ);
+  const sampleCount = Math.max(2, Math.ceil(length / Math.max(0.8, cellWorldSize * 0.45)) + 1);
+  return Array.from({ length: sampleCount }, (_, index) => {
+    const amount = index / (sampleCount - 1);
+    return getSurfacePoint(
+      startX + (endX - startX) * amount,
+      startZ + (endZ - startZ) * amount,
+      context,
+      0.14
+    );
+  });
 }
 
-function getCellSurfacePoint(cell, x, z, context, lift) {
-  const frame = getVoxelSphereFrame(x, z, context.radius);
-  return frame.surface.clone().addScaledVector(
-    frame.normal,
-    getCellSurfaceHeight(cell, context) + lift
-  );
-}
-
-function getCellSurfaceHeight(cell, context) {
-  const constructionDatum = Number(
-    context.state.constructionDatum?.finishedConstructionHeightWorld
-      ?? context.worldState?.constructionDatum?.finishedConstructionHeightWorld
-      ?? -0.0625
-  );
-  const voxelSize = Number(
-    context.state.constructionDatum?.voxelSize
-      ?? context.worldState?.constructionDatum?.voxelSize
-      ?? 0.125
-  );
-  const elevation = Number(cell?.surface?.maxElevationVoxels ?? 0);
-  return Math.max(constructionDatum, constructionDatum + elevation * voxelSize);
-}
-
-function getSurfacePoint(x, z, context, lift) {
+function getSurfacePoint(x, z, context, offset) {
   const frame = getVoxelSphereFrame(x, z, context.radius);
   const terrainHeight = getSurfaceHeight(x, z, context);
-  return frame.surface.clone().addScaledVector(frame.normal, terrainHeight + lift);
+  return frame.surface.clone().addScaledVector(frame.normal, terrainHeight + offset);
 }
 
 function getSurfaceHeight(x, z, context) {
