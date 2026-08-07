@@ -1,5 +1,10 @@
 import { VOXEL_MASSING_PRESETS } from "./voxelMassingGrammar.js";
 import { createPublicBuildingStylePreset } from "./publicBuildingStyleComparison.js";
+import {
+  applyPublicBuildingVariation,
+  createDistrictArchitectureContext,
+  inferPublicBuildingProgram
+} from "./voxelBuildingArchitecture.js";
 
 export const BUILDING_INTENT_VERSION = "0.1";
 export const BUILDING_COMPOSITION_IDS = Object.freeze(["street", "court", "hall", "tower", "yard"]);
@@ -60,7 +65,9 @@ export function normalizeBuildingIntent(input = {}) {
     access: enumValue(BUILDING_ACCESS_IDS, input.access, "private"),
     style: enumValue(BUILDING_STYLE_IDS, input.style, defaultStyle),
     prominence,
-    magicLevel: clampNumber(input.magicLevel ?? 0.35, 0, 1)
+    magicLevel: clampNumber(input.magicLevel ?? 0.35, 0, 1),
+    districtStyle: text(input.districtStyle ?? input.district_style, ""),
+    variationIntent: text(input.variationIntent ?? input.variation_intent, "")
   };
 }
 
@@ -89,6 +96,12 @@ export function adaptBuildingIntentToStreetConfig(input = {}, overrides = {}) {
     windowRatio: index === 0 ? groundWindowRatio : upperPurpose === "storage" ? 0.28 : 0.38
   }));
   const style = STREET_STYLE_BY_INTENT[intent.style];
+  const variationIntent = intent.variationIntent.toLowerCase();
+  const roofForm = variationIntent.includes("hip") || variationIntent.includes("corner")
+    ? "hip"
+    : intent.composition === "hall" || intent.frontage === "large_bay"
+      ? "gable_cross"
+      : "gable_street";
   return {
     seed: text(overrides.seed, `${slug(intent.name)}-street`),
     sunTime: clampNumber(overrides.sunTime ?? 0.56, 0, 1),
@@ -99,8 +112,8 @@ export function adaptBuildingIntentToStreetConfig(input = {}, overrides = {}) {
     floorPrograms,
     style,
     materialScheme: ["london_brick", "violet_alchemist", "forest_craft"].indexOf(style),
-    roofForm: intent.composition === "hall" || intent.frontage === "large_bay" ? "gable_cross" : "gable_street",
-    cornerFacades: intent.access === "private" ? "right" : "both",
+    roofForm,
+    cornerFacades: intent.access === "private" && !variationIntent.includes("corner") ? "right" : "both",
     ridgePosition: intent.style === "industrial_iron" ? 0.2 : 0.5,
     windowRatio: groundWindowRatio,
     variation: clampNumber(0.48 + intent.magicLevel * 0.35, 0, 1),
@@ -109,13 +122,32 @@ export function adaptBuildingIntentToStreetConfig(input = {}, overrides = {}) {
     detailDensity: clampNumber(overrides.detailDensity ?? 0.7 + intent.magicLevel * 0.25, 0, 1),
     ...overrides,
     intent,
-    metadata: { ...semanticMetadata(intent), ...(overrides.metadata ?? {}) }
+    metadata: {
+      ...semanticMetadata(intent),
+      ...(intent.districtStyle ? { districtStyle: intent.districtStyle } : {}),
+      ...(intent.variationIntent ? { variationIntent: intent.variationIntent } : {}),
+      ...(overrides.districtContext ? { districtContext: createDistrictArchitectureContext(overrides.districtContext) } : {}),
+      ...(overrides.metadata ?? {})
+    }
   };
 }
 
 export function adaptBuildingIntentToMassingConfig(input = {}, overrides = {}) {
   const intent = normalizeBuildingIntent(input);
-  const preset = structuredClone(resolveMassingPreset(intent, overrides));
+  const seed = text(overrides.seed, `${slug(intent.name)}-massing`);
+  const basePreset = structuredClone(resolveMassingPreset(intent, { ...overrides, seed }));
+  const program = inferPublicBuildingProgram(intent.purpose);
+  const residentialProgram = program === "residential" || intent.frontage === "residential";
+  const shouldVaryPublic = !residentialProgram && (intent.frontage === "institutional"
+    || intent.prominence !== "ordinary"
+    || ["public", "ceremonial"].includes(intent.access)
+    || ["library", "academy", "greenhouse", "workshop", "civic"].includes(program));
+  const preset = shouldVaryPublic
+    ? applyPublicBuildingVariation(basePreset, intent, {
+        seed,
+        variantId: overrides.variantId ?? overrides.variant_id
+      })
+    : basePreset;
   const palette = MASSING_PALETTE_BY_STYLE[intent.style];
   preset.masses = preset.masses.map((mass) => {
     if (mass.type === "solid") {
@@ -146,11 +178,18 @@ export function adaptBuildingIntentToMassingConfig(input = {}, overrides = {}) {
     ...preset,
     ...overrides,
     id: text(overrides.id, `${slug(intent.name)}-massing`),
-    seed: text(overrides.seed, `${slug(intent.name)}-massing`),
+    seed,
     sunTime: clampNumber(overrides.sunTime ?? 0.56, 0, 1),
     nightLighting: clampNumber(overrides.nightLighting ?? intent.magicLevel * 0.18, 0, 1),
     intent,
-    metadata: { ...semanticMetadata(intent), ...(overrides.metadata ?? {}) }
+    metadata: {
+      ...(preset.metadata ?? {}),
+      ...semanticMetadata(intent),
+      ...(intent.districtStyle ? { districtStyle: intent.districtStyle } : {}),
+      ...(intent.variationIntent ? { variationIntent: intent.variationIntent } : {}),
+      ...(overrides.districtContext ? { districtContext: createDistrictArchitectureContext(overrides.districtContext) } : {}),
+      ...(overrides.metadata ?? {})
+    }
   };
 }
 
@@ -164,6 +203,8 @@ export function getBuildingIntentCatalog() {
     prominence: [...BUILDING_PROMINENCE_IDS],
     magicLevelRange: [0, 1],
     semanticFields: ["name", "purpose", "description", "signText"],
+    variationFields: ["districtStyle", "variationIntent"],
+    publicPrograms: ["library", "academy", "greenhouse", "workshop", "civic", "generic_public"],
     site: {
       cellSizeVoxels: 32,
       maximumSpanCells: 6,

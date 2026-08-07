@@ -92,9 +92,11 @@ export function createOpenApiDocument(baseUrl) {
             composition: { enum: ["street", "court", "hall", "tower", "yard"] },
             frontage: { enum: ["residential", "display", "workshop", "institutional", "large_bay"] },
             access: { enum: ["private", "public", "service", "ceremonial"] },
-            style: { enum: ["victorian_domestic", "victorian_gothic", "civic_classical", "industrial_iron"] },
+            style: { enum: ["victorian_domestic", "victorian_gothic", "civic_classical", "industrial_iron", "alchemical_glass"] },
             prominence: { enum: ["ordinary", "important", "landmark"] },
-            magic_level: { type: "number", minimum: 0, maximum: 1 }
+            magic_level: { type: "number", minimum: 0, maximum: 1 },
+            district_style: { type: "string", description: "Optional district-level style cue to preserve" },
+            variation_intent: { type: "string", description: "Optional high-level variation cue such as narrow_corner_house or stepped_frontage" }
           }
         },
         Decoration: {
@@ -114,7 +116,25 @@ export function createOpenApiDocument(baseUrl) {
             generation_mode: { enum: ["auto", "floor_stack", "urban_massing"] },
             site: { $ref: "#/components/schemas/Site" },
             intent: { $ref: "#/components/schemas/BuildingIntent" },
-            requirements: { type: "object", properties: { preferred_floors: { type: "integer", minimum: 1 } } },
+            requirements: { type: "object", properties: { preferred_floors: { type: "integer", minimum: 1 }, variant_id: { type: "string", description: "Optional public-building variant from the generated catalog" } } },
+            district_context: {
+              type: "object",
+              description: "Optional district context used to keep residential buildings coherent while varying one or two structural cues",
+              additionalProperties: true,
+              properties: {
+                id: { type: "string" },
+                name: { type: "string" },
+                purpose: { type: "string" },
+                style: { type: "string" },
+                district_style: { type: "string" },
+                character: { type: "string" },
+                preserve: { type: "array", items: { type: "string" } },
+                vary: { type: "array", items: { type: "string" } },
+                change: { type: "array", items: { type: "string" } },
+                existing_features: { type: "array", items: { type: "string" } },
+                notes: { type: "string" }
+              }
+            },
             decorations: { type: "object", properties: { items: { type: "array", items: { $ref: "#/components/schemas/Decoration" } } } },
             locks: { type: "array", items: { type: "string" } }
           }
@@ -124,7 +144,7 @@ export function createOpenApiDocument(baseUrl) {
           required: ["expected_revision", "operations"],
           properties: {
             expected_revision: { type: "integer", minimum: 1 },
-            operations: { type: "array", minItems: 1, items: { type: "object", required: ["op"], properties: { op: { enum: ["set_intent", "set_roof", "set_material", "add_decoration", "update_decoration", "remove_decoration", "add_floor", "set_floor_program", "add_mass", "update_mass", "remove_mass"] }, decoration: { $ref: "#/components/schemas/Decoration" } }, additionalProperties: true } }
+            operations: { type: "array", minItems: 1, items: { type: "object", required: ["op"], properties: { op: { enum: ["set_intent", "regenerate_from_intent", "set_roof", "set_material", "add_decoration", "update_decoration", "remove_decoration", "add_floor", "set_floor_program", "add_mass", "update_mass", "remove_mass"] }, decoration: { $ref: "#/components/schemas/Decoration" } }, additionalProperties: true } }
           }
         },
         BuildingDesignConfirmRequest: {

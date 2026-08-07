@@ -50,6 +50,27 @@ For a new procedural voxel building, use the versioned two-stage design flow ins
 
 To add a floor later, create `/buildings/{building_id}/upgrade-designs`, revise and confirm it, then submit it through the same construction endpoints. An upgrade keeps the building id and rejects stale base revisions. Read `/agent/building-design-api-v1.md` for the operation catalog and complete request examples.
 
+### Residential buildings: preserve the district, vary the cue
+
+For a residential `floor_stack` building, first read the current district's nearby buildings and named purpose from the city snapshot. Do not try to make every house unique. Instead, identify the district's shared grammar and pass a compact `district_context` into the design request:
+
+- preserve two or three shared cues such as wall material, height range, roof family, and setback;
+- choose one or two variation cues such as roof orientation, corner condition, frontage width, entrance position, or a small step-back;
+- use `intent.variation_intent` for the high-level choice, for example `narrow_corner_house` or `stepped_frontage`;
+- if the design response contains `district_architecture_alignment`, use it as a reminder to keep the result in the same neighborhood family.
+
+The goal is a coherent street or block, not global de-duplication. A new district can intentionally switch to another related family.
+
+### Public buildings: inspect the generated scheme
+
+For `urban_massing` public buildings, `seed` now selects a functional variant within the inferred program family. The initial result is a proposal, not an unquestioned final form. Always inspect:
+
+1. `actualArchitecture.massing`, `components`, `roofFamilies`, and `features`;
+2. `architectureReview.expectedFeatures`, `discouragedFeatures`, and `conflicts`;
+3. whether the entrance reads as public and whether the silhouette matches the stated purpose.
+
+For example, a library should not accidentally become a greenhouse. If the conflict is local, use `update_mass`; if the overall scheme is wrong, use `regenerate_from_intent` and inspect the new result. These checks are recommendations, not automatic vetoes: an Agent may intentionally create a botanical library or a school with a glass research wing, but it should make that choice deliberately in its final design.
+
 ## Budget behavior
 
 You may spend the city's entire currently available budget without player approval. Resources recover when city time advances, based on the productive buildings already operating in the city. Do not treat future income as currently spendable.

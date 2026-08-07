@@ -11,6 +11,14 @@ import {
   createVoxelBuildingFromSpec,
   createVoxelMassingLab
 } from "../generators/voxelBuildingLab.js";
+import {
+  createDistrictArchitectureContext,
+  createPublicArchitectureReview,
+  getPublicBuildingVariantCatalog,
+  inferPublicBuildingProgram,
+  summarizeFloorStackArchitecture,
+  summarizeMassingArchitecture
+} from "../generators/voxelBuildingArchitecture.js";
 
 export const BUILDING_DESIGN_VERSION = "1.0";
 export const DECORATION_SPEC_VERSION = "0.1";
@@ -36,6 +44,7 @@ export const SEMANTIC_GRID_SIGN_MICRO_VOXEL = Object.freeze({
 
 const COMMON_OPERATIONS = Object.freeze([
   "set_intent",
+  "regenerate_from_intent",
   "set_roof",
   "set_material",
   "add_decoration",
@@ -62,7 +71,9 @@ export function createBuildingDesignDraft(input = {}, context = {}) {
   const id = String(context.id ?? input.id ?? `design-${Date.now()}`);
   const seed = String(input.seed ?? context.seed ?? id);
   const site = recommendSite(input.site, requestedFootprint, mode, intent);
-  const generation = recommendGeneration({ id, seed, intent, mode, site, requirements: input.requirements ?? {} });
+  const requirements = input.requirements ?? {};
+  const districtContext = createDistrictArchitectureContext(input.district_context ?? input.districtContext);
+  const generation = recommendGeneration({ id, seed, intent, mode, site, requirements, districtContext });
   const design = {
     designVersion: BUILDING_DESIGN_VERSION,
     id,
@@ -71,11 +82,12 @@ export function createBuildingDesignDraft(input = {}, context = {}) {
     source: { kind: "new" },
     intent,
     site,
+    districtContext,
     generation,
     ports: [createPrimaryEntrancePort(site)],
     decorations: normalizeDecorationSpec(input.decorations),
     locks: normalizeLocks(input.locks),
-    availableOperations: availableOperations(mode),
+    availableOperations: availableOperations(mode, intent),
     createdBy: context.actor ?? input.actor ?? "agent:unknown"
   };
   return finalizeDesign(design, context);
@@ -101,7 +113,7 @@ export function createBuildingUpgradeDraft(building, input = {}, context = {}) {
       baseDesignRevision: prior.revision
     },
     createdBy: context.actor ?? input.actor ?? "agent:unknown",
-    availableOperations: availableOperations(base.generation.mode)
+    availableOperations: availableOperations(base.generation.mode, base.intent)
   };
   delete design.specHash;
 
@@ -132,7 +144,7 @@ export function reviseBuildingDesign(current, input = {}, context = {}) {
   }
   next.revision += 1;
   next.lastChanges = changes;
-  next.availableOperations = availableOperations(next.generation.mode);
+  next.availableOperations = availableOperations(next.generation.mode, next.intent);
   delete next.specHash;
   return finalizeDesign(next, context);
 }
@@ -194,17 +206,20 @@ export function buildingDesignToConstructionBody(design, input = {}) {
     },
     asset: { mode: "voxel" },
     agent_guidance: createAgentGuidance(design),
+    actual_architecture: structuredClone(design.actualArchitecture ?? null),
+    architecture_review: structuredClone(design.architectureReview ?? null),
     voxel_design: structuredClone(design)
   };
 }
 
-function recommendGeneration({ id, seed, intent, mode, site, requirements }) {
+function recommendGeneration({ id, seed, intent, mode, site, requirements, districtContext = null }) {
   if (mode === "floor_stack") {
     const recommended = adaptBuildingIntentToStreetConfig(intent, {
       seed,
       buildingCount: 1,
       parcelWidth: 32,
-      parcelDepth: 32
+      parcelDepth: 32,
+      districtContext
     });
     const preferredFloors = integerInRange(requirements.preferred_floors ?? requirements.preferredFloors, 1, 8, recommended.floors);
     const sourceSpec = createBuildingSpec({
@@ -235,7 +250,9 @@ function recommendGeneration({ id, seed, intent, mode, site, requirements }) {
     // entrance. Swap rectangular source dimensions before a quarter turn so
     // the resulting geometry still fits the reserved logical footprint.
     widthCells: rotated ? shape.rows : shape.columns,
-    depthCells: rotated ? shape.columns : shape.rows
+    depthCells: rotated ? shape.columns : shape.rows,
+    variantId: requirements.variant_id ?? requirements.variantId,
+    districtContext
   });
   let sourceSpec;
   try {
@@ -363,6 +380,8 @@ function applyOperation(design, rawOperation = {}) {
     case "set_intent":
       design.intent = normalizeIntentAliases({ ...design.intent, ...(operation.intent ?? operation.value ?? {}) });
       return { op: operation.op, fields: Object.keys(operation.intent ?? operation.value ?? {}) };
+    case "regenerate_from_intent":
+      return regenerateFromIntent(design, operation);
     case "add_decoration":
       return addDecoration(design, operation);
     case "update_decoration":
@@ -655,7 +674,7 @@ function normalizeOperation(value) {
   return { ...value, op };
 }
 
-function availableOperations(mode) {
+function availableOperations(mode, intent = {}) {
   return {
     common: [...COMMON_OPERATIONS],
     modeSpecific: [...MODE_OPERATIONS[normalizeMode(mode)]],
@@ -674,7 +693,47 @@ function availableOperations(mode) {
           "main/floor-{index}/facade-{direction}/entrance",
           "main/roof"
         ]
-      : ["{mass_id}/facade-{direction}", "{mass_id}/cap", "site"]
+      : ["{mass_id}/facade-{direction}", "{mass_id}/cap", "site"],
+    ...(mode === "urban_massing" ? {
+      publicMassing: {
+        program: inferPublicBuildingProgram(intent.purpose),
+        variants: getPublicBuildingVariantCatalog(inferPublicBuildingProgram(intent.purpose))
+      }
+    } : {})
+  };
+}
+
+function regenerateFromIntent(design, operation) {
+  const nextIntent = normalizeIntentAliases({
+    ...design.intent,
+    ...(operation.intent ?? operation.value ?? {})
+  });
+  const footprint = parseFootprint(design.site.footprint);
+  const mode = recommendGenerationMode(nextIntent, footprint.id);
+  const preferredFloors = design.generation.mode === "floor_stack"
+    ? design.generation.sourceSpec.floors
+    : undefined;
+  design.intent = nextIntent;
+  design.generation = recommendGeneration({
+    id: design.id,
+    seed: String(operation.seed ?? design.generation.sourceSpec.seed ?? design.id),
+    intent: nextIntent,
+    mode,
+    site: design.site,
+    requirements: {
+      ...(preferredFloors ? { preferred_floors: preferredFloors } : {}),
+      variant_id: operation.variant_id ?? operation.variantId
+    },
+    districtContext: design.districtContext
+  });
+  design.ports = [createPrimaryEntrancePort(design.site)];
+  if (!(operation.preserve_decorations ?? operation.preserveDecorations)) {
+    design.decorations = normalizeDecorationSpec();
+  }
+  return {
+    op: operation.op,
+    mode,
+    preserved: ["site", ...(operation.preserve_decorations ?? operation.preserveDecorations ? ["decorations"] : [])]
   };
 }
 
@@ -745,19 +804,45 @@ function deepMerge(target, patch) {
 function finalizeDesign(design, context) {
   const value = structuredClone(design);
   value.decorations.items.forEach((item) => validateDecorationAnchor(value, item));
+  value.actualArchitecture = value.generation.mode === "urban_massing"
+    ? summarizeMassingArchitecture(value.generation.sourceSpec)
+    : summarizeFloorStackArchitecture(value.generation.sourceSpec);
+  value.architectureReview = isPublicBuildingDesign(value)
+    ? createPublicArchitectureReview(value.intent, value.actualArchitecture)
+    : null;
   value.agentGuidance = createAgentGuidance(value);
   value.specHash = (context.hash ?? fallbackHash)(designHashSource(value));
   return value;
 }
 
 function createAgentGuidance(design) {
+  const guidance = [];
+  if (design.architectureReview && isPublicBuildingDesign(design)) {
+    guidance.push({
+      code: "public_architecture_review_required",
+      phase: "design_after_generation",
+      severity: design.architectureReview.conflicts.length ? "recommendation" : "review",
+      blocking: false,
+      message: "Review actualArchitecture against the building purpose before confirmation. If it does not fit, revise a mass or regenerate from intent.",
+      actualArchitecture: structuredClone(design.actualArchitecture),
+      review: structuredClone(design.architectureReview),
+      suggestedActions: [
+        { operation: "update_mass", when: "Only one or two components need correction." },
+        { operation: "regenerate_from_intent", when: "The overall scheme does not match the intended function." }
+      ]
+    });
+  }
+
+  if (isResidentialDesign(design)) {
+    guidance.push(createDistrictAlignmentGuidance(design));
+  }
+
   const hasCustomSign = design.decorations?.items?.some((item) => item.type === "semantic_grid_sign");
   const groundPurpose = design.generation?.mode === "floor_stack"
     ? design.generation.sourceSpec?.floorSpecs?.[0]?.purpose
     : null;
   const isStreetShop = design.intent?.frontage === "display" || groundPurpose === "shop";
-  if (!isStreetShop || hasCustomSign) return [];
-  return [{
+  if (isStreetShop && !hasCustomSign) guidance.push({
     code: "custom_shop_sign_recommended",
     phase: "design_before_construction",
     severity: "recommendation",
@@ -769,7 +854,42 @@ function createAgentGuidance(design) {
       anchor: "main/floor-0/facade-south/entrance",
       agentChooses: ["grid", "frameMaterial", "boardMaterial", "emissiveMaterial", "frameStyle"]
     }
-  }];
+  });
+  return guidance;
+}
+
+function isPublicBuildingDesign(design) {
+  return design.generation?.mode === "urban_massing"
+    && !isResidentialDesign(design)
+    && (design.intent?.frontage === "institutional"
+      || design.intent?.prominence !== "ordinary"
+      || ["public", "ceremonial"].includes(design.intent?.access)
+      || ["library", "academy", "greenhouse", "workshop", "civic"].includes(inferPublicBuildingProgram(design.intent?.purpose)));
+}
+
+function isResidentialDesign(design) {
+  return design.intent?.frontage === "residential"
+    || inferPublicBuildingProgram(design.intent?.purpose) === "residential";
+}
+
+function createDistrictAlignmentGuidance(design) {
+  const context = design.districtContext;
+  return {
+    code: "district_architecture_alignment",
+    phase: "design_before_construction",
+    severity: "recommendation",
+    blocking: false,
+    message: context
+      ? "Keep the house recognizably part of this district, then vary one or two structural cues so the street does not read as a copied row."
+      : "Before confirmation, compare this house with the current district's dominant style and choose a restrained variation direction.",
+    districtContext: structuredClone(context),
+    suggestedAction: {
+      operation: "regenerate_from_intent",
+      agentChooses: ["district_style", "variation_intent", "preserve", "change"],
+      preserveExamples: ["wall_material", "height_range", "roof_family", "street_setback"],
+      variationExamples: ["roof_orientation", "frontage_width", "corner_condition", "step_back", "entrance_position"]
+    }
+  };
 }
 
 function validateDecorationAnchor(design, item) {
@@ -807,6 +927,7 @@ function lockedScopeForOperation(locks, operation) {
   const values = new Set(locks ?? []);
   const scopes = {
     set_intent: ["intent"],
+    regenerate_from_intent: ["intent", "layout", "form"],
     set_roof: ["roof", "form"],
     set_material: ["materials", "detail"],
     add_decoration: ["decorations", "detail"],
@@ -829,6 +950,8 @@ function designHashSource(design) {
   delete value.confirmedAt;
   delete value.lastChanges;
   delete value.compileDiagnostics;
+  delete value.actualArchitecture;
+  delete value.architectureReview;
   return value;
 }
 
