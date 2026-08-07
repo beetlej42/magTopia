@@ -1,5 +1,5 @@
 [Unit]
-Description=MagicTown voxel Agent API
+Description=MAGTOPIA voxel Agent API
 After=network-online.target postgresql.service
 Wants=network-online.target
 

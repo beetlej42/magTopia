@@ -42,7 +42,7 @@ export async function createApp({ repository, config, logger = false }) {
   app.get("/", async (_request, reply) => reply.type("text/html; charset=utf-8").send(homePage(config.publicBaseUrl)));
   app.get("/healthz", async () => {
     await repository.database.query("SELECT 1");
-    return { status: "ok", service: "magictown", voxel_only: config.voxelOnly };
+    return { status: "ok", service: "MAGTOPIA", chinese_name: "麦托邦", voxel_only: config.voxelOnly };
   });
   app.get("/agent/playbook.md", async (_request, reply) => reply.type("text/markdown; charset=utf-8").send(await fs.readFile(PLAYBOOK_PATH, "utf8")));
   app.get("/agent/building-design-api-v1.md", async (_request, reply) => reply.type("text/markdown; charset=utf-8").send(await fs.readFile(BUILDING_DESIGN_API_PATH, "utf8")));
@@ -64,14 +64,19 @@ export async function createApp({ repository, config, logger = false }) {
     const target = resolvePublicFile(GENERATED_ROOT, request.params["*"]);
     return reply.type(mimeType(target)).header("Cache-Control", "public, max-age=31536000, immutable").send(await readBuiltFile(target));
   });
-  app.get("/.well-known/magictown-agent.json", async () => ({
-    service: "MagicTown Agent City Service",
+  const agentDiscovery = () => ({
+    service: "MAGTOPIA Agent City Service",
+    chinese_name: "麦托邦",
+    product_positioning: "AI Agent-driven magic city",
     version: "v1",
     authentication: "one-time capability URL exchanged for Bearer token",
     api_base_url: `${config.publicBaseUrl}/api/v1`,
     playbook_url: `${config.publicBaseUrl}/agent/playbook.md`,
     openapi_url: `${config.publicBaseUrl}/openapi.json`
-  }));
+  });
+  app.get("/.well-known/magtopia-agent.json", async () => agentDiscovery());
+  // Keep the pre-rebrand discovery URL readable for existing Agents.
+  app.get("/.well-known/magictown-agent.json", async () => agentDiscovery());
   app.get("/openapi.json", async () => createOpenApiDocument(config.publicBaseUrl));
 
   app.get("/connect/:capability", { logLevel: "silent" }, async (request, reply) => {
@@ -80,7 +85,7 @@ export async function createApp({ repository, config, logger = false }) {
   });
 
   app.post("/api/v1/players", async (request, reply) => {
-    const name = String(request.body?.display_name ?? "MagicTown Player").trim();
+    const name = String(request.body?.display_name ?? "MAGTOPIA Player").trim();
     if (!name || name.length > 80) throw new ServiceError(400, "INVALID_DISPLAY_NAME", "display_name must contain 1–80 characters");
     reply.header("Cache-Control", "no-store");
     return reply.code(201).send(await repository.createPlayer(name));
@@ -582,7 +587,7 @@ function proposalFromBody(body, principal, asset) {
       design: {
         districtStyle: body.design?.district_style,
         patterns: body.design?.patterns,
-        prompt: body.design?.creative_brief ?? body.program?.description ?? `${body.program?.name ?? body.program?.archetype} for MagicTown`
+        prompt: body.design?.creative_brief ?? body.program?.description ?? `${body.program?.name ?? body.program?.archetype} for MAGTOPIA`
       },
       connectionRequest,
       voxelDesign: body.voxel_design
@@ -861,7 +866,7 @@ async function completeManualAsset(repository, config, principal, job, body, ide
 }
 
 function homePage(baseUrl) {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>MagicTown Agent Service</title><style>body{max-width:760px;margin:64px auto;padding:0 24px;background:#14201c;color:#edf2df;font:17px/1.6 system-ui}a{color:#b9e39f}code{background:#24332c;padding:.15em .35em;border-radius:4px}.card{border:1px solid #496153;border-radius:14px;padding:20px;margin:20px 0}</style></head><body><h1>MagicTown Agent City Service</h1><p>每位玩家拥有一座默认私有的魔法城市。市政 Agent 通过专属的一次性链接接入，并以受限 API 读取、建设和解释城市。</p><div class="card"><h2>Agent 从这里开始</h2><p><a href="/agent/playbook.md">Playbook</a> · <a href="/openapi.json">OpenAPI 3.1</a> · <a href="/.well-known/magictown-agent.json">机器发现清单</a></p><p>API base：<code>${baseUrl}/api/v1</code></p></div><div class="card"><h2>城市运营</h2><p><a href="/dashboard">打开城市与资产状态面板</a></p><p>创建玩家与私有城市 → 创建 Agent link → Agent 兑换凭证 → 查询城市 → 预览并提交建设 → 读取事件和异步资产状态。</p></div></body></html>`;
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>MAGTOPIA · 麦托邦 · Agent Service</title><style>body{max-width:760px;margin:64px auto;padding:0 24px;background:#14201c;color:#edf2df;font:17px/1.6 system-ui}a{color:#b9e39f}code{background:#24332c;padding:.15em .35em;border-radius:4px}.card{border:1px solid #496153;border-radius:14px;padding:20px;margin:20px 0}</style></head><body><h1>MAGTOPIA Agent City Service</h1><p>麦托邦是一座由 AI Agent 驱动的魔法城市。每位玩家拥有一座默认私有的城市，市政 Agent 通过专属的一次性链接接入，并以受限 API 读取、建设和解释城市。</p><div class="card"><h2>Agent 从这里开始</h2><p><a href="/agent/playbook.md">Playbook</a> · <a href="/openapi.json">OpenAPI 3.1</a> · <a href="/.well-known/magtopia-agent.json">机器发现清单</a></p><p>API base：<code>${baseUrl}/api/v1</code></p></div><div class="card"><h2>城市运营</h2><p><a href="/dashboard">打开城市与资产状态面板</a></p><p>创建玩家与私有城市 → 创建 Agent link → Agent 兑换凭证 → 查询城市 → 预览并提交建设 → 读取事件和异步资产状态。</p></div></body></html>`;
 }
 
 function mimeType(file) {

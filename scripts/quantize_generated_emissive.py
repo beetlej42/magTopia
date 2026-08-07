@@ -9,7 +9,7 @@ from PIL import Image
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Quantize an AI-proposed emissive label image into exact MagicTown map colors."
+        description="Quantize an AI-proposed emissive label image into exact MAGTOPIA map colors."
     )
     parser.add_argument("--input", required=True)
     parser.add_argument("--out", required=True)

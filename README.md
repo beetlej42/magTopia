@@ -1,7 +1,8 @@
-# MagicTown
+# MAGTOPIA（麦托邦）
 
-MagicTown is a shared city-building simulation: a player establishes direction
-and an Agent develops the city over time. The current playable foundation is
+MAGTOPIA is an AI Agent-driven magic city: a player sets direction through
+natural language, and an Agent with its own identity, personality, memory, and
+architectural taste develops a living city over time. The current playable foundation is
 `magic-london-terrain-001`, a clean SimCity-like terrain foundation: 50 × 50
 logical parcels projected onto a continuous, subdivided isometric riverfront.
 
@@ -47,7 +48,7 @@ pnpm run server
 
 Open `http://127.0.0.1:4183/` for the Agent discovery page, or `/dashboard` for the city/order status panel. Machine-readable entry points are:
 
-- `/.well-known/magictown-agent.json`
+- `/.well-known/magtopia-agent.json`
 - `/agent/playbook.md`
 - `/openapi.json`
 
@@ -93,7 +94,7 @@ and bridges from CityState on each map seed. Everything
 conforms to the same continuous height field rather than replacing the terrain.
 
 ```js
-MagicTown.generateDevelopmentMap({
+MAGTOPIA.generateDevelopmentMap({
   developmentColumns: 50,
   developmentRows: 50,
   mapCurvature: 0.075,
@@ -101,13 +102,13 @@ MagicTown.generateDevelopmentMap({
   trainSpeed: 0.3
 });
 
-MagicTown.getWorldContract();
-MagicTown.setGridVisible(true); // show the 50 × 50 build grid
-MagicTown.generateDevelopmentMap({ perspective: 0.35 }); // 0 = orthographic, 1 = strongest perspective
-MagicTown.setCameraMode("play"); // edge-pan isometric gameplay camera
-MagicTown.setCameraMode("free"); // rotate/zoom debug camera
-MagicTown.generateDevelopmentMap({ nightLighting: 1, sunTime: 0 }); // inspect functional dusk lighting
-MagicTown.getBaseTileContract(); // ports, families, and lighting rules for infrastructure tiles
+MAGTOPIA.getWorldContract();
+MAGTOPIA.setGridVisible(true); // show the 50 × 50 build grid
+MAGTOPIA.generateDevelopmentMap({ perspective: 0.35 }); // 0 = orthographic, 1 = strongest perspective
+MAGTOPIA.setCameraMode("play"); // edge-pan isometric gameplay camera
+MAGTOPIA.setCameraMode("free"); // rotate/zoom debug camera
+MAGTOPIA.generateDevelopmentMap({ nightLighting: 1, sunTime: 0 }); // inspect functional dusk lighting
+MAGTOPIA.getBaseTileContract(); // ports, families, and lighting rules for infrastructure tiles
 ```
 
 The base-tile kit uses road lamps, flush plaza lights, and river-edge lights.
@@ -131,7 +132,7 @@ from lintel-safe entrance-side anchors by default. Existing frame, board, and
 emissive material IDs are reused; no purpose-specific prop model is required.
 
 ```js
-MagicTown.generateVoxelStreet({
+MAGTOPIA.generateVoxelStreet({
   buildingCount: 3,
   floors: 2,
   floorPrograms: [
@@ -148,9 +149,9 @@ MagicTown.generateVoxelStreet({
   nightLighting: 0.3
 });
 
-MagicTown.getVoxelBuildingContract();
-MagicTown.getVoxelGrammarCatalog();
-MagicTown.createVoxelBuildingSpec({
+MAGTOPIA.getVoxelBuildingContract();
+MAGTOPIA.getVoxelGrammarCatalog();
+MAGTOPIA.createVoxelBuildingSpec({
   id: "agent-shop-1",
   seed: "agent-shop-seed",
   style: "violet_alchemist",
@@ -196,7 +197,7 @@ v0.2` automatically exposes one derived solid mass, so the existing procedural
 street remains compatible.
 
 ```js
-MagicTown.generateVoxelMassing({
+MAGTOPIA.generateVoxelMassing({
   widthCells: 2,
   depthCells: 2,
   masses: [
@@ -232,7 +233,7 @@ MagicTown.generateVoxelMassing({
   ]
 });
 
-MagicTown.getVoxelGrammarCatalog().massing;
+MAGTOPIA.getVoxelGrammarCatalog().massing;
 ```
 
 Select `Voxel Massing Grammar` in Studio to open the Massing Explorer. It provides
@@ -251,10 +252,10 @@ order across their solid masses so generated buildings read as one composition.
 The same workflow is available from the console:
 
 ```js
-MagicTown.randomizeVoxelMassing("layout", "site-study-01");
-MagicTown.randomizeVoxelMassing("form", "silhouette-study-01");
-MagicTown.randomizeVoxelMassing("detail", "facade-study-01");
-MagicTown.randomizeVoxelMassing("all", "option-01");
+MAGTOPIA.randomizeVoxelMassing("layout", "site-study-01");
+MAGTOPIA.randomizeVoxelMassing("form", "silhouette-study-01");
+MAGTOPIA.randomizeVoxelMassing("detail", "facade-study-01");
+MAGTOPIA.randomizeVoxelMassing("all", "option-01");
 ```
 
 Framed masses default to white limestone members with a light translucent
@@ -296,7 +297,7 @@ brief; the runtime appends the non-negotiable parcel, camera, and output
 contract to the asset prompt.
 
 ```js
-const lots = MagicTown.findCandidateParcels({
+const lots = MAGTOPIA.findCandidateParcels({
   footprint: "1x2",
   near: ["riverfront"],
   limit: 12
@@ -320,11 +321,11 @@ const proposal = {
   connectionRequest: { to: "old_town_entry", mode: "road" }
 };
 
-MagicTown.previewConstruction(proposal); // footprint, route, bridge, cost, resources-after
-MagicTown.submitConstruction(proposal);  // accepted result or rejected preflight
-MagicTown.connectRoad({ fromBuildingId: "building-1", toBuildingId: "building-2" });
-MagicTown.getCityState();
-MagicTown.resetCity({ resources: { coins: 800, timber: 180, stone: 160 } });
+MAGTOPIA.previewConstruction(proposal); // footprint, route, bridge, cost, resources-after
+MAGTOPIA.submitConstruction(proposal);  // accepted result or rejected preflight
+MAGTOPIA.connectRoad({ fromBuildingId: "building-1", toBuildingId: "building-2" });
+MAGTOPIA.getCityState();
+MAGTOPIA.resetCity({ resources: { coins: 800, timber: 180, stone: 160 } });
 ```
 
 `old_town_entry` is the initial protected external gateway. It cannot be built
@@ -338,7 +339,7 @@ uses those maps for limited-angle relief/parallax and lighting; it does not
 pretend that a generated image is a free-orbit 3D model.
 
 ```js
-MagicTown.generateIsometricAsset({
+MAGTOPIA.generateIsometricAsset({
   parallaxStrength: 0.16,
   parallaxViewX: 0,
   parallaxViewY: 0,
@@ -346,7 +347,7 @@ MagicTown.generateIsometricAsset({
 });
 ```
 
-`MagicTown.previewParcel()` exposes the footprint, camera, safe margin, and
+`MAGTOPIA.previewParcel()` exposes the footprint, camera, safe margin, and
 prompt contract that every future asset must obey.
 
 ## Parcel guideplates
@@ -367,7 +368,7 @@ envelope stable. The image model should replace only its translucent blue
 envelope. Its JSON also records the three visible base-corner UV anchors. The
 asset slicer copies those anchors into each new `asset.json`, so Isometric Play
 can fit the base to curved or perspective-projected ground without inspecting
-the image every frame. `MagicTown.getParcelGuideSpec()` returns the same
+the image every frame. `MAGTOPIA.getParcelGuideSpec()` returns the same
 contract and a ready-to-run command for the active parcel configuration.
 
 ## Hunyuan3D LowPoly assets

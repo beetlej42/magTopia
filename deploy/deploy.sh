@@ -57,7 +57,7 @@ for _ in {1..30}; do
 done
 
 if [[ "$HEALTHY" != "1" ]]; then
-  echo "MagicTown health check failed; attempting rollback" >&2
+  echo "MAGTOPIA health check failed; attempting rollback" >&2
   if [[ -n "$PREVIOUS" && -d "$PREVIOUS" ]]; then
     ln -sfn "$PREVIOUS" "$ROOT/current"
     sudo -n systemctl restart magictown.service
@@ -68,4 +68,4 @@ fi
 mapfile -t OLD_RELEASES < <(find "$ROOT/releases" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | tail -n +$((KEEP + 1)) | cut -d' ' -f2-)
 for OLD in "${OLD_RELEASES[@]}"; do rm -rf "$OLD"; done
 
-echo "MagicTown deployed: $SHA"
+echo "MAGTOPIA deployed: $SHA"

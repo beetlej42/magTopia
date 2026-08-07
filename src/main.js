@@ -1114,23 +1114,23 @@ function syncMapPreview() {
 
 function syncApiPill() {
   if (currentMode === "map") {
-    apiPill.textContent = "MagicTown.generateDevelopmentMap({ developmentColumns, developmentRows, mapCurvature, perspective, showGrid })";
+    apiPill.textContent = "MAGTOPIA.generateDevelopmentMap({ developmentColumns, developmentRows, mapCurvature, perspective, showGrid })";
   } else if (currentMode === "asset") {
-    apiPill.textContent = "MagicTown.generateIsometricAsset({ parallaxStrength, parallaxViewX, parallaxViewY, viewYaw })";
+    apiPill.textContent = "MAGTOPIA.generateIsometricAsset({ parallaxStrength, parallaxViewX, parallaxViewY, viewYaw })";
   } else if (currentMode === "vanishing") {
-    apiPill.textContent = "MagicTown.previewVanishingWarp({ leftVanishingDistance, rightVanishingDistance, footprintWidth, footprintDepth })";
+    apiPill.textContent = "MAGTOPIA.previewVanishingWarp({ leftVanishingDistance, rightVanishingDistance, footprintWidth, footprintDepth })";
   } else if (currentMode === "comparison") {
-    apiPill.textContent = "MagicTown.compareAssetRepresentations({ depthStrength, comparisonYaw, showBounds, depthWireframe })";
+    apiPill.textContent = "MAGTOPIA.compareAssetRepresentations({ depthStrength, comparisonYaw, showBounds, depthWireframe })";
   } else if (currentMode === "voxel") {
-    apiPill.textContent = "MagicTown.generateVoxelStreet({ floorPrograms: [{ purpose: 'shop', windowRatio: 0.86 }, { purpose: 'home', windowRatio: 0.32 }], cornerFacades: 'both', roofForm: 'hip' })";
+    apiPill.textContent = "MAGTOPIA.generateVoxelStreet({ floorPrograms: [{ purpose: 'shop', windowRatio: 0.86 }, { purpose: 'home', windowRatio: 0.32 }], cornerFacades: 'both', roofForm: 'hip' })";
   } else if (currentMode === "massing") {
-    apiPill.textContent = `Massing Explorer · ${currentConfig.masses.length} nodes · ${currentConfig.relations.length} relations · MagicTown.getObject().userData.getVoxelDiagnostics()`;
+    apiPill.textContent = `Massing Explorer · ${currentConfig.masses.length} nodes · ${currentConfig.relations.length} relations · MAGTOPIA.getObject().userData.getVoxelDiagnostics()`;
   } else if (currentMode === "styles") {
     apiPill.textContent = "Five bounded public-building style grammars · silhouette + facade + material identity";
   } else if (currentMode === "district") {
-    apiPill.textContent = "BuildingIntent → Street + Massing adapters · MagicTown.generateIntentDistrict({ intents })";
+    apiPill.textContent = "BuildingIntent → Street + Massing adapters · MAGTOPIA.generateIntentDistrict({ intents })";
   } else {
-    apiPill.textContent = `MagicTown.previewParcel({ footprint: '${currentConfig.footprint}', floors: ${currentConfig.floors}, maxHeight: ${currentConfig.maxHeight} })`;
+    apiPill.textContent = `MAGTOPIA.previewParcel({ footprint: '${currentConfig.footprint}', floors: ${currentConfig.floors}, maxHeight: ${currentConfig.maxHeight} })`;
   }
 }
 
@@ -1370,7 +1370,7 @@ function exposeAgentApi() {
     }
   };
 
-  Object.defineProperty(window, "MagicTown", {
+  Object.defineProperty(window, "MAGTOPIA", {
     value: api,
     writable: true,
     configurable: true

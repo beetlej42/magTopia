@@ -16,7 +16,7 @@ await app.listen({ host: config.host, port: config.port });
 worker.run().catch((error) => app.log.error(error));
 
 async function shutdown(signal) {
-  app.log.info({ signal }, "Shutting down MagicTown");
+    app.log.info({ signal }, "Shutting down MAGTOPIA");
   worker.stop();
   await app.close();
   await database.close();

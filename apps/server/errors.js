@@ -11,7 +11,7 @@ export class ServiceError extends Error {
 
 export function errorEnvelope(error, requestId = null) {
   return {
-    type: "https://magictown.example/errors/service-error",
+    type: "https://magtopia.example/errors/service-error",
     code: error.code ?? "INTERNAL_ERROR",
     message: error.statusCode ? error.message : "An internal error occurred",
     retryable: Boolean(error.retryable),

@@ -1,4 +1,4 @@
-# MagicTown 程序化体素建筑纵切
+# MAGTOPIA 程序化体素建筑纵切
 
 ## 状态
 
@@ -17,7 +17,7 @@
 启动前端后，在 `Mode` 中选择 `Procedural Voxel Street`，或在控制台调用：
 
 ```js
-MagicTown.generateVoxelStreet({
+MAGTOPIA.generateVoxelStreet({
   buildingCount: 3,
   floors: 2,
   floorPrograms: [
@@ -34,9 +34,9 @@ MagicTown.generateVoxelStreet({
   nightLighting: 0.3
 });
 
-MagicTown.getVoxelBuildingContract();
-MagicTown.getVoxelGrammarCatalog();
-MagicTown.createVoxelBuildingSpec({
+MAGTOPIA.getVoxelBuildingContract();
+MAGTOPIA.getVoxelGrammarCatalog();
+MAGTOPIA.createVoxelBuildingSpec({
   id: "agent-shop-1",
   seed: "agent-shop-seed",
   style: "violet_alchemist",

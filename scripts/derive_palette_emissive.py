@@ -8,7 +8,7 @@ from PIL import Image
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Derive a deterministic MagicTown emissive map from constrained RGB palette colors.")
+    parser = argparse.ArgumentParser(description="Derive a deterministic MAGTOPIA emissive map from constrained RGB palette colors.")
     parser.add_argument("--input", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--minimum-component", type=int, default=40)

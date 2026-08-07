@@ -7,7 +7,7 @@
 Agent 只按 `archetype`、`footprint`、标签与夜间意图请求资产；系统从 registry 选择现有 `assetId`。Agent 不传图像路径，也不直接修改 prompt。
 
 ```js
-const candidates = MagicTown.findAssetCandidates({
+const candidates = MAGTOPIA.findAssetCandidates({
   footprint: "1x1",
   tags: ["starter"]
 });

@@ -1,4 +1,4 @@
-name: Deploy MagicTown
+name: Deploy MAGTOPIA
 
 on:
   push:
