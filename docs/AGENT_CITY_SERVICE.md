@@ -1,4 +1,4 @@
-# MagicTown Agent 城市服务整体方案
+# MAGTOPIA Agent 城市服务整体方案
 
 > 状态：Phase 0–3 已实现，本文同时保留架构决策与后续演进边界  
 > 核心目标：让每位玩家拥有一座独立城市，并能把一个专属入口交给自己的 Agent。Agent 通过稳定、可发现、可审计的 HTTP API 读取城市、查询空间、建设房屋、选择或生产资产、连接道路。
@@ -150,7 +150,7 @@ Player 1---N City 1---N AgentCredential
 玩家在城市设置页点击“连接 Agent”，得到类似：
 
 ```text
-https://play.magictown.example/connect/mtc_xxxxxxxxx
+https://play.magtopia.example/connect/mtc_xxxxxxxxx
 ```
 
 它是高熵、短期有效、可撤销、默认只能兑换一次的 capability。Agent 首次访问后得到：
@@ -192,7 +192,10 @@ city:admin        # 不给普通 Agent
 GET /
   HTML：产品说明、创建/打开城市、Agent 接入说明
 
-GET /.well-known/magictown-agent.json
+GET /.well-known/magtopia-agent.json
+
+The previous `/.well-known/magictown-agent.json` path remains available as a
+compatibility alias for already-connected Agents.
   机器清单：版本、playbook、OpenAPI、认证方式、API 根地址
 
 GET /agent/playbook.md
@@ -676,6 +679,6 @@ docs/
 | `src/city/workbench.js` | 拆为 command handler；内存闭包由 repository/application service 替代 |
 | `src/city/assets.js` | 变为持久化 registry 的内置 seed 数据和查询接口 |
 | `src/city/scenarios.js` | 变为地图/城市初始化 fixture 与集成测试场景 |
-| `src/main.js` 的 `window.MagicTown` | 保留为本地调试 facade，正式前端改调 HTTP API |
+| `src/main.js` 的 `window.MAGTOPIA` | 保留为本地调试 facade，正式前端改调 HTTP API |
 
 第一刀应落在“纯引擎合同”而非直接添加 Express/Fastify route。只有当同一命令能在浏览器测试和服务端测试中复用，网络服务才不会逐渐产生第二套城市逻辑。

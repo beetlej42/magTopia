@@ -127,7 +127,7 @@
 
 ```text
 Use case: stylized-concept
-Asset type: architectural concept sheet for MagicTown's modular voxel building generator.
+Asset type: architectural concept sheet for MAGTOPIA's modular voxel building generator.
 Camera: high three-quarter orthographic view; yaw 45 degrees; elevation 55 degrees;
 roll 0; weak perspective at most.
 Style: soft isometric low-poly urban diorama rendered as refined small-scale voxel

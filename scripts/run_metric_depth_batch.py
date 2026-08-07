@@ -19,7 +19,7 @@ VARIANT = "metric-indoor-small"
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the Depth Anything V2 Indoor Small metric model on existing MagicTown assets.")
+    parser = argparse.ArgumentParser(description="Run the Depth Anything V2 Indoor Small metric model on existing MAGTOPIA assets.")
     parser.add_argument("inputs", nargs="+", help="RGBA rgb.png asset paths.")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--background", default="#f5eef8")

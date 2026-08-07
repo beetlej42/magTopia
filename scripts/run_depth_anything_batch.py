@@ -14,7 +14,7 @@ from run_depth_anything import DEFAULT_MODEL, composite_on_background, normalize
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Depth Anything once for a batch of MagicTown asset RGB maps.")
+    parser = argparse.ArgumentParser(description="Run Depth Anything once for a batch of MAGTOPIA asset RGB maps.")
     parser.add_argument("inputs", nargs="+", help="Paths to RGBA rgb.png assets.")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--background", default="#f5eef8")

@@ -5,7 +5,7 @@ const config = loadConfig();
 const database = createDatabase(config.databaseUrl);
 try {
   await migrateDatabase(database);
-  console.log("MagicTown database migrations complete.");
+  console.log("MAGTOPIA database migrations complete.");
 } finally {
   await database.close();
 }

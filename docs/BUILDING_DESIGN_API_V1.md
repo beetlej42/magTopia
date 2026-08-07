@@ -1,6 +1,6 @@
 # BuildingDesign API v1
 
-`BuildingDesign` 统一 MagicTown 的两种程序化体素建筑生成模式：
+`BuildingDesign` 统一 MAGTOPIA 的两种程序化体素建筑生成模式：
 
 - `floor_stack`：逐层住宅、商铺、工坊和联排单体，源规格为 `BuildingSpec v0.2`；
 - `urban_massing`：大厅、塔楼、庭院、校园和多体量公共建筑，源规格为 `UrbanMassingSpec v0.1`。
@@ -86,7 +86,7 @@ POST /api/v1/cities/{city_id}/building-designs/{design_id}/revisions
 
 ### 4×4 语义纹章店招
 
-`semantic_grid_sign` 为 Agent 提供无需预制模型的沿街店招。图案固定为四行四列，使用 `0/1` 或 `./#` 表示暗格与亮格。4×4 是逻辑网格，不继承建筑的 12.5cm 体素：每个亮格固定为建筑体素的一半，即 6.25cm，Agent 不可修改。招牌默认垂直墙面侧挂并双面显示；使用 `entrance` anchor 时，编译器会把安装点移动到入口侧柱，并让牌面底部高于门楣一个建筑体素。侧挂牌最靠墙的边缘也会与立面保持一个建筑体素的净距，支架长度由牌面尺寸自动派生，从而避免透视下与门楣叠在一起。边框、底板和发光色只能从现有 MagicTown 材质目录选择：
+`semantic_grid_sign` 为 Agent 提供无需预制模型的沿街店招。图案固定为四行四列，使用 `0/1` 或 `./#` 表示暗格与亮格。4×4 是逻辑网格，不继承建筑的 12.5cm 体素：每个亮格固定为建筑体素的一半，即 6.25cm，Agent 不可修改。招牌默认垂直墙面侧挂并双面显示；使用 `entrance` anchor 时，编译器会把安装点移动到入口侧柱，并让牌面底部高于门楣一个建筑体素。侧挂牌最靠墙的边缘也会与立面保持一个建筑体素的净距，支架长度由牌面尺寸自动派生，从而避免透视下与门楣叠在一起。边框、底板和发光色只能从现有 MAGTOPIA 材质目录选择：
 
 ```json
 {

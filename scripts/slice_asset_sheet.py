@@ -11,7 +11,7 @@ KEY = (255, 0, 255)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Split a chroma-key MagicTown contact sheet into independent assets.")
+    parser = argparse.ArgumentParser(description="Split a chroma-key MAGTOPIA contact sheet into independent assets.")
     parser.add_argument("--input", required=True, help="Source contact-sheet PNG.")
     parser.add_argument("--out-dir", required=True, help="Directory for independent asset folders.")
     parser.add_argument("--columns", required=True, type=int)

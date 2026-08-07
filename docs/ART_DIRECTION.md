@@ -1,4 +1,4 @@
-# MagicTown 美术原则（v3：柔和等距魔法伦敦）
+# MAGTOPIA 美术原则（v3：柔和等距魔法伦敦）
 
 视觉北极星见 [VISUAL_TARGET.md](VISUAL_TARGET.md)。本文件是将其落实为地图、资产和渲染合同的执行规范。
 
@@ -154,6 +154,6 @@ Output constraints: isolated on flat #FF00FF chroma-key background, generous 8% 
 - 是否把暖光、交通红和魔法色控制在导视/叙事重点，而非铺满画面？
 - 城市是否足够繁密，但仍留出河岸、公园、广场和车站前空间？
 
-## 对现有 MagicTown 的落地结论
+## 对现有 MAGTOPIA 的落地结论
 
 规则网格与低模环境负责地块、道路、河流、铁路、桥梁、树木、人车船和云雾；**图像资产 + Depth Anything 是独特建筑外观的主力**。默认资产语法是符合固定地块与相机合同的柔和低多边形砖石建筑，能够进入连续街区而非孤立展示。`blush`、`petal`、`orchid` 不再是默认主色，只可作为魔法商业街的有限主题变体；默认调色板优先采用砖红、板岩蓝灰、暖砂岩和暖窗光。

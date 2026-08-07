@@ -8,7 +8,7 @@ const error = {
 export function createOpenApiDocument(baseUrl) {
   const document = {
     openapi: "3.1.0",
-    info: { title: "MagicTown Agent API", version: "1.0.0", description: "Private multi-city construction API for municipal Agents." },
+    info: { title: "MAGTOPIA（麦托邦）Agent API", version: "1.0.0", description: "Private multi-city construction API for municipal Agents building living magic cities." },
     servers: [{ url: `${baseUrl}/api/v1` }],
     security: [{ bearerAuth: [] }],
     components: {

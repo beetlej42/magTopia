@@ -19,7 +19,7 @@ export function composeHunyuanDayOffPrompt({ cells, dimensions, agentBrief }) {
   return [
     `[WORLD_CONTEXT:${MAGIC_LONDON_WORLD_PROMPT_VERSION}]\n${MAGIC_LONDON_WORLD_CONTEXT}`,
     `[AGENT_BRIEF]\n用途与功能由创建资产的 agent 提供。本次需求：${agentBrief.trim()}\n不得自行改变建筑用途；只补足实现该用途所必需的外部构件。`,
-    `[RENDER_CONTRACT]\n用途：MagicTown / Magic London 城市建造游戏的独立建筑资产。本次输出是白天关灯 RGB 基底。建筑规格为 ${cells} 个地块单元，世界尺寸 ${dimensions}。`,
+    `[RENDER_CONTRACT]\n用途：MAGTOPIA / Magic London 城市建造游戏的独立建筑资产。本次输出是白天关灯 RGB 基底。建筑规格为 ${cells} 个地块单元，世界尺寸 ${dimensions}。`,
     absoluteScaleContract,
     "输入图 1 的角色（最高优先级）：几何、尺度、镜头和门位编辑目标。严格保持相同的 1024×1024 正方形画布、正交等距镜头、地块菱形、深色底座、包络占地和总高度。蓝灰体块只是可替换包络。琥珀色参考门所在的左侧可见墙就是相机正对的 south/front 正面；真实主入口必须落在这面正墙的参考门位置。删除所有蓝灰包络、楼层线、箭头和基准标记。完整屋顶、烟囱和底座不得越出包络或被裁切。",
     "输入图 2 的角色（只允许借鉴风格）：Magic London 全城概念图。只借鉴建筑的大色块、简洁伦敦轮廓、低多边形切面、哑光表面、柔和午后色彩和略带可爱的比例；绝不复制整座城市、河流、桥梁、地标、道路、树木、人物或构图。若两个输入冲突，输入图 1 的体量、镜头和门位绝对优先。",

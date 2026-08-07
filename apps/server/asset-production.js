@@ -27,7 +27,7 @@ export function buildAssetPrompt(spec, options = {}) {
   const { length: cellsWide, width: cellsDeep, height: storeys } = volume.gridDimensions;
   const usesStyleReference = options.usesStyleReference === true;
   const imageRoleContract = usesStyleReference
-    ? "最重要的图片角色约束：请编辑图2。图2是必须严格遵守的几何与输出底图，保留它的画布、正交镜头、地块角点、体量、层高、人物尺度以及地块外纯色 #FF00FF 背景；只把蓝灰色体块替换为建筑，并删除所有辅助线、参考门和箭头。图1仅用于参考 MagicTown 单体建筑的柔和低多边形画风、简化程度、配色、哑光材质和暖光冷影；不要复制图1的具体房屋设计。"
+    ? "最重要的图片角色约束：请编辑图2。图2是必须严格遵守的几何与输出底图，保留它的画布、正交镜头、地块角点、体量、层高、人物尺度以及地块外纯色 #FF00FF 背景；只把蓝灰色体块替换为建筑，并删除所有辅助线、参考门和箭头。图1仅用于参考 MAGTOPIA 单体建筑的柔和低多边形画风、简化程度、配色、哑光材质和暖光冷影；不要复制图1的具体房屋设计。"
     : "最重要的图片角色约束：只输入了一张图。请编辑图1。图1是必须严格遵守的几何、尺度、镜头和输出底图；保留它的正方形画布、正交镜头、地块菱形、三个可见地块角点、蓝灰色体量的占地与高度、标准门所表达的人物尺度，以及地块外逐像素一致的纯色 #FF00FF 背景。只把蓝灰色体块替换为建筑，并删除所有辅助线、层高分隔线、参考门和箭头。没有其他风格参考图；美术风格只能按照以下文字规范生成，不得自行添加街景或写实环境。";
   const backgroundReference = usesStyleReference ? "图2" : "图1";
   return [
