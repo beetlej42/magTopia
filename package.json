@@ -6,6 +6,8 @@
   "packageManager": "pnpm@11.7.0",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "dev:studio": "vite --host 127.0.0.1",
+    "dev:acceptance": "vite --host 127.0.0.1",
     "server": "node --env-file-if-exists=.env apps/server/start.js",
     "server:dev": "node --env-file-if-exists=.env --watch apps/server/start.js",
     "db:migrate": "node --env-file-if-exists=.env apps/server/migrate.js",
