@@ -55,6 +55,7 @@ export function createCityInfoOverlay() {
 
   const state = {
     root: null,
+    context: null,
     active: null,
     pendingKey: null,
     pendingSince: 0,
@@ -76,6 +77,7 @@ export function createCityInfoOverlay() {
   function setSceneRoot(root = null) {
     worldLayer.setSceneRoot(root);
     state.root = root;
+    state.context = root ? createContext(root) : null;
     state.active = null;
     state.pendingKey = null;
     state.pendingSince = 0;
@@ -91,13 +93,13 @@ export function createCityInfoOverlay() {
 
   function update({ camera, delta = 0.016, viewMode = "far", viewport }) {
     const root = state.root;
-    if (!root || !camera || !viewport?.width || !viewport?.height) {
+    const context = state.context;
+    if (!root || !context || !camera || !viewport?.width || !viewport?.height) {
       state.opacity = approach(state.opacity, 0, delta, 14);
       applyOpacity();
       return;
     }
 
-    const context = createContext(root);
     const selection = resolveSelection(context, camera, viewMode);
     const now = performance.now();
 
@@ -134,7 +136,7 @@ export function createCityInfoOverlay() {
       blockShouldShow ? 13 : 16
     );
     const hasBlockVisual = state.lastBlockCellTiles.length > 0 && state.blockOverlayOpacity > 0.001;
-    const planetCenter = new THREE.Vector3(0, -context.radius, 0);
+    const planetCenter = context.planetCenter;
 
     if (state.active) {
       const screen = projectToScreen(state.active.anchorWorld, camera, viewport);
@@ -237,13 +239,36 @@ function createContext(root) {
     return { placement, object, building };
   }).filter((entry) => entry.object || entry.building);
   const districts = Object.values(state.districts ?? {});
+  const gridCells = Array.isArray(grid.cells)
+    ? grid.cells
+    : Object.values(state.cells ?? {});
+  const cellsByCoord = new Map(
+    gridCells.map((cell) => [
+      `${Number(cell.column)}:${Number(cell.row)}`,
+      state.cells?.[cell.id] ?? cell
+    ])
+  );
+  const buildingCountByDistrict = new Map();
+  Object.values(state.buildings ?? {}).forEach((building) => {
+    if (!building?.districtId) return;
+    buildingCountByDistrict.set(
+      building.districtId,
+      (buildingCountByDistrict.get(building.districtId) ?? 0) + 1
+    );
+  });
+  const radius = Number(root.userData?.surfaceNavigation?.radius ?? 220);
   return {
     state,
     worldState: world.stateWorld ?? state.world ?? {},
     grid,
+    gridCells,
+    cellsByCoord,
     buildings,
     districts,
-    radius: Number(root.userData?.surfaceNavigation?.radius ?? 220)
+    buildingCountByDistrict,
+    blockSelections: new Map(),
+    planetCenter: new THREE.Vector3(0, -radius, 0),
+    radius
   };
 }
 
@@ -263,8 +288,8 @@ function resolveSelection(context, camera, viewMode) {
       kicker: "BUILDING · " + statusLabel(building.building),
       title: building.building?.program?.name ?? building.placement.label ?? buildingId,
       subtitle: buildingSubtitle(building.building),
-      anchorWorld: getBuildingAnchor(building, context),
-      targetWorld: getBuildingAnchor(building, context),
+      anchorWorld: building.anchorWorld,
+      targetWorld: building.anchorWorld,
       detailTarget: {
         kind: "building",
         id: buildingId,
@@ -275,25 +300,29 @@ function resolveSelection(context, camera, viewMode) {
 
   const block = selectBlock(context, centralCell.cell, camera);
   if (!block) return null;
-  const buildingCount = Object.values(context.state.buildings ?? {})
-    .filter((building) => building.districtId === block.id).length;
-  return {
-    key: "block:" + block.id,
-    kind: "block",
-    kicker: blockKicker(block, context),
-    title: block.name ?? block.id,
-    subtitle: blockSubtitle(block, buildingCount),
-    anchorWorld: getBlockAnchor(block, context),
-    targetWorld: getBlockTarget(block, context),
-    targetNormal: getBlockTargetNormal(block, context),
-    ...getBlockParcelTiles(block, context),
-    buildingObjects: getBlockBuildingObjects(block, context),
-    detailTarget: {
+  let selection = context.blockSelections.get(block.id);
+  if (!selection) {
+    const buildingCount = context.buildingCountByDistrict.get(block.id) ?? 0;
+    selection = {
+      key: "block:" + block.id,
       kind: "block",
-      id: block.id,
-      district: block
-    }
-  };
+      kicker: blockKicker(block, context),
+      title: block.name ?? block.id,
+      subtitle: blockSubtitle(block, buildingCount),
+      anchorWorld: getBlockAnchor(block, context),
+      targetWorld: getBlockTarget(block, context),
+      targetNormal: getBlockTargetNormal(block, context),
+      ...getBlockParcelTiles(block, context),
+      buildingObjects: getBlockBuildingObjects(block, context),
+      detailTarget: {
+        kind: "block",
+        id: block.id,
+        district: block
+      }
+    };
+    context.blockSelections.set(block.id, selection);
+  }
+  return selection;
 }
 
 function selectBlock(context, cell, camera) {
@@ -302,7 +331,7 @@ function selectBlock(context, cell, camera) {
       const center = getBlockCenter(district, context);
       const projection = projectToScreen(center, camera, { width: 2, height: 2 });
       return {
-        ...district,
+        district,
         screenDistance: projection.visible
           ? Math.hypot(projection.ndcX, projection.ndcY)
           : Number.POSITIVE_INFINITY,
@@ -310,7 +339,7 @@ function selectBlock(context, cell, camera) {
       };
     });
   candidates.sort((left, right) => left.area - right.area || left.screenDistance - right.screenDistance);
-  return candidates[0] ?? null;
+  return candidates[0]?.district ?? null;
 }
 
 function selectBuilding(context, centralCell, camera) {
@@ -325,6 +354,7 @@ function selectBuilding(context, centralCell, camera) {
     return {
       ...entry,
       includesCenter,
+      anchorWorld,
       screenDistance
     };
   }).filter((entry) => entry.screenDistance <= SELECTION_RADIUS_NDC || entry.includesCenter);
@@ -344,8 +374,7 @@ function cellAtFlatPoint(context, flatX, flatZ) {
   const column = Math.floor((Number(flatX) + columns * cellWorldSize / 2) / cellWorldSize);
   const row = Math.floor((rows * cellWorldSize / 2 - Number(flatZ)) / cellWorldSize);
   if (column < 0 || row < 0 || column >= columns || row >= rows) return null;
-  const cells = context.grid.cells ?? Object.values(context.state.cells ?? {});
-  const cell = cells.find((candidate) => Number(candidate.column) === column && Number(candidate.row) === row)
+  const cell = context.cellsByCoord.get(`${column}:${row}`)
     ?? context.state.cells?.["cell-" + column + "-" + row];
   if (!cell) return null;
   return {
@@ -380,7 +409,7 @@ function getBlockTargetNormal(block, context) {
 }
 
 function getBlockParcelTiles(block, context) {
-  const sourceCells = context.grid.cells ?? Object.values(context.state.cells ?? {});
+  const sourceCells = context.gridCells;
   const cellWorldSize = Number(context.grid.cellWorldSize ?? 4);
   const inset = Math.min(0.22, cellWorldSize * 0.08);
   const lift = 0.08;
