@@ -96,8 +96,25 @@ scene.background = new THREE.Color("#fff3f8");
 
 const startupParams = new URLSearchParams(window.location.search);
 const startupMode = startupParams.get("mode");
-if (startupParams.get("view") === "1") document.documentElement.dataset.magicTownPresentation = "true";
-let currentMode = ["map", "district", "agentcity", "styles"].includes(startupMode) ? startupMode : "map";
+const startupPath = window.location.pathname;
+const isCityViewerPath = /^\/cities\/[^/]+\/?$/.test(startupPath);
+const isAcceptancePath = /^\/acceptance(?:\/|$)/.test(startupPath);
+const isPresentationRequest = startupParams.get("view") === "1"
+  || startupParams.get("surface") === "acceptance"
+  || isAcceptancePath;
+const frontendSurface = isPresentationRequest
+  ? "acceptance"
+  : isCityViewerPath
+    ? "player"
+    : "studio";
+document.documentElement.dataset.magtopiaSurface = frontendSurface;
+if (isPresentationRequest) document.documentElement.dataset.magicTownPresentation = "true";
+const studioModes = ["map", "asset", "vanishing", "comparison", "voxel", "massing", "styles", "district", "agentcity", "parcel"];
+let currentMode = frontendSurface === "studio" && studioModes.includes(startupMode)
+  ? startupMode
+  : frontendSurface === "player" || frontendSurface === "acceptance"
+    ? "agentcity"
+    : "map";
 let camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 2200);
 camera.position.set(7.8, 5.5, 9.5);
 
@@ -538,7 +555,10 @@ animate();
 if (cityViewerContext) initializeCityViewer();
 
 function initializeUi() {
-  Object.entries(MODES).forEach(([mode, definition]) => {
+  const availableModes = frontendSurface === "studio"
+    ? Object.entries(MODES)
+    : [["agentcity", MODES.agentcity]];
+  availableModes.forEach(([mode, definition]) => {
     const option = document.createElement("option");
     option.value = mode;
     option.textContent = definition.label;
@@ -610,7 +630,7 @@ async function rebuildActive(config) {
   }
 
   scene.add(activeObject);
-  cityInfoOverlay.setSceneRoot(currentMode === "agentcity" ? activeObject : null);
+  cityInfoOverlay.setSceneRoot(frontendSurface === "player" && currentMode === "agentcity" ? activeObject : null);
   warmupActiveVoxelLod();
   activeAnimationObjects = collectAnimationObjects(activeObject);
   applyWorldLighting(currentConfig.sunTime);
@@ -2015,4 +2035,3 @@ function disposeObject(object) {
     }
   });
 }
-
