@@ -555,6 +555,7 @@ animate();
 if (cityViewerContext) initializeCityViewer();
 
 function initializeUi() {
+  panelTitle.textContent = frontendSurface === "player" ? "MAGTOPIA City" : "MAGTOPIA Studio";
   const availableModes = frontendSurface === "studio"
     ? Object.entries(MODES)
     : [["agentcity", MODES.agentcity]];
