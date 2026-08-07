@@ -769,6 +769,18 @@ html[data-magic-town-viewer="loading"] #app {
   opacity: 0.3;
 }
 
+html[data-magtopia-surface="player"] .studio-only,
+html[data-magtopia-surface="acceptance"] .studio-only {
+  display: none !important;
+}
+
+html[data-magtopia-surface="acceptance"] .control-panel,
+html[data-magtopia-surface="acceptance"] .map-panel,
+html[data-magtopia-surface="acceptance"] .api-pill,
+html[data-magtopia-surface="acceptance"] .city-info-overlay {
+  display: none !important;
+}
+
 .map-panel {
   position: fixed;
   top: 18px;
@@ -1084,4 +1096,3 @@ html[data-magic-town-presentation] .api-pill {
     transition: none;
   }
 }
-
