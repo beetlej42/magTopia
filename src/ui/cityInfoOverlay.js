@@ -9,6 +9,8 @@ const MIN_CARD_SCALE = 0.78;
 const MAX_CARD_SCALE = 1.16;
 const SELECTION_DELAY_MS = 125;
 const SELECTION_RADIUS_NDC = 0.28;
+const BLOCK_SELECTION_RADIUS_NDC = 0.85;
+const BLOCK_UPLIFT_HEIGHT = 0.08;
 
 const PURPOSE_LABELS = {
   residential: "Residence",
@@ -63,6 +65,8 @@ export function createCityInfoOverlay() {
     blockOverlayOpacity: 0,
     lastBlockKey: null,
     lastBlockBoundaryEdges: [],
+    lastBlockCellTiles: [],
+    lastBlockBuildingObjects: [],
     detailTarget: null
   };
 
@@ -85,6 +89,8 @@ export function createCityInfoOverlay() {
     state.blockOverlayOpacity = 0;
     state.lastBlockKey = null;
     state.lastBlockBoundaryEdges = [];
+    state.lastBlockCellTiles = [];
+    state.lastBlockBuildingObjects = [];
     overlay.classList.toggle("is-enabled", Boolean(root));
     overlay.setAttribute("aria-hidden", root ? "false" : "true");
   }
@@ -114,6 +120,8 @@ export function createCityInfoOverlay() {
           if (selection.kind === "block") {
             state.lastBlockKey = selection.key;
             state.lastBlockBoundaryEdges = selection.boundaryEdges ?? [];
+            state.lastBlockCellTiles = selection.cellTiles ?? [];
+            state.lastBlockBuildingObjects = selection.buildingObjects ?? [];
           }
           updateCardContent(selection);
           card.classList.toggle("is-parcel", selection.kind === "parcel");
@@ -132,7 +140,10 @@ export function createCityInfoOverlay() {
       delta,
       blockShouldShow ? 13 : 16
     );
-    const hasBlockVisual = state.lastBlockBoundaryEdges.length > 0 && state.blockOverlayOpacity > 0.001;
+    const hasBlockVisual = Boolean(
+      (state.lastBlockBoundaryEdges.length > 0 || state.lastBlockCellTiles.length > 0)
+      && state.blockOverlayOpacity > 0.001
+    );
     const planetCenter = context.planetCenter;
 
     if (state.active) {
@@ -144,10 +155,14 @@ export function createCityInfoOverlay() {
         worldLayer.update({
           geometryKey: state.lastBlockKey,
           boundaryEdges: state.lastBlockBoundaryEdges,
+          cellTiles: state.lastBlockCellTiles,
+          buildingObjects: state.lastBlockBuildingObjects,
+          buildingLift: BLOCK_UPLIFT_HEIGHT,
           planetCenter,
           opacity: state.blockOverlayOpacity,
           targetOpacity: 0,
           frameVisible: hasBlockVisual,
+          upliftVisible: hasBlockVisual,
           targetVisible: false
         });
       } else {
@@ -167,12 +182,16 @@ export function createCityInfoOverlay() {
         worldLayer.update({
           geometryKey: state.lastBlockKey,
           boundaryEdges: state.lastBlockBoundaryEdges,
+          cellTiles: state.lastBlockCellTiles,
+          buildingObjects: state.lastBlockBuildingObjects,
+          buildingLift: BLOCK_UPLIFT_HEIGHT,
           targetWorld: state.active.targetWorld ?? state.active.anchorWorld,
           targetNormal: state.active.targetNormal,
           planetCenter,
           opacity: state.blockOverlayOpacity,
           targetOpacity: state.opacity,
           frameVisible: hasBlockVisual,
+          upliftVisible: hasBlockVisual,
           targetVisible: shouldShow
         });
       }
@@ -182,10 +201,14 @@ export function createCityInfoOverlay() {
       worldLayer.update({
         geometryKey: state.lastBlockKey,
         boundaryEdges: state.lastBlockBoundaryEdges,
+        cellTiles: state.lastBlockCellTiles,
+        buildingObjects: state.lastBlockBuildingObjects,
+        buildingLift: BLOCK_UPLIFT_HEIGHT,
         planetCenter,
         opacity: state.blockOverlayOpacity,
         targetOpacity: 0,
         frameVisible: hasBlockVisual,
+        upliftVisible: hasBlockVisual,
         targetVisible: false
       });
     }
@@ -289,7 +312,7 @@ function resolveSelection(context, camera, viewMode) {
     };
   }
 
-  const block = selectBlock(context, centralCell.cell, camera);
+  const block = selectCityInfoBlock(context, centralCell.cell, camera, surface);
   if (!block) return null;
   let selection = context.blockSelections.get(block.id);
   if (!selection) {
@@ -304,6 +327,8 @@ function resolveSelection(context, camera, viewMode) {
       targetWorld: getBlockTarget(block, context),
       targetNormal: getBlockTargetNormal(block, context),
       ...getBlockBoundary(block, context),
+      ...getBlockParcelTiles(block, context),
+      buildingObjects: getBlockBuildingObjects(block, context),
       detailTarget: {
         kind: "block",
         id: block.id,
@@ -315,20 +340,29 @@ function resolveSelection(context, camera, viewMode) {
   return selection;
 }
 
-function selectBlock(context, cell, camera) {
-  const candidates = context.districts.filter((district) => isCellWithinBlock(cell, district.bounds))
+export function selectCityInfoBlock(context, cell, camera, surface = {}) {
+  const candidates = context.districts
     .map((district) => {
-      const center = getBlockCenter(district, context);
-      const projection = projectToScreen(center, camera, { width: 2, height: 2 });
+      const projection = projectToScreen(getBlockAnchor(district, context), camera, { width: 2, height: 2 });
       return {
         district,
+        containsCenter: isCellWithinBlock(cell, district.bounds),
         screenDistance: projection.visible
           ? Math.hypot(projection.ndcX, projection.ndcY)
           : Number.POSITIVE_INFINITY,
+        flatDistance: distanceToBlock(surface.flatX, surface.flatZ, district, context),
         area: blockArea(district.bounds)
       };
-    });
-  candidates.sort((left, right) => left.area - right.area || left.screenDistance - right.screenDistance);
+    })
+    .filter((candidate) => candidate.containsCenter
+      || candidate.screenDistance <= BLOCK_SELECTION_RADIUS_NDC);
+  candidates.sort((left, right) => {
+    if (left.containsCenter !== right.containsCenter) return left.containsCenter ? -1 : 1;
+    if (left.containsCenter) return left.area - right.area || left.screenDistance - right.screenDistance;
+    return left.screenDistance - right.screenDistance
+      || left.flatDistance - right.flatDistance
+      || left.area - right.area;
+  });
   return candidates[0]?.district ?? null;
 }
 
@@ -416,6 +450,67 @@ function getBlockBoundary(block, context) {
   };
 }
 
+function getBlockParcelTiles(block, context) {
+  const cellWorldSize = Number(context.grid.cellWorldSize ?? 4);
+  const inset = Math.min(0.22, cellWorldSize * 0.08);
+  const halfSize = Math.max(0.25, cellWorldSize * 0.5 - inset);
+  const cellTiles = context.gridCells
+    .map((cell) => context.state.cells?.[cell.id] ?? cell)
+    .filter((cell) => isCellWithinBlock(cell, block.bounds)
+      && cell.buildable !== false
+      && cell.strictBuildable !== false
+      && cell.infrastructure !== "road"
+      && context.state.infrastructure?.[cell.id]?.type !== "bridge")
+    .map((cell) => {
+      const center = cellCenter(cell, context.grid.columns, context.grid.rows, cellWorldSize);
+      const corners = [
+        { x: center.x - halfSize, z: center.z - halfSize },
+        { x: center.x + halfSize, z: center.z - halfSize },
+        { x: center.x + halfSize, z: center.z + halfSize },
+        { x: center.x - halfSize, z: center.z + halfSize }
+      ];
+      return {
+        id: cell.id,
+        base: corners.map(({ x, z }) => getCellSurfacePoint(cell, x, z, context, 0)),
+        top: corners.map(({ x, z }) => getCellSurfacePoint(cell, x, z, context, BLOCK_UPLIFT_HEIGHT))
+      };
+    });
+  return { cellTiles };
+}
+
+function getBlockBuildingObjects(block, context) {
+  return context.buildings
+    .filter((entry) => entry.object && (
+      entry.building?.districtId === block.id
+      || (entry.placement.footprintCells ?? entry.building?.footprintCells ?? [])
+        .some((cellId) => isCellWithinBlock(context.state.cells?.[cellId] ?? {}, block.bounds))
+    ))
+    .map((entry) => entry.object);
+}
+
+function getCellSurfacePoint(cell, x, z, context, lift) {
+  const frame = getVoxelSphereFrame(x, z, context.radius);
+  return frame.surface.clone().addScaledVector(
+    frame.normal,
+    getCellSurfaceHeight(cell, context) + lift
+  );
+}
+
+function getCellSurfaceHeight(cell, context) {
+  const constructionDatum = Number(
+    context.state.constructionDatum?.finishedConstructionHeightWorld
+      ?? context.worldState?.constructionDatum?.finishedConstructionHeightWorld
+      ?? -0.0625
+  );
+  const voxelSize = Number(
+    context.state.constructionDatum?.voxelSize
+      ?? context.worldState?.constructionDatum?.voxelSize
+      ?? 0.125
+  );
+  const elevation = Number(cell?.surface?.maxElevationVoxels ?? 0);
+  return Math.max(constructionDatum, constructionDatum + elevation * voxelSize);
+}
+
 function sampleBlockEdge(startX, startZ, endX, endZ, context) {
   const cellWorldSize = Number(context.grid.cellWorldSize ?? 4);
   const length = Math.hypot(endX - startX, endZ - startZ);
@@ -467,6 +562,13 @@ function getBlockWorldBounds(block, context) {
     minZ: rows * cellWorldSize / 2 - (Number(bounds.maxRow) + 1) * cellWorldSize,
     maxZ: rows * cellWorldSize / 2 - Number(bounds.minRow) * cellWorldSize
   };
+}
+
+function distanceToBlock(x, z, block, context) {
+  const bounds = getBlockWorldBounds(block, context);
+  const dx = Math.max(bounds.minX - Number(x), 0, Number(x) - bounds.maxX);
+  const dz = Math.max(bounds.minZ - Number(z), 0, Number(z) - bounds.maxZ);
+  return Math.hypot(dx, dz);
 }
 
 function isCellWithinBlock(cell, bounds = {}) {
