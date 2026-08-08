@@ -14,10 +14,10 @@ Never expose the token in logs, prose, asset prompts, or another URL.
 ## Recommended decision loop
 
 1. `GET /api/v1/cities/{city_id}/snapshot?view=agent`.
-2. Continue a suitable named development district. If none exists, designate one with a short name, purpose, and rectangular bounds through `POST /districts`.
-3. Query that district with `/spatial`. If it has no roads, use connection previews and `/connections` to establish its access and internal streets before placing buildings.
-4. Search `/buildings` and `/assets`, then call `/site-searches` with `district_id`. Candidate results contain objective terrain, road-distance, and exact road-frontage facts; the server does not score or rank them.
-5. Choose a site whose intended entrance appears in `context.roadFrontageDirections`, then preview and submit construction with the same `district_id`.
+2. Continue a suitable named development district. If none exists, designate one small work package with a short name, purpose, and rectangular bounds through `POST /districts`.
+3. Query that district with `/spatial`. If it has no access, use connection previews and `/connections` to connect it to the city. Then shape the local streets according to the district intention; a complete perimeter is useful feedback, not a prerequisite.
+4. Search `/buildings` and `/assets`, then call `/site-searches` with `district_id`. Candidate results contain objective terrain, road-distance, exact road-frontage, and block-role facts; the server does not score or rank them.
+5. Choose a site whose intended entrance appears in `context.roadFrontageDirections`. Use `context.blockRole`, boundary coverage, and frontage facts to compose the area, then preview and submit construction with the same `district_id`.
 6. Submit mutations with `Idempotency-Key` and the latest `expected_city_version`.
 7. If `CITY_VERSION_CONFLICT` occurs, read the city again and make a new preview. Do not blindly retry the old plan.
 8. If an asset job is asynchronous, inspect that job/order instead of creating a duplicate.
@@ -25,18 +25,38 @@ Never expose the token in logs, prose, asset prompts, or another URL.
 
 ## District-first growth
 
-A development district is deliberately simple: a stable name, a plain-language purpose, and rectangular bounds. It is shared context for your own later decisions, not a zoning prohibition. Buildings outside districts remain legal, but normal growth should follow this order: name an area, build its roads, then compose buildings along those roads.
+A development district is a spatial work package, not an entire neighborhood. The runtime derives block-sized analysis units and returns a soft scale reference: a typical block is roughly 24–48 buildable cells, often with a short side of 5–6 cells and a long side of 6–8 cells. `4x8`, `5x6`, `6x6`, and `6x8` can all be sensible choices for different intentions. These values are recommendations, not limits; unusual shapes and larger districts remain legal. Roads belong to the city network and normally sit outside the buildable block. One main road may be the shared boundary of two neighboring blocks.
 
 ```json
 {
   "expected_city_version": 0,
   "name": "Moon Lantern Quarter",
   "purpose": "compact residential and shopping street",
-  "bounds": { "minColumn": 20, "minRow": 15, "maxColumn": 30, "maxRow": 24 }
+  "bounds": { "minColumn": 20, "minRow": 15, "maxColumn": 27, "maxRow": 22 }
 }
 ```
 
-The snapshot and `GET /districts` report road and building counts plus `recommended_next_action`. Road geometry remains your decision: inspect terrain, connect the district to the existing network, and add only the streets needed to give several future buildings coherent frontage.
+The snapshot and `GET /districts` report the derived `layout`, `block_progress`, `observations`, `suggestions`, and `composition_review`. Use them as spatial feedback, not as a mandatory workflow:
+
+- `connect_to_city`: establish access when nearby roads do not reach the city network;
+- `extend_secondary_street`: consider a side street, corner, loop, or anchor when a single linear frontage is emerging;
+- `switch_frontage`: consider another side or corner when buildings concentrate on one frontage;
+- `consider_shared_boundary`: reuse a main road as the boundary of another buildable block;
+- `preserve_open_space`: consider a garden, courtyard, square, or future reserve when occupancy is high;
+- `review_composition`: pause and decide whether the current spatial composition is ready for this growth step;
+- `continue_composition`: continue according to the Agent's own spatial intention.
+
+The Agent may accept, ignore, or intentionally override any suggestion. If it overrides a suggestion, record the spatial intention in `actor_note`; the server does not veto a legal choice because it is unusual.
+
+Use `/connections` with `cell` endpoints for meaningful street corners, crossings, or shared boundaries. The Agent chooses the endpoints and the solver chooses the exact path. Block perimeter cells are still legal building sites; `context.blockRole`, `context.boundarySidesCovered`, `context.boundaryCoverage`, and `context.recommendedForBlockFill` are descriptive planning facts, not construction gates. Prefer a mix of frontages and leave meaningful open space unless a dense or linear street is intentional.
+
+The main automated observations are objective geometry facts:
+
+- `connected_to_city`, `road_junctions`, and `road_endpoints` describe road access and topology;
+- `building_clusters`, `frontage_count`, `dominant_frontage_ratio`, and `same_frontage_streak` describe concentration;
+- `open_buildable_ratio` describes remaining space;
+- `shared_boundary_opportunities` identifies roads with buildable space on both sides;
+- `composition_review` says whether the district is ready for an Agent review, never that it must stop.
 
 ## Procedural voxel design loop
 
