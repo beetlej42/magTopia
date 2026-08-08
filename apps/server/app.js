@@ -166,6 +166,41 @@ export async function createApp({ repository, config, logger = false }) {
     return { city_version: state.version, data: Object.values(state.districts ?? {}).map((district) => districtResponse(state, district)) };
   });
 
+  app.post("/api/v1/cities/:cityId/districts/:districtId/cancel", async (request, reply) => {
+    const principal = await authenticate(repository, request, "city:build");
+    const body = request.body ?? {};
+    const response = await repository.transactCity({
+      principal,
+      cityId: request.params.cityId,
+      endpoint: `districts/${request.params.districtId}/cancel`,
+      idempotencyKey: request.headers["idempotency-key"],
+      requestBody: body,
+      expectedVersion: expectedCityVersion(request, body),
+      action: "cancel_district",
+      reason: body.reason ?? body.actor_note ?? "cancelled_by_actor"
+    }, async ({ state }) => {
+      const result = executeCityCommand(state, {
+        type: "cancel_district",
+        districtId: request.params.districtId,
+        reason: body.reason ?? body.actor_note,
+        actor: actorId(principal)
+      }, engineContext());
+      if (!result.accepted) return rejectedCommand(result);
+      const commandId = createId("command");
+      return {
+        nextState: result.state,
+        response: commandEnvelope(commandId, result, {
+          kind: "district",
+          id: result.district.id,
+          status: "cancelled",
+          district: districtResponse(result.state, result.district),
+          preserved: result.preserved
+        })
+      };
+    });
+    return reply.code(response.status === "rejected" ? 422 : 200).send(response);
+  });
+
   app.post("/api/v1/cities/:cityId/districts", async (request, reply) => {
     const principal = await authenticate(repository, request, "city:build");
     const body = request.body ?? {};
@@ -261,6 +296,7 @@ export async function createApp({ repository, config, logger = false }) {
     const districtId = input.district_id ?? input.districtId ?? null;
     const district = districtId ? state.districts?.[districtId] : null;
     if (districtId && !district) throw new ServiceError(404, "DISTRICT_NOT_FOUND", `District ${districtId} was not found`);
+    if (district?.status === "cancelled") throw new ServiceError(409, "DISTRICT_CANCELLED", `District ${districtId} is cancelled; choose a new district or omit district_id`);
     const candidates = findCandidateParcels(state, {
       footprint: input.footprint,
       districtId,
@@ -808,12 +844,22 @@ function districtResponse(state, district) {
   const roadCells = cells.filter((cell) => cell.infrastructure === "road" || state.infrastructure[cell.id]?.type === "bridge").length;
   const blocks = districtBlockProgress(state, district);
   const observations = districtSpatialObservations(state, district, blocks);
-  const suggestions = districtSuggestions(state, district, observations);
-  const compositionReview = districtCompositionReview(state, district, blocks, observations, suggestions);
-  const suggestedNextFocus = suggestions[0]?.action
-    ?? (compositionReview.status === "ready_for_review" ? "review_composition" : "continue_composition");
+  const status = district.status ?? "active";
+  const suggestions = status === "cancelled" ? [] : districtSuggestions(state, district, observations);
+  const compositionReview = status === "cancelled"
+    ? {
+      status: "cancelled",
+      reasons: ["development planning was cancelled", `${buildingIds.size} existing building(s) remain`, `${roadCells} existing road cell(s) remain`],
+      suggestions: [],
+      note: "Cancellation releases the planning context only. Existing buildings and roads are preserved."
+    }
+    : districtCompositionReview(state, district, blocks, observations, suggestions);
+  const suggestedNextFocus = status === "cancelled"
+    ? "none"
+    : suggestions[0]?.action ?? (compositionReview.status === "ready_for_review" ? "review_composition" : "continue_composition");
   return {
     ...district,
+    status,
     counts: { buildings: buildingIds.size, roads: roadCells, blocks: blocks.blockCount, completed_blocks: blocks.completedBlocks },
     block_progress: blocks,
     observations,
@@ -855,6 +901,8 @@ function agentSnapshot(row, state, events, orders, config) {
     counts: {
       buildings: buildings.length,
       districts: districts.length,
+      active_districts: districts.filter((district) => district.status !== "cancelled").length,
+      cancelled_districts: districts.filter((district) => district.status === "cancelled").length,
       roads: Object.values(state.cells).filter((cell) => cell.infrastructure === "road").length,
       bridges: bridgeCount,
       pending_orders: orders.filter((order) => !["completed", "failed", "cancelled"].includes(order.status)).length
@@ -863,7 +911,7 @@ function agentSnapshot(row, state, events, orders, config) {
     recent_changes: events,
     districts,
     pending_orders: orders.filter((order) => !["completed", "failed", "cancelled"].includes(order.status)),
-    available_actions: { define_district: true, construct: true, connect: true, request_asset: true, spend_full_current_budget: true },
+    available_actions: { define_district: true, cancel_district: true, construct: true, connect: true, request_asset: true, spend_full_current_budget: true },
     links: {
       playbook: `${config.publicBaseUrl}/agent/playbook.md`,
       spatial_query: `${config.publicBaseUrl}/api/v1/cities/${row.id}/spatial`,
