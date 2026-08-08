@@ -121,6 +121,7 @@ export async function createApp({ repository, config, logger = false }) {
       name: row.name,
       city_version: Number(row.city_version),
       state,
+      daily_production: calculateDailyIncome(state),
       assets,
       render_contract: {
         mode: "agentcity",
