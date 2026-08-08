@@ -17,6 +17,7 @@ export function createEngineContext(options = {}) {
 export function executeCityCommand(currentState, input, context = createEngineContext()) {
   switch (input.type) {
     case "define_district": return defineDistrict(currentState, input, context);
+    case "cancel_district": return cancelDistrict(currentState, input, context);
     case "construct_building": return constructBuilding(currentState, input, context);
     case "upgrade_building": return upgradeBuilding(currentState, input, context);
     case "connect": return connect(currentState, input, context);
@@ -43,7 +44,7 @@ function defineDistrict(currentState, input, context) {
   }
   if (currentState.districts?.[district.id]) return rejected(currentState, "DISTRICT_ID_CONFLICT", `District ${district.id} already exists`);
   const next = cloneCityState(currentState);
-  next.districts[district.id] = { ...district, createdAtTurn: next.turn };
+  next.districts[district.id] = { ...district, status: "active", createdAtTurn: next.turn };
   bump(next);
   appendEvent(next, {
     type: "district_defined",
@@ -55,6 +56,49 @@ function defineDistrict(currentState, input, context) {
     summary: `${district.name} was designated for ${district.purpose}.`
   }, context);
   return accepted(currentState, next, { district: structuredClone(next.districts[district.id]) });
+}
+
+function cancelDistrict(currentState, input, context) {
+  const districtId = String(input.districtId ?? input.district_id ?? input.id ?? "").trim();
+  if (!districtId) return rejected(currentState, "DISTRICT_ID_REQUIRED", "District id is required to cancel a district");
+  const district = currentState.districts?.[districtId];
+  if (!district) return rejected(currentState, "DISTRICT_NOT_FOUND", `District ${districtId} was not found`);
+  if ((district.status ?? "active") === "cancelled") {
+    return rejected(currentState, "DISTRICT_ALREADY_CANCELLED", `District ${districtId} is already cancelled`);
+  }
+
+  const next = cloneCityState(currentState);
+  bump(next);
+  const reason = String(input.reason ?? input.actorNote ?? "cancelled_by_actor").trim().slice(0, 160) || "cancelled_by_actor";
+  next.districts[districtId] = {
+    ...district,
+    status: "cancelled",
+    cancelledAt: context.now(),
+    cancelledAtTurn: next.turn,
+    cancelledBy: input.actor ?? "agent:unknown",
+    cancellationReason: reason
+  };
+  const preservedBuildings = Object.values(currentState.buildings ?? {}).filter((building) => (
+    building.districtId === districtId || building.program?.attributes?.districtId === districtId
+  )).length;
+  const preservedRoads = Object.values(currentState.cells ?? {}).filter((cell) => (
+    cell.column >= district.bounds.minColumn && cell.column <= district.bounds.maxColumn
+      && cell.row >= district.bounds.minRow && cell.row <= district.bounds.maxRow
+      && (cell.infrastructure === "road" || currentState.infrastructure?.[cell.id]?.type === "bridge")
+  )).length;
+  appendEvent(next, {
+    type: "district_cancelled",
+    actor: input.actor ?? "agent:unknown",
+    districtId,
+    reason,
+    preservedBuildings,
+    preservedRoads,
+    summary: `${district.name} was released as an active development plan; existing construction remains.`
+  }, context);
+  return accepted(currentState, next, {
+    district: structuredClone(next.districts[districtId]),
+    preserved: { buildings: preservedBuildings, roads: preservedRoads }
+  });
 }
 
 function upgradeBuilding(currentState, input, context) {
@@ -275,6 +319,7 @@ function rejected(state, code, message, extra = {}) {
 
 function classifyPreviewError(preview) {
   const text = preview.errors?.join(" ") ?? "";
+  if (/district .*cancelled/i.test(text)) return "DISTRICT_CANCELLED";
   if (/Insufficient/.test(text)) return "INSUFFICIENT_RESOURCES";
   if (/occupied|reserved/i.test(text)) return "LOT_OCCUPIED";
   if (/route|target|entrance/i.test(text)) return "NO_ROUTE";

@@ -248,6 +248,8 @@ GET /api/v1/cities/{city_id}/events?after_version=41&limit=100
   ],
   "recent_changes": [],
   "available_actions": {
+    "define_district": true,
+    "cancel_district": true,
     "construct": true,
     "connect": true,
     "request_asset": true
@@ -291,6 +293,21 @@ POST /api/v1/cities/{city_id}/districts
 ```
 
 片区不是用途禁令；它只是让 Agent 在后续轮次保持同一个空间意图。道路属于独立的城市道路网络，通常位于 block 外围；一条主路可以同时作为两侧 block 的共享边界。返回中的 `layout`、`block_progress`、`observations`、`suggestions` 和 `composition_review` 都是规划反馈，不会因为尺寸、道路形状或未闭合而拒绝合法动作。正常思路是“划片 → 确保接入城市 → 按空间意图组织道路和建筑”，不要求每个 block 先完成一圈道路。
+
+如果当前规划方向不再合适，可以取消规划关系而不破坏城市内容：
+
+```http
+POST /api/v1/cities/{city_id}/districts/{district_id}/cancel
+```
+
+```json
+{
+  "expected_city_version": 12,
+  "reason": "把下一片发展转移到河岸入口"
+}
+```
+
+取消后街区仍会保留在历史列表中，但 `status` 变为 `cancelled`。已经建好的建筑、道路、桥梁、资源和事件全部保留；该街区不再提供新的规划建议，也不能继续用于 site-search 或 construction order。需要继续发展时创建新的街区，或者在明确不属于任何规划街区时省略 `district_id`。
 
 ```http
 POST /api/v1/cities/{city_id}/site-searches

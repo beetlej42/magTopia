@@ -173,6 +173,15 @@ export function createOpenApiDocument(baseUrl) {
             }
           }
         },
+        DistrictCancelRequest: {
+          type: "object",
+          required: ["expected_city_version"],
+          properties: {
+            expected_city_version: { type: "integer", minimum: 0 },
+            reason: { type: "string", maxLength: 160, description: "Why this planning context is being released; existing roads and buildings are preserved." },
+            actor_note: { type: "string", maxLength: 160 }
+          }
+        },
         SiteSearchRequest: {
           type: "object",
           required: ["footprint"],
@@ -256,6 +265,9 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}/districts": {
         get: operation("List named development districts with block, road, and building progress", "districts"),
         post: commandOperation("Name and designate a spatial development district with advisory block guidance", "districts", { $ref: "#/components/schemas/DistrictCreateRequest" })
+      },
+      "/cities/{city_id}/districts/{district_id}/cancel": {
+        post: commandOperation("Release a district's planning context while preserving existing roads and buildings", "districts", { $ref: "#/components/schemas/DistrictCancelRequest" })
       },
       "/cities/{city_id}/building-designs": {
         get: operation("List versioned building designs", "building-designs"),

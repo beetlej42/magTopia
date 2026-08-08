@@ -139,6 +139,26 @@ test("Agent API roads render with shared voxel assets and derive reciprocal dire
     assert.equal(cityObject.userData.diagnostics.source, "agent-api-render-state");
     assert.equal(cityObject.userData.diagnostics.roadRenderer.roadAsset, rendered.render_contract.roadAsset);
     assert.equal(cityObject.userData.diagnostics.roadRenderer.roadCellCount, roadIds.size);
+
+    const cancelled = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/districts/${district.resource.id}/cancel`,
+      headers: { "idempotency-key": "voxel-road-district-cancel-1" },
+      payload: { expected_city_version: rendered.state.version, reason: "start the next growth area elsewhere" }
+    }), 200);
+    assert.equal(cancelled.resource.status, "cancelled");
+    assert.equal(cancelled.resource.district.status, "cancelled");
+    assert.ok(cancelled.resource.preserved.roads > 0);
+
+    const cancelledSnapshot = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/snapshot` }), 200);
+    assert.equal(cancelledSnapshot.counts.active_districts, 0);
+    assert.equal(cancelledSnapshot.counts.cancelled_districts, 1);
+    const cancelledSites = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/site-searches`,
+      payload: { district_id: district.resource.id, footprint: "1x1", limit: 10 }
+    }), 409);
+    assert.equal(cancelledSites.code, "DISTRICT_CANCELLED");
   } finally {
     await app.close();
   }

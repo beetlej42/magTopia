@@ -5,7 +5,7 @@ import { createEngineContext, executeCityCommand } from "../src/city/engine.js";
 import { confirmBuildingDesign, createBuildingDesignDraft, createBuildingUpgradeDraft } from "../src/city/building-design.js";
 import { blockPerimeterCellIds, districtBlockProgress } from "../src/city/district-layout.js";
 import { districtSpatialObservations, districtSuggestions } from "../src/city/district-guidance.js";
-import { findCandidateParcels, previewConnectionBetween } from "../src/city/solver.js";
+import { findCandidateParcels, previewConnectionBetween, previewConstruction } from "../src/city/solver.js";
 
 function world(columns = 12, rows = 12) {
   const cells = [];
@@ -151,6 +151,51 @@ test("district observations surface linear frontage and shared-road opportunitie
   assert.ok(observations.shared_boundary_opportunities.length > 0);
   assert.ok(suggestions.some((suggestion) => suggestion.code === "LINEAR_ROAD_RISK"));
   assert.ok(suggestions.every((suggestion) => suggestion.priority && suggestion.message));
+});
+
+test("cancelling a district releases planning context without deleting city work", () => {
+  const initial = createCityState(world(), { resources: { coins: 9999, timber: 9999, stone: 9999 } });
+  const defined = executeCityCommand(initial, {
+    type: "define_district",
+    id: "district-cancelled",
+    name: "Old Lantern Plan",
+    purpose: "temporary residential cluster",
+    bounds: { minColumn: 2, maxColumn: 7, minRow: 2, maxRow: 7 },
+    actor: "agent:test"
+  }, context());
+  const stateWithWork = defined.state;
+  stateWithWork.cells["cell-3-2"].infrastructure = "road";
+  stateWithWork.cells["cell-3-3"].occupancy = "building-kept";
+  stateWithWork.buildings["building-kept"] = {
+    id: "building-kept",
+    districtId: "district-cancelled",
+    footprintCells: ["cell-3-3"],
+    program: { name: "Kept Cottage", purpose: "residential" }
+  };
+
+  const cancelled = executeCityCommand(stateWithWork, {
+    type: "cancel_district",
+    districtId: "district-cancelled",
+    reason: "move the next growth step elsewhere",
+    actor: "agent:test"
+  }, context());
+  assert.equal(cancelled.accepted, true);
+  assert.equal(cancelled.state.districts["district-cancelled"].status, "cancelled");
+  assert.equal(cancelled.state.districts["district-cancelled"].cancellationReason, "move the next growth step elsewhere");
+  assert.equal(cancelled.preserved.buildings, 1);
+  assert.equal(cancelled.preserved.roads, 1);
+  assert.equal(cancelled.state.cells["cell-3-2"].infrastructure, "road");
+  assert.equal(cancelled.state.cells["cell-3-3"].occupancy, "building-kept");
+  assert.equal(cancelled.state.buildings["building-kept"].districtId, "district-cancelled");
+  assert.equal(cancelled.state.events.at(-1).type, "district_cancelled");
+
+  const preview = previewConstruction(cancelled.state, { ...proposal("cell-4-4"), districtId: "district-cancelled" });
+  assert.equal(preview.feasible, false);
+  assert.match(preview.errors[0], /is cancelled/);
+
+  const repeated = executeCityCommand(cancelled.state, { type: "cancel_district", districtId: "district-cancelled" }, context());
+  assert.equal(repeated.accepted, false);
+  assert.equal(repeated.code, "DISTRICT_ALREADY_CANCELLED");
 });
 
 test("production reservation freezes and failure refunds the exact cost", () => {
