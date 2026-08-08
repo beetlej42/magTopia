@@ -91,7 +91,7 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
         }
       }
     }), 201);
-    assert.equal(district.resource.district.recommended_next_action, "build_district_roads");
+    assert.equal(district.resource.district.suggested_next_focus, "connect_to_city");
     const districtRoad = await json(app, auth(agentB, {
       method: "POST",
       url: `/api/v1/cities/${cityB.id}/connections`,
@@ -109,7 +109,8 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
       payload: { district_id: district.resource.id, footprint: "1x1", limit: 100 }
     }), 200);
     assert.equal(districtSites.district.counts.roads > 0, true);
-    assert.equal(districtSites.district.recommended_next_action, "build_along_district_roads");
+    assert.equal(districtSites.district.observations.connected_to_city, true);
+    assert.ok(["continue_composition", "consider_shared_boundary"].includes(districtSites.district.suggested_next_focus));
     assert.ok(districtSites.data.some((candidate) => candidate.context.adjacentRoad));
     assert.ok(districtSites.data.every((candidate) => !("score" in candidate) && !("score_explanation" in candidate)));
     assert.equal(districtRoad.city_version_after, 2);

@@ -1,4 +1,6 @@
 import { getFootprintCells } from "./contracts.js";
+import { districtBlockForCell, districtBlockProgress } from "./district-layout.js";
+import { districtSuggestions, districtSpatialObservations } from "./district-guidance.js";
 import { canOccupyFootprint } from "./state.js";
 
 const ROAD_COST = { coins: 8, timber: 1, stone: 1 };
@@ -22,6 +24,9 @@ export function findCandidateParcels(state, criteria = {}) {
     if (!entranceDirections.length) continue;
     const roadFrontageDirections = entranceDirections.filter((direction) => adjacentRoad(state, occupancy.cells, direction));
     const roadDistance = nearestRoadDistance(state, lot);
+    const block = criteria.layout ? districtBlockForCell(lot, criteria.layout) : null;
+    const blockProgress = block ? criteria.blockProgress?.blocks?.find((entry) => entry.id === block.id) : null;
+    const blockRole = block ? (isBlockPerimeterCell(lot, block) ? "perimeter" : "interior") : null;
     candidates.push({
       lotId: lot.id,
       footprintCells: occupancy.cells,
@@ -34,7 +39,24 @@ export function findCandidateParcels(state, criteria = {}) {
         roadFrontageDirections,
         nearestRoadDistance: Number.isFinite(roadDistance) ? roadDistance : null,
         scenic: isNearWater(state, lot, 3) ? "waterfront" : "urban",
-        boundsMatched: Boolean(criteria.bounds)
+        boundsMatched: Boolean(criteria.bounds),
+        blockId: block?.id ?? null,
+        blockBounds: block ? {
+          minColumn: block.minColumn,
+          minRow: block.minRow,
+          maxColumn: block.maxColumn,
+          maxRow: block.maxRow
+        } : null,
+        blockRole,
+        blockPerimeterClosed: blockProgress?.perimeter.closed ?? false,
+        boundarySidesCovered: blockProgress?.perimeter.sidesCovered ?? 0,
+        boundaryCoverage: blockProgress?.perimeter.coverage ?? 0,
+        recommendedForBlockFill: blockRole === "interior"
+          && Boolean(blockProgress?.access.hasRoad || blockProgress?.counts.buildings),
+        // Compatibility field. This is descriptive only; it never blocks a
+        // legal construction proposal.
+        eligibleForBlockFill: blockRole === "interior"
+          && Boolean(blockProgress?.access.hasRoad || blockProgress?.counts.buildings)
       }
     });
   }
@@ -204,20 +226,30 @@ function constructionGuidance(state, proposal, footprintCells) {
     guidance.push({ code: "district_not_found", message: `The referenced district ${proposal.districtId} does not exist.` });
     return guidance;
   }
+  const blockProgress = districtBlockProgress(state, district);
+  const observations = districtSpatialObservations(state, district, blockProgress);
+  const suggestions = districtSuggestions(state, district, observations);
   if (!footprintWithinBounds(state, footprintCells, district.bounds)) {
     guidance.push({ code: "site_outside_district", message: `${proposal.program.name} is outside the bounds of ${district.name}.` });
   }
-  const districtHasRoads = Object.values(state.cells).some((cell) => (
-    cell.column >= district.bounds.minColumn && cell.column <= district.bounds.maxColumn
-    && cell.row >= district.bounds.minRow && cell.row <= district.bounds.maxRow
-    && (cell.infrastructure === "road" || state.infrastructure[cell.id]?.type === "bridge")
-  ));
-  if (!districtHasRoads) {
-    guidance.push({ code: "district_has_no_roads", message: `${district.name} has no road network yet; establish its streets before placing buildings.` });
+  if (observations.road_cells === 0) {
+    guidance.push({ code: "district_has_no_roads", message: `${district.name} has no nearby road network yet; adding access first may make this building easier to integrate.` });
   } else if (!adjacentRoad(state, footprintCells, proposal.site.entrance)) {
     guidance.push({ code: "entrance_not_on_existing_road", message: `The ${proposal.site.entrance} entrance does not face an existing road in ${district.name}.` });
   }
+  suggestions.forEach((suggestion) => guidance.push({
+    code: suggestion.code.toLowerCase(),
+    action: suggestion.action,
+    priority: suggestion.priority,
+    message: suggestion.message,
+    optional: true
+  }));
   return guidance;
+}
+
+function isBlockPerimeterCell(cell, block) {
+  return cell.column === block.minColumn || cell.column === block.maxColumn
+    || cell.row === block.minRow || cell.row === block.maxRow;
 }
 
 export function getEntranceFrontageCells(state, footprintCells, direction) {

@@ -67,7 +67,8 @@ test("Agent API roads render with shared voxel assets and derive reciprocal dire
         }
       }
     }), 201);
-    assert.equal(district.resource.district.recommended_next_action, "build_district_roads");
+    assert.equal(district.resource.district.suggested_next_focus, "connect_to_city");
+    assert.equal(district.resource.district.composition_review.status, "not_started");
 
     await json(app, auth(agent, {
       method: "POST",
@@ -91,8 +92,12 @@ test("Agent API roads render with shared voxel assets and derive reciprocal dire
       url: `/api/v1/cities/${city.id}/site-searches`,
       payload: { district_id: district.resource.id, footprint: "1x1", limit: 100 }
     }), 200);
-    assert.equal(sites.district.recommended_next_action, "build_along_district_roads");
+    assert.equal(sites.district.observations.connected_to_city, true);
+    assert.ok(["continue_composition", "consider_shared_boundary"].includes(sites.district.suggested_next_focus));
+    assert.ok(Array.isArray(sites.district.suggestions));
     assert.ok(sites.data.some((candidate) => candidate.context.adjacentRoad));
+    assert.ok(sites.data.every((candidate) => candidate.context.blockId));
+    assert.ok(sites.data.some((candidate) => candidate.context.blockRole === "interior"));
     assert.ok(sites.data.every((candidate) => !("score" in candidate) && !("score_explanation" in candidate)));
 
     const opposite = { north: "south", east: "west", south: "north", west: "east" };

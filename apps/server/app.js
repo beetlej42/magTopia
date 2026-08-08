@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import { calculateDailyIncome, createEngineContext, executeCityCommand } from "../../src/city/engine.js";
 import { normalizeConstructionProposal } from "../../src/city/contracts.js";
+import { districtBlockProgress } from "../../src/city/district-layout.js";
+import { districtCompositionReview, districtSpatialObservations, districtSuggestions } from "../../src/city/district-guidance.js";
 import { AGENT_VOXEL_ROAD_RENDER_CONTRACT } from "../../src/city/road-topology.js";
 import { findCandidateParcels, previewConnectionBetween, previewConstruction } from "../../src/city/solver.js";
 import { createId, hashRequest } from "./ids.js";
@@ -121,7 +123,6 @@ export async function createApp({ repository, config, logger = false }) {
       name: row.name,
       city_version: Number(row.city_version),
       state,
-      daily_production: calculateDailyIncome(state),
       assets,
       render_contract: {
         mode: "agentcity",
@@ -264,6 +265,8 @@ export async function createApp({ repository, config, logger = false }) {
       footprint: input.footprint,
       districtId,
       bounds: district?.bounds ?? input.bounds ?? null,
+      layout: district?.layout ?? null,
+      blockProgress: district ? districtBlockProgress(state, district) : null,
       limit: Math.min(Number(input.limit ?? 12), 100)
     });
     return {
@@ -803,10 +806,23 @@ function districtResponse(state, district) {
     .filter((building) => building.districtId === district.id || building.program?.attributes?.districtId === district.id)
     .map((building) => building.id));
   const roadCells = cells.filter((cell) => cell.infrastructure === "road" || state.infrastructure[cell.id]?.type === "bridge").length;
+  const blocks = districtBlockProgress(state, district);
+  const observations = districtSpatialObservations(state, district, blocks);
+  const suggestions = districtSuggestions(state, district, observations);
+  const compositionReview = districtCompositionReview(state, district, blocks, observations, suggestions);
+  const suggestedNextFocus = suggestions[0]?.action
+    ?? (compositionReview.status === "ready_for_review" ? "review_composition" : "continue_composition");
   return {
     ...district,
-    counts: { buildings: buildingIds.size, roads: roadCells },
-    recommended_next_action: roadCells === 0 ? "build_district_roads" : buildingIds.size === 0 ? "build_along_district_roads" : "continue_district"
+    counts: { buildings: buildingIds.size, roads: roadCells, blocks: blocks.blockCount, completed_blocks: blocks.completedBlocks },
+    block_progress: blocks,
+    observations,
+    suggestions,
+    composition_review: compositionReview,
+    suggested_next_focus: suggestedNextFocus,
+    // Deprecated compatibility alias. It is intentionally advisory and no
+    // longer represents a server-enforced construction phase.
+    recommended_next_action: suggestedNextFocus
   };
 }
 function numberParam(value, fallback) { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : fallback; }

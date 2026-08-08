@@ -27,7 +27,7 @@ const DISTRICT_PROGRAM = Object.freeze([
     id: "market-court",
     name: "Market Court",
     purpose: "market, guild and workshop quarter",
-    bounds: { minColumn: 27, maxColumn: 38, minRow: 23, maxRow: 31 },
+    bounds: { minColumn: 27, maxColumn: 34, minRow: 23, maxRow: 30 },
     buildings: [
       { name: "Mercury Market Hall", footprint: "3x2", entrance: "east", purpose: "covered market", style: "victorian_gothic", composition: "hall", frontage: "large_bay", prominence: "important" },
       { name: "Guild Courtyard", footprint: "2x2", entrance: "south", purpose: "guild meeting hall", style: "civic_classical", composition: "court", frontage: "institutional", prominence: "ordinary" },
@@ -38,7 +38,7 @@ const DISTRICT_PROGRAM = Object.freeze([
     id: "west-bank",
     name: "West Bank",
     purpose: "riverside residential and civic quarter",
-    bounds: { minColumn: 1, maxColumn: 5, minRow: 20, maxRow: 30 },
+    bounds: { minColumn: 1, maxColumn: 5, minRow: 20, maxRow: 27 },
     buildings: [
       { name: "Bridgekeeper Cottage", footprint: "1x1", entrance: "east", purpose: "residential", style: "victorian_domestic", frontage: "residential", floors: 2 },
       { name: "Starlight Academy", footprint: "3x2", entrance: "south", purpose: "neighbourhood school", style: "civic_classical", composition: "tower", frontage: "institutional", prominence: "landmark" }
