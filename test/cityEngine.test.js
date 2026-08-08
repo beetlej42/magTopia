@@ -3,6 +3,8 @@ import test from "node:test";
 import { createCityState } from "../src/city/state.js";
 import { createEngineContext, executeCityCommand } from "../src/city/engine.js";
 import { confirmBuildingDesign, createBuildingDesignDraft, createBuildingUpgradeDraft } from "../src/city/building-design.js";
+import { blockPerimeterCellIds, districtBlockProgress } from "../src/city/district-layout.js";
+import { districtSpatialObservations, districtSuggestions } from "../src/city/district-guidance.js";
 import { findCandidateParcels, previewConnectionBetween } from "../src/city/solver.js";
 
 function world(columns = 12, rows = 12) {
@@ -64,6 +66,91 @@ test("named districts persist simple intent while site search returns facts with
   assert.ok(candidates.some((candidate) => candidate.context.adjacentRoad));
   assert.ok(candidates.every((candidate) => candidate.context.districtId === "district-lantern"));
   assert.ok(candidates.every((candidate) => !("score" in candidate) && !("scoreExplanation" in candidate)));
+});
+
+test("districts expose soft block-scale guidance without rejecting unusual shapes", () => {
+  const state = createCityState(world(), { resources: { coins: 9999, timber: 9999, stone: 9999 } });
+  const oneBlock = executeCityCommand(state, {
+    type: "define_district",
+    id: "district-small",
+    name: "Small Block",
+    purpose: "compact residential street",
+    bounds: { minColumn: 2, maxColumn: 5, minRow: 2, maxRow: 9 },
+    actor: "agent:test"
+  }, context());
+  assert.equal(oneBlock.accepted, true);
+  assert.equal(oneBlock.district.layout.blockCount, 1);
+  assert.deepEqual(oneBlock.district.layout.blockSize, { columns: 4, rows: 8 });
+  assert.equal(oneBlock.district.layout.withinContract, true);
+  assert.ok(oneBlock.district.layout.softWarnings.some((warning) => warning.code === "DISTRICT_NARROW_SHAPE"));
+
+  const ringState = structuredClone(oneBlock.state);
+  const block = oneBlock.district.layout.blocks[0];
+  blockPerimeterCellIds(block, ringState).forEach((cellId) => {
+    const cell = ringState.cells[cellId];
+    for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+      const outside = ringState.cells[`cell-${cell.column + dx}-${cell.row + dy}`];
+      if (!outside || outside.column < block.minColumn || outside.column > block.maxColumn || outside.row < block.minRow || outside.row > block.maxRow) {
+        if (outside) outside.infrastructure = "road";
+      }
+    }
+  });
+  const progress = districtBlockProgress(ringState, oneBlock.district);
+  assert.equal(progress.blocks[0].perimeter.closed, true);
+  assert.equal(progress.blocks[0].status, "ready_to_fill");
+  const interiorCandidates = findCandidateParcels(ringState, {
+    footprint: "1x1",
+    bounds: oneBlock.district.bounds,
+    districtId: oneBlock.district.id,
+    layout: oneBlock.district.layout,
+    blockProgress: progress,
+    limit: 100
+  });
+  assert.ok(interiorCandidates.length > 0);
+  const interior = interiorCandidates.filter((candidate) => candidate.context.blockRole === "interior");
+  assert.ok(interior.length > 0);
+  assert.ok(interior.every((candidate) => candidate.context.recommendedForBlockFill));
+
+  const tooLarge = executeCityCommand(state, {
+    type: "define_district",
+    id: "district-large",
+    name: "Too Large",
+    purpose: "whole neighborhood",
+    bounds: { minColumn: 1, maxColumn: 11, minRow: 1, maxRow: 9 },
+    actor: "agent:test"
+  }, context());
+  assert.equal(tooLarge.accepted, true);
+  assert.equal(tooLarge.district.layout.withinContract, true);
+  assert.equal(tooLarge.district.layout.withinRecommendation, false);
+  assert.ok(tooLarge.district.layout.softWarnings.some((warning) => warning.code === "DISTRICT_LARGE_SCALE"));
+});
+
+test("district observations surface linear frontage and shared-road opportunities as optional guidance", () => {
+  const state = createCityState(world(), { resources: { coins: 9999, timber: 9999, stone: 9999 } });
+  const defined = executeCityCommand(state, {
+    type: "define_district",
+    id: "district-linear",
+    name: "Linear Row",
+    purpose: "deliberate shopping street",
+    bounds: { minColumn: 2, maxColumn: 7, minRow: 2, maxRow: 7 },
+    actor: "agent:test"
+  }, context());
+  const district = defined.state.districts["district-linear"];
+  for (let column = 2; column <= 7; column += 1) state.cells[`cell-${column}-1`].infrastructure = "road";
+  for (let column = 2; column <= 4; column += 1) {
+    const id = `building-${column}`;
+    const cellId = `cell-${column}-2`;
+    state.cells[cellId].occupancy = id;
+    state.buildings[id] = { id, districtId: district.id, footprintCells: [cellId] };
+  }
+  const progress = districtBlockProgress(state, district);
+  const observations = districtSpatialObservations(state, district, progress);
+  const suggestions = districtSuggestions(state, district, observations);
+  assert.equal(observations.linear_road_risk, true);
+  assert.equal(observations.dominant_frontage_ratio, 1);
+  assert.ok(observations.shared_boundary_opportunities.length > 0);
+  assert.ok(suggestions.some((suggestion) => suggestion.code === "LINEAR_ROAD_RISK"));
+  assert.ok(suggestions.every((suggestion) => suggestion.priority && suggestion.message));
 });
 
 test("production reservation freezes and failure refunds the exact cost", () => {
