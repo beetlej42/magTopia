@@ -161,6 +161,7 @@ export function createOpenApiDocument(baseUrl) {
             purpose: { type: "string", minLength: 1, maxLength: 160 },
             actor_note: { type: "string" },
             bounds: {
+              description: "Spatial work package. The response contains a soft 24–48-cell scale reference and derived block observations; unusual or larger shapes remain legal.",
               type: "object",
               required: ["minColumn", "minRow", "maxColumn", "maxRow"],
               properties: {
@@ -177,7 +178,7 @@ export function createOpenApiDocument(baseUrl) {
           required: ["footprint"],
           properties: {
             footprint: { enum: ["1x1", "1x2", "1x3", "2x1", "2x2", "2x3", "3x1", "3x2", "3x3"] },
-            district_id: { type: "string", description: "Use the persisted bounds of this named development district" },
+            district_id: { type: "string", description: "Use the persisted spatial layout and advisory observations of this named development district" },
             limit: { type: "integer", minimum: 1, maximum: 100 }
           }
         },
@@ -253,8 +254,8 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}/spatial": { get: operation("Query cells and occupants in a bounded grid rectangle", "queries") },
       "/cities/{city_id}/buildings": { get: operation("Find buildings by name, archetype, purpose, or bounding box", "queries") },
       "/cities/{city_id}/districts": {
-        get: operation("List named development districts with road and building progress", "districts"),
-        post: commandOperation("Name and designate a rectangular development district", "districts", { $ref: "#/components/schemas/DistrictCreateRequest" })
+        get: operation("List named development districts with block, road, and building progress", "districts"),
+        post: commandOperation("Name and designate a spatial development district with advisory block guidance", "districts", { $ref: "#/components/schemas/DistrictCreateRequest" })
       },
       "/cities/{city_id}/building-designs": {
         get: operation("List versioned building designs", "building-designs"),
