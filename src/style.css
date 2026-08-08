@@ -671,12 +671,10 @@ button.quiet:hover {
 }
 
 .city-viewer-panel {
-  display: grid;
-  gap: 12px;
+  display: block;
 }
 
-.city-viewer-status,
-.city-viewer-note {
+.city-viewer-status {
   margin: 0;
   color: #7b5b88;
   font-size: 0.78rem;
@@ -692,68 +690,105 @@ button.quiet:hover {
   margin: 0;
 }
 
-.city-viewer-metrics {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-}
-
-.city-viewer-metrics > div {
-  display: grid;
-  gap: 3px;
-  padding: 10px;
-  border: 1px solid #efd7e7;
-  border-radius: 8px;
-  background: rgb(255 253 245 / 72%);
-}
-
-.city-viewer-metrics span,
-.city-viewer-resources span {
-  color: #8a6a91;
-  font-size: 0.68rem;
-  font-weight: 800;
-  text-transform: uppercase;
-}
-
-.city-viewer-metrics strong {
-  color: #5b3676;
-  font-size: 1.12rem;
-}
-
 .city-viewer-resources {
   display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  margin-top: 9px;
-}
-
-.city-viewer-resources span {
-  padding: 5px 8px;
-  border-radius: 99px;
-  background: #f3e6ed;
-}
-
-.city-viewer-actions {
-  display: flex;
   align-items: center;
-  gap: 12px;
-  margin-top: 11px;
+  gap: 0;
+  width: 100%;
+  min-width: 0;
+  white-space: nowrap;
 }
 
-.city-viewer-actions a {
-  color: #77518d;
-  font-size: 0.78rem;
+.city-resource-item {
+  display: inline-flex;
+  flex: 1 1 0;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 2px 12px 2px 0;
+  border: 0;
+  border-right: 1px solid #d9c8a7;
+  border-radius: 0;
+  background: transparent;
+}
+
+.city-resource-item + .city-resource-item {
+  padding-left: 12px;
+}
+
+.city-resource-item:last-child {
+  padding-right: 0;
+  border-right: 0;
+}
+
+.city-resource-icon {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+  color: #be9a57;
+  place-items: center;
+}
+
+.city-resource-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.55;
+}
+
+.city-resource-amount {
+  min-width: 0;
+  overflow: hidden;
+  color: #28394d;
+  font-size: 0.91rem;
   font-weight: 800;
+  line-height: 1;
+  text-overflow: ellipsis;
 }
 
-.city-viewer-note {
-  margin-top: 10px;
+.city-resource-rate {
+  flex: 0 0 auto;
+  color: #3d6b5d;
+  font-size: 0.64rem;
+  line-height: 1;
+}
+
+html[data-magtopia-surface="player"] .panel-heading {
+  display: none;
+}
+
+html[data-magtopia-surface="player"] .city-viewer-panel {
+  gap: 0;
 }
 
 html[data-magic-town-viewer] .control-panel {
-  right: 18px;
-  left: auto;
-  width: min(340px, calc(100vw - 36px));
+  top: max(12px, env(safe-area-inset-top));
+  right: auto;
+  left: max(12px, env(safe-area-inset-left));
+  width: min(310px, calc(100vw - 24px));
+  max-height: none;
+  padding: 10px 12px;
+  border-color: rgb(255 255 255 / 76%);
+  border-radius: 12px;
+  background: rgb(255 249 253 / 88%);
+  box-shadow: 0 12px 34px rgb(113 64 135 / 13%);
+}
+
+html[data-magic-town-viewer="ready"] .panel-heading {
+  margin-bottom: 8px;
+}
+
+html[data-magic-town-viewer="ready"] .panel-heading .eyebrow {
+  font-size: 0.64rem;
+}
+
+html[data-magic-town-viewer="ready"] .panel-heading h1 {
+  font-size: 1rem;
 }
 
 html[data-magic-town-viewer] .control-panel > :not(.panel-heading, .city-viewer-panel) {
