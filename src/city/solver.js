@@ -68,6 +68,10 @@ export function findCandidateParcels(state, criteria = {}) {
 }
 
 export function previewConstruction(state, proposal) {
+  const district = proposal.districtId ? state.districts?.[proposal.districtId] : null;
+  if (district?.status === "cancelled") {
+    return { feasible: false, errors: [`District ${proposal.districtId} is cancelled; choose a new district or omit district_id`] };
+  }
   const lot = state.cells[proposal.site.lotId];
   const occupancy = canOccupyFootprint(state, proposal.site.lotId, proposal.site.footprint);
   if (!occupancy.ok) return { feasible: false, errors: [occupancy.reason] };
