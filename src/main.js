@@ -491,11 +491,7 @@ const cityViewerAuth = document.querySelector("#city-viewer-auth");
 const cityViewerToken = document.querySelector("#city-viewer-token");
 const cityViewerConnect = document.querySelector("#city-viewer-connect");
 const cityViewerSummary = document.querySelector("#city-viewer-summary");
-const cityViewerVersion = document.querySelector("#city-viewer-version");
-const cityViewerBuildings = document.querySelector("#city-viewer-buildings");
-const cityViewerRoads = document.querySelector("#city-viewer-roads");
 const cityViewerResources = document.querySelector("#city-viewer-resources");
-const cityViewerRefresh = document.querySelector("#city-viewer-refresh");
 const sliderInputs = new Map();
 const sliderValues = new Map();
 const sliderFields = new Map();
@@ -963,7 +959,6 @@ function initializeCityViewer() {
     sessionStorage.setItem("mtToken", token);
     loadCityViewerState({ force: true });
   });
-  cityViewerRefresh.addEventListener("click", () => loadCityViewerState({ force: true }));
   window.addEventListener("focus", () => loadCityViewerState());
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) loadCityViewerState();
@@ -1018,25 +1013,49 @@ async function loadCityViewerState({ force = false } = {}) {
 
 function renderCityViewerSummary(payload) {
   const state = payload.state;
-  const buildingCount = Object.keys(state.buildings ?? {}).length;
-  const roadCount = Object.values(state.cells ?? {}).filter((cell) => cell.infrastructure === "road").length;
-  panelTitle.textContent = payload.name;
-  cityViewerVersion.textContent = String(payload.city_version);
-  cityViewerBuildings.textContent = String(buildingCount);
-  cityViewerRoads.textContent = String(roadCount);
+  const dailyProduction = payload.daily_production ?? {};
+  const resourceLabels = {
+    coins: "Coins",
+    timber: "Timber",
+    stone: "Stone"
+  };
   cityViewerResources.replaceChildren(...Object.entries(state.resources ?? {}).map(([name, value]) => {
-    const item = document.createElement("span");
-    item.textContent = `${name} ${value}`;
+    const item = document.createElement("div");
+    item.className = "city-resource-item";
+
+    const heading = document.createElement("div");
+    heading.className = "city-resource-heading";
+
+    const label = document.createElement("span");
+    label.textContent = resourceLabels[name] ?? name;
+
+    const amount = document.createElement("strong");
+    const numericValue = Number(value);
+    amount.textContent = Number.isFinite(numericValue)
+      ? numericValue.toLocaleString()
+      : String(value);
+
+    heading.append(label, amount);
+
+    const rate = document.createElement("small");
+    const numericRate = Number(dailyProduction[name] ?? 0);
+    const ratePrefix = numericRate >= 0 ? "+" : "";
+    rate.textContent = Number.isFinite(numericRate)
+      ? `${ratePrefix}${numericRate.toLocaleString()} / day`
+      : "— / day";
+
+    item.append(heading, rate);
     return item;
   }));
   cityViewerSummary.hidden = false;
   cityViewerAuth.hidden = true;
-  cityViewerStatus.textContent = `已同步 · 城市时间 ${state.elapsedHours ?? 0} 小时 · 每 5 秒自动检查`;
+  cityViewerStatus.hidden = true;
 }
 
 function showCityViewerAuth(message) {
   document.documentElement.dataset.magicTownViewer = "auth";
   cityViewerStatus.textContent = message;
+  cityViewerStatus.hidden = false;
   cityViewerAuth.hidden = false;
   cityViewerSummary.hidden = true;
   cityViewerToken.value = cityViewerContext?.token ?? "";
