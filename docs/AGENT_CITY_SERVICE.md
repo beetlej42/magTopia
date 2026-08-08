@@ -284,13 +284,13 @@ GET /api/v1/cities/{city_id}/buildings/{building_id}
 
 ### 6.4 查询候选地块
 
-Agent 开始一组新建设前，先创建一个只有名字、用途和矩形范围的轻量发展片区：
+Agent 开始一组新建设前，先创建一个只有名字、用途和空间范围的轻量发展片区。服务端会把范围拆成 block-sized 分析单元，并返回软性的尺度参考：通常 24--48 个可建设格、短边 5--6 格、长边 6--8 格，常见是 1--2 个 block。`4x8` 仍然可以用于狭长住宅街，`5x6`、`6x6`、`6x8` 也都合理；这些不是限制，较大或特殊形状的范围仍然合法：
 
 ```http
 POST /api/v1/cities/{city_id}/districts
 ```
 
-片区不是用途禁令；它只是让 Agent 在后续轮次保持同一个空间意图。正常循环是“划片 → 用现有 `/connections` 先修路 → 沿片区道路选址建房”。
+片区不是用途禁令；它只是让 Agent 在后续轮次保持同一个空间意图。道路属于独立的城市道路网络，通常位于 block 外围；一条主路可以同时作为两侧 block 的共享边界。返回中的 `layout`、`block_progress`、`observations`、`suggestions` 和 `composition_review` 都是规划反馈，不会因为尺寸、道路形状或未闭合而拒绝合法动作。正常思路是“划片 → 确保接入城市 → 按空间意图组织道路和建筑”，不要求每个 block 先完成一圈道路。
 
 ```http
 POST /api/v1/cities/{city_id}/site-searches
@@ -304,7 +304,7 @@ POST /api/v1/cities/{city_id}/site-searches
 }
 ```
 
-这是现有 `findCandidateParcels` 的服务化版本。服务只筛选合法占地并使用片区的持久化范围，不再计算或返回地块分数。每个候选返回客观事实，包括合法入口方向、精确临路方向、最近道路距离和地形摘要，由 Agent 自己做组合与取舍。
+这是现有 `findCandidateParcels` 的服务化版本。服务只筛选合法占地并使用片区的持久化范围，不计算或返回地块分数。每个候选返回客观事实，包括合法入口方向、精确临路方向、最近道路距离、地形摘要和所在 block 的 `blockId` / `blockRole`，以及边界道路覆盖和 `recommendedForBlockFill` 规划参考，由 Agent 自己做组合与取舍。所有这些字段都是提示，不是施工前置条件。
 
 ### 6.5 资产搜索与生产决策
 
