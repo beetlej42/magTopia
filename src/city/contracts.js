@@ -1,3 +1,5 @@
+import { normalizeDistrictLayout } from "./district-layout.js";
+
 const FOOTPRINTS = new Set(Array.from({ length: 6 }, (_, columnIndex) => (
   Array.from({ length: 6 }, (_, rowIndex) => `${columnIndex + 1}x${rowIndex + 1}`)
 )).flat());
@@ -87,6 +89,7 @@ export function normalizeDistrictDefinition(input = {}, context = {}) {
     name,
     purpose,
     bounds,
+    layout: normalizeDistrictLayout(bounds),
     actor: input.actor ?? "agent:unknown"
   };
 }
