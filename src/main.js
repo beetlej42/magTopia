@@ -1014,37 +1014,51 @@ async function loadCityViewerState({ force = false } = {}) {
 function renderCityViewerSummary(payload) {
   const state = payload.state;
   const dailyProduction = payload.daily_production ?? {};
-  const resourceLabels = {
-    coins: "Coins",
-    timber: "Timber",
-    stone: "Stone"
+  const resourceIcons = {
+    coins: {
+      label: "金币",
+      svg: `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.25"></circle><path d="M9.25 8.5h5.5M9.25 12h5.5M9.25 15.5h5.5"></path></svg>`
+    },
+    timber: {
+      label: "木材",
+      svg: `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 5.5h10v13H7z"></path><path d="M7 9h10M7 14h10"></path></svg>`
+    },
+    stone: {
+      label: "石料",
+      svg: `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m5 15 2.2-7.2L12 5l5.3 2.8L19 15l-3.2 4H8.2z"></path><path d="m7.2 7.8 4.8 4.1 5.3-4.1M12 11.9V19"></path></svg>`
+    }
   };
   cityViewerResources.replaceChildren(...Object.entries(state.resources ?? {}).map(([name, value]) => {
     const item = document.createElement("div");
     item.className = "city-resource-item";
 
-    const heading = document.createElement("div");
-    heading.className = "city-resource-heading";
-
-    const label = document.createElement("span");
-    label.textContent = resourceLabels[name] ?? name;
+    const resource = resourceIcons[name] ?? {
+      label: "资源",
+      svg: `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.25"></circle><path d="M8 12h8"></path></svg>`
+    };
+    const icon = document.createElement("span");
+    icon.className = `city-resource-icon city-resource-icon-${name}`;
+    icon.setAttribute("role", "img");
+    icon.setAttribute("aria-label", resource.label);
+    icon.innerHTML = resource.svg;
 
     const amount = document.createElement("strong");
+    amount.className = "city-resource-amount";
     const numericValue = Number(value);
     amount.textContent = Number.isFinite(numericValue)
       ? numericValue.toLocaleString()
       : String(value);
 
-    heading.append(label, amount);
-
     const rate = document.createElement("small");
+    rate.className = "city-resource-rate";
     const numericRate = Number(dailyProduction[name] ?? 0);
     const ratePrefix = numericRate >= 0 ? "+" : "";
     rate.textContent = Number.isFinite(numericRate)
-      ? `${ratePrefix}${numericRate.toLocaleString()} / day`
-      : "— / day";
+      ? `${ratePrefix}${numericRate.toLocaleString()}/日`
+      : "—/日";
 
-    item.append(heading, rate);
+    item.title = `${resource.label}：${amount.textContent}，每日增长 ${rate.textContent}`;
+    item.append(icon, amount, rate);
     return item;
   }));
   cityViewerSummary.hidden = false;
