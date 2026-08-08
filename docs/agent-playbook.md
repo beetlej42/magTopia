@@ -14,7 +14,7 @@ Never expose the token in logs, prose, asset prompts, or another URL.
 ## Recommended decision loop
 
 1. `GET /api/v1/cities/{city_id}/snapshot?view=agent`.
-2. Continue a suitable named development district. If none exists, designate one small work package with a short name, purpose, and rectangular bounds through `POST /districts`.
+2. Continue a suitable named development district whose `status` is `active`. If none exists, designate one small work package with a short name, purpose, and rectangular bounds through `POST /districts`.
 3. Query that district with `/spatial`. If it has no access, use connection previews and `/connections` to connect it to the city. Then shape the local streets according to the district intention; a complete perimeter is useful feedback, not a prerequisite.
 4. Search `/buildings` and `/assets`, then call `/site-searches` with `district_id`. Candidate results contain objective terrain, road-distance, exact road-frontage, and block-role facts; the server does not score or rank them.
 5. Choose a site whose intended entrance appears in `context.roadFrontageDirections`. Use `context.blockRole`, boundary coverage, and frontage facts to compose the area, then preview and submit construction with the same `district_id`.
@@ -47,6 +47,21 @@ The snapshot and `GET /districts` report the derived `layout`, `block_progress`,
 - `continue_composition`: continue according to the Agent's own spatial intention.
 
 The Agent may accept, ignore, or intentionally override any suggestion. If it overrides a suggestion, record the spatial intention in `actor_note`; the server does not veto a legal choice because it is unusual.
+
+If the current spatial plan is no longer useful, release it with:
+
+```http
+POST /api/v1/cities/{city_id}/districts/{district_id}/cancel
+```
+
+```json
+{
+  "expected_city_version": 12,
+  "reason": "move the next growth step to the river crossing"
+}
+```
+
+Cancellation is a planning-state change, not demolition. The district remains visible in history with `status: "cancelled"`; existing buildings, roads, bridges, resources, and events are preserved. Do not use a cancelled district for new site searches or construction orders. Either define a new district or omit `district_id` when making an intentionally ungrouped legal construction.
 
 Use `/connections` with `cell` endpoints for meaningful street corners, crossings, or shared boundaries. The Agent chooses the endpoints and the solver chooses the exact path. Block perimeter cells are still legal building sites; `context.blockRole`, `context.boundarySidesCovered`, `context.boundaryCoverage`, and `context.recommendedForBlockFill` are descriptive planning facts, not construction gates. Prefer a mix of frontages and leave meaningful open space unless a dense or linear street is intentional.
 
