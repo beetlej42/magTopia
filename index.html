@@ -15,7 +15,7 @@
       </div>
 
       <section id="city-viewer-panel" class="city-viewer-panel" hidden>
-        <p id="city-viewer-status" class="city-viewer-status" role="status">正在连接城市存档…</p>
+        <p id="city-viewer-status" class="city-viewer-status" role="status" hidden>正在连接城市存档…</p>
         <div id="city-viewer-auth" class="city-viewer-auth" hidden>
           <label class="field">
             <span>只读访问凭证</span>
@@ -24,17 +24,7 @@
           <button id="city-viewer-connect" type="button">打开城市</button>
         </div>
         <div id="city-viewer-summary" hidden>
-          <div class="city-viewer-metrics">
-            <div><span>版本</span><strong id="city-viewer-version">0</strong></div>
-            <div><span>建筑</span><strong id="city-viewer-buildings">0</strong></div>
-            <div><span>道路</span><strong id="city-viewer-roads">0</strong></div>
-          </div>
-          <div class="city-viewer-resources" id="city-viewer-resources"></div>
-          <div class="city-viewer-actions">
-            <button id="city-viewer-refresh" type="button">立即刷新</button>
-            <a href="/dashboard">状态与订单</a>
-          </div>
-          <p class="city-viewer-note">正交视角 · 世界曲率 0 · 深度视差建筑</p>
+          <div class="city-viewer-resources" id="city-viewer-resources" aria-label="City resources"></div>
         </div>
       </section>
 
