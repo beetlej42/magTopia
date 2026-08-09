@@ -9,6 +9,7 @@ import {
   MAGIC_LONDON_WORLD_PROMPT_VERSION,
   composeHunyuanDayOffPrompt
 } from "./hunyuan_asset_prompt.mjs";
+import { execPythonFile, resolvePythonExecutable } from "./python-runtime.mjs";
 
 const execFileAsync = promisify(execFile);
 const workspace = process.cwd();
@@ -17,13 +18,13 @@ const submitUrl = "https://tokenhub.tencentmaas.com/v1/api/image/submit";
 const queryUrl = "https://tokenhub.tencentmaas.com/v1/api/image/query";
 const pollIntervalMs = 5_000;
 const timeoutMs = 10 * 60_000;
-const pythonPath = path.resolve(".venv/bin/python");
+const pythonPath = await resolvePythonExecutable({ workspace });
 const guideScript = path.resolve("scripts/generate_parcel_guide.py");
 const shadowRemovalScript = path.resolve("scripts/remove_asset_shadow.swift");
 const lightmapScript = path.resolve("scripts/derive_paired_day_lightmap.py");
 const conceptPath = path.resolve(
   process.argv[2]
-    ?? "/Users/jialinrui/Pictures/Photos Library.photoslibrary/resources/derivatives/0/0597C91A-F0D9-46D2-AA57-670812ED11F3_1_105_c.jpeg"
+    ?? "docs/reference-images/isometric-magic-london-city.jpg"
 );
 const experimentId = `hunyuan-concept-batch-${new Date().toISOString().replaceAll(/[:.]/g, "-")}`;
 const outputDir = path.resolve(
@@ -67,8 +68,7 @@ for (const building of buildings) {
   const buildingDir = path.join(outputDir, building.id);
   const guidePath = path.join(buildingDir, `guide-${building.cells}.png`);
   await fs.mkdir(buildingDir, { recursive: true });
-  await execFileAsync(pythonPath, [
-    guideScript,
+  await execPythonFile(pythonPath, guideScript, [
     "--dimensions", building.dimensions,
     "--out", guidePath,
     "--entrance", "south",
@@ -161,8 +161,7 @@ async function generateDayOnAndLightmap(building) {
   const lightSupportFile = "light-support.png";
   const stableDayOnFile = "day-on-stable-composite.png";
   const lightReportFile = "light-report.json";
-  await execFileAsync(pythonPath, [
-    lightmapScript,
+  await execPythonFile(pythonPath, lightmapScript, [
     "--off", dayOffCorrected,
     "--on", path.join(building.buildingDir, files.correctedFile),
     "--out", path.join(building.buildingDir, lightContributionFile),
