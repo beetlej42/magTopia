@@ -140,9 +140,9 @@ export function districtCompositionReview(state, district, progress, observation
   };
 }
 
-function districtBuildings(state, district) {
+export function districtBuildings(state, district) {
   const bounds = district.bounds;
-  return Object.values(state.buildings).filter((building) => (
+  return Object.values(state.buildings ?? {}).filter((building) => (
     building.districtId === district.id
       || building.program?.attributes?.districtId === district.id
       || (building.footprintCells ?? []).some((cellId) => {
