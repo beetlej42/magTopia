@@ -263,7 +263,7 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}/spatial": { get: operation("Query cells and occupants in a bounded grid rectangle", "queries") },
       "/cities/{city_id}/buildings": { get: operation("Find buildings by name, archetype, purpose, or bounding box", "queries") },
       "/cities/{city_id}/districts": {
-        get: operation("List named development districts with block, road, and building progress", "districts"),
+        get: operation("List named development districts with block, road, and spatially computed building progress", "districts"),
         post: commandOperation("Name and designate a spatial development district with advisory block guidance", "districts", { $ref: "#/components/schemas/DistrictCreateRequest" })
       },
       "/cities/{city_id}/districts/{district_id}/cancel": {

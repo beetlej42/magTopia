@@ -36,7 +36,7 @@ A development district is a spatial work package, not an entire neighborhood. Th
 }
 ```
 
-The snapshot and `GET /districts` report the derived `layout`, `block_progress`, `observations`, `suggestions`, and `composition_review`. Use them as spatial feedback, not as a mandatory workflow:
+The snapshot and `GET /districts` report the derived `layout`, `block_progress`, `observations`, `suggestions`, and `composition_review`. Building counts and `building_ids` are computed from both explicit district association and building footprints inside the district bounds, so a district defined after construction still sees existing buildings. Use these fields as spatial feedback, not as a mandatory workflow:
 
 - `connect_to_city`: establish access when nearby roads do not reach the city network;
 - `extend_secondary_street`: consider a side street, corner, loop, or anchor when a single linear frontage is emerging;
@@ -61,7 +61,7 @@ POST /api/v1/cities/{city_id}/districts/{district_id}/cancel
 }
 ```
 
-Cancellation is a planning-state change, not demolition. The district remains visible in history with `status: "cancelled"`; existing buildings, roads, bridges, resources, and events are preserved. Do not use a cancelled district for new site searches or construction orders. Either define a new district or omit `district_id` when making an intentionally ungrouped legal construction.
+Cancellation is a planning-state change, not demolition. The district remains visible to the Agent in history with `status: "cancelled"`, but is removed from the player city viewer's selectable district overlays; existing buildings, roads, bridges, resources, and events are preserved. Do not use a cancelled district for new site searches or construction orders. Either define a new district or omit `district_id` when making an intentionally ungrouped legal construction.
 
 Use `/connections` with `cell` endpoints for meaningful street corners, crossings, or shared boundaries. The Agent chooses the endpoints and the solver chooses the exact path. Block perimeter cells are still legal building sites; `context.blockRole`, `context.boundarySidesCovered`, `context.boundaryCoverage`, and `context.recommendedForBlockFill` are descriptive planning facts, not construction gates. Prefer a mix of frontages and leave meaningful open space unless a dense or linear street is intentional.
 

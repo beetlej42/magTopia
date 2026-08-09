@@ -4,7 +4,7 @@ import { createCityState } from "../src/city/state.js";
 import { createEngineContext, executeCityCommand } from "../src/city/engine.js";
 import { confirmBuildingDesign, createBuildingDesignDraft, createBuildingUpgradeDraft } from "../src/city/building-design.js";
 import { blockPerimeterCellIds, districtBlockProgress } from "../src/city/district-layout.js";
-import { districtSpatialObservations, districtSuggestions } from "../src/city/district-guidance.js";
+import { districtBuildings, districtSpatialObservations, districtSuggestions } from "../src/city/district-guidance.js";
 import { findCandidateParcels, previewConnectionBetween, previewConstruction } from "../src/city/solver.js";
 
 function world(columns = 12, rows = 12) {
@@ -151,6 +151,29 @@ test("district observations surface linear frontage and shared-road opportunitie
   assert.ok(observations.shared_boundary_opportunities.length > 0);
   assert.ok(suggestions.some((suggestion) => suggestion.code === "LINEAR_ROAD_RISK"));
   assert.ok(suggestions.every((suggestion) => suggestion.priority && suggestion.message));
+});
+
+test("district building membership includes existing footprints inside new bounds", () => {
+  const state = createCityState(world(), { resources: { coins: 9999, timber: 9999, stone: 9999 } });
+  state.cells["cell-4-4"].occupancy = "building-in-range";
+  state.buildings["building-in-range"] = {
+    id: "building-in-range",
+    footprintCells: ["cell-4-4"],
+    program: { name: "Existing Cottage", purpose: "residential" }
+  };
+  state.cells["cell-9-9"].occupancy = "building-outside";
+  state.buildings["building-outside"] = {
+    id: "building-outside",
+    districtId: "district-other",
+    footprintCells: ["cell-9-9"],
+    program: { name: "Explicitly Assigned Building", purpose: "public" }
+  };
+
+  const buildings = districtBuildings(state, {
+    id: "district-new",
+    bounds: { minColumn: 2, maxColumn: 6, minRow: 2, maxRow: 6 }
+  });
+  assert.deepEqual(buildings.map((building) => building.id), ["building-in-range"]);
 });
 
 test("cancelling a district releases planning context without deleting city work", () => {

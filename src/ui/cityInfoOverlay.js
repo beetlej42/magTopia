@@ -252,7 +252,9 @@ function createContext(root) {
     const building = state.buildings?.[placement.buildingId] ?? null;
     return { placement, object, building };
   }).filter((entry) => entry.object || entry.building);
-  const districts = Object.values(state.districts ?? {});
+  // Cancellation preserves the district in the agent-facing history, but a
+  // released planning context must not remain selectable in the city view.
+  const districts = Object.values(state.districts ?? {}).filter((district) => district.status !== "cancelled");
   const gridCells = Array.isArray(grid.cells)
     ? grid.cells
     : Object.values(state.cells ?? {});
@@ -262,14 +264,20 @@ function createContext(root) {
       state.cells?.[cell.id] ?? cell
     ])
   );
-  const buildingCountByDistrict = new Map();
+  const buildingIdsByDistrict = new Map(districts.map((district) => [district.id, new Set()]));
   Object.values(state.buildings ?? {}).forEach((building) => {
-    if (!building?.districtId) return;
-    buildingCountByDistrict.set(
-      building.districtId,
-      (buildingCountByDistrict.get(building.districtId) ?? 0) + 1
-    );
+    districts.forEach((district) => {
+      const explicitlyAssigned = building.districtId === district.id
+        || building.program?.attributes?.districtId === district.id;
+      const insideBounds = (building.footprintCells ?? []).some((cellId) => (
+        isCellWithinBlock(state.cells?.[cellId] ?? {}, district.bounds)
+      ));
+      if (explicitlyAssigned || insideBounds) buildingIdsByDistrict.get(district.id).add(building.id);
+    });
   });
+  const buildingCountByDistrict = new Map(
+    [...buildingIdsByDistrict.entries()].map(([districtId, buildingIds]) => [districtId, buildingIds.size])
+  );
   const radius = Number(root.userData?.surfaceNavigation?.radius ?? 220);
   return {
     state,
@@ -342,6 +350,7 @@ function resolveSelection(context, camera, viewMode) {
 
 export function selectCityInfoBlock(context, cell, camera, surface = {}) {
   const candidates = context.districts
+    .filter((district) => district.status !== "cancelled")
     .map((district) => {
       const projection = projectToScreen(getBlockAnchor(district, context), camera, { width: 2, height: 2 });
       return {

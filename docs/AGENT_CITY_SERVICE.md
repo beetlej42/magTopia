@@ -292,7 +292,7 @@ Agent 开始一组新建设前，先创建一个只有名字、用途和空间�
 POST /api/v1/cities/{city_id}/districts
 ```
 
-片区不是用途禁令；它只是让 Agent 在后续轮次保持同一个空间意图。道路属于独立的城市道路网络，通常位于 block 外围；一条主路可以同时作为两侧 block 的共享边界。返回中的 `layout`、`block_progress`、`observations`、`suggestions` 和 `composition_review` 都是规划反馈，不会因为尺寸、道路形状或未闭合而拒绝合法动作。正常思路是“划片 → 确保接入城市 → 按空间意图组织道路和建筑”，不要求每个 block 先完成一圈道路。
+片区不是用途禁令；它只是让 Agent 在后续轮次保持同一个空间意图。道路属于独立的城市道路网络，通常位于 block 外围；一条主路可以同时作为两侧 block 的共享边界。街区返回的建筑统计会在读取时把范围内已有建筑纳入，不需要回写或改绑建筑的 `district_id`；因此先建建筑、后划街区也能得到正确统计。返回中的 `layout`、`block_progress`、`observations`、`suggestions` 和 `composition_review` 都是规划反馈，不会因为尺寸、道路形状或未闭合而拒绝合法动作。正常思路是“划片 → 确保接入城市 → 按空间意图组织道路和建筑”，不要求每个 block 先完成一圈道路。
 
 如果当前规划方向不再合适，可以取消规划关系而不破坏城市内容：
 
@@ -307,7 +307,7 @@ POST /api/v1/cities/{city_id}/districts/{district_id}/cancel
 }
 ```
 
-取消后街区仍会保留在历史列表中，但 `status` 变为 `cancelled`。已经建好的建筑、道路、桥梁、资源和事件全部保留；该街区不再提供新的规划建议，也不能继续用于 site-search 或 construction order。需要继续发展时创建新的街区，或者在明确不属于任何规划街区时省略 `district_id`。
+取消后街区仍会保留在 Agent 的历史列表中，但 `status` 变为 `cancelled`；它不会再出现在玩家城市可视化的可选街区中。已经建好的建筑、道路、桥梁、资源和事件全部保留；该街区不再提供新的规划建议，也不能继续用于 site-search 或 construction order。需要继续发展时创建新的街区，或者在明确不属于任何规划街区时省略 `district_id`。
 
 ```http
 POST /api/v1/cities/{city_id}/site-searches

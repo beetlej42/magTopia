@@ -5,7 +5,7 @@ import Fastify from "fastify";
 import { calculateDailyIncome, createEngineContext, executeCityCommand } from "../../src/city/engine.js";
 import { normalizeConstructionProposal } from "../../src/city/contracts.js";
 import { districtBlockProgress } from "../../src/city/district-layout.js";
-import { districtCompositionReview, districtSpatialObservations, districtSuggestions } from "../../src/city/district-guidance.js";
+import { districtBuildings, districtCompositionReview, districtSpatialObservations, districtSuggestions } from "../../src/city/district-guidance.js";
 import { AGENT_VOXEL_ROAD_RENDER_CONTRACT } from "../../src/city/road-topology.js";
 import { findCandidateParcels, previewConnectionBetween, previewConstruction } from "../../src/city/solver.js";
 import { createId, hashRequest } from "./ids.js";
@@ -838,9 +838,10 @@ function districtResponse(state, district) {
     cell.column >= district.bounds.minColumn && cell.column <= district.bounds.maxColumn
     && cell.row >= district.bounds.minRow && cell.row <= district.bounds.maxRow
   ));
-  const buildingIds = new Set(Object.values(state.buildings)
-    .filter((building) => building.districtId === district.id || building.program?.attributes?.districtId === district.id)
-    .map((building) => building.id));
+  // District membership is spatial and intentionally computed at read time.
+  // This lets a newly defined district include existing buildings without
+  // mutating those buildings or creating a stale one-way assignment.
+  const buildingIds = new Set(districtBuildings(state, district).map((building) => building.id));
   const roadCells = cells.filter((cell) => cell.infrastructure === "road" || state.infrastructure[cell.id]?.type === "bridge").length;
   const blocks = districtBlockProgress(state, district);
   const observations = districtSpatialObservations(state, district, blocks);
@@ -860,6 +861,7 @@ function districtResponse(state, district) {
   return {
     ...district,
     status,
+    building_ids: [...buildingIds],
     counts: { buildings: buildingIds.size, roads: roadCells, blocks: blocks.blockCount, completed_blocks: blocks.completedBlocks },
     block_progress: blocks,
     observations,

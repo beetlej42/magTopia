@@ -48,6 +48,25 @@ test("far city info keeps a district that contains the camera focus", () => {
   assert.equal(selected?.id, "west-bank");
 });
 
+test("cancelled districts are not selectable in the city view", () => {
+  const selected = selectCityInfoBlock(
+    {
+      grid: GRID,
+      districts: [{
+        id: "old-plan",
+        status: "cancelled",
+        bounds: { minColumn: 27, maxColumn: 38, minRow: 23, maxRow: 31 }
+      }],
+      radius: 220
+    },
+    { column: 32, row: 27 },
+    createSurfaceCamera({ flatX: 30, flatZ: -8, scale: 1.9 }),
+    { flatX: 30, flatZ: -8 }
+  );
+
+  assert.equal(selected, null);
+});
+
 test("district uplift batches all parcel tops and sides into two draw groups", () => {
   const tiles = [createTile(0), createTile(2)];
   const geometry = createBatchedParcelTileGeometry(tiles);
