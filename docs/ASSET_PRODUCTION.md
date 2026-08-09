@@ -16,8 +16,8 @@ const candidates = MAGTOPIA.findAssetCandidates({
 ## 图集生产命令
 
 ```bash
-.venv/bin/python scripts/slice_asset_sheet.py --input <sheet.png> --out-dir public/generated/<pack> --guide public/generated/<pack>/guide-4x4x4.json --columns <n> --rows <n> --assets '<json>'
-.venv/bin/python scripts/run_depth_anything_batch.py public/generated/<pack>/*/rgb.png --linear-guide-fit
+node scripts/python-runtime.mjs scripts/slice_asset_sheet.py --input <sheet.png> --out-dir public/generated/<pack> --guide public/generated/<pack>/guide-4x4x4.json --columns <n> --rows <n> --assets '<json>'
+node scripts/python-runtime.mjs scripts/run_depth_anything_batch.py public/generated/<pack>/*/rgb.png --linear-guide-fit
 ```
 
 `--guide` 会把统一的三点底座 UV 契约写入每个 `asset.json`。新资产应直接继承该契约；只有早期图像模型改动过底座轮廓的资产才允许记录一次性的离线校准锚点。
