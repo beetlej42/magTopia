@@ -79,6 +79,7 @@ import {
 import { createCityState } from "./city/state.js";
 import { createCityWorkbench } from "./city/workbench.js";
 import { createStarterCityWorkbench } from "./city/scenarios.js";
+import { createVoxelSky } from "./city/voxel-sky.js";
 import { findAssetCandidates, getAssetRegistry, resolveAsset } from "./city/assets.js";
 import { getModelOrientationPreviewUrls } from "./generators/modelOrientation.js";
 import { createAgentAcceptanceCity } from "./generators/agentAcceptanceCity.js";
@@ -102,6 +103,19 @@ scene.background = new THREE.Color("#fff3f8");
 
 const startupParams = new URLSearchParams(window.location.search);
 const startupMode = startupParams.get("mode");
+const startupWorldTimeValue = Number(startupParams.get("worldTime"));
+const startupWorldTime = startupParams.has("worldTime") && Number.isFinite(startupWorldTimeValue)
+  ? ((startupWorldTimeValue % 1) + 1) % 1
+  : null;
+const startupTimeScaleValue = Number(startupParams.get("timeScale") ?? 1);
+const startupTimeScale = Number.isFinite(startupTimeScaleValue) && startupTimeScaleValue >= 0
+  ? startupTimeScaleValue
+  : 1;
+const startupDayLengthValue = Number(startupParams.get("dayLength") ?? 180);
+const startupDayLength = Number.isFinite(startupDayLengthValue)
+  ? THREE.MathUtils.clamp(startupDayLengthValue, 24, 3600)
+  : 180;
+const startupClockPaused = startupParams.get("clock") === "0" || startupTimeScale === 0;
 const startupPath = window.location.pathname;
 const isCityViewerPath = /^\/cities\/[^/]+\/?$/.test(startupPath);
 const isAcceptancePath = /^\/acceptance(?:\/|$)/.test(startupPath);
@@ -536,7 +550,28 @@ const configsByMode = {
   }),
   parcel: normalizeParcelBlueprintConfig(PARCEL_BLUEPRINT_PRESETS.shop)
 };
+if (startupWorldTime !== null) {
+  Object.keys(configsByMode).forEach((mode) => {
+    if (Object.hasOwn(configsByMode[mode], "sunTime")) {
+      configsByMode[mode] = { ...configsByMode[mode], sunTime: startupWorldTime };
+    }
+  });
+}
 let currentConfig = configsByMode[currentMode];
+const voxelSky = createVoxelSky({
+  mobile: mobilePerformanceProfile,
+  seed: startupParams.get("skySeed") ?? startupParams.get("seed") ?? "magtopia-sky-001",
+  time: startupWorldTime ?? currentConfig.sunTime ?? 0.58
+});
+scene.add(voxelSky);
+const skyClock = {
+  time: startupWorldTime ?? currentConfig.sunTime ?? 0.58,
+  paused: startupClockPaused,
+  dayLengthSeconds: startupDayLength,
+  timeScale: startupTimeScale || 1,
+  motionElapsed: 0,
+  lastLightingUpdateAt: -Infinity
+};
 const massingExplorer = createVoxelMassingExplorer({
   root: massingExplorerRoot,
   onApply: (config) => rebuildActive(config),
@@ -644,6 +679,8 @@ async function rebuildActive(config) {
   cityInfoOverlay.setSceneRoot(frontendSurface === "player" && currentMode === "agentcity" ? activeObject : null);
   warmupActiveVoxelLod();
   activeAnimationObjects = collectAnimationObjects(activeObject);
+  skyClock.time = Number.isFinite(Number(currentConfig.sunTime)) ? Number(currentConfig.sunTime) : skyClock.time;
+  voxelSky.visible = isVoxelSkyMode();
   applyWorldLighting(currentConfig.sunTime);
   applyDistrictBokeh(currentConfig.bokehStrength ?? 1, currentConfig.bokehBlur ?? 1);
   configureCameraForViewport();
@@ -736,8 +773,8 @@ function addLights(targetScene) {
   return { ambient, key, rim };
 }
 
-function applyWorldLighting(sunTime = 0.52) {
-  const style = currentMode === "voxel" || currentMode === "massing" || currentMode === "styles" || currentMode === "district" || currentMode === "agentcity"
+function applyWorldLighting(sunTime = 0.52, updateActiveObject = true) {
+  const style = isVoxelSkyMode()
     ? voxelDaylightStyle(sunTime)
     : getDaylightStyle(sunTime);
   scene.background.copy(style.skyColor);
@@ -750,7 +787,8 @@ function applyWorldLighting(sunTime = 0.52) {
   worldLights.key.position.copy(style.sunPosition);
   worldLights.rim.color.copy(style.rgbTint);
   worldLights.rim.intensity = style.rimIntensity;
-  activeObject?.userData.updateDaylight?.(style);
+  if (updateActiveObject) activeObject?.userData.updateDaylight?.(style);
+  return style;
 }
 
 function rebuildPresetOptions() {
@@ -805,6 +843,8 @@ function buildSliderUi() {
       if (definition.key === "sunTime") {
         currentConfig = { ...currentConfig, sunTime: Number(input.value) };
         configsByMode[currentMode] = currentConfig;
+        skyClock.time = currentConfig.sunTime;
+        skyClock.paused = true;
         if (activeObject?.userData.config) activeObject.userData.config.sunTime = currentConfig.sunTime;
         document.documentElement.dataset.magicTownConfig = JSON.stringify(currentConfig);
         applyWorldLighting(currentConfig.sunTime);
@@ -1276,6 +1316,27 @@ function exposeAgentApi() {
       setMode("agentcity", { ...configsByMode.agentcity, ...config });
       return this.getParams();
     },
+    setWorldTime(time, options = {}) {
+      const numeric = Number(time);
+      if (!Number.isFinite(numeric)) throw new Error("World time must be a finite number between 0 and 1");
+      skyClock.time = ((numeric % 1) + 1) % 1;
+      skyClock.paused = options.paused ?? true;
+      applySkyTimeToWorld(true);
+      return getSkyClockState();
+    },
+    setTimeFlow(options = {}) {
+      if (Object.hasOwn(options, "paused")) skyClock.paused = Boolean(options.paused);
+      if (Number.isFinite(Number(options.dayLengthSeconds))) {
+        skyClock.dayLengthSeconds = THREE.MathUtils.clamp(Number(options.dayLengthSeconds), 24, 3600);
+      }
+      if (Number.isFinite(Number(options.timeScale)) && Number(options.timeScale) > 0) {
+        skyClock.timeScale = Number(options.timeScale);
+      }
+      return getSkyClockState();
+    },
+    getSkyClock() {
+      return getSkyClockState();
+    },
     getAgentAcceptanceReport() {
       return structuredClone(activeObject?.userData?.acceptanceReport ?? null);
     },
@@ -1466,6 +1527,7 @@ function animate() {
     renderQuality.peakFrameMs = Math.max(renderQuality.peakFrameMs, frameMs);
   }
 
+  updateSkyClock(delta, elapsed);
   updatePlayCamera(delta);
 
   if (activeObject) {
@@ -1505,6 +1567,13 @@ function animate() {
     configureDistrictSurfaceCamera();
   }
   camera.updateMatrixWorld();
+  if (voxelSky.visible) {
+    voxelSky.userData.update({
+      time: skyClock.time,
+      elapsed: skyClock.motionElapsed,
+      camera
+    });
+  }
   updateDistrictCompassNeedle();
   activeObject?.userData?.updateView?.(camera, renderQuality.mobile ? 4 : 8, {
     width: renderer.domElement.clientWidth,
@@ -1568,8 +1637,9 @@ function animate() {
 function applyDistrictBokeh(strength = 1, blur = 1) {
   const normalizedStrength = THREE.MathUtils.clamp(Number(strength) || 0, 0, 4);
   const normalizedBlur = THREE.MathUtils.clamp(Number(blur) || 0, 0, 6);
-  districtDepthOfField.uniforms.aperture.value = districtBokehDefaults.aperture * normalizedStrength;
-  districtDepthOfField.uniforms.maxblur.value = districtBokehDefaults.maxblur * normalizedBlur;
+  const skySharpness = isVoxelSkyMode() ? 0.46 : 1;
+  districtDepthOfField.uniforms.aperture.value = districtBokehDefaults.aperture * normalizedStrength * skySharpness;
+  districtDepthOfField.uniforms.maxblur.value = districtBokehDefaults.maxblur * normalizedBlur * skySharpness;
 }
 
 function collectAnimationObjects(root) {
@@ -1622,6 +1692,58 @@ function publishRenderDiagnostics() {
   document.documentElement.dataset.magicTownPrefabLod = ["district", "agentcity"].includes(currentMode)
     ? JSON.stringify(activeObject?.userData?.getPrefabLodDiagnostics?.() ?? {})
     : "{}";
+  document.documentElement.dataset.magicTownSky = voxelSky.visible
+    ? JSON.stringify(getSkyClockState())
+    : "{}";
+}
+
+function updateSkyClock(delta, elapsed) {
+  voxelSky.visible = isVoxelSkyMode();
+  if (!voxelSky.visible) {
+    delete document.documentElement.dataset.magicTownSkyReady;
+    return;
+  }
+  if (!skyClock.paused) {
+    skyClock.time = (skyClock.time + delta * skyClock.timeScale / skyClock.dayLengthSeconds) % 1;
+    skyClock.motionElapsed += delta;
+  }
+  const liveStyle = applyWorldLighting(skyClock.time, false);
+  if (elapsed - skyClock.lastLightingUpdateAt >= 0.08) {
+    skyClock.lastLightingUpdateAt = elapsed;
+    applySkyTimeToWorld(false, liveStyle);
+  }
+  document.documentElement.dataset.magicTownSkyReady = "true";
+  document.documentElement.dataset.magicTownWorldTime = skyClock.time.toFixed(6);
+  document.documentElement.dataset.magicTownClockPaused = String(skyClock.paused);
+}
+
+function applySkyTimeToWorld(syncControls, style = null) {
+  if (!isVoxelSkyMode()) return;
+  currentConfig.sunTime = skyClock.time;
+  configsByMode[currentMode] = currentConfig;
+  if (activeObject?.userData?.config) activeObject.userData.config.sunTime = skyClock.time;
+  if (style) activeObject?.userData.updateDaylight?.(style);
+  else applyWorldLighting(skyClock.time);
+  if (syncControls) {
+    const input = sliderInputs.get("sunTime");
+    const value = sliderValues.get("sunTime");
+    if (input) input.value = String(skyClock.time);
+    if (value) value.textContent = skyClock.time.toFixed(2);
+  }
+}
+
+function getSkyClockState() {
+  return {
+    ...voxelSky.userData.getState(),
+    time: skyClock.time,
+    paused: skyClock.paused,
+    dayLengthSeconds: skyClock.dayLengthSeconds,
+    timeScale: skyClock.timeScale
+  };
+}
+
+function isVoxelSkyMode() {
+  return ["map", "voxel", "massing", "styles", "district", "agentcity"].includes(currentMode);
 }
 
 function onResize() {

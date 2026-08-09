@@ -14,6 +14,7 @@ import {
   createUrbanMassingSpec,
   getUrbanMassingCatalog
 } from "./voxelMassingGrammar.js";
+import { getVoxelSkyState } from "../city/voxel-sky.js";
 
 export const VOXEL_SIZE = 0.125;
 export const SEMANTIC_GRID_SIGN_VOXEL_SIZE = VOXEL_SIZE / 2;
@@ -1457,22 +1458,33 @@ function decorationColor(material) {
 }
 
 export function voxelDaylightStyle(sunTime = 0.52) {
-  const time = clamp(sunTime, 0, 1);
-  const noon = Math.sin(time * Math.PI);
-  const nightFactor = Math.pow(1 - noon, 1.35);
-  const skyColor = new THREE.Color("#172238").lerp(new THREE.Color("#c5deea"), noon);
-  const sunColor = new THREE.Color("#e39a66").lerp(new THREE.Color("#fff0cc"), noon);
+  const state = getVoxelSkyState(sunTime);
+  const daylight = state.daylight;
+  const moonlight = state.night;
+  const goldenHour = state.twilight;
+  const skyColor = state.topColor.clone().lerp(state.horizonColor, 0.36);
+  const sunColor = new THREE.Color("#e17d5c")
+    .lerp(new THREE.Color("#fff0c7"), daylight)
+    .lerp(new THREE.Color("#b8c9ff"), moonlight * 0.34);
   return {
     sunColor,
     skyColor,
-    rgbTint: new THREE.Color("#8d83b8").lerp(new THREE.Color("#fff7e8"), noon),
-    ambientSky: new THREE.Color("#27314a").lerp(new THREE.Color("#e5f2f5"), noon),
-    ambientGround: new THREE.Color("#242c37").lerp(new THREE.Color("#9da992"), noon),
-    ambientIntensity: 0.48 + noon * 1.85,
-    sunIntensity: 0.22 + noon * 2.5,
-    rimIntensity: 0.55 + nightFactor * 0.9,
-    nightFactor,
-    sunPosition: new THREE.Vector3(-8 + time * 16, 2 + noon * 10, 7)
+    rgbTint: new THREE.Color("#8192c5").lerp(new THREE.Color("#fff7e8"), daylight),
+    rgbStrength: 0.68 + daylight * 0.39,
+    ambientSky: new THREE.Color("#202a49").lerp(new THREE.Color("#dceef2"), daylight),
+    ambientGround: new THREE.Color("#202738").lerp(new THREE.Color("#99a58f"), daylight),
+    ambientIntensity: 0.68 + daylight * 1.66 + goldenHour * 0.68,
+    sunIntensity: 0.12 + daylight * 2.65 + goldenHour * 0.72,
+    rimIntensity: 0.55 + moonlight * 0.95 + goldenHour * 0.28,
+    nightFactor: state.night,
+    daylightFactor: daylight,
+    twilightFactor: goldenHour,
+    starOpacity: state.starOpacity,
+    sunPosition: new THREE.Vector3(
+      -Math.cos(state.solarAngle) * 10,
+      0.8 + Math.max(0, state.solarHeight) * 11.2,
+      6.5
+    )
   };
 }
 
