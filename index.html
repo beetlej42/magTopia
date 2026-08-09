@@ -82,6 +82,30 @@
       <code>MAGTOPIA.generate({ seed, floors, towerCount, greeneryDensity })</code>
     </aside>
 
+    <button
+      id="district-compass"
+      class="district-compass"
+      type="button"
+      aria-label="顺时针旋转地图 90 度"
+      title="顺时针旋转地图 90°"
+      hidden
+    >
+      <svg class="district-compass-dial" viewBox="0 0 64 64" aria-hidden="true">
+        <circle class="district-compass-rim" cx="32" cy="32" r="27.5" />
+        <path class="district-compass-ticks" d="M32 7v5M57 32h-5M32 57v-5M7 32h5" />
+        <g id="district-compass-needle" class="district-compass-needle">
+          <path class="district-compass-north" d="M32 11 37 32 32 29 27 32Z" />
+          <path class="district-compass-south" d="M32 53 27 32 32 35 37 32Z" />
+          <circle class="district-compass-pin" cx="32" cy="32" r="3.4" />
+          <text class="district-compass-n" x="32" y="9.5">N</text>
+        </g>
+      </svg>
+      <span class="district-compass-copy" aria-hidden="true">
+        <strong>旋转地图</strong>
+        <small>顺时针 90°</small>
+      </span>
+    </button>
+
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

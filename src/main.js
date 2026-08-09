@@ -84,6 +84,12 @@ import { getModelOrientationPreviewUrls } from "./generators/modelOrientation.js
 import { createAgentAcceptanceCity } from "./generators/agentAcceptanceCity.js";
 import { createCityInfoOverlay } from "./ui/cityInfoOverlay.js";
 import {
+  approachDistrictYaw,
+  nextClockwiseDistrictRotation,
+  normalizeYawDegrees,
+  unwrapAngleDegrees
+} from "./ui/districtCompass.js";
+import {
   PUBLIC_BUILDING_STYLE_COMPARISON_PRESETS,
   createPublicBuildingStyleComparison,
   normalizePublicBuildingStyleComparisonConfig
@@ -171,8 +177,14 @@ const districtSurfaceNavigation = {
   nearScale: 1,
   farScale: 1.9,
   targetCameraScale: 1,
-  viewMode: "near"
+  viewMode: "near",
+  cameraYawDegrees: 45,
+  targetYawDegrees: 45,
+  quarterTurn: 0,
+  baseYawDegrees: null,
+  compassNeedleAngleDegrees: null
 };
+const reducedMotionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 let controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
@@ -492,6 +504,8 @@ const cityViewerToken = document.querySelector("#city-viewer-token");
 const cityViewerConnect = document.querySelector("#city-viewer-connect");
 const cityViewerSummary = document.querySelector("#city-viewer-summary");
 const cityViewerResources = document.querySelector("#city-viewer-resources");
+const districtCompass = document.querySelector("#district-compass");
+const districtCompassNeedle = document.querySelector("#district-compass-needle");
 const sliderInputs = new Map();
 const sliderValues = new Map();
 const sliderFields = new Map();
@@ -845,6 +859,8 @@ function buildSliderUi() {
 }
 
 function bindUi() {
+  districtCompass.addEventListener("click", rotateDistrictViewClockwise);
+
   modeControl.addEventListener("change", () => {
     setMode(modeControl.value);
   });
@@ -1082,6 +1098,8 @@ function syncUi() {
   pipelineNote.hidden = !activePipeline;
   cameraModeField.hidden = currentMode !== "map";
   cameraModeControl.value = currentConfig.cameraMode ?? "play";
+  districtCompass.hidden = !isSurfaceVoxelWorld() || frontendSurface === "acceptance";
+  syncDistrictCompassState();
 
   MODES[currentMode].sliders.forEach((definition) => {
     const { key } = definition;
@@ -1487,6 +1505,7 @@ function animate() {
     configureDistrictSurfaceCamera();
   }
   camera.updateMatrixWorld();
+  updateDistrictCompassNeedle();
   activeObject?.userData?.updateView?.(camera, renderQuality.mobile ? 4 : 8, {
     width: renderer.domElement.clientWidth,
     height: renderer.domElement.clientHeight
@@ -1765,13 +1784,23 @@ function configureDistrictSurfaceCamera(scale = districtSurfaceNavigation.camera
     districtSurfaceNavigation.flatZ = THREE.MathUtils.clamp(-5, navigation.bounds.minZ, navigation.bounds.maxZ);
     districtSurfaceNavigation.radius = navigation.radius;
   }
+  const navigationBaseYaw = normalizeYawDegrees(navigation.yawDegrees);
+  const baseYawChanged = districtSurfaceNavigation.baseYawDegrees == null
+    || normalizeYawDegrees(districtSurfaceNavigation.baseYawDegrees) !== navigationBaseYaw;
+  if (baseYawChanged) {
+    districtSurfaceNavigation.baseYawDegrees = navigation.yawDegrees;
+    districtSurfaceNavigation.cameraYawDegrees = navigation.yawDegrees;
+    districtSurfaceNavigation.targetYawDegrees = navigation.yawDegrees;
+    districtSurfaceNavigation.quarterTurn = 0;
+    districtSurfaceNavigation.compassNeedleAngleDegrees = null;
+  }
   districtSurfaceNavigation.cameraScale = scale;
   const frame = getVoxelSphereFrame(
     districtSurfaceNavigation.flatX,
     districtSurfaceNavigation.flatZ,
     navigation.radius
   );
-  const yaw = THREE.MathUtils.degToRad(navigation.yawDegrees);
+  const yaw = THREE.MathUtils.degToRad(districtSurfaceNavigation.cameraYawDegrees);
   const elevation = THREE.MathUtils.degToRad(navigation.elevationDegrees);
   const distance = navigation.cameraDistance * scale;
   const horizontal = frame.tangentX.clone().multiplyScalar(Math.cos(yaw))
@@ -1789,13 +1818,80 @@ function configureDistrictSurfaceCamera(scale = districtSurfaceNavigation.camera
     flatX: districtSurfaceNavigation.flatX,
     flatZ: districtSurfaceNavigation.flatZ,
     radialDistance: districtSurfaceNavigation.radialDistance,
-    yawDegrees: navigation.yawDegrees,
+    yawDegrees: normalizeYawDegrees(districtSurfaceNavigation.cameraYawDegrees),
+    targetYawDegrees: normalizeYawDegrees(districtSurfaceNavigation.targetYawDegrees),
+    quarterTurn: districtSurfaceNavigation.quarterTurn,
+    isRotating: districtSurfaceNavigation.cameraYawDegrees !== districtSurfaceNavigation.targetYawDegrees,
     elevationDegrees: navigation.elevationDegrees,
     viewMode: districtSurfaceNavigation.viewMode,
     cameraScale: districtSurfaceNavigation.cameraScale,
     targetCameraScale: districtSurfaceNavigation.targetCameraScale
   };
   document.documentElement.dataset.magicTownDistrictView = districtSurfaceNavigation.viewMode;
+  syncDistrictCompassState();
+}
+
+function rotateDistrictViewClockwise() {
+  if (!isSurfaceVoxelWorld()) return;
+  const next = nextClockwiseDistrictRotation(districtSurfaceNavigation);
+  districtSurfaceNavigation.quarterTurn = next.quarterTurn;
+  districtSurfaceNavigation.targetYawDegrees = next.targetYawDegrees;
+  if (reducedMotionPreference.matches) {
+    districtSurfaceNavigation.cameraYawDegrees = next.targetYawDegrees;
+  }
+  syncDistrictCompassState();
+}
+
+function syncDistrictCompassState() {
+  const quarterTurn = districtSurfaceNavigation.quarterTurn;
+  const turnLabels = ["初始视角", "顺时针 90 度", "顺时针 180 度", "顺时针 270 度"];
+  const isRotating = districtSurfaceNavigation.cameraYawDegrees !== districtSurfaceNavigation.targetYawDegrees;
+  const quarterTurnValue = String(quarterTurn);
+  const rotatingValue = String(isRotating);
+  const ariaLabel = `当前为${turnLabels[quarterTurn]}，点击顺时针旋转地图 90 度`;
+  const yawValue = normalizeYawDegrees(districtSurfaceNavigation.cameraYawDegrees).toFixed(3);
+  const focusValue = `${districtSurfaceNavigation.flatX.toFixed(3)},${districtSurfaceNavigation.flatZ.toFixed(3)}`;
+  if (districtCompass.dataset.quarterTurn !== quarterTurnValue) {
+    districtCompass.dataset.quarterTurn = quarterTurnValue;
+  }
+  if (districtCompass.dataset.rotating !== rotatingValue) {
+    districtCompass.dataset.rotating = rotatingValue;
+  }
+  if (districtCompass.getAttribute("aria-label") !== ariaLabel) {
+    districtCompass.setAttribute("aria-label", ariaLabel);
+  }
+  if (document.documentElement.dataset.magicTownDistrictQuarterTurn !== quarterTurnValue) {
+    document.documentElement.dataset.magicTownDistrictQuarterTurn = quarterTurnValue;
+  }
+  if (document.documentElement.dataset.magicTownDistrictYaw !== yawValue) {
+    document.documentElement.dataset.magicTownDistrictYaw = yawValue;
+  }
+  if (document.documentElement.dataset.magicTownDistrictFocus !== focusValue) {
+    document.documentElement.dataset.magicTownDistrictFocus = focusValue;
+  }
+}
+
+function updateDistrictCompassNeedle() {
+  if (districtCompass.hidden || !isSurfaceVoxelWorld()) return;
+  const navigation = activeObject?.userData?.surfaceNavigation;
+  if (!navigation) return;
+  const frame = getVoxelSphereFrame(
+    districtSurfaceNavigation.flatX,
+    districtSurfaceNavigation.flatZ,
+    navigation.radius
+  );
+  const cameraRight = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+  const cameraUp = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+  const projectedAngle = THREE.MathUtils.radToDeg(Math.atan2(
+    frame.tangentZ.dot(cameraRight),
+    frame.tangentZ.dot(cameraUp)
+  ));
+  const angle = unwrapAngleDegrees(
+    districtSurfaceNavigation.compassNeedleAngleDegrees,
+    projectedAngle
+  );
+  districtSurfaceNavigation.compassNeedleAngleDegrees = angle;
+  districtCompassNeedle.style.transform = `rotate(${angle.toFixed(3)}deg)`;
 }
 
 function toggleDistrictViewDistance() {
@@ -1818,6 +1914,12 @@ function updateDistrictViewTransition(delta) {
   if (Math.abs(districtSurfaceNavigation.cameraScale - target) < 0.0005) {
     districtSurfaceNavigation.cameraScale = target;
   }
+  districtSurfaceNavigation.cameraYawDegrees = approachDistrictYaw(
+    districtSurfaceNavigation.cameraYawDegrees,
+    districtSurfaceNavigation.targetYawDegrees,
+    delta,
+    { reducedMotion: reducedMotionPreference.matches }
+  );
 }
 
 function updateDistrictSurfacePointer(event, rect) {
@@ -1838,7 +1940,7 @@ function updateDistrictSurfacePointer(event, rect) {
     districtSurfaceNavigation.flatZ,
     navigation.radius
   );
-  const yaw = THREE.MathUtils.degToRad(navigation.yawDegrees);
+  const yaw = THREE.MathUtils.degToRad(districtSurfaceNavigation.cameraYawDegrees);
   const elevation = THREE.MathUtils.degToRad(navigation.elevationDegrees);
   const horizontal = frame.tangentX.clone().multiplyScalar(Math.cos(yaw))
     .addScaledVector(frame.tangentZ, Math.sin(yaw))
