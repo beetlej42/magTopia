@@ -1,3 +1,6 @@
 numpy>=2.0,<3
 Pillow>=12,<13
 scipy>=1.14,<2
+# Depth Anything batch/metric scripts.
+torch>=2.0
+transformers>=4.45

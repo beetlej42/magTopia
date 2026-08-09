@@ -1,14 +1,12 @@
 #!/usr/bin/env node
 
-import { readFile, mkdir, writeFile, access } from "node:fs/promises";
+import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { extname, basename, resolve, relative, join } from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { execPythonFile, resolvePythonExecutable } from "./python-runtime.mjs";
 
 const API_BASE = "https://api.ai3d.cloud.tencent.com/v1/ai3d";
 const DEFAULT_POLL_INTERVAL_MS = 15_000;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
-const execFileAsync = promisify(execFile);
 
 function usage() {
   console.log(`Usage:
@@ -131,28 +129,17 @@ async function download(url, outputPath) {
 }
 
 async function optimizeGlb(inputPath) {
-  const pythonCandidates = [resolve(".venv/bin/python"), "python3"];
   const outputPath = inputPath.replace(/\.glb$/i, "-1024-webp.glb");
-  let lastError;
-
-  for (const python of pythonCandidates) {
-    if (python.includes("/") && await access(python).then(() => false, () => true)) continue;
-    try {
-      const { stdout } = await execFileAsync(python, [
-        resolve("scripts/optimize_glb_texture.py"),
-        inputPath,
-        "--out", outputPath,
-        "--max-size", "1024",
-        "--quality", "80",
-      ], { maxBuffer: 1024 * 1024 });
-      const summary = JSON.parse(stdout.trim());
-      console.log(`Optimized ${basename(outputPath)} (${summary.optimizedBytes} bytes)`);
-      return { outputPath, summary };
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  throw lastError ?? new Error("Python with Pillow is required to optimize the GLB texture");
+  const python = await resolvePythonExecutable({ workspace: process.cwd() });
+  const { stdout } = await execPythonFile(python, resolve("scripts/optimize_glb_texture.py"), [
+    inputPath,
+    "--out", outputPath,
+    "--max-size", "1024",
+    "--quality", "80",
+  ], { maxBuffer: 1024 * 1024, cwd: process.cwd() });
+  const summary = JSON.parse(stdout.trim());
+  console.log(`Optimized ${basename(outputPath)} (${summary.optimizedBytes} bytes)`);
+  return { outputPath, summary };
 }
 
 async function submit(apiKey, imagePath, outDir) {

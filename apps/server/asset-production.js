@@ -7,6 +7,7 @@ import { createEngineContext, executeCityCommand } from "../../src/city/engine.j
 import { createId, hashRequest } from "./ids.js";
 import { ServiceError } from "./errors.js";
 import { generateHunyuanAssetBundle } from "./hunyuan-production.js";
+import { execPythonFile, resolvePythonExecutable } from "../../scripts/python-runtime.mjs";
 
 const execFileAsync = promisify(execFile);
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -14,7 +15,6 @@ const WORKSPACE = path.resolve(SERVER_DIR, "../..");
 const GUIDEPLATE_ROOT = path.join(WORKSPACE, "public/generated/asset-guides");
 const GUIDEPLATE_SCRIPT = path.join(WORKSPACE, "scripts/generate_parcel_guide.py");
 const NORMALIZE_ASSET_SCRIPT = path.join(WORKSPACE, "scripts/normalize_isometric_asset.py");
-const GUIDEPLATE_PYTHON = path.join(WORKSPACE, ".venv/bin/python");
 const STYLE_REFERENCE_PATH = path.join(WORKSPACE, "public/generated/magic-london-starter-001/starter-cottage-001/source-magenta.png");
 const HUNYUAN_STYLE_REFERENCE_PATH = path.join(WORKSPACE, "docs/reference-images/isometric-magic-london-city.jpg");
 const WORLD_UNITS_PER_CELL = 4;
@@ -309,7 +309,11 @@ async function normalizeAssetToGuide({ inputPath, outputPath, sourceAnchors, tar
   ];
   if (reportPath) args.push("--report", reportPath);
   try {
-    await execFileAsync(config.hunyuanPythonPath ?? GUIDEPLATE_PYTHON, args, { cwd: WORKSPACE, maxBuffer: 2 * 1024 * 1024 });
+    const python = await resolvePythonExecutable({
+      workspace: WORKSPACE,
+      configuredPath: config.hunyuanPythonPath
+    });
+    await execPythonFile(python, args[0], args.slice(1), { cwd: WORKSPACE, maxBuffer: 2 * 1024 * 1024 });
   } catch (error) {
     throw new ServiceError(500, "HUNYUAN_ANCHOR_NORMALIZATION_FAILED", error.message, {}, false);
   }
@@ -441,8 +445,11 @@ export async function resolveAssetGuideplate(spec = {}, config = {}) {
     } catch {}
     if (needsGeneration) {
       await fs.mkdir(path.dirname(pngPath), { recursive: true });
-      await execFileAsync(config.assetGuideplatePython ?? GUIDEPLATE_PYTHON, [
-        GUIDEPLATE_SCRIPT,
+      const python = await resolvePythonExecutable({
+        workspace: WORKSPACE,
+        configuredPath: config.assetGuideplatePython ?? config.hunyuanPythonPath
+      });
+      await execPythonFile(python, GUIDEPLATE_SCRIPT, [
         "--dimensions", [volume.dimensions.length, volume.dimensions.width, volume.dimensions.height].join("x"),
         "--entrance", "south",
         "--out", pngPath
