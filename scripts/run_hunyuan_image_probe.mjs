@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { execPythonFile, resolvePythonExecutable } from "./python-runtime.mjs";
 
 const execFileAsync = promisify(execFile);
 const workspace = process.cwd();
@@ -21,7 +22,7 @@ const pollIntervalMs = 5_000;
 const timeoutMs = 10 * 60_000;
 const shadowRemovalScript = path.resolve("scripts/remove_asset_shadow.swift");
 const emissiveScript = path.resolve("scripts/quantize_generated_emissive.py");
-const pythonPath = path.resolve(".venv/bin/python");
+const pythonPath = await resolvePythonExecutable({ workspace });
 
 const prompt = [
   "用途：MAGTOPIA 城市建造游戏中的独立建筑资产。",
@@ -96,8 +97,7 @@ for (const [index, seed] of [[1, 314159], [2, 314159]]) {
 }
 
 const emissiveFileName = "emissive-deterministic.png";
-await execFileAsync(pythonPath, [
-  emissiveScript,
+await execPythonFile(pythonPath, emissiveScript, [
   "--input", path.join(outputDir, runs[0].correctedFile),
   "--out", path.join(outputDir, emissiveFileName),
   "--minimum-component", "200"

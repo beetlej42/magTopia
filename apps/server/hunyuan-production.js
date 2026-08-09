@@ -2,9 +2,8 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { ServiceError } from "./errors.js";
+import { execPythonFile, resolvePythonExecutable } from "../../scripts/python-runtime.mjs";
 import {
   HUNYUAN_PAIRED_LIGHT_VERSION,
   MAGIC_LONDON_WORLD_PROMPT_VERSION,
@@ -12,7 +11,6 @@ import {
   composeHunyuanDayOnPrompt
 } from "./hunyuan-prompts.js";
 
-const execFileAsync = promisify(execFile);
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
 export async function generateHunyuanAssetBundle({ job, config, guideplate, styleReference, workspace }) {
@@ -142,8 +140,11 @@ async function derivePairedLight({ config, workspace, workDir, dayOffBytes, dayO
   const reportPath = path.join(workDir, "light-report.json");
   await Promise.all([fs.writeFile(offPath, dayOffBytes), fs.writeFile(onPath, dayOnBytes)]);
   try {
-    await execFileAsync(config.hunyuanPythonPath ?? path.join(workspace, ".venv/bin/python"), [
-      config.hunyuanLightmapScript ?? path.join(workspace, "scripts/derive_paired_day_lightmap.py"),
+    const python = await resolvePythonExecutable({
+      workspace,
+      configuredPath: config.hunyuanPythonPath
+    });
+    await execPythonFile(python, config.hunyuanLightmapScript ?? path.join(workspace, "scripts/derive_paired_day_lightmap.py"), [
       "--off", offPath,
       "--on", onPath,
       "--out", emissivePath,

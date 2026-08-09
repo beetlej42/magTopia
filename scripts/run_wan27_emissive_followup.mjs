@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { generateAssetImage } from "../apps/server/asset-production.js";
 import { loadConfig } from "../apps/server/config.js";
+import { execPythonFile, resolvePythonExecutable } from "./python-runtime.mjs";
 
 const execFileAsync = promisify(execFile);
 const workspace = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -49,8 +50,8 @@ const bytes = await generateAssetImage({
 await fs.writeFile(outputPath, bytes);
 const extension = path.extname(outputPath);
 const quantizedPath = `${outputPath.slice(0, -extension.length)}-quantized${extension}`;
-await execFileAsync(path.join(workspace, ".venv/bin/python"), [
-  path.join(workspace, "scripts/quantize_generated_emissive.py"),
+const pythonPath = await resolvePythonExecutable({ workspace });
+await execPythonFile(pythonPath, path.join(workspace, "scripts/quantize_generated_emissive.py"), [
   "--input", outputPath,
   "--out", quantizedPath,
   "--minimum-component", "40"

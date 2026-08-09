@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { generateAssetImage } from "../apps/server/asset-production.js";
 import { loadConfig } from "../apps/server/config.js";
+import { execPythonFile, resolvePythonExecutable } from "./python-runtime.mjs";
 
 const execFileAsync = promisify(execFile);
 const workspace = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -12,7 +13,7 @@ const experimentId = `wan27-asset-probe-${new Date().toISOString().replaceAll(/[
 const outputDir = path.join(workspace, "public/generated/wan-experiments", experimentId);
 const shadowRemovalScript = path.join(workspace, "scripts/remove_asset_shadow.swift");
 const flatCanvasScript = path.join(workspace, "scripts/create_flat_canvas.py");
-const pythonPath = path.join(workspace, ".venv/bin/python");
+const pythonPath = await resolvePythonExecutable({ workspace });
 const config = { ...loadConfig(), dashscopeStyleReferenceEnabled: false };
 const model = "wan2.7-image";
 const spec = {
@@ -62,7 +63,7 @@ for (const [index, seed] of [[1, 314159], [2, 271828]]) {
 }
 
 const blackTargetPath = path.join(outputDir, "emissive-target-black.png");
-await execFileAsync(pythonPath, [flatCanvasScript, "--out", blackTargetPath, "--size", "1024x1024", "--color", "#000000"], { cwd: workspace });
+await execPythonFile(pythonPath, flatCanvasScript, ["--out", blackTargetPath, "--size", "1024x1024", "--color", "#000000"], { cwd: workspace });
 const [rgbReference, blackTarget] = await Promise.all([
   fs.readFile(path.join(outputDir, "rgb-run-1-vision-chroma.png")),
   fs.readFile(blackTargetPath)

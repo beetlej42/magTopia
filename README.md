@@ -29,11 +29,8 @@ pnpm install
 pnpm run dev
 ```
 
-If the local shell cannot find Node, use the bundled runtime:
-
-```bash
-PATH=/Users/jialinrui/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH pnpm run dev
-```
+If the local shell cannot find Node, add your Node.js installation to `PATH`
+before running the commands above.
 
 ## Agent city service
 
@@ -357,7 +354,7 @@ dimension contract is explicit world-unit `length × width × height`; grid
 footprint remains a separate placement contract.
 
 ```bash
-.venv/bin/python scripts/generate_parcel_guide.py \
+node scripts/python-runtime.mjs scripts/generate_parcel_guide.py \
   --dimensions 4x8x8.2 \
   --entrance south \
   --out public/generated/guides/shop-4x8x8.2.png
