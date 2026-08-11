@@ -36,6 +36,59 @@ canvas {
   touch-action: none;
 }
 
+.pure-view-toggle {
+  position: fixed;
+  right: auto;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  left: calc(16px + env(safe-area-inset-left));
+  z-index: 7;
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgb(255 255 255 / 78%);
+  border-radius: 50%;
+  color: #75527e;
+  background: rgb(255 249 253 / 78%);
+  box-shadow: 0 8px 24px rgb(113 64 135 / 17%);
+  backdrop-filter: blur(12px);
+  cursor: pointer;
+  transition: transform 160ms ease, background-color 160ms ease;
+}
+
+.pure-view-toggle:hover {
+  background: rgb(255 255 255 / 94%);
+  transform: translateY(-1px);
+}
+
+.pure-view-toggle:focus-visible {
+  outline: 2px solid #8068b7;
+  outline-offset: 3px;
+}
+
+.pure-view-toggle svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.65;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+html[data-magtopia-pure-view="true"] .control-panel,
+html[data-magtopia-pure-view="true"] .map-panel,
+html[data-magtopia-pure-view="true"] .api-pill,
+html[data-magtopia-pure-view="true"] .city-info-overlay,
+html[data-magtopia-pure-view="true"] .pure-view-toggle {
+  display: none !important;
+}
+
+html[data-magtopia-surface="acceptance"] .pure-view-toggle {
+  display: none;
+}
+
 button,
 input,
 select {
