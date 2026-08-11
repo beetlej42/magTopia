@@ -18,8 +18,8 @@
         <p id="city-viewer-status" class="city-viewer-status" role="status" hidden>正在连接城市存档…</p>
         <div id="city-viewer-auth" class="city-viewer-auth" hidden>
           <label class="field">
-            <span>只读访问凭证</span>
-            <input id="city-viewer-token" type="password" autocomplete="off" placeholder="mta_… 或 mtp_…" />
+            <span>玩家访问凭证</span>
+            <input id="city-viewer-token" type="password" autocomplete="off" placeholder="mtp_… 或 mta_…" />
           </label>
           <button id="city-viewer-connect" type="button">打开城市</button>
         </div>
@@ -28,84 +28,58 @@
         </div>
       </section>
 
-      <label class="field studio-only">
-        <span>Mode</span>
-        <select id="mode-control"></select>
-      </label>
-
-      <label class="field studio-only">
-        <span>Preset</span>
-        <select id="preset-control"></select>
-      </label>
-
-      <label id="camera-mode-field" class="field studio-only">
-        <span>Camera</span>
-        <select id="camera-mode-control">
-          <option value="play">Isometric Play</option>
-          <option value="free">Free Debug</option>
-        </select>
-      </label>
+      <label class="field studio-only"><span>Mode</span><select id="mode-control"></select></label>
+      <label class="field studio-only"><span>Preset</span><select id="preset-control"></select></label>
+      <label id="camera-mode-field" class="field studio-only"><span>Camera</span><select id="camera-mode-control"><option value="play">Isometric Play</option><option value="free">Free Debug</option></select></label>
 
       <div class="seed-row studio-only">
-        <label class="field seed-field">
-          <span>Seed</span>
-          <input id="seed-control" type="text" value="wand-001" />
-        </label>
+        <label class="field seed-field"><span>Seed</span><input id="seed-control" type="text" value="wand-001" /></label>
         <button id="randomize-button" type="button">Random</button>
       </div>
 
       <div id="slider-controls" class="sliders studio-only"></div>
-
       <section id="massing-explorer" class="massing-explorer studio-only" aria-label="Voxel Massing Explorer" hidden></section>
-
       <section id="intent-district-summary" class="intent-district-summary studio-only" aria-label="Agent building intents" hidden></section>
-
-      <div class="actions studio-only">
-        <button id="copy-config-button" type="button">Copy Config</button>
-        <span id="copy-status" role="status"></span>
-      </div>
-
-      <p id="pipeline-note" class="pipeline-note studio-only">
-        The asset is a depth-map parallax sprite facing the isometric camera. Tune Parallax and View X/Y for the limited-angle 2.5D effect.
-      </p>
+      <div class="actions studio-only"><button id="copy-config-button" type="button">Copy Config</button><span id="copy-status" role="status"></span></div>
+      <p id="pipeline-note" class="pipeline-note studio-only">The asset is a depth-map parallax sprite facing the isometric camera. Tune Parallax and View X/Y for the limited-angle 2.5D effect.</p>
     </section>
 
-    <aside id="map-panel" class="map-panel studio-only" aria-label="Generated image maps">
-      <div class="map-panel-heading">
-        <p class="eyebrow">Maps</p>
-        <strong>Asset + Terrain</strong>
-      </div>
-      <div id="map-previews" class="map-previews"></div>
-    </aside>
+    <aside id="map-panel" class="map-panel studio-only" aria-label="Generated image maps"><div class="map-panel-heading"><p class="eyebrow">Maps</p><strong>Asset + Terrain</strong></div><div id="map-previews" class="map-previews"></div></aside>
+    <aside id="api-pill" class="api-pill studio-only" aria-label="Current API call"><code>MAGTOPIA.generate({ seed, floors, towerCount, greeneryDensity })</code></aside>
 
-    <aside id="api-pill" class="api-pill studio-only" aria-label="Current API call">
-      <code>MAGTOPIA.generate({ seed, floors, towerCount, greeneryDensity })</code>
-    </aside>
-
-    <button
-      id="district-compass"
-      class="district-compass"
-      type="button"
-      aria-label="顺时针旋转地图 90 度"
-      title="顺时针旋转地图 90°"
-      hidden
-    >
-      <svg class="district-compass-dial" viewBox="0 0 64 64" aria-hidden="true">
-        <circle class="district-compass-rim" cx="32" cy="32" r="27.5" />
-        <path class="district-compass-ticks" d="M32 7v5M57 32h-5M32 57v-5M7 32h5" />
-        <g id="district-compass-needle" class="district-compass-needle">
-          <path class="district-compass-north" d="M32 11 37 32 32 29 27 32Z" />
-          <path class="district-compass-south" d="M32 53 27 32 32 35 37 32Z" />
-          <circle class="district-compass-pin" cx="32" cy="32" r="3.4" />
-          <text class="district-compass-n" x="32" y="9.5">N</text>
-        </g>
-      </svg>
-      <span class="district-compass-copy" aria-hidden="true">
-        <strong>旋转地图</strong>
-        <small>顺时针 90°</small>
-      </span>
+    <button id="district-compass" class="district-compass" type="button" aria-label="顺时针旋转地图 90 度" title="顺时针旋转地图 90°" hidden>
+      <svg class="district-compass-dial" viewBox="0 0 64 64" aria-hidden="true"><circle class="district-compass-rim" cx="32" cy="32" r="27.5" /><path class="district-compass-ticks" d="M32 7v5M57 32h-5M32 57v-5M7 32h5" /><g id="district-compass-needle" class="district-compass-needle"><path class="district-compass-north" d="M32 11 37 32 32 29 27 32Z" /><path class="district-compass-south" d="M32 53 27 32 32 35 37 32Z" /><circle class="district-compass-pin" cx="32" cy="32" r="3.4" /><text class="district-compass-n" x="32" y="9.5">N</text></g></svg>
+      <span class="district-compass-copy" aria-hidden="true"><strong>旋转地图</strong><small>顺时针 90°</small></span>
     </button>
 
+    <script>
+      (() => {
+        if (!/^\/cities\/[^/]+\/?$/.test(location.pathname)) return;
+        if (!sessionStorage.getItem("mtToken")) sessionStorage.setItem("mtToken", "session");
+        const nativeFetch = window.fetch.bind(window);
+        let sessionCreation = null;
+        window.fetch = async (input, init = {}) => {
+          const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined));
+          const authorization = headers.get("Authorization") || "";
+          if (/^Bearer\s+mtp_/i.test(authorization)) {
+            sessionCreation ||= nativeFetch("/api/v1/player-session", {
+              method: "POST",
+              headers: { Authorization: authorization },
+              credentials: "same-origin",
+              cache: "no-store"
+            }).then((response) => {
+              if (!response.ok) sessionCreation = null;
+              return response;
+            }).catch((error) => {
+              sessionCreation = null;
+              throw error;
+            });
+            await sessionCreation;
+          }
+          return nativeFetch(input, { ...init, credentials: init.credentials ?? "same-origin" });
+        };
+      })();
+    </script>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
