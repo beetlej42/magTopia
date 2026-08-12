@@ -144,6 +144,7 @@ export function createCityInfoOverlay() {
       (state.lastBlockBoundaryEdges.length > 0 || state.lastBlockCellTiles.length > 0)
       && state.blockOverlayOpacity > 0.001
     );
+    const worldVisualsEnabled = document.documentElement.dataset.magtopiaPureView !== "true";
     const planetCenter = context.planetCenter;
 
     if (state.active) {
@@ -161,8 +162,8 @@ export function createCityInfoOverlay() {
           planetCenter,
           opacity: state.blockOverlayOpacity,
           targetOpacity: 0,
-          frameVisible: hasBlockVisual,
-          upliftVisible: hasBlockVisual,
+          frameVisible: hasBlockVisual && worldVisualsEnabled,
+          upliftVisible: hasBlockVisual && worldVisualsEnabled,
           targetVisible: false
         });
       } else {
@@ -190,9 +191,9 @@ export function createCityInfoOverlay() {
           planetCenter,
           opacity: state.blockOverlayOpacity,
           targetOpacity: state.opacity,
-          frameVisible: hasBlockVisual,
-          upliftVisible: hasBlockVisual,
-          targetVisible: shouldShow
+          frameVisible: hasBlockVisual && worldVisualsEnabled,
+          upliftVisible: hasBlockVisual && worldVisualsEnabled,
+          targetVisible: shouldShow && worldVisualsEnabled
         });
       }
     }
@@ -207,8 +208,8 @@ export function createCityInfoOverlay() {
         planetCenter,
         opacity: state.blockOverlayOpacity,
         targetOpacity: 0,
-        frameVisible: hasBlockVisual,
-        upliftVisible: hasBlockVisual,
+        frameVisible: hasBlockVisual && worldVisualsEnabled,
+        upliftVisible: hasBlockVisual && worldVisualsEnabled,
         targetVisible: false
       });
     }
