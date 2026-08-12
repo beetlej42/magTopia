@@ -97,6 +97,7 @@ import {
 } from "./generators/publicBuildingStyleComparison.js";
 
 const app = document.querySelector("#app");
+const pureViewToggle = document.querySelector("#pure-view-toggle");
 const cityInfoOverlay = createCityInfoOverlay();
 const scene = new THREE.Scene();
 scene.background = new THREE.Color("#fff3f8");
@@ -899,6 +900,13 @@ function buildSliderUi() {
 }
 
 function bindUi() {
+  pureViewToggle.addEventListener("click", () => {
+    setPureView(true);
+  });
+  document.addEventListener("pointerdown", () => {
+    if (document.documentElement.dataset.magtopiaPureView === "true") setPureView(false);
+  });
+
   districtCompass.addEventListener("click", rotateDistrictViewClockwise);
 
   modeControl.addEventListener("change", () => {
@@ -989,6 +997,13 @@ function bindUi() {
   renderer.domElement.addEventListener("pointerleave", () => {
     edgePanPointer.active = false;
   });
+}
+
+function setPureView(enabled) {
+  document.documentElement.dataset.magtopiaPureView = enabled ? "true" : "false";
+  pureViewToggle.setAttribute("aria-pressed", String(enabled));
+  pureViewToggle.setAttribute("aria-label", enabled ? "退出纯享模式" : "进入纯享模式");
+  pureViewToggle.title = enabled ? "退出纯享模式" : "进入纯享模式";
 }
 
 function resolveCityViewerContext() {
