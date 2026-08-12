@@ -81,7 +81,8 @@ html[data-magtopia-pure-view="true"] .control-panel,
 html[data-magtopia-pure-view="true"] .map-panel,
 html[data-magtopia-pure-view="true"] .api-pill,
 html[data-magtopia-pure-view="true"] .city-info-overlay,
-html[data-magtopia-pure-view="true"] .pure-view-toggle {
+html[data-magtopia-pure-view="true"] .pure-view-toggle,
+html[data-magtopia-pure-view="true"] .district-compass {
   display: none !important;
 }
 
@@ -969,13 +970,12 @@ html[data-magtopia-surface="acceptance"] .city-info-overlay {
   right: max(18px, env(safe-area-inset-right));
   bottom: max(18px, env(safe-area-inset-bottom));
   z-index: 7;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: auto;
-  min-width: 132px;
+  display: grid;
+  place-items: center;
+  width: 64px;
+  min-width: 64px;
   height: 64px;
-  padding: 7px 12px 7px 8px;
+  padding: 7px;
   border: 1px solid #c9b89c;
   border-radius: 14px;
   color: #28394d;
@@ -1062,26 +1062,6 @@ html[data-magtopia-surface="acceptance"] .city-info-overlay {
   text-anchor: middle;
 }
 
-.district-compass-copy {
-  display: grid;
-  gap: 2px;
-  white-space: nowrap;
-}
-
-.district-compass-copy strong {
-  color: #28394d;
-  font-family: ui-serif, Georgia, "Songti SC", serif;
-  font-size: 0.82rem;
-  line-height: 1.05;
-}
-
-.district-compass-copy small {
-  color: #596477;
-  font-size: 0.64rem;
-  font-weight: 700;
-  line-height: 1.05;
-}
-
 html[data-magtopia-surface="studio"][data-magic-town-mode="agentcity"] .district-compass {
   bottom: max(78px, calc(env(safe-area-inset-bottom) + 78px));
 }
@@ -1135,9 +1115,10 @@ html[data-magic-town-presentation] .api-pill {
   .district-compass {
     right: max(12px, env(safe-area-inset-right));
     bottom: max(12px, env(safe-area-inset-bottom));
-    min-width: 124px;
+    width: 58px;
+    min-width: 58px;
     height: 58px;
-    padding: 6px 10px 6px 7px;
+    padding: 6px;
   }
 
   .district-compass-dial {
