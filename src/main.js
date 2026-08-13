@@ -196,6 +196,8 @@ composer.setPixelRatio(renderQuality.pixelRatio);
 const edgePanPointer = { x: 0, y: 0, active: false };
 const districtSurfacePointer = { id: null, x: 0, y: 0, startX: 0, startY: 0, moved: false, pointerType: "" };
 const districtViewGesture = { lastTapTime: 0, lastTapX: 0, lastTapY: 0, lastTouchToggleAt: 0 };
+const DISTRICT_BOKEH_MOTION_SETTLE_MS = 140;
+let districtSurfaceLastMotionAt = -Infinity;
 const districtSurfaceNavigation = {
   initialized: false,
   flatX: 2.5,
@@ -970,6 +972,7 @@ function bindUi() {
   });
   renderer.domElement.addEventListener("pointerdown", (event) => {
     if (!isSurfaceVoxelWorld() || districtSurfacePointer.id != null) return;
+    districtSurfaceLastMotionAt = performance.now();
     districtSurfacePointer.id = event.pointerId;
     districtSurfacePointer.x = event.clientX;
     districtSurfacePointer.y = event.clientY;
@@ -1001,6 +1004,7 @@ function bindUi() {
       }
     }
     districtSurfacePointer.id = null;
+    districtSurfaceLastMotionAt = performance.now();
   };
   renderer.domElement.addEventListener("pointerup", releaseDistrictPointer);
   renderer.domElement.addEventListener("pointercancel", releaseDistrictPointer);
@@ -1657,7 +1661,12 @@ function animate() {
     renderPass.camera = camera;
     districtDepthOfField.camera = camera;
     districtDepthOfField.uniforms.focus.value = camera.position.distanceTo(controls.target);
-    districtDepthOfField.enabled = bokehEnabled && renderQuality.depthOfFieldScale > 0
+    const cameraInMotion = isDistrictSurfaceCameraInMotion();
+    const motionValue = String(cameraInMotion);
+    if (document.documentElement.dataset.magicTownBokehMotionSuppressed !== motionValue) {
+      document.documentElement.dataset.magicTownBokehMotionSuppressed = motionValue;
+    }
+    districtDepthOfField.enabled = bokehEnabled && !cameraInMotion && renderQuality.depthOfFieldScale > 0
       && (currentConfig?.bokehStrength ?? 1) * (currentConfig?.bokehBlur ?? 1) > 0.001;
     composer.render();
   } else {
@@ -2066,6 +2075,7 @@ function updateDistrictCompassNeedle() {
 
 function toggleDistrictViewDistance() {
   if (!isSurfaceVoxelWorld()) return;
+  districtSurfaceLastMotionAt = performance.now();
   districtSurfaceNavigation.viewMode = districtSurfaceNavigation.viewMode === "near" ? "far" : "near";
   districtSurfaceNavigation.targetCameraScale = districtSurfaceNavigation.viewMode === "far"
     ? districtSurfaceNavigation.farScale
@@ -2074,6 +2084,8 @@ function toggleDistrictViewDistance() {
 }
 
 function updateDistrictViewTransition(delta) {
+  const previousScale = districtSurfaceNavigation.cameraScale;
+  const previousYaw = districtSurfaceNavigation.cameraYawDegrees;
   const target = districtSurfaceNavigation.targetCameraScale;
   const alpha = 1 - Math.exp(-Math.max(0, delta) * 7);
   districtSurfaceNavigation.cameraScale = THREE.MathUtils.lerp(
@@ -2090,6 +2102,10 @@ function updateDistrictViewTransition(delta) {
     delta,
     { reducedMotion: reducedMotionPreference.matches }
   );
+  if (
+    Math.abs(districtSurfaceNavigation.cameraScale - previousScale) > 0.00001
+    || Math.abs(districtSurfaceNavigation.cameraYawDegrees - previousYaw) > 0.00001
+  ) districtSurfaceLastMotionAt = performance.now();
 }
 
 function updateDistrictSurfacePointer(event, rect) {
@@ -2103,6 +2119,7 @@ function updateDistrictSurfacePointer(event, rect) {
   districtSurfacePointer.x = event.clientX;
   districtSurfacePointer.y = event.clientY;
   if (dx === 0 && dy === 0) return;
+  districtSurfaceLastMotionAt = performance.now();
   const navigation = activeObject?.userData?.surfaceNavigation;
   if (!navigation) return;
   const frame = getVoxelSphereFrame(
@@ -2138,6 +2155,11 @@ function updateDistrictSurfacePointer(event, rect) {
 
 function isSurfaceVoxelWorld() {
   return currentMode === "district" || currentMode === "agentcity";
+}
+
+function isDistrictSurfaceCameraInMotion() {
+  return districtSurfacePointer.id != null
+    || performance.now() - districtSurfaceLastMotionAt < DISTRICT_BOKEH_MOTION_SETTLE_MS;
 }
 
 function getMapGroundHeight(x, z) {

@@ -696,7 +696,11 @@ export function createVoxelDistrictMacroSurface(config = {}) {
     vertexColors: true,
     roughness: 0.98,
     metalness: 0,
-    flatShading: true
+    flatShading: true,
+    // Greedy quads become non-planar after sphere projection. Their two
+    // triangles can wind differently from the original flat surface, so a
+    // single-sided material drops otherwise valid terrain tops while panning.
+    side: THREE.DoubleSide
   });
   const terrainGrid = createMacroTerrainGrid(params, {
     terrainColumns,

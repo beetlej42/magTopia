@@ -276,6 +276,7 @@ test("macro world reaches Magic London scale with a compact base-voxel heightfie
   const terrainChunks = macro.group.children.filter((child) => child.name.startsWith("IntentDistrictMacroChunk-"));
   assert.equal(terrainChunks.length, 49);
   assert.ok(terrainChunks.every((mesh) => mesh.userData.flatVoxelGeometry));
+  assert.ok(terrainChunks.every((mesh) => mesh.material.side === THREE.DoubleSide));
   assert.ok(macro.group.getObjectByName("MacroVoxelPlants"));
 });
 
