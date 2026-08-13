@@ -851,7 +851,7 @@ export function createVoxelBuildingLodLevelsFromSpec(sourceSpec, options = {}, f
     includeStreetLamps: false,
     renderStrategy: options.renderStrategy ?? "greedy",
     voxelChunkSize: options.voxelChunkSize ?? 128,
-    maxMergeSpanVoxels: options.maxMergeSpanVoxels ?? 8,
+    maxMergeSpanVoxels: options.maxMergeSpanVoxels ?? 16,
     nightLighting: options.nightLighting ?? 0
   });
   const buffer = new VoxelInstanceBuffer(building.seed);
@@ -888,7 +888,7 @@ export function createVoxelMassingLodLevels(input = {}, factors = [1, 2, 3]) {
   const levels = createVoxelLodGroups(compiled.buffer, factors, {
     strategy: input.renderStrategy ?? "greedy",
     chunkSizeVoxels: input.voxelChunkSize ?? 128,
-    maxMergeSpanVoxels: input.maxMergeSpanVoxels ?? 8
+    maxMergeSpanVoxels: input.maxMergeSpanVoxels ?? 16
   }, `VoxelMassingLOD-${spec.id}`);
   const updateDaylight = (style) => {
     const night = clamp(Math.max(style.nightFactor, input.nightLighting ?? 0), 0, 1);
@@ -918,7 +918,7 @@ function createVoxelLodGroups(buffer, factors, options, name) {
     const meshes = levelBuffer.createMeshes({
       strategy: options.strategy,
       chunkSizeVoxels: Math.max(8, Math.ceil((options.chunkSizeVoxels ?? 128) / factor)),
-      maxMergeSpanVoxels: Math.max(1, Math.ceil((options.maxMergeSpanVoxels ?? 8) / factor))
+      maxMergeSpanVoxels: Math.max(1, Math.ceil((options.maxMergeSpanVoxels ?? 16) / factor))
     });
     meshes.forEach((mesh) => group.add(mesh));
     group.userData.lodFactor = factor;
@@ -1900,7 +1900,7 @@ export class VoxelInstanceBuffer {
 
   createGreedyMeshes(options = {}) {
     const chunkSize = Math.max(8, Math.round(options.chunkSizeVoxels ?? 128));
-    const maxMergeSpan = Math.max(1, Math.round(options.maxMergeSpanVoxels ?? 8));
+    const maxMergeSpan = Math.max(1, Math.round(options.maxMergeSpanVoxels ?? 16));
     const meshes = [];
     let sourceFaceCount = 0;
     let mergedQuadCount = 0;

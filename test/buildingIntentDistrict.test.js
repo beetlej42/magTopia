@@ -154,7 +154,7 @@ test("intent district combines street and public-building adapters into one dete
   assert.equal(diagnostics.world.logicalCellCount, 2500);
   assert.deepEqual(diagnostics.world.terrainVoxelGridSize, [1600, 1600]);
   assert.equal(diagnostics.world.chunkCount, 49);
-  assert.ok(diagnostics.world.triangleCount >= 1000000 && diagnostics.world.triangleCount < 2000000);
+  assert.ok(diagnostics.world.triangleCount >= 200000 && diagnostics.world.triangleCount < 400000);
   assert.equal(diagnostics.world.construction.siteCount, 8);
   assert.ok(diagnostics.world.construction.rejectedWaterCellCount > 0);
   assert.equal(diagnostics.world.construction.flattenedLogicalCellCount, 160);
@@ -162,7 +162,7 @@ test("intent district combines street and public-building adapters into one dete
   assert.ok(diagnostics.world.construction.parcelSurfaceVoxels > 0);
   assert.equal(diagnostics.world.prefabDistricts.count, 8);
   assert.equal(diagnostics.world.prefabDistricts.selection, "camera frustum plus projected base-voxel screen size");
-  assert.deepEqual(diagnostics.world.prefabDistricts.projectedVoxelThresholdsPx, { near: 2, medium: 1 });
+  assert.deepEqual(diagnostics.world.prefabDistricts.projectedVoxelThresholdsPx, { near: 1.5, medium: 0.55 });
   assert.equal(district.userData.contract.mode, "intent-district");
   assert.equal(district.userData.contract.camera.navigation, "fixed-radius surface pan");
   assert.equal(district.userData.contract.camera.depthOfField, "bokeh retained");
@@ -193,7 +193,7 @@ test("distant prefab districts use four real LOD levels", () => {
   assert.ok(prefabs.diagnostics.placements.every((district) => district.logicalCellIds.length === 20));
   assert.ok(prefabs.diagnostics.placements.every((district) => district.foundationClearance > 0));
   assert.equal(prefabs.diagnostics.selection, "camera frustum plus projected base-voxel screen size");
-  assert.deepEqual(prefabs.diagnostics.projectedVoxelThresholdsPx, { near: 2, medium: 1 });
+  assert.deepEqual(prefabs.diagnostics.projectedVoxelThresholdsPx, { near: 1.5, medium: 0.55 });
   assert.ok(prefabs.group.children.every((district) => district.isLOD));
   assert.ok(prefabs.group.children.every((district) => district.levels.length === 4));
   assert.ok(prefabs.diagnostics.placements.every((district) => (
@@ -226,7 +226,7 @@ test("prefab LOD follows camera frustum and projected screen size at the same ca
   const narrowLevel = prefabs.diagnostics.currentLevels.find((entry) => entry.id === first.userData.prefabDistrictId);
 
   first.userData.currentLevel = null;
-  camera.fov = 100;
+  camera.fov = 130;
   camera.updateProjectionMatrix();
   camera.updateMatrixWorld(true);
   prefabs.updateView(camera, { width: 650, height: 650 });
@@ -239,7 +239,7 @@ test("prefab LOD follows camera frustum and projected screen size at the same ca
   const outsideLevel = prefabs.diagnostics.currentLevels.find((entry) => entry.id === first.userData.prefabDistrictId);
 
   assert.equal(narrowLevel.level, "near");
-  assert.equal(wideLevel.level, "far");
+  assert.equal(wideLevel.level, "medium");
   assert.deepEqual(camera.position.toArray(), fixedPosition.toArray());
   assert.equal(outsideLevel.level, "culled");
   assert.equal(outsideLevel.visibleInFrustum, false);
@@ -257,8 +257,8 @@ test("macro world reaches Magic London scale with a compact base-voxel heightfie
   assert.equal(macro.diagnostics.terrainVoxelWorldSize, 0.125);
   assert.equal(macro.diagnostics.terrainVoxelBaseSpan, 1);
   assert.equal(macro.diagnostics.elevationSteps, 4);
-  assert.equal(macro.diagnostics.meshStrategy, "sphere-safe 2x2 maximum coplanar merging with exact one-voxel contour boundaries");
-  assert.ok(macro.diagnostics.triangleCount >= 1000000 && macro.diagnostics.triangleCount < 2000000);
+  assert.equal(macro.diagnostics.meshStrategy, "sphere-safe 16x16 maximum coplanar merging with exact one-voxel contour boundaries");
+  assert.ok(macro.diagnostics.triangleCount >= 200000 && macro.diagnostics.triangleCount < 400000);
   assert.equal(macro.diagnostics.construction.siteCount, 8);
   assert.equal(macro.diagnostics.construction.globalConstructionHeight, -0.0625);
   assert.ok(macro.diagnostics.construction.gradedTransitionVoxels > 0);
