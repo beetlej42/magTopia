@@ -1538,7 +1538,7 @@ export function createVoxelPrefabDistricts(config = {}, constructionPlan = null)
   };
   const updateDaylight = (style) => generatedDistricts.forEach((generated) => generated.updateDaylight?.(style));
   const updateView = (camera, viewport = {}) => {
-    const viewportHeight = Math.max(1, Number(viewport.height) || 720);
+    const viewportHeight = Math.max(1, Number(viewport.height) || 720) * Math.max(1, Number(viewport.renderScale) || 1);
     const projectionView = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     const frustum = new THREE.Frustum().setFromProjectionMatrix(projectionView);
     diagnostics.currentLevels = lods.map((lod) => {

@@ -309,7 +309,7 @@ function getObjectBoundingRadius(object) {
 
 function updateVoxelLods(lods, camera, viewport = {}) {
   if (!camera || !lods.length) return;
-  const viewportHeight = Math.max(1, Number(viewport.height) || 720);
+  const viewportHeight = Math.max(1, Number(viewport.height) || 720) * Math.max(1, Number(viewport.renderScale) || 1);
   const projectionView = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
   const frustum = new THREE.Frustum().setFromProjectionMatrix(projectionView);
   lods.forEach((lod) => {
