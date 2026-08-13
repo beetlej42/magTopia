@@ -3,8 +3,8 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
-import { BokehPass } from "three/examples/jsm/postprocessing/BokehPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+import { AdaptiveBokehPass } from "./render/adaptiveBokehPass.js";
 import { chooseAdaptiveQuality, detectMobileRenderProfile } from "./render/mobilePerformance.js";
 import {
   ISOMETRIC_ASSET_PRESETS,
@@ -104,6 +104,8 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color("#fff3f8");
 
 const startupParams = new URLSearchParams(window.location.search);
+const adaptiveQualityEnabled = startupParams.get("adaptiveQuality") !== "0";
+const bokehEnabled = startupParams.get("bokeh") !== "0";
 const startupMode = startupParams.get("mode");
 const startupWorldTimeValue = Number(startupParams.get("worldTime"));
 const startupWorldTime = startupParams.has("worldTime") && Number.isFinite(startupWorldTimeValue)
@@ -155,6 +157,8 @@ const renderQuality = {
   maxPixelRatio: deviceRenderProfile.maxPixelRatio,
   pixelRatio: deviceRenderProfile.initialPixelRatio,
   depthOfFieldScale: 1,
+  depthOfFieldQuality: 1,
+  lodQualityScale: 1,
   averageFrameMs: 16.67,
   lastFrameMs: 16.67,
   peakFrameMs: 16.67,
@@ -177,10 +181,11 @@ const districtBokehDefaults = {
   aperture: mobilePerformanceProfile ? 0.0002 : 0.00028,
   maxblur: mobilePerformanceProfile ? 0.004 : 0.006
 };
-const districtDepthOfField = new BokehPass(scene, camera, {
+const districtDepthOfField = new AdaptiveBokehPass(scene, camera, {
   focus: 60,
   aperture: districtBokehDefaults.aperture,
-  maxblur: districtBokehDefaults.maxblur
+  maxblur: districtBokehDefaults.maxblur,
+  quality: renderQuality.depthOfFieldQuality
 });
 const outputPass = new OutputPass();
 composer.addPass(renderPass);
@@ -686,6 +691,7 @@ async function rebuildActive(config) {
   }
 
   scene.add(activeObject);
+  districtDepthOfField.invalidateDepth();
   cityInfoOverlay.setSceneRoot(frontendSurface === "player" && currentMode === "agentcity" ? activeObject : null);
   warmupActiveVoxelLod();
   activeAnimationObjects = collectAnimationObjects(activeObject);
@@ -1602,7 +1608,9 @@ function animate() {
   activeObject?.userData?.updateView?.(camera, renderQuality.mobile ? 4 : 8, {
     width: renderer.domElement.clientWidth,
     height: renderer.domElement.clientHeight,
-    renderScale: renderQuality.pixelRatio
+    renderScale: renderQuality.pixelRatio,
+    viewMode: camera.userData?.districtSurface?.viewMode ?? districtSurfaceNavigation.viewMode,
+    qualityScale: renderQuality.lodQualityScale
   });
   cityInfoOverlay.update({
     camera,
@@ -1649,23 +1657,22 @@ function animate() {
     renderPass.camera = camera;
     districtDepthOfField.camera = camera;
     districtDepthOfField.uniforms.focus.value = camera.position.distanceTo(controls.target);
-    districtDepthOfField.enabled = renderQuality.depthOfFieldScale > 0
+    districtDepthOfField.enabled = bokehEnabled && renderQuality.depthOfFieldScale > 0
       && (currentConfig?.bokehStrength ?? 1) * (currentConfig?.bokehBlur ?? 1) > 0.001;
     composer.render();
   } else {
     districtDepthOfField.enabled = false;
     renderer.render(scene, camera);
   }
-  updateDynamicResolution(delta, elapsed);
+  if (adaptiveQualityEnabled) updateDynamicResolution(delta, elapsed);
   if (refreshRuntimeDiagnostics) publishRenderDiagnostics();
 }
 
 function applyDistrictBokeh(strength = 1, blur = 1) {
   const normalizedStrength = THREE.MathUtils.clamp(Number(strength) || 0, 0, 4);
   const normalizedBlur = THREE.MathUtils.clamp(Number(blur) || 0, 0, 6);
-  const skySharpness = isVoxelSkyMode() ? 0.46 : 1;
-  districtDepthOfField.uniforms.aperture.value = districtBokehDefaults.aperture * normalizedStrength * skySharpness * renderQuality.depthOfFieldScale;
-  districtDepthOfField.uniforms.maxblur.value = districtBokehDefaults.maxblur * normalizedBlur * skySharpness * renderQuality.depthOfFieldScale;
+  districtDepthOfField.uniforms.aperture.value = districtBokehDefaults.aperture * normalizedStrength * renderQuality.depthOfFieldScale;
+  districtDepthOfField.uniforms.maxblur.value = districtBokehDefaults.maxblur * normalizedBlur * renderQuality.depthOfFieldScale;
 }
 
 function collectAnimationObjects(root) {
@@ -1677,24 +1684,31 @@ function collectAnimationObjects(root) {
 }
 
 function updateDynamicResolution(delta, elapsed) {
-  if (!Number.isFinite(delta) || delta <= 0 || delta > 0.25) return;
-  const frameMs = delta * 1000;
+  if (!Number.isFinite(delta) || delta <= 0 || document.hidden) return;
+  const frameMs = Math.min(delta * 1000, 100);
   renderQuality.averageFrameMs += (frameMs - renderQuality.averageFrameMs) * 0.05;
   renderQuality.stableFrames += 1;
   if (elapsed * 1000 - renderQuality.lastAdjustmentMs < 1500) return;
-  const canLower = renderQuality.averageFrameMs > 18 && renderQuality.stableFrames >= 24;
-  const canRaise = renderQuality.averageFrameMs < 15.2 && renderQuality.stableFrames >= 150;
-  const dofNeedsAdjustment = renderQuality.averageFrameMs > 17.4 || renderQuality.depthOfFieldScale < 1;
-  if (!canLower && !canRaise && !dofNeedsAdjustment) return;
+  const canLower = renderQuality.averageFrameMs > 18.2 && renderQuality.stableFrames >= 24;
+  const canRaise = renderQuality.averageFrameMs < 15.5 && renderQuality.stableFrames >= 150;
+  const qualityNeedsAdjustment = renderQuality.depthOfFieldScale < 1
+    || renderQuality.depthOfFieldQuality < 1
+    || renderQuality.lodQualityScale > 1;
+  if (!canLower && !canRaise && !qualityNeedsAdjustment) return;
   const nextQuality = chooseAdaptiveQuality({
     averageFrameMs: renderQuality.averageFrameMs,
     pixelRatio: renderQuality.pixelRatio,
     minPixelRatio: renderQuality.minPixelRatio,
-    maxPixelRatio: Math.min(renderQuality.maxPixelRatio, window.devicePixelRatio)
+    maxPixelRatio: Math.min(renderQuality.maxPixelRatio, window.devicePixelRatio),
+    bokehQuality: renderQuality.depthOfFieldQuality
   });
   const nextPixelRatio = nextQuality.pixelRatio;
-  const dofChanged = nextQuality.depthOfFieldScale !== renderQuality.depthOfFieldScale;
+  const dofChanged = nextQuality.depthOfFieldScale !== renderQuality.depthOfFieldScale
+    || nextQuality.bokehQuality !== renderQuality.depthOfFieldQuality;
   renderQuality.depthOfFieldScale = nextQuality.depthOfFieldScale;
+  renderQuality.depthOfFieldQuality = nextQuality.bokehQuality;
+  renderQuality.lodQualityScale = nextQuality.lodQualityScale;
+  districtDepthOfField.setQuality(renderQuality.depthOfFieldQuality);
   applyDistrictBokeh(currentConfig?.bokehStrength ?? 1, currentConfig?.bokehBlur ?? 1);
   renderQuality.stableFrames = 0;
   renderQuality.lastAdjustmentMs = elapsed * 1000;
@@ -1715,6 +1729,8 @@ function publishRenderDiagnostics() {
   document.documentElement.dataset.magicTownPeakFrameMs = renderQuality.peakFrameMs.toFixed(2);
   document.documentElement.dataset.magicTownFrameMs = renderQuality.averageFrameMs.toFixed(2);
   document.documentElement.dataset.magicTownDepthOfFieldScale = renderQuality.depthOfFieldScale.toFixed(2);
+  document.documentElement.dataset.magicTownBokehQuality = renderQuality.depthOfFieldQuality.toFixed(2);
+  document.documentElement.dataset.magicTownLodQualityScale = renderQuality.lodQualityScale.toFixed(2);
   document.documentElement.dataset.magicTownRenderProfile = renderQuality.profile.iosSafari ? "ios-safari-60" : renderQuality.mobile ? "mobile-60" : "desktop";
   document.documentElement.dataset.magicTownDrawCalls = String(renderer.info.render.calls);
   document.documentElement.dataset.magicTownTriangles = String(renderer.info.render.triangles);

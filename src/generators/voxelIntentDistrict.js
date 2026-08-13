@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { getVoxelLodThresholds, selectScreenSpaceVoxelLod } from "../render/voxelLodQuality.js";
 import { createRng } from "../utils/random.js";
 import {
   adaptBuildingIntentToMassingConfig,
@@ -24,7 +25,7 @@ const DISTRICT_DEPTH_VOXELS = DISTRICT_ROWS * DISTRICT_CELL_VOXELS;
 const DISTRICT_BASE_Y = -1;
 const GLOBAL_CONSTRUCTION_HEIGHT = (DISTRICT_BASE_Y + 0.5) * VOXEL_SIZE;
 const MACRO_TERRAIN_SUBDIVISIONS = DISTRICT_CELL_VOXELS;
-const MACRO_TERRAIN_MAX_MERGE_SPAN = 2;
+const MACRO_TERRAIN_MAX_MERGE_SPAN = 16;
 const MACRO_TERRAIN_KIND = Object.freeze({
   terrain: 0,
   water: 1,
@@ -427,6 +428,7 @@ export function createVoxelIntentDistrict(config = {}) {
     prefabDistricts.updateDaylight(style);
   };
   root.userData.updateView = (camera, maxDynamicLights = 4, viewport = {}) => {
+    macroSurface.group.userData.updateView?.(camera);
     environment.updateView(camera, maxDynamicLights);
     prefabDistricts.updateView(camera, viewport);
   };
@@ -694,8 +696,7 @@ export function createVoxelDistrictMacroSurface(config = {}) {
     vertexColors: true,
     roughness: 0.98,
     metalness: 0,
-    flatShading: true,
-    side: THREE.DoubleSide
+    flatShading: true
   });
   const terrainGrid = createMacroTerrainGrid(params, {
     terrainColumns,
@@ -714,6 +715,7 @@ export function createVoxelDistrictMacroSurface(config = {}) {
   let triangleCount = 0;
   let waterCellCount = 0;
   let chunkCount = 0;
+  const terrainMeshes = [];
 
   for (let chunkRow = 0; chunkRow < params.worldRows; chunkRow += chunkCells) {
     for (let chunkColumn = 0; chunkColumn < params.worldColumns; chunkColumn += chunkCells) {
@@ -742,6 +744,7 @@ export function createVoxelDistrictMacroSurface(config = {}) {
       mesh.receiveShadow = true;
       mesh.renderOrder = -10;
       group.add(mesh);
+      terrainMeshes.push(mesh);
       chunkCount += 1;
     }
   }
@@ -769,13 +772,54 @@ export function createVoxelDistrictMacroSurface(config = {}) {
     elevationSteps: 4,
     terrainStyle: "base-voxel heightfield with seeded multi-scale organic contours and gentle 0-4 voxel rises outside the shared construction datum",
     paletteRule: "organic, non-repeating grass patches reuse the central grass, grassLight, and grassDark material colours across the full map",
-    meshStrategy: "sphere-safe 2x2 maximum coplanar merging with exact one-voxel contour boundaries",
+    meshStrategy: `sphere-safe ${MACRO_TERRAIN_MAX_MERGE_SPAN}x${MACRO_TERRAIN_MAX_MERGE_SPAN} maximum coplanar merging with exact one-voxel contour boundaries`,
     construction: constructionPlan.diagnostics,
     vegetation: macroVegetation.diagnostics
   };
   group.userData.diagnostics = diagnostics;
   group.userData.constructionPlan = constructionPlan;
+  group.userData.updateView = createSphericalTerrainChunkUpdater(
+    terrainMeshes,
+    params.planetRadius,
+    diagnostics
+  );
   return { group, diagnostics, constructionPlan };
+}
+
+function createSphericalTerrainChunkUpdater(meshes, radius, diagnostics) {
+  const sphereCenter = new THREE.Vector3(0, -radius, 0);
+  const cameraDirection = new THREE.Vector3();
+  const chunkDirection = new THREE.Vector3();
+  return (camera) => {
+    if (!camera) return;
+    cameraDirection.subVectors(camera.position, sphereCenter);
+    const cameraRadius = cameraDirection.length();
+    if (cameraRadius <= radius + 0.001) {
+      meshes.forEach((mesh) => { mesh.visible = true; });
+      diagnostics.horizonVisibleChunks = meshes.length;
+      diagnostics.horizonCulledChunks = 0;
+      return;
+    }
+    cameraDirection.multiplyScalar(1 / cameraRadius);
+    const horizonAngle = Math.acos(THREE.MathUtils.clamp(radius / cameraRadius, -1, 1));
+    let visibleChunks = 0;
+    meshes.forEach((mesh) => {
+      const bounds = mesh.geometry.boundingSphere;
+      if (!bounds) {
+        mesh.visible = true;
+        visibleChunks += 1;
+        return;
+      }
+      chunkDirection.subVectors(bounds.center, sphereCenter);
+      const chunkRadiusFromCenter = Math.max(radius, chunkDirection.length());
+      chunkDirection.normalize();
+      const angularRadius = Math.asin(THREE.MathUtils.clamp(bounds.radius / chunkRadiusFromCenter, 0, 1));
+      mesh.visible = chunkDirection.dot(cameraDirection) >= Math.cos(Math.min(Math.PI, horizonAngle + angularRadius));
+      if (mesh.visible) visibleChunks += 1;
+    });
+    diagnostics.horizonVisibleChunks = visibleChunks;
+    diagnostics.horizonCulledChunks = meshes.length - visibleChunks;
+  };
 }
 
 function createMacroConstructionPlan(params, terrainGrid, {
@@ -1531,7 +1575,8 @@ export function createVoxelPrefabDistricts(config = {}, constructionPlan = null)
     placementRule: "contiguous dry logical cells are flattened first; roads and parcels are written before the building root is raised above the site surface",
     count: placements.length,
     selection: "camera frustum plus projected base-voxel screen size",
-    projectedVoxelThresholdsPx: { near: 2, medium: 1 },
+    projectedVoxelThresholdsPx: { near: 1.5, medium: 0.55 },
+    projectedDiameterGuardsPx: { near: 84, medium: 30 },
     hysteresis: 0.08,
     placements,
     currentLevels: []
@@ -1539,11 +1584,15 @@ export function createVoxelPrefabDistricts(config = {}, constructionPlan = null)
   const updateDaylight = (style) => generatedDistricts.forEach((generated) => generated.updateDaylight?.(style));
   const updateView = (camera, viewport = {}) => {
     const viewportHeight = Math.max(1, Number(viewport.height) || 720) * Math.max(1, Number(viewport.renderScale) || 1);
+    const thresholds = getVoxelLodThresholds(viewport);
     const projectionView = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     const frustum = new THREE.Frustum().setFromProjectionMatrix(projectionView);
     diagnostics.currentLevels = lods.map((lod) => {
       const metrics = getPrefabScreenMetrics(lod, camera, frustum, viewportHeight);
-      const nextLevel = selectPrefabScreenLod(lod.userData.currentLevel, metrics, diagnostics.hysteresis);
+      const nextLevel = selectScreenSpaceVoxelLod(lod.userData.currentLevel, metrics, {
+        hysteresis: diagnostics.hysteresis,
+        thresholds
+      });
       setPrefabLodLevel(lod, nextLevel);
       return {
         id: lod.userData.prefabDistrictId,
@@ -1625,21 +1674,6 @@ function getPrefabScreenMetrics(lod, camera, frustum, viewportHeight) {
     projectedVoxelPx: VOXEL_SIZE * pixelsPerWorldUnit,
     projectedDiameterPx: boundingRadius * 2 * pixelsPerWorldUnit
   };
-}
-
-function selectPrefabScreenLod(currentLevel, metrics, hysteresis) {
-  if (!metrics.visibleInFrustum) return 3;
-  const projected = metrics.projectedVoxelPx;
-  if (currentLevel == null || currentLevel === 3) {
-    return projected >= 2 ? 0 : projected >= 1 ? 1 : 2;
-  }
-  if (currentLevel === 0) return projected < 2 * (1 - hysteresis) ? 1 : 0;
-  if (currentLevel === 1) {
-    if (projected > 2 * (1 + hysteresis)) return 0;
-    if (projected < 1 * (1 - hysteresis)) return 2;
-    return 1;
-  }
-  return projected > 1 * (1 + hysteresis) ? 1 : 2;
 }
 
 function setPrefabLodLevel(lod, levelIndex) {

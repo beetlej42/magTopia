@@ -14,18 +14,57 @@ test("iPhone Safari uses the largest DPR inside its post-processing pixel budget
 
   assert.equal(profile.iosSafari, true);
   assert.equal(profile.mobile, true);
-  assert.equal(profile.initialPixelRatio, 1.6);
+  assert.equal(profile.initialPixelRatio, 1.7);
   assert.equal(profile.maxPixelRatio, 1.79);
   assert.ok(390 * 844 * profile.maxPixelRatio ** 2 <= profile.pixelBudget * 1.01);
 });
 
 test("adaptive quality protects 60fps before restoring resolution", () => {
-  assert.deepEqual(chooseAdaptiveQuality({ averageFrameMs: 23, pixelRatio: 1.6, minPixelRatio: 1, maxPixelRatio: 1.8 }), {
-    pixelRatio: 1.4,
-    depthOfFieldScale: 0
-  });
-  assert.deepEqual(chooseAdaptiveQuality({ averageFrameMs: 14, pixelRatio: 1.6, minPixelRatio: 1, maxPixelRatio: 1.8 }), {
+  assert.deepEqual(chooseAdaptiveQuality({
+    averageFrameMs: 23,
     pixelRatio: 1.7,
-    depthOfFieldScale: 1
+    minPixelRatio: 1,
+    maxPixelRatio: 1.8,
+    bokehQuality: 1
+  }), {
+    pixelRatio: 1.7,
+    depthOfFieldScale: 1,
+    bokehQuality: 0.5,
+    lodQualityScale: 1.1
   });
+  assert.deepEqual(chooseAdaptiveQuality({
+    averageFrameMs: 23,
+    pixelRatio: 1.7,
+    minPixelRatio: 1,
+    maxPixelRatio: 1.8,
+    bokehQuality: 0.5
+  }), {
+    pixelRatio: 1.6,
+    depthOfFieldScale: 1,
+    bokehQuality: 0.5,
+    lodQualityScale: 1.1
+  });
+  assert.deepEqual(chooseAdaptiveQuality({
+    averageFrameMs: 14,
+    pixelRatio: 1.7,
+    minPixelRatio: 1,
+    maxPixelRatio: 1.8,
+    bokehQuality: 0.5
+  }), {
+    pixelRatio: 1.7,
+    depthOfFieldScale: 1,
+    bokehQuality: 1,
+    lodQualityScale: 1
+  });
+});
+
+test("desktop pixel-ratio bounds never invert on a 4K viewport", () => {
+  const profile = detectMobileRenderProfile({
+    userAgent: "Mozilla/5.0 AppleWebKit/537.36 Chrome/126 Safari/537.36",
+    width: 3840,
+    height: 2160,
+    devicePixelRatio: 2
+  });
+  assert.ok(profile.minPixelRatio <= profile.initialPixelRatio);
+  assert.ok(profile.initialPixelRatio <= profile.maxPixelRatio);
 });

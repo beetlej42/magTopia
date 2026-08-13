@@ -110,6 +110,7 @@ export function createAgentAcceptanceCity(config = {}) {
   root.userData.getVoxelContract = () => structuredClone(root.userData.contract);
   root.userData.getPrefabLodDiagnostics = () => buildings.userData.getVoxelLodDiagnostics?.() ?? {};
   root.userData.updateView = (camera, _maxDynamicLights = 4, viewport = {}) => {
+    macro.group.userData.updateView?.(camera);
     buildings.userData.updateView?.(camera, _maxDynamicLights, viewport);
     vegetation.userData.updateView?.(camera);
   };

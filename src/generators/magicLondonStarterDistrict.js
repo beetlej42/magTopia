@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { getVoxelLodThresholds, selectScreenSpaceVoxelLod } from "../render/voxelLodQuality.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeAssetRegistry } from "../city/assets.js";
 import { resolveAutomaticModelOrientation } from "./modelOrientation.js";
@@ -224,14 +225,14 @@ function createAgentVoxelBuildingLod(nearObject, design, nightLighting) {
       nightLighting,
       renderStrategy: "greedy",
       voxelChunkSize: 128,
-      maxMergeSpanVoxels: 8
+      maxMergeSpanVoxels: 16
     }, [2, 3])
     : createVoxelBuildingLodLevelsFromSpec(sourceSpec, {
       decorations: design.decorations,
       nightLighting,
       renderStrategy: "greedy",
       voxelChunkSize: 128,
-      maxMergeSpanVoxels: 8
+      maxMergeSpanVoxels: 16
     }, [2, 3]);
   const lod = new THREE.LOD();
   lod.name = `${nearObject.name}-LOD`;
@@ -310,11 +311,12 @@ function getObjectBoundingRadius(object) {
 function updateVoxelLods(lods, camera, viewport = {}) {
   if (!camera || !lods.length) return;
   const viewportHeight = Math.max(1, Number(viewport.height) || 720) * Math.max(1, Number(viewport.renderScale) || 1);
+  const thresholds = getVoxelLodThresholds(viewport);
   const projectionView = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
   const frustum = new THREE.Frustum().setFromProjectionMatrix(projectionView);
   lods.forEach((lod) => {
     const metrics = getVoxelLodScreenMetrics(lod, camera, frustum, viewportHeight);
-    const nextLevel = selectVoxelLodLevel(lod.userData.currentLevel, metrics, 0.08);
+    const nextLevel = selectScreenSpaceVoxelLod(lod.userData.currentLevel, metrics, { hysteresis: 0.08, thresholds });
     lod.levels.forEach((level, index) => {
       level.object.visible = index === nextLevel;
     });
@@ -340,21 +342,6 @@ function getVoxelLodScreenMetrics(lod, camera, frustum, viewportHeight) {
   };
 }
 
-function selectVoxelLodLevel(currentLevel, metrics, hysteresis) {
-  if (!metrics.visibleInFrustum) return 3;
-  const projected = metrics.projectedVoxelPx;
-  if (currentLevel == null || currentLevel === 3) {
-    return projected >= 2 ? 0 : projected >= 1 ? 1 : 2;
-  }
-  if (currentLevel === 0) return projected < 2 * (1 - hysteresis) ? 1 : 0;
-  if (currentLevel === 1) {
-    if (projected > 2 * (1 + hysteresis)) return 0;
-    if (projected < 1 * (1 - hysteresis)) return 2;
-    return 1;
-  }
-  return projected > 1 * (1 + hysteresis) ? 1 : 2;
-}
-
 function getVoxelLodDiagnostics(lods) {
   const currentLevels = lods.map((lod) => ({
     id: lod.userData.buildingId ?? lod.name,
@@ -374,7 +361,8 @@ function getVoxelLodDiagnostics(lods) {
     shadowPolicy: "low-lod-proxy",
     count: lods.length,
     selection: "camera frustum plus projected base-voxel screen size",
-    projectedVoxelThresholdsPx: { near: 2, medium: 1 },
+    projectedVoxelThresholdsPx: { near: 1.5, medium: 0.55 },
+    projectedDiameterGuardsPx: { near: 84, medium: 30 },
     hysteresis: 0.08,
     currentLevels,
     levelCounts: currentLevels.reduce((counts, entry) => {
