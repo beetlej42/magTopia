@@ -3,10 +3,7 @@ import test from "node:test";
 import * as THREE from "three";
 import { getVoxelSphereFrame } from "../src/generators/voxelIntentDistrict.js";
 import { selectCityInfoBlock } from "../src/ui/cityInfoOverlay.js";
-import {
-  createBatchedParcelTileGeometry,
-  createCityInfoWorldLayer
-} from "../src/ui/cityInfoWorldLayer.js";
+import { createCityInfoWorldLayer } from "../src/ui/cityInfoWorldLayer.js";
 
 const GRID = { columns: 50, rows: 50, cellWorldSize: 4 };
 const DISTRICTS = [
@@ -67,19 +64,7 @@ test("cancelled districts are not selectable in the city view", () => {
   assert.equal(selected, null);
 });
 
-test("district uplift batches all parcel tops and sides into two draw groups", () => {
-  const tiles = [createTile(0), createTile(2)];
-  const geometry = createBatchedParcelTileGeometry(tiles);
-
-  assert.equal(geometry.groups.length, 2);
-  assert.deepEqual(geometry.groups.map((group) => group.materialIndex), [0, 1]);
-  assert.deepEqual(geometry.groups.map((group) => group.count), [24, 48]);
-  assert.equal(geometry.getAttribute("position").count, 18);
-  assert.equal(geometry.index.count, 72);
-  geometry.dispose();
-});
-
-test("district uplift restores building transforms when the selection leaves", () => {
+test("city info selection does not add terrain uplift or move buildings", () => {
   const root = new THREE.Group();
   const building = new THREE.Group();
   building.position.set(0, 0, 0);
@@ -89,24 +74,10 @@ test("district uplift restores building transforms when the selection leaves", (
 
   worldLayer.update({
     geometryKey: "block:test",
-    cellTiles: [createTile(0)],
-    buildingObjects: [building],
-    buildingLift: 0.08,
-    planetCenter: new THREE.Vector3(0, -220, 0),
-    opacity: 1,
-    upliftVisible: true
-  });
-  assert.ok(Math.abs(building.position.y - 0.08) < 1e-9);
-
-  worldLayer.update({
-    geometryKey: "block:test",
-    cellTiles: [createTile(0)],
-    buildingObjects: [building],
-    planetCenter: new THREE.Vector3(0, -220, 0),
-    opacity: 0,
-    upliftVisible: false
+    opacity: 1
   });
   assert.deepEqual(building.position.toArray(), [0, 0, 0]);
+  assert.equal(root.getObjectByName("CityInfoBlockUplift"), undefined);
   worldLayer.dispose();
 });
 
@@ -128,17 +99,4 @@ function createSurfaceCamera({ flatX, flatZ, scale }) {
   camera.updateProjectionMatrix();
   camera.updateMatrixWorld(true);
   return camera;
-}
-
-function createTile(offsetX) {
-  const base = [
-    new THREE.Vector3(offsetX, 0, 0),
-    new THREE.Vector3(offsetX + 1, 0, 0),
-    new THREE.Vector3(offsetX + 1, 0, 1),
-    new THREE.Vector3(offsetX, 0, 1)
-  ];
-  return {
-    base,
-    top: base.map((point) => point.clone().add(new THREE.Vector3(0, 0.08, 0)))
-  };
 }
