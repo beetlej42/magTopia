@@ -9,7 +9,8 @@ import { chooseAdaptiveQuality, detectMobileRenderProfile, shouldEnableBokeh } f
 import {
   calculateSurfaceShadowRefreshThreshold,
   defaultShadowRefreshThreshold,
-  shadowDirectionExceedsThreshold
+  shadowDirectionExceedsThreshold,
+  shouldCommitShadowRefresh
 } from "./render/shadowRefreshScheduler.js";
 import {
   ISOMETRIC_ASSET_PRESETS,
@@ -91,6 +92,7 @@ import { createVoxelSky } from "./city/voxel-sky.js";
 import { findAssetCandidates, getAssetRegistry, resolveAsset } from "./city/assets.js";
 import { getModelOrientationPreviewUrls } from "./generators/modelOrientation.js";
 import { createAgentAcceptanceCity } from "./generators/agentAcceptanceCity.js";
+import { configureVoxelShadowOnlyLayer } from "./generators/magicLondonStarterDistrict.js";
 import { createCityInfoOverlay } from "./ui/cityInfoOverlay.js";
 import {
   approachDistrictYaw,
@@ -116,6 +118,7 @@ scene.matrixAutoUpdate = false;
 const startupParams = new URLSearchParams(window.location.search);
 setVoxelMaterialMode(startupParams.get("voxelShader") ?? "diffuse");
 const adaptiveQualityEnabled = startupParams.get("adaptiveQuality") !== "0";
+const detailedRuntimeDiagnostics = startupParams.get("detailedDiagnostics") === "1";
 const requestedBokeh = startupParams.get("bokeh");
 const startupMode = startupParams.get("mode");
 const startupWorldTimeValue = Number(startupParams.get("worldTime"));
@@ -273,6 +276,7 @@ controls.maxDistance = 900;
 controls.maxPolarAngle = Math.PI * 0.5;
 
 const worldLights = addLights(scene);
+configureVoxelShadowOnlyLayer({ viewCamera: camera, shadowLights: [worldLights.key] });
 
 const MODES = {
   map: {
@@ -610,8 +614,14 @@ const activeViewCache = {
 const shadowLightDirection = new THREE.Vector3();
 const candidateShadowLightDirection = new THREE.Vector3();
 let shadowLightDirectionValid = false;
+const surfaceShadowRefreshIntervalMs = mobilePerformanceProfile ? 160 : 100;
+let shadowRefreshPending = true;
+let shadowRefreshUrgent = true;
+let shadowRefreshLastCommittedAtMs = Number.NEGATIVE_INFINITY;
 const shadowRefreshDiagnostics = {
   scheduledRefreshes: 0,
+  committedRefreshes: 0,
+  deferredRefreshes: 0,
   directionChanges: 0,
   skippedDirectionChanges: 0,
   forcedRefreshes: 0,
@@ -620,6 +630,7 @@ const shadowRefreshDiagnostics = {
   renderPixelWorldSize: null,
   voxelDisplacementLimit: null,
   viewMode: "default",
+  minIntervalMs: surfaceShadowRefreshIntervalMs,
   lastReason: "startup"
 };
 const configsByMode = {
@@ -948,10 +959,32 @@ function getShadowRefreshThreshold() {
 }
 
 function scheduleShadowRefresh(reason, forced = false) {
-  if (!renderer.shadowMap.needsUpdate) shadowRefreshDiagnostics.scheduledRefreshes += 1;
+  if (!shadowRefreshPending) shadowRefreshDiagnostics.scheduledRefreshes += 1;
   if (forced) shadowRefreshDiagnostics.forcedRefreshes += 1;
   shadowRefreshDiagnostics.lastReason = reason;
+  shadowRefreshPending = true;
+  if (forced && reason === "scene-rebuild") shadowRefreshUrgent = true;
+}
+
+function commitPendingShadowRefresh(nowMs, cameraInMotion) {
+  if (!shouldCommitShadowRefresh({
+    pending: shadowRefreshPending,
+    urgent: shadowRefreshUrgent,
+    surfaceWorld: isSurfaceVoxelWorld(),
+    cameraInMotion,
+    nowMs,
+    lastCommittedAtMs: shadowRefreshLastCommittedAtMs,
+    minIntervalMs: isSurfaceVoxelWorld() ? surfaceShadowRefreshIntervalMs : 0
+  })) {
+    if (shadowRefreshPending) shadowRefreshDiagnostics.deferredRefreshes += 1;
+    return false;
+  }
   renderer.shadowMap.needsUpdate = true;
+  shadowRefreshPending = false;
+  shadowRefreshUrgent = false;
+  shadowRefreshLastCommittedAtMs = nowMs;
+  shadowRefreshDiagnostics.committedRefreshes += 1;
+  return true;
 }
 
 function rebuildPresetOptions() {
@@ -1221,13 +1254,17 @@ async function loadCityViewerState({ force = false } = {}) {
       cityWorkbench = createCityWorkbench(payload.state);
       cityViewerRuntimeState = payload.state;
       citySeed = payload.state.mapSeed ?? configsByMode.agentcity.seed;
+      const viewerPreset = startupParams.get("time") === "evening"
+        ? VOXEL_INTENT_DISTRICT_PRESETS.agentQuarterEvening
+        : VOXEL_INTENT_DISTRICT_PRESETS.agentQuarterDay;
       const viewerConfig = normalizeVoxelIntentDistrictConfig({
-        ...VOXEL_INTENT_DISTRICT_PRESETS.agentQuarterDay,
+        ...viewerPreset,
         seed: citySeed,
         worldColumns: payload.state.world?.grid?.columns ?? 50,
         worldRows: payload.state.world?.grid?.rows ?? 50,
-        bokehStrength: VOXEL_INTENT_DISTRICT_PRESETS.agentQuarterDay.bokehStrength,
-        bokehBlur: VOXEL_INTENT_DISTRICT_PRESETS.agentQuarterDay.bokehBlur
+        sunTime: skyClock.time,
+        bokehStrength: viewerPreset.bokehStrength,
+        bokehBlur: viewerPreset.bokehBlur
       });
       configsByMode.agentcity = viewerConfig;
       currentMode = "agentcity";
@@ -1764,7 +1801,9 @@ function animate() {
   if (shouldUpdateActiveView(activeObject, camera, activeViewViewport)) {
     activeObject?.userData?.updateView?.(camera, renderQuality.mobile ? 4 : 8, activeViewViewport);
   }
+  const cameraInMotion = isSurfaceVoxelWorld() && isDistrictSurfaceCameraInMotion();
   cityInfoOverlay.update({
+    enabled: document.documentElement.dataset.magtopiaPureView !== "true" && !cameraInMotion,
     camera,
     delta,
     viewMode: camera.userData?.districtSurface?.viewMode ?? districtSurfaceNavigation.viewMode,
@@ -1809,20 +1848,22 @@ function animate() {
     renderPass.camera = camera;
     districtDepthOfField.camera = camera;
     districtDepthOfField.uniforms.focus.value = camera.position.distanceTo(controls.target);
-    const cameraInMotion = isDistrictSurfaceCameraInMotion();
     const motionValue = String(cameraInMotion);
     if (document.documentElement.dataset.magicTownBokehMotionSuppressed !== motionValue) {
       document.documentElement.dataset.magicTownBokehMotionSuppressed = motionValue;
     }
     districtDepthOfField.enabled = bokehEnabled && !cameraInMotion && renderQuality.depthOfFieldScale > 0
       && (currentConfig?.bokehStrength ?? 1) * (currentConfig?.bokehBlur ?? 1) > 0.001;
+    if (activeAnimatedShadowCasters) scheduleShadowRefresh("animated-caster", true);
+    commitPendingShadowRefresh(performance.now(), cameraInMotion);
     if (districtDepthOfField.enabled) composer.render();
     else renderer.render(scene, camera);
   } else {
     districtDepthOfField.enabled = false;
+    if (activeAnimatedShadowCasters) scheduleShadowRefresh("animated-caster", true);
+    commitPendingShadowRefresh(performance.now(), false);
     renderer.render(scene, camera);
   }
-  if (activeAnimatedShadowCasters) scheduleShadowRefresh("animated-caster", true);
   if (adaptiveQualityEnabled) updateDynamicResolution(delta, elapsed);
   if (refreshRuntimeDiagnostics) publishRenderDiagnostics();
 }
@@ -1993,11 +2034,21 @@ function publishRenderDiagnostics() {
     ? JSON.stringify(camera.userData.districtSurface ?? {})
     : "{}";
   document.documentElement.dataset.magicTownPrefabLod = ["district", "agentcity"].includes(currentMode)
-    ? JSON.stringify(activeObject?.userData?.getPrefabLodDiagnostics?.() ?? {})
+    ? JSON.stringify(getPublishedPrefabLodDiagnostics())
     : "{}";
   document.documentElement.dataset.magicTownSky = voxelSky.visible
     ? JSON.stringify(getSkyClockState())
     : "{}";
+}
+
+function getPublishedPrefabLodDiagnostics() {
+  if (detailedRuntimeDiagnostics) return activeObject?.userData?.getPrefabLodDiagnostics?.() ?? {};
+  const summary = activeObject?.userData?.getPrefabLodSummaryDiagnostics?.();
+  if (summary) return summary;
+  const diagnostics = activeObject?.userData?.getPrefabLodDiagnostics?.() ?? {};
+  if (!Array.isArray(diagnostics.currentLevels)) return diagnostics;
+  const { currentLevels: _currentLevels, ...aggregate } = diagnostics;
+  return aggregate;
 }
 
 function updateSkyClock(delta, elapsed) {

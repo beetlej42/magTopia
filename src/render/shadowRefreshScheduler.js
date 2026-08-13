@@ -56,6 +56,21 @@ export function shadowDirectionExceedsThreshold(dotProduct, thresholdCosine) {
   return clamp(dotProduct, -1, 1) < thresholdCosine;
 }
 
+export function shouldCommitShadowRefresh({
+  pending = false,
+  urgent = false,
+  surfaceWorld = false,
+  cameraInMotion = false,
+  nowMs = 0,
+  lastCommittedAtMs = Number.NEGATIVE_INFINITY,
+  minIntervalMs = 0
+} = {}) {
+  if (!pending) return false;
+  if (urgent) return true;
+  if (surfaceWorld && cameraInMotion) return false;
+  return Number(nowMs) - Number(lastCommittedAtMs) >= Math.max(0, Number(minIntervalMs) || 0);
+}
+
 function positiveNumber(value, fallback) {
   const numeric = Number(value);
   return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;

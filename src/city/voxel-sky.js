@@ -4,6 +4,9 @@ import { createRng } from "../utils/random.js";
 const TAU = Math.PI * 2;
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const SKY_RADIUS = 190;
+const SKY_TIME_UPDATE_THRESHOLD = 1e-5;
+const CLOUD_ELAPSED_UPDATE_INTERVAL = 1 / 30;
+const CLOUD_BASIS_CHANGE_THRESHOLD_SQ = 3e-6;
 
 const SKY_STOPS = Object.freeze([
   [0, "#091126", "#182543"],
@@ -16,30 +19,39 @@ const SKY_STOPS = Object.freeze([
   [0.84, "#151f42", "#594967"],
   [1, "#091126", "#182543"]
 ]);
+const SKY_STOP_COLORS = SKY_STOPS.map(([time, topColor, horizonColor]) => ({
+  time,
+  topColor: new THREE.Color(topColor),
+  horizonColor: new THREE.Color(horizonColor)
+}));
+const CLOUD_NIGHT_COLOR = new THREE.Color("#7e87a5");
+const CLOUD_DAY_COLOR = new THREE.Color("#fff7e7");
+const CLOUD_SHADOW_NIGHT_COLOR = new THREE.Color("#39405f");
+const CLOUD_SHADOW_DAY_COLOR = new THREE.Color("#b9cbd3");
+const MOON_NIGHT_COLOR = new THREE.Color("#dfe8ff");
+const MOON_TWILIGHT_COLOR = new THREE.Color("#fff0c7");
 
-export function getVoxelSkyState(inputTime = 0.5) {
+export function getVoxelSkyState(inputTime = 0.5, target = null) {
+  const state = ensureSkyStateTarget(target);
   const time = wrap01(inputTime);
   const solarAngle = (time - 0.25) * TAU;
   const solarHeight = Math.sin(solarAngle);
   const daylight = smoothstep(-0.08, 0.18, solarHeight);
   const night = 1 - smoothstep(-0.18, 0.08, solarHeight);
   const twilight = (1 - Math.abs(2 * daylight - 1)) * (1 - night * 0.35);
-  const [topColor, horizonColor] = sampleSkyStops(time);
-  return {
-    time,
-    solarAngle,
-    solarHeight,
-    daylight,
-    night,
-    twilight,
-    topColor,
-    horizonColor,
-    cloudColor: new THREE.Color("#7e87a5").lerp(new THREE.Color("#fff7e7"), daylight),
-    cloudShadowColor: new THREE.Color("#39405f").lerp(new THREE.Color("#b9cbd3"), daylight),
-    starOpacity: smoothstep(0.05, 0.65, night),
-    sunOpacity: smoothstep(-0.08, 0.08, solarHeight),
-    moonOpacity: smoothstep(-0.08, 0.1, -solarHeight)
-  };
+  sampleSkyStops(time, state.topColor, state.horizonColor);
+  state.time = time;
+  state.solarAngle = solarAngle;
+  state.solarHeight = solarHeight;
+  state.daylight = daylight;
+  state.night = night;
+  state.twilight = twilight;
+  state.cloudColor.copy(CLOUD_NIGHT_COLOR).lerp(CLOUD_DAY_COLOR, daylight);
+  state.cloudShadowColor.copy(CLOUD_SHADOW_NIGHT_COLOR).lerp(CLOUD_SHADOW_DAY_COLOR, daylight);
+  state.starOpacity = smoothstep(0.05, 0.65, night);
+  state.sunOpacity = smoothstep(-0.08, 0.08, solarHeight);
+  state.moonOpacity = smoothstep(-0.08, 0.1, -solarHeight);
+  return state;
 }
 
 export function createVoxelSky(options = {}) {
@@ -108,11 +120,18 @@ export function createVoxelSky(options = {}) {
   const moonColor = new THREE.Color();
   const starBasis = new THREE.Matrix4();
   const starForwardAxis = new THREE.Vector3();
-  let lastState = getVoxelSkyState(options.time ?? 0.5);
+  const lastCloudForward = new THREE.Vector3();
+  const lastCloudRight = new THREE.Vector3();
+  const lastCloudUp = new THREE.Vector3();
+  const lastState = getVoxelSkyState(options.time ?? 0.5);
+  let lastCloudElapsed = Number.NaN;
 
   function update({ time = lastState.time, elapsed = 0, camera }) {
     if (!camera) return lastState;
-    lastState = getVoxelSkyState(time);
+    const normalizedTime = wrap01(time);
+    const normalizedElapsed = Number.isFinite(Number(elapsed)) ? Number(elapsed) : 0;
+    const timeChanged = circularDistance01(normalizedTime, lastState.time) >= SKY_TIME_UPDATE_THRESHOLD;
+    if (timeChanged) getVoxelSkyState(normalizedTime, lastState);
 
     root.position.copy(camera.position);
     skyUp.copy(camera.up).normalize();
@@ -136,12 +155,12 @@ export function createVoxelSky(options = {}) {
     bottomColor.copy(lastState.horizonColor).multiplyScalar(0.68 + lastState.daylight * 0.2);
     domeMaterial.uniforms.bottomColor.value.copy(bottomColor);
 
-    stars.material.opacity = lastState.starOpacity * (0.78 + Math.sin(elapsed * 1.6) * 0.1);
+    stars.material.opacity = lastState.starOpacity * (0.78 + Math.sin(normalizedElapsed * 1.6) * 0.1);
     stars.visible = stars.material.opacity > 0.01;
 
     positionCelestial(sun, lastState.solarAngle, lastState.sunOpacity, 178);
     positionCelestial(moon, lastState.solarAngle + Math.PI, lastState.moonOpacity, 176);
-    moonColor.set("#dfe8ff").lerp(new THREE.Color("#fff0c7"), lastState.twilight * 0.3);
+    moonColor.copy(MOON_NIGHT_COLOR).lerp(MOON_TWILIGHT_COLOR, lastState.twilight * 0.3);
     moon.userData.material.opacity = lastState.moonOpacity;
     moon.userData.material.color.copy(moonColor);
     sun.userData.material.opacity = lastState.sunOpacity;
@@ -153,7 +172,27 @@ export function createVoxelSky(options = {}) {
     clouds.materials.shadow.color.copy(lastState.cloudShadowColor);
     clouds.materials.light.opacity = 0.35 + lastState.daylight * 0.48;
     clouds.materials.shadow.opacity = 0.24 + lastState.daylight * 0.3;
-    updateClouds(clouds.entries, elapsed, forwardLocal, screenRight, screenUp);
+    const cloudElapsedChanged = !Number.isFinite(lastCloudElapsed)
+      || Math.abs(normalizedElapsed - lastCloudElapsed) + Number.EPSILON * 16 >= CLOUD_ELAPSED_UPDATE_INTERVAL;
+    const cloudBasisChanged = !Number.isFinite(lastCloudElapsed)
+      || forwardLocal.distanceToSquared(lastCloudForward) >= CLOUD_BASIS_CHANGE_THRESHOLD_SQ
+      || screenRight.distanceToSquared(lastCloudRight) >= CLOUD_BASIS_CHANGE_THRESHOLD_SQ
+      || screenUp.distanceToSquared(lastCloudUp) >= CLOUD_BASIS_CHANGE_THRESHOLD_SQ;
+    if (cloudElapsedChanged || cloudBasisChanged) {
+      updateClouds(
+        clouds.entries,
+        normalizedElapsed,
+        forwardLocal,
+        screenRight,
+        screenUp,
+        clouds.meshes.light,
+        clouds.meshes.shadow
+      );
+      lastCloudElapsed = normalizedElapsed;
+      lastCloudForward.copy(forwardLocal);
+      lastCloudRight.copy(screenRight);
+      lastCloudUp.copy(screenUp);
+    }
     return lastState;
   }
 
@@ -331,9 +370,7 @@ function createCloudField(count, seed) {
   return { group, entries, materials: { light, shadow }, meshes: { light: lightMesh, shadow: shadowMesh } };
 }
 
-function updateClouds(entries, elapsed, forwardLocal, screenRight, screenUp) {
-  let lightMesh = null;
-  let shadowMesh = null;
+function updateClouds(entries, elapsed, forwardLocal, screenRight, screenUp, lightMesh, shadowMesh) {
   entries.forEach((entry) => {
     const driftRange = 164;
     const initialOffset = ((entry.baseAngle / TAU) - 0.5) * driftRange;
@@ -342,8 +379,6 @@ function updateClouds(entries, elapsed, forwardLocal, screenRight, screenUp) {
       .addScaledVector(screenRight, drift)
       .addScaledVector(screenUp, entry.height + Math.sin(elapsed * 0.13 + entry.phase) * entry.bob);
     entry.quaternion.setFromRotationMatrix(cloudLookAtMatrix.lookAt(entry.position, cloudOrigin, WORLD_UP));
-    lightMesh ??= entry.blocks.find((block) => block.materialKey === "light")?.mesh ?? null;
-    shadowMesh ??= entry.blocks.find((block) => block.materialKey === "shadow")?.mesh ?? null;
     updateCloudEntryInstances(entry, lightMesh, shadowMesh);
   });
   if (lightMesh) lightMesh.instanceMatrix.needsUpdate = true;
@@ -368,21 +403,28 @@ function updateCloudEntryInstances(entry, lightMesh, shadowMesh) {
   });
 }
 
-function sampleSkyStops(time) {
-  let lower = SKY_STOPS[0];
-  let upper = SKY_STOPS[SKY_STOPS.length - 1];
-  for (let index = 1; index < SKY_STOPS.length; index += 1) {
-    if (time <= SKY_STOPS[index][0]) {
-      lower = SKY_STOPS[index - 1];
-      upper = SKY_STOPS[index];
+function sampleSkyStops(time, topColor, horizonColor) {
+  let lower = SKY_STOP_COLORS[0];
+  let upper = SKY_STOP_COLORS[SKY_STOP_COLORS.length - 1];
+  for (let index = 1; index < SKY_STOP_COLORS.length; index += 1) {
+    if (time <= SKY_STOP_COLORS[index].time) {
+      lower = SKY_STOP_COLORS[index - 1];
+      upper = SKY_STOP_COLORS[index];
       break;
     }
   }
-  const amount = smoothstep(lower[0], upper[0], time);
-  return [
-    new THREE.Color(lower[1]).lerp(new THREE.Color(upper[1]), amount),
-    new THREE.Color(lower[2]).lerp(new THREE.Color(upper[2]), amount)
-  ];
+  const amount = smoothstep(lower.time, upper.time, time);
+  topColor.copy(lower.topColor).lerp(upper.topColor, amount);
+  horizonColor.copy(lower.horizonColor).lerp(upper.horizonColor, amount);
+}
+
+function ensureSkyStateTarget(target) {
+  const state = target ?? {};
+  state.topColor ??= new THREE.Color();
+  state.horizonColor ??= new THREE.Color();
+  state.cloudColor ??= new THREE.Color();
+  state.cloudShadowColor ??= new THREE.Color();
+  return state;
 }
 
 function smoothstep(min, max, value) {
@@ -395,4 +437,9 @@ function wrap01(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return 0.5;
   return ((numeric % 1) + 1) % 1;
+}
+
+function circularDistance01(left, right) {
+  const distance = Math.abs(left - right);
+  return Math.min(distance, 1 - distance);
 }

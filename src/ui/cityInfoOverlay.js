@@ -10,6 +10,10 @@ const MAX_CARD_SCALE = 1.16;
 const SELECTION_DELAY_MS = 125;
 const SELECTION_RADIUS_NDC = 0.28;
 const BLOCK_SELECTION_RADIUS_NDC = 0.85;
+const BUILDING_SEARCH_CELL_RADIUS = 2;
+
+const cameraPointScratch = new THREE.Vector3();
+const ndcPointScratch = new THREE.Vector3();
 
 const PURPOSE_LABELS = {
   residential: "Residence",
@@ -64,7 +68,8 @@ export function createCityInfoOverlay() {
     blockOverlayOpacity: 0,
     lastBlockKey: null,
     lastBlockBoundaryEdges: [],
-    detailTarget: null
+    detailTarget: null,
+    suppressed: false
   };
 
   card.addEventListener("click", () => {
@@ -77,7 +82,7 @@ export function createCityInfoOverlay() {
   function setSceneRoot(root = null) {
     worldLayer.setSceneRoot(root);
     state.root = root;
-    state.context = root ? createContext(root) : null;
+    state.context = root ? createCityInfoContext(root) : null;
     state.active = null;
     state.pendingKey = null;
     state.pendingSince = 0;
@@ -86,11 +91,30 @@ export function createCityInfoOverlay() {
     state.blockOverlayOpacity = 0;
     state.lastBlockKey = null;
     state.lastBlockBoundaryEdges = [];
+    state.suppressed = false;
     overlay.classList.toggle("is-enabled", Boolean(root));
     overlay.setAttribute("aria-hidden", root ? "false" : "true");
   }
 
-  function update({ camera, delta = 0.016, viewMode = "far", viewport }) {
+  function update({ camera, delta = 0.016, viewMode = "far", viewport, enabled = true }) {
+    if (!enabled) {
+      if (!state.suppressed) {
+        state.opacity = 0;
+        state.blockOverlayOpacity = 0;
+        worldLayer.update({
+          geometryKey: state.lastBlockKey,
+          boundaryEdges: state.lastBlockBoundaryEdges,
+          opacity: 0,
+          targetOpacity: 0,
+          frameVisible: false,
+          targetVisible: false
+        });
+        applyOpacity();
+        state.suppressed = true;
+      }
+      return;
+    }
+    state.suppressed = false;
     const root = state.root;
     const context = state.context;
     if (!root || !context || !camera || !viewport?.width || !viewport?.height) {
@@ -219,17 +243,14 @@ export function createCityInfoOverlay() {
   };
 }
 
-function createContext(root) {
+export function createCityInfoContext(root) {
   const state = root.userData?.cityState ?? {};
   const world = root.userData?.worldContract ?? {};
   const grid = world.grid ?? state.world?.grid ?? {};
   const buildingsRoot = root.getObjectByName("AgentAcceptanceBuildings");
   const placements = buildingsRoot?.userData?.contract?.placements ?? [];
-  const buildings = placements.map((placement) => {
-    const object = findBuildingObject(root, placement.buildingId);
-    const building = state.buildings?.[placement.buildingId] ?? null;
-    return { placement, object, building };
-  }).filter((entry) => entry.object || entry.building);
+  root.updateWorldMatrix(true, true);
+  const buildingObjectsById = findBuildingObjects(root);
   // Cancellation preserves the district in the agent-facing history, but a
   // released planning context must not remain selectable in the city view.
   const districts = Object.values(state.districts ?? {}).filter((district) => district.status !== "cancelled");
@@ -257,19 +278,52 @@ function createContext(root) {
     [...buildingIdsByDistrict.entries()].map(([districtId, buildingIds]) => [districtId, buildingIds.size])
   );
   const radius = Number(root.userData?.surfaceNavigation?.radius ?? 220);
-  return {
+  const context = {
     state,
     worldState: world.stateWorld ?? state.world ?? {},
     grid,
     gridCells,
     cellsByCoord,
-    buildings,
+    buildings: [],
+    buildingsByCellId: new Map(),
+    unindexedBuildings: [],
+    buildingCandidates: [],
+    buildingQueryVersion: 0,
     districts,
     buildingCountByDistrict,
     blockSelections: new Map(),
     planetCenter: new THREE.Vector3(0, -radius, 0),
     radius
   };
+  context.buildings = placements.map((placement, order) => {
+    const object = buildingObjectsById.get(placement.buildingId) ?? null;
+    const building = state.buildings?.[placement.buildingId] ?? null;
+    if (!object && !building) return null;
+    const footprintCellIds = placement.footprintCells ?? building?.footprintCells ?? [];
+    const geometry = getBuildingGeometry({ placement, object, building }, context);
+    const entry = {
+      placement,
+      object,
+      building,
+      footprintCellIds,
+      footprintCellIdSet: new Set(footprintCellIds),
+      boundsWorld: geometry.boundsWorld,
+      anchorWorld: geometry.anchorWorld,
+      order,
+      cityInfoQueryVersion: -1
+    };
+    if (footprintCellIds.length === 0) context.unindexedBuildings.push(entry);
+    footprintCellIds.forEach((cellId) => {
+      let entries = context.buildingsByCellId.get(cellId);
+      if (!entries) {
+        entries = [];
+        context.buildingsByCellId.set(cellId, entries);
+      }
+      entries.push(entry);
+    });
+    return entry;
+  }).filter(Boolean);
+  return context;
 }
 
 function resolveSelection(context, camera, viewMode) {
@@ -279,7 +333,7 @@ function resolveSelection(context, camera, viewMode) {
   if (!centralCell) return null;
 
   if (viewMode === "near") {
-    const building = selectBuilding(context, centralCell, camera);
+    const building = selectCityInfoBuilding(context, centralCell, camera);
     if (!building) return null;
     const buildingId = building.placement.buildingId;
     return {
@@ -351,28 +405,60 @@ export function selectCityInfoBlock(context, cell, camera, surface = {}) {
   return candidates[0]?.district ?? null;
 }
 
-function selectBuilding(context, centralCell, camera) {
-  const candidates = context.buildings.map((entry) => {
-    const footprint = entry.placement.footprintCells ?? entry.building?.footprintCells ?? [];
-    const includesCenter = footprint.includes(centralCell.cell.id);
-    const anchorWorld = getBuildingAnchor(entry, context);
-    const projection = projectToScreen(anchorWorld, camera, { width: 2, height: 2 });
+export function selectCityInfoBuilding(context, centralCell, camera) {
+  const candidates = collectNearbyBuildings(context, centralCell);
+  const centerCellId = centralCell.cell.id;
+  let selected = null;
+  let selectedIncludesCenter = false;
+  let selectedScreenDistance = Number.POSITIVE_INFINITY;
+
+  for (const entry of candidates) {
+    const includesCenter = entry.footprintCellIdSet.has(centerCellId);
+    const projection = projectToScreen(entry.anchorWorld, camera, { width: 2, height: 2 });
     const screenDistance = projection.visible
       ? Math.hypot(projection.ndcX, projection.ndcY)
       : Number.POSITIVE_INFINITY;
-    return {
-      ...entry,
-      includesCenter,
-      anchorWorld,
-      screenDistance
-    };
-  }).filter((entry) => entry.screenDistance <= SELECTION_RADIUS_NDC || entry.includesCenter);
+    if (!includesCenter && screenDistance > SELECTION_RADIUS_NDC) continue;
+    const isBetter = !selected
+      || (includesCenter && !selectedIncludesCenter)
+      || (includesCenter === selectedIncludesCenter && screenDistance < selectedScreenDistance)
+      || (includesCenter === selectedIncludesCenter
+        && screenDistance === selectedScreenDistance
+        && entry.order < selected.order);
+    if (!isBetter) continue;
+    selected = entry;
+    selectedIncludesCenter = includesCenter;
+    selectedScreenDistance = screenDistance;
+  }
+  return selected;
+}
 
-  candidates.sort((left, right) => {
-    if (left.includesCenter !== right.includesCenter) return left.includesCenter ? -1 : 1;
-    return left.screenDistance - right.screenDistance;
-  });
-  return candidates[0] ?? null;
+function collectNearbyBuildings(context, centralCell) {
+  const candidates = context.buildingCandidates;
+  candidates.length = 0;
+  context.buildingQueryVersion += 1;
+  const queryVersion = context.buildingQueryVersion;
+  const centerColumn = Number(centralCell.cell.column);
+  const centerRow = Number(centralCell.cell.row);
+
+  for (let rowOffset = -BUILDING_SEARCH_CELL_RADIUS; rowOffset <= BUILDING_SEARCH_CELL_RADIUS; rowOffset += 1) {
+    for (let columnOffset = -BUILDING_SEARCH_CELL_RADIUS; columnOffset <= BUILDING_SEARCH_CELL_RADIUS; columnOffset += 1) {
+      const cell = context.cellsByCoord.get(`${centerColumn + columnOffset}:${centerRow + rowOffset}`);
+      if (!cell) continue;
+      appendBuildingCandidates(context.buildingsByCellId.get(cell.id), candidates, queryVersion);
+    }
+  }
+  appendBuildingCandidates(context.unindexedBuildings, candidates, queryVersion);
+  return candidates;
+}
+
+function appendBuildingCandidates(entries, candidates, queryVersion) {
+  if (!entries) return;
+  for (const entry of entries) {
+    if (entry.cityInfoQueryVersion === queryVersion) continue;
+    entry.cityInfoQueryVersion = queryVersion;
+    candidates.push(entry);
+  }
 }
 
 function cellAtFlatPoint(context, flatX, flatZ) {
@@ -520,15 +606,18 @@ function blockSubtitle(block, buildingCount) {
   return `${countLabel} · ${purpose}`;
 }
 
-function getBuildingAnchor(entry, context) {
+function getBuildingGeometry(entry, context) {
   if (entry.object) {
     const bounds = new THREE.Box3().setFromObject(entry.object);
     if (!bounds.isEmpty()) {
-      return new THREE.Vector3(
-        (bounds.min.x + bounds.max.x) * 0.5,
-        bounds.max.y + 0.42,
-        (bounds.min.z + bounds.max.z) * 0.5
-      );
+      return {
+        boundsWorld: bounds,
+        anchorWorld: new THREE.Vector3(
+          (bounds.min.x + bounds.max.x) * 0.5,
+          bounds.max.y + 0.42,
+          (bounds.min.z + bounds.max.z) * 0.5
+        )
+      };
     }
   }
   const footprint = entry.placement.footprintCells ?? entry.building?.footprintCells ?? [];
@@ -541,7 +630,10 @@ function getBuildingAnchor(entry, context) {
     z: sum.z + point.z / Math.max(1, centers.length)
   }), { x: 0, z: 0 });
   const frame = getVoxelSphereFrame(center.x, center.z, context.radius);
-  return frame.surface.clone().addScaledVector(frame.normal, 5.4);
+  return {
+    boundsWorld: null,
+    anchorWorld: frame.surface.clone().addScaledVector(frame.normal, 5.4)
+  };
 }
 
 function cellCenter(cell, columns, rows, cellWorldSize) {
@@ -552,21 +644,21 @@ function cellCenter(cell, columns, rows, cellWorldSize) {
 }
 
 function projectToScreen(worldPoint, camera, viewport) {
-  const cameraPoint = worldPoint.clone().applyMatrix4(camera.matrixWorldInverse);
-  if (cameraPoint.z >= 0) return { visible: false, ndcX: 0, ndcY: 0 };
-  const ndc = worldPoint.clone().project(camera);
+  cameraPointScratch.copy(worldPoint).applyMatrix4(camera.matrixWorldInverse);
+  if (cameraPointScratch.z >= 0) return { visible: false, ndcX: 0, ndcY: 0 };
+  ndcPointScratch.copy(worldPoint).project(camera);
   return {
-    visible: ndc.z >= -1 && ndc.z <= 1,
-    ndcX: ndc.x,
-    ndcY: ndc.y,
-    x: (ndc.x * 0.5 + 0.5) * viewport.width,
-    y: (-ndc.y * 0.5 + 0.5) * viewport.height
+    visible: ndcPointScratch.z >= -1 && ndcPointScratch.z <= 1,
+    ndcX: ndcPointScratch.x,
+    ndcY: ndcPointScratch.y,
+    x: (ndcPointScratch.x * 0.5 + 0.5) * viewport.width,
+    y: (-ndcPointScratch.y * 0.5 + 0.5) * viewport.height
   };
 }
 
 function getDepthScale(worldPoint, camera) {
-  const cameraPoint = worldPoint.clone().applyMatrix4(camera.matrixWorldInverse);
-  const depth = Math.max(1, -cameraPoint.z);
+  cameraPointScratch.copy(worldPoint).applyMatrix4(camera.matrixWorldInverse);
+  const depth = Math.max(1, -cameraPointScratch.z);
   const referenceDepth = 58;
   return clamp(Math.pow(referenceDepth / depth, 0.72), MIN_CARD_SCALE, MAX_CARD_SCALE);
 }
@@ -582,13 +674,14 @@ function statusLabel(building) {
   return STATUS_LABELS[building?.status] ?? "ACTIVE";
 }
 
-function findBuildingObject(root, buildingId) {
-  if (!root || !buildingId) return null;
-  let match = null;
+function findBuildingObjects(root) {
+  const buildingsById = new Map();
+  if (!root) return buildingsById;
   root.traverse((object) => {
-    if (!match && object.userData?.buildingId === buildingId) match = object;
+    const buildingId = object.userData?.buildingId;
+    if (buildingId && !buildingsById.has(buildingId)) buildingsById.set(buildingId, object);
   });
-  return match;
+  return buildingsById;
 }
 
 function approach(current, target, delta, rate) {

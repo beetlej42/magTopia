@@ -19,6 +19,11 @@ const FALLBACK_BASE_ANCHORS_UV = Object.freeze({
 });
 const DEPTH_MESH_SUBDIVISIONS = 96;
 const GROUND_SEAM_HEIGHT_RATIO = 0.08;
+// Layer 31 is reserved for coarse voxel shadow casters. The view camera must not
+// render it, while every shadow-casting light camera that should see voxel
+// buildings must enable it. Keeping this contract explicit prevents the proxy
+// meshes from adding a second color-pass draw call for every material chunk.
+export const VOXEL_SHADOW_ONLY_LAYER = 31;
 const EMISSIVE_STRENGTHS = Object.freeze({
   "starter-cottage-001": 1.35,
   "starter-workshop-001": 1.55,
@@ -36,6 +41,9 @@ export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cit
   const baseFitControllers = [];
   const voxelLods = [];
   const voxelDaylightTargets = [];
+  const dynamicLightRecords = [];
+  const dynamicLightCandidates = [];
+  const dynamicLightDiagnostics = { count: 0, visible: 0, limit: 0 };
 
   Object.values(cityState?.buildings ?? {}).forEach((building, index) => {
     const buildingAssetId = building.assetId ?? building.program?.assetId;
@@ -85,6 +93,16 @@ export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cit
     });
     root.add(buildingObject);
   });
+
+  // Point lights are substantially more expensive than emissive window meshes
+  // because every visible light expands the forward-lighting shader work for
+  // all affected materials. Keep stable records so camera movement can select
+  // the nearest active fixtures without traversing the district or allocating
+  // sort entries on the render-loop hot path.
+  root.traverse((object) => {
+    if (object.isPointLight) dynamicLightRecords.push({ object, distanceSq: Infinity });
+  });
+  dynamicLightDiagnostics.count = dynamicLightRecords.length;
 
   root.userData.contract = {
     id: "magic-london-starter-district-001",
@@ -153,9 +171,11 @@ export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cit
     // targets so daylight continues to reach windows and lights afterwards.
     voxelDaylightTargets.forEach((target) => target.userData?.updateDaylight?.(style));
   };
-  root.userData.updateView = (camera, _maxDynamicLights = 4, viewport = {}) => {
+  root.userData.updateView = (camera, maxDynamicLights = 4, viewport = {}) => {
     updateVoxelLods(voxelLods, camera, viewport);
+    updateNearestDynamicLights(dynamicLightRecords, dynamicLightCandidates, camera, maxDynamicLights, dynamicLightDiagnostics);
   };
+  root.userData.configureVoxelShadowOnlyLayer = (options) => configureVoxelShadowOnlyLayer(options);
   root.userData.prepareVoxelLodWarmup = () => {
     const states = voxelLods.map((lod) => {
       const near = lod.levels[0]?.object;
@@ -189,7 +209,29 @@ export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cit
     };
   };
   root.userData.getVoxelLodDiagnostics = () => getVoxelLodDiagnostics(voxelLods);
+  root.userData.getVoxelLodSummaryDiagnostics = () => getVoxelLodSummaryDiagnostics(voxelLods);
+  root.userData.getDynamicLightDiagnostics = () => ({ ...dynamicLightDiagnostics });
   return root;
+}
+
+/**
+ * Exclude voxel shadow proxies from the color pass and include them in selected
+ * shadow maps. This should be called after cameras/lights are constructed.
+ */
+export function configureVoxelShadowOnlyLayer({ viewCamera, shadowLights = [] } = {}) {
+  viewCamera?.layers?.disable(VOXEL_SHADOW_ONLY_LAYER);
+  const configuredShadowCameras = [];
+  for (const light of shadowLights) {
+    const shadowCamera = light?.shadow?.camera;
+    if (!shadowCamera?.layers) continue;
+    shadowCamera.layers.enable(VOXEL_SHADOW_ONLY_LAYER);
+    configuredShadowCameras.push(light.uuid ?? light.name ?? shadowCamera.uuid);
+  }
+  return {
+    layer: VOXEL_SHADOW_ONLY_LAYER,
+    viewCameraExcluded: Boolean(viewCamera?.layers) && !viewCamera.layers.isEnabled(VOXEL_SHADOW_ONLY_LAYER),
+    configuredShadowCameras
+  };
 }
 
 function createRuntimeVoxelBuilding(building, renderCells, sampleGroundHeight, nightLighting, enableVoxelLod = false) {
@@ -256,9 +298,9 @@ function createAgentVoxelBuildingLod(nearObject, design, nightLighting) {
   lod.addLevel(nearObject, 0);
   pipeline.levels.forEach((level, index) => lod.addLevel(level.group, index + 1));
   lod.addLevel(new THREE.Group(), 3);
-  // Keep a coarse, color-write-disabled copy active for the directional shadow pass
-  // across LOD transitions. It is cheap to render and avoids promoting the near
-  // building's full-detail meshes into the 2048px shadow map.
+  // Keep a coarse copy active on the shadow-only layer across LOD transitions.
+  // It remains available to selected light cameras without adding proxy chunks
+  // to the view camera's color-pass render list.
   shadowProxy.visible = true;
   lod.add(shadowProxy);
   lod.userData.updateDaylight = (style) => {
@@ -283,6 +325,7 @@ function createShadowProxy(source) {
   proxy.name = `${source?.name ?? "VoxelBuilding"}-ShadowProxy`;
   let meshCount = 0;
   proxy.traverse((child) => {
+    child.layers.set(VOXEL_SHADOW_ONLY_LAYER);
     if (!child.isMesh) return;
     child.castShadow = true;
     child.receiveShadow = false;
@@ -312,14 +355,63 @@ function getObjectBoundingRadius(object) {
   return Math.max(VOXEL_SIZE * 4, sphere.radius);
 }
 
+// updateView is a single-threaded render-loop hot path. Reusing these values
+// avoids allocating several Three.js math objects per building on every camera
+// movement while keeping all returned metrics owned by their corresponding LOD.
+const voxelLodScratch = {
+  projectionView: new THREE.Matrix4(),
+  frustum: new THREE.Frustum(),
+  worldPosition: new THREE.Vector3(),
+  worldScale: new THREE.Vector3(),
+  viewPosition: new THREE.Vector3(),
+  sphere: new THREE.Sphere()
+};
+
+const dynamicLightWorldPosition = new THREE.Vector3();
+
+function updateNearestDynamicLights(records, candidates, camera, maxDynamicLights, diagnostics) {
+  if (!camera || !records.length) {
+    diagnostics.visible = 0;
+    diagnostics.limit = 0;
+    return;
+  }
+  const limit = Math.max(0, Math.round(Number(maxDynamicLights) || 0));
+  candidates.length = 0;
+  for (const record of records) {
+    record.object.visible = false;
+    if (!isVisibleThroughParents(record.object.parent)) continue;
+    record.object.getWorldPosition(dynamicLightWorldPosition);
+    record.distanceSq = dynamicLightWorldPosition.distanceToSquared(camera.position);
+    candidates.push(record);
+  }
+  candidates.sort((left, right) => left.distanceSq - right.distanceSq);
+  const visibleCount = Math.min(limit, candidates.length);
+  for (let index = 0; index < visibleCount; index += 1) candidates[index].object.visible = true;
+  diagnostics.visible = visibleCount;
+  diagnostics.limit = limit;
+}
+
+function isVisibleThroughParents(object) {
+  for (let current = object; current; current = current.parent) {
+    if (!current.visible) return false;
+  }
+  return true;
+}
+
 function updateVoxelLods(lods, camera, viewport = {}) {
   if (!camera || !lods.length) return;
   const viewportHeight = Math.max(1, Number(viewport.height) || 720) * Math.max(1, Number(viewport.renderScale) || 1);
   const thresholds = getVoxelLodThresholds(viewport);
-  const projectionView = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
-  const frustum = new THREE.Frustum().setFromProjectionMatrix(projectionView);
+  const projectionView = voxelLodScratch.projectionView.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  const frustum = voxelLodScratch.frustum.setFromProjectionMatrix(projectionView);
   lods.forEach((lod) => {
-    const metrics = getVoxelLodScreenMetrics(lod, camera, frustum, viewportHeight);
+    const metrics = getVoxelLodScreenMetrics(
+      lod,
+      camera,
+      frustum,
+      viewportHeight,
+      lod.userData.currentMetrics ?? {}
+    );
     const nextLevel = selectScreenSpaceVoxelLod(lod.userData.currentLevel, metrics, { hysteresis: 0.08, thresholds });
     lod.levels.forEach((level, index) => {
       level.object.visible = index === nextLevel;
@@ -329,20 +421,43 @@ function updateVoxelLods(lods, camera, viewport = {}) {
   });
 }
 
-function getVoxelLodScreenMetrics(lod, camera, frustum, viewportHeight) {
-  const worldPosition = lod.getWorldPosition(new THREE.Vector3());
-  const worldScale = lod.getWorldScale(new THREE.Vector3());
+function getVoxelLodScreenMetrics(lod, camera, frustum, viewportHeight, target = {}) {
+  const worldPosition = lod.getWorldPosition(voxelLodScratch.worldPosition);
+  const worldScale = lod.getWorldScale(voxelLodScratch.worldScale);
   const boundingRadius = lod.userData.boundingRadius * Math.max(worldScale.x, worldScale.y, worldScale.z);
-  const visibleInFrustum = frustum.intersectsSphere(new THREE.Sphere(worldPosition, boundingRadius));
-  const viewPosition = worldPosition.clone().applyMatrix4(camera.matrixWorldInverse);
+  const visibleInFrustum = frustum.intersectsSphere(voxelLodScratch.sphere.set(worldPosition, boundingRadius));
+  const viewPosition = voxelLodScratch.viewPosition.copy(worldPosition).applyMatrix4(camera.matrixWorldInverse);
   const viewDepth = Math.max(0.001, -viewPosition.z);
   const pixelsPerWorldUnit = camera.isPerspectiveCamera
     ? viewportHeight / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * viewDepth)
     : viewportHeight / Math.max(0.001, (camera.top - camera.bottom) / camera.zoom);
+  target.visibleInFrustum = visibleInFrustum && viewPosition.z < 0;
+  target.projectedVoxelPx = VOXEL_SIZE * pixelsPerWorldUnit;
+  target.projectedDiameterPx = boundingRadius * 2 * pixelsPerWorldUnit;
+  return target;
+}
+
+function getVoxelLodSummaryDiagnostics(lods) {
+  const levelCounts = {};
+  let visibleInFrustum = 0;
+  let shadowProxyMeshCount = 0;
+  let nearShadowCastersDisabled = 0;
+  for (const lod of lods) {
+    const level = ["near", "medium", "far", "culled"][lod.userData.currentLevel] ?? "uninitialized";
+    levelCounts[level] = (levelCounts[level] ?? 0) + 1;
+    if (lod.userData.currentMetrics?.visibleInFrustum) visibleInFrustum += 1;
+    shadowProxyMeshCount += lod.userData.shadowProxyMeshCount ?? 0;
+    nearShadowCastersDisabled += lod.userData.nearShadowCastersDisabled ?? 0;
+  }
   return {
-    visibleInFrustum: visibleInFrustum && viewPosition.z < 0,
-    projectedVoxelPx: VOXEL_SIZE * pixelsPerWorldUnit,
-    projectedDiameterPx: boundingRadius * 2 * pixelsPerWorldUnit
+    renderer: "agentcity-voxel-mip-lod-v1",
+    shadowPolicy: "low-lod-proxy-shadow-only-layer",
+    shadowOnlyLayer: VOXEL_SHADOW_ONLY_LAYER,
+    count: lods.length,
+    visibleInFrustum,
+    levelCounts,
+    shadowProxyMeshCount,
+    nearShadowCastersDisabled
   };
 }
 

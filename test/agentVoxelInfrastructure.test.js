@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import * as THREE from "three";
 import { createAgentAcceptanceCity } from "../src/generators/agentAcceptanceCity.js";
 import { createAgentVoxelRoadLayer, selectVictorianBridgeStyle } from "../src/generators/agentVoxelInfrastructure.js";
+import {
+  VOXEL_SHADOW_ONLY_LAYER,
+  configureVoxelShadowOnlyLayer
+} from "../src/generators/magicLondonStarterDistrict.js";
 
 test("Agent acceptance city renders roads and vegetation entirely as voxel geometry", () => {
   const city = createAgentAcceptanceCity({ acceptanceSeed: "voxel-infrastructure-test" });
@@ -38,6 +43,60 @@ test("Agent acceptance city renders roads and vegetation entirely as voxel geome
   assert.ok(lodDiagnostics.currentLevels.every((entry) => entry.nearShadowCasterCount === 0));
   assert.ok(lodDiagnostics.currentLevels.every((entry) => entry.nearShadowCastersDisabled > 0));
   assert.ok(lodDiagnostics.currentLevels.every((entry) => entry.shadowProxyMeshCount > 0));
+
+  const lodSummary = city.getObjectByName("AgentAcceptanceBuildings").userData.getVoxelLodSummaryDiagnostics();
+  assert.equal(lodSummary.count, lodDiagnostics.currentLevels.length);
+  assert.equal(lodSummary.shadowOnlyLayer, VOXEL_SHADOW_ONLY_LAYER);
+  assert.ok(lodSummary.shadowProxyMeshCount > 0);
+  assert.equal("currentLevels" in lodSummary, false);
+
+  const shadowProxyMeshes = [];
+  const lods = [];
+  city.traverse((object) => {
+    if (object.isLOD) lods.push(object);
+    if (object.isMesh && object.userData.shadowProxy) shadowProxyMeshes.push(object);
+  });
+  assert.ok(shadowProxyMeshes.length > 0);
+  assert.ok(shadowProxyMeshes.every((mesh) => mesh.layers.isEnabled(VOXEL_SHADOW_ONLY_LAYER)));
+
+  const viewCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+  viewCamera.position.set(20, 30, 20);
+  viewCamera.lookAt(0, 0, 0);
+  viewCamera.updateProjectionMatrix();
+  viewCamera.updateMatrixWorld(true);
+  const shadowLight = new THREE.DirectionalLight();
+  const layerContract = configureVoxelShadowOnlyLayer({ viewCamera, shadowLights: [shadowLight] });
+  assert.equal(layerContract.viewCameraExcluded, true);
+  assert.equal(layerContract.configuredShadowCameras.length, 1);
+  assert.ok(shadowLight.shadow.camera.layers.isEnabled(0));
+  assert.ok(shadowLight.shadow.camera.layers.isEnabled(VOXEL_SHADOW_ONLY_LAYER));
+  assert.ok(shadowProxyMeshes.every((mesh) => !viewCamera.layers.test(mesh.layers)));
+  assert.ok(shadowProxyMeshes.every((mesh) => shadowLight.shadow.camera.layers.test(mesh.layers)));
+
+  city.userData.updateView(viewCamera, 4, { height: 720, renderScale: 1 });
+  const firstMetrics = lods.map((lod) => lod.userData.currentMetrics);
+  city.userData.updateView(viewCamera, 4, { height: 720, renderScale: 1 });
+  assert.ok(lods.every((lod, index) => lod.userData.currentMetrics === firstMetrics[index]));
+
+  const buildingLayer = city.getObjectByName("AgentAcceptanceBuildings");
+  const pointLights = [];
+  city.traverse((object) => {
+    if (object.isPointLight) pointLights.push(object);
+  });
+  const lightTarget = pointLights[0].getWorldPosition(new THREE.Vector3());
+  const surfaceNormal = lightTarget.clone().sub(new THREE.Vector3(0, -220, 0)).normalize();
+  const lightCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+  lightCamera.position.copy(lightTarget).addScaledVector(surfaceNormal, 58);
+  lightCamera.up.set(0, 0, -1);
+  lightCamera.lookAt(lightTarget);
+  lightCamera.updateProjectionMatrix();
+  lightCamera.updateMatrixWorld(true);
+  city.userData.updateView(lightCamera, 1, { height: 720, renderScale: 1 });
+  const dynamicLightDiagnostics = buildingLayer.userData.getDynamicLightDiagnostics();
+  assert.ok(dynamicLightDiagnostics.count > 1);
+  assert.equal(dynamicLightDiagnostics.limit, 1);
+  assert.equal(dynamicLightDiagnostics.visible, 1);
+  assert.equal(pointLights.filter((light) => light.visible).length, 1);
 
   const roads = city.getObjectByName("AgentAcceptanceRoads");
   const vegetation = city.getObjectByName("AgentAcceptanceVegetation");

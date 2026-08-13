@@ -4,7 +4,8 @@ import test from "node:test";
 import {
   calculateSurfaceShadowRefreshThreshold,
   defaultShadowRefreshThreshold,
-  shadowDirectionExceedsThreshold
+  shadowDirectionExceedsThreshold,
+  shouldCommitShadowRefresh
 } from "../src/render/shadowRefreshScheduler.js";
 
 const MOBILE_SURFACE_VIEW = Object.freeze({
@@ -56,4 +57,44 @@ test("non-surface views retain the existing conservative default", () => {
 
   assert.equal(threshold.thresholdDegrees, 0.05);
   assert.ok(Math.abs(threshold.thresholdCosine - Math.cos(0.05 * Math.PI / 180)) < 1e-12);
+});
+
+test("surface shadow refresh waits for camera motion to settle and respects its cadence", () => {
+  assert.equal(shouldCommitShadowRefresh({
+    pending: true,
+    surfaceWorld: true,
+    cameraInMotion: true,
+    nowMs: 500,
+    lastCommittedAtMs: 0,
+    minIntervalMs: 100
+  }), false);
+  assert.equal(shouldCommitShadowRefresh({
+    pending: true,
+    surfaceWorld: true,
+    cameraInMotion: false,
+    nowMs: 90,
+    lastCommittedAtMs: 0,
+    minIntervalMs: 100
+  }), false);
+  assert.equal(shouldCommitShadowRefresh({
+    pending: true,
+    surfaceWorld: true,
+    cameraInMotion: false,
+    nowMs: 100,
+    lastCommittedAtMs: 0,
+    minIntervalMs: 100
+  }), true);
+});
+
+test("urgent shadow refresh bypasses motion and cadence", () => {
+  assert.equal(shouldCommitShadowRefresh({
+    pending: true,
+    urgent: true,
+    surfaceWorld: true,
+    cameraInMotion: true,
+    nowMs: 1,
+    lastCommittedAtMs: 0,
+    minIntervalMs: 160
+  }), true);
+  assert.equal(shouldCommitShadowRefresh({ pending: false, urgent: true }), false);
 });
