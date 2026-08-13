@@ -5,7 +5,7 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { AdaptiveBokehPass } from "./render/adaptiveBokehPass.js";
-import { chooseAdaptiveQuality, detectMobileRenderProfile } from "./render/mobilePerformance.js";
+import { chooseAdaptiveQuality, detectMobileRenderProfile, shouldEnableBokeh } from "./render/mobilePerformance.js";
 import {
   calculateSurfaceShadowRefreshThreshold,
   defaultShadowRefreshThreshold,
@@ -116,7 +116,7 @@ scene.matrixAutoUpdate = false;
 const startupParams = new URLSearchParams(window.location.search);
 setVoxelMaterialMode(startupParams.get("voxelShader") ?? "diffuse");
 const adaptiveQualityEnabled = startupParams.get("adaptiveQuality") !== "0";
-const bokehEnabled = startupParams.get("bokeh") !== "0";
+const requestedBokeh = startupParams.get("bokeh");
 const startupMode = startupParams.get("mode");
 const startupWorldTimeValue = Number(startupParams.get("worldTime"));
 const startupWorldTime = startupParams.has("worldTime") && Number.isFinite(startupWorldTimeValue)
@@ -161,6 +161,16 @@ const deviceRenderProfile = detectMobileRenderProfile({
   devicePixelRatio: window.devicePixelRatio
 });
 const mobilePerformanceProfile = deviceRenderProfile.mobile;
+const bokehEnabled = shouldEnableBokeh({
+  requestedValue: requestedBokeh,
+  mobile: mobilePerformanceProfile
+});
+document.documentElement.dataset.magicTownBokehEnabled = String(bokehEnabled);
+document.documentElement.dataset.magicTownBokehPolicy = requestedBokeh === "1"
+  ? "explicit-on"
+  : requestedBokeh === "0"
+    ? "explicit-off"
+    : mobilePerformanceProfile ? "mobile-default-off" : "desktop-default-on";
 const renderQuality = {
   mobile: mobilePerformanceProfile,
   profile: deviceRenderProfile,
@@ -1806,7 +1816,8 @@ function animate() {
     }
     districtDepthOfField.enabled = bokehEnabled && !cameraInMotion && renderQuality.depthOfFieldScale > 0
       && (currentConfig?.bokehStrength ?? 1) * (currentConfig?.bokehBlur ?? 1) > 0.001;
-    composer.render();
+    if (districtDepthOfField.enabled) composer.render();
+    else renderer.render(scene, camera);
   } else {
     districtDepthOfField.enabled = false;
     renderer.render(scene, camera);
@@ -1923,7 +1934,8 @@ function updateDynamicResolution(delta, elapsed) {
     pixelRatio: renderQuality.pixelRatio,
     minPixelRatio: renderQuality.minPixelRatio,
     maxPixelRatio: Math.min(renderQuality.maxPixelRatio, window.devicePixelRatio),
-    bokehQuality: renderQuality.depthOfFieldQuality
+    bokehQuality: renderQuality.depthOfFieldQuality,
+    bokehEnabled
   });
   const nextPixelRatio = nextQuality.pixelRatio;
   const dofChanged = nextQuality.depthOfFieldScale !== renderQuality.depthOfFieldScale

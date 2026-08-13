@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { chooseAdaptiveQuality, detectMobileRenderProfile } from "../src/render/mobilePerformance.js";
+import { chooseAdaptiveQuality, detectMobileRenderProfile, shouldEnableBokeh } from "../src/render/mobilePerformance.js";
 
 test("iPhone Safari uses the largest DPR inside its post-processing pixel budget", () => {
   const profile = detectMobileRenderProfile({
@@ -17,6 +17,13 @@ test("iPhone Safari uses the largest DPR inside its post-processing pixel budget
   assert.equal(profile.initialPixelRatio, 1.7);
   assert.equal(profile.maxPixelRatio, 1.79);
   assert.ok(390 * 844 * profile.maxPixelRatio ** 2 <= profile.pixelBudget * 1.01);
+});
+
+test("mobile Bokeh is off by default but remains explicitly testable", () => {
+  assert.equal(shouldEnableBokeh({ mobile: true }), false);
+  assert.equal(shouldEnableBokeh({ mobile: false }), true);
+  assert.equal(shouldEnableBokeh({ requestedValue: "1", mobile: true }), true);
+  assert.equal(shouldEnableBokeh({ requestedValue: "0", mobile: false }), false);
 });
 
 test("adaptive quality protects 60fps before restoring resolution", () => {
@@ -55,6 +62,22 @@ test("adaptive quality protects 60fps before restoring resolution", () => {
     depthOfFieldScale: 1,
     bokehQuality: 1,
     lodQualityScale: 1
+  });
+});
+
+test("adaptive quality skips disabled Bokeh and reduces scene resolution immediately", () => {
+  assert.deepEqual(chooseAdaptiveQuality({
+    averageFrameMs: 23,
+    pixelRatio: 1.7,
+    minPixelRatio: 1,
+    maxPixelRatio: 1.8,
+    bokehQuality: 1,
+    bokehEnabled: false
+  }), {
+    pixelRatio: 1.6,
+    depthOfFieldScale: 0,
+    bokehQuality: 1,
+    lodQualityScale: 1.1
   });
 });
 
