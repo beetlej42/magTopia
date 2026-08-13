@@ -17,6 +17,8 @@
     "agent:lan": "node scripts/start-agent-api-acceptance.mjs",
     "agent:cities": "node scripts/list-agent-lan-cities.mjs",
     "test": "node --test",
+    "test:render-acceptance": "node scripts/run-render-acceptance.mjs",
+    "test:render-acceptance:60hz": "RENDER_ACCEPTANCE_MAX_P95_MS=16.7 node scripts/run-render-acceptance.mjs",
     "test:agent-build": "node --test test/agentDistrictSimulation.test.js",
     "hunyuan3d": "node scripts/hunyuan3d.mjs"
   },
@@ -27,5 +29,10 @@
     "pg": "^8.22.0",
     "three": "^0.160.0",
     "vite": "^5.0.0"
+  },
+  "devDependencies": {
+    "@sparticuz/chromium": "138.0.2",
+    "pngjs": "7.0.0",
+    "puppeteer-core": "24.16.0"
   }
 }

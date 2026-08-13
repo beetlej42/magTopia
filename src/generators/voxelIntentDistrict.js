@@ -696,7 +696,11 @@ export function createVoxelDistrictMacroSurface(config = {}) {
     vertexColors: true,
     roughness: 0.98,
     metalness: 0,
-    flatShading: true
+    flatShading: true,
+    // Reflected projection roots have their index winding corrected while the
+    // flat geometry is baked onto the sphere, so hidden back faces can remain
+    // culled without dropping visible terrain tops.
+    side: THREE.FrontSide
   });
   const terrainGrid = createMacroTerrainGrid(params, {
     terrainColumns,
@@ -2330,6 +2334,7 @@ export function projectDistrictOntoSphere(root, radius) {
   const worldUp = new THREE.Vector3(0, 1, 0);
   let projectedInstances = 0;
   let projectedVertices = 0;
+  let correctedReflectedGeometries = 0;
   let maximumTiltRadians = 0;
 
   leaves.forEach((object) => {
@@ -2352,6 +2357,13 @@ export function projectDistrictOntoSphere(root, radius) {
     }
 
     if (object.isMesh && object.userData.flatVoxelGeometry) {
+      // Some API-backed layers mirror flat Z to reconcile row conventions.
+      // Baking that negative transform into positions reverses triangle
+      // winding, so restore the original outward-facing orientation before
+      // using FrontSide materials on the curved result.
+      if (object.matrixWorld.determinant() < 0 && reverseIndexedTriangleWinding(object.geometry)) {
+        correctedReflectedGeometries += 1;
+      }
       const positions = object.geometry.attributes.position;
       const flatPosition = new THREE.Vector3();
       const curvedPosition = new THREE.Vector3();
@@ -2389,8 +2401,21 @@ export function projectDistrictOntoSphere(root, radius) {
     projectedObjects: leaves.length,
     projectedInstances,
     projectedVertices,
+    correctedReflectedGeometries,
     maximumSurfaceTiltDegrees: THREE.MathUtils.radToDeg(maximumTiltRadians)
   };
+}
+
+function reverseIndexedTriangleWinding(geometry) {
+  const index = geometry.getIndex();
+  if (!index || index.count % 3 !== 0) return false;
+  for (let offset = 0; offset < index.count; offset += 3) {
+    const second = index.getX(offset + 1);
+    index.setX(offset + 1, index.getX(offset + 2));
+    index.setX(offset + 2, second);
+  }
+  index.needsUpdate = true;
+  return true;
 }
 
 function curveFlatMatrixOntoSphere(flatMatrix, targetMatrix, radius) {
@@ -2414,26 +2439,33 @@ function curveFlatMatrixOntoSphere(flatMatrix, targetMatrix, radius) {
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
-export function getVoxelSphereFrame(x, z, radius) {
+export function getVoxelSphereFrame(x, z, radius, target = null) {
   const longitude = x / radius;
   const latitude = z / radius;
   const cosLongitude = Math.cos(longitude);
   const sinLongitude = Math.sin(longitude);
   const cosLatitude = Math.cos(latitude);
   const sinLatitude = Math.sin(latitude);
-  const normal = new THREE.Vector3(
+  const frame = target ?? {
+    normal: new THREE.Vector3(),
+    tangentX: new THREE.Vector3(),
+    tangentZ: new THREE.Vector3(),
+    surface: new THREE.Vector3()
+  };
+  frame.normal.set(
     sinLongitude * cosLatitude,
     cosLongitude * cosLatitude,
     sinLatitude
   );
-  const tangentX = new THREE.Vector3(cosLongitude, -sinLongitude, 0);
-  const tangentZ = new THREE.Vector3(
+  frame.tangentX.set(cosLongitude, -sinLongitude, 0);
+  frame.tangentZ.set(
     -sinLongitude * sinLatitude,
     -cosLongitude * sinLatitude,
     cosLatitude
   );
-  const surface = normal.clone().multiplyScalar(radius).add(new THREE.Vector3(0, -radius, 0));
-  return { normal, tangentX, tangentZ, surface };
+  frame.surface.copy(frame.normal).multiplyScalar(radius);
+  frame.surface.y -= radius;
+  return frame;
 }
 
 function mapFlatDirectionToSphere(direction, frame) {

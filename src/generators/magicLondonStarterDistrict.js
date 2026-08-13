@@ -35,6 +35,7 @@ export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cit
   const skipped = [];
   const baseFitControllers = [];
   const voxelLods = [];
+  const voxelDaylightTargets = [];
 
   Object.values(cityState?.buildings ?? {}).forEach((building, index) => {
     const buildingAssetId = building.assetId ?? building.program?.assetId;
@@ -48,6 +49,7 @@ export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cit
       }
       const buildingObject = createRuntimeVoxelBuilding(building, renderCells, sampleGroundHeight, nightLighting, enableVoxelLod);
       if (buildingObject.isLOD) voxelLods.push(buildingObject);
+      voxelDaylightTargets.push(buildingObject);
       placements.push({
         assetId: null,
         label: building.program.name,
@@ -147,7 +149,9 @@ export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cit
   };
   root.userData.updateDaylight = (style) => {
     baseFitControllers.forEach((controller) => controller.updateDaylight(style, nightLighting));
-    root.children.forEach((child) => child.userData?.updateDaylight?.(style));
+    // Spherical projection reparents each LOD to the city root. Retain stable
+    // targets so daylight continues to reach windows and lights afterwards.
+    voxelDaylightTargets.forEach((target) => target.userData?.updateDaylight?.(style));
   };
   root.userData.updateView = (camera, _maxDynamicLights = 4, viewport = {}) => {
     updateVoxelLods(voxelLods, camera, viewport);

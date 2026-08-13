@@ -27,6 +27,7 @@ test("Agent acceptance city renders roads and vegetation entirely as voxel geome
   assert.equal(diagnostics.projection.type, "spherical-local-frame");
   assert.equal(diagnostics.projection.radius, 220);
   assert.ok(diagnostics.projection.projectedObjects > 0);
+  assert.equal(diagnostics.projection.correctedReflectedGeometries, 49);
   assert.equal(city.userData.contract.renderSurface, "spherical voxel world; flat Agent API coordinates remain authoritative");
   assert.equal(city.userData.contract.camera.depthOfField, "bokeh retained");
   assert.equal(city.userData.surfaceNavigation.radius, 220);
@@ -44,6 +45,25 @@ test("Agent acceptance city renders roads and vegetation entirely as voxel geome
   assert.ok(vegetation.children.every((child) => child.userData.voxelRenderStrategy === "greedy-chunk"));
   assert.equal(city.getObjectByName("MagicLondonVegetation"), undefined);
   assert.equal(city.getObjectByName("MagicLondonBaseTiles"), undefined);
+});
+
+test("projected Agent buildings retain live day and night emissive updates", () => {
+  const city = createAgentAcceptanceCity({ acceptanceSeed: "voxel-daylight-projection-test" });
+  const emissiveMaterials = [];
+  city.traverse((object) => {
+    if (!object.isMesh) return;
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+    materials.forEach((material) => {
+      if (material?.emissive && material.emissive.getHex() !== 0) emissiveMaterials.push(material);
+    });
+  });
+  assert.ok(emissiveMaterials.length > 0);
+
+  city.userData.updateDaylight({ nightFactor: 0 });
+  const dayIntensity = Math.max(...emissiveMaterials.map((material) => material.emissiveIntensity));
+  city.userData.updateDaylight({ nightFactor: 1 });
+  const nightIntensity = Math.max(...emissiveMaterials.map((material) => material.emissiveIntensity));
+  assert.ok(nightIntensity > dayIntensity);
 });
 
 test("Victorian bridge selection is deterministic, span-aware, and visually varied", () => {

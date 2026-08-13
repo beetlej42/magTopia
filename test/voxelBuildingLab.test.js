@@ -10,10 +10,12 @@ import {
   createVoxelBuildingLodLevels,
   createVoxelBuildingLodLevelsFromSpec,
   getVoxelBuildingContract,
+  getVoxelMaterialMode,
   normalizeVoxelBuildingConfig,
   planPitchedRoof,
   planVoxelRoof,
   planVoxelStreet,
+  setVoxelMaterialMode,
   VOXEL_WRITE_PRIORITIES
 } from "../src/generators/voxelBuildingLab.js";
 import {
@@ -232,6 +234,26 @@ test("voxel occupancy is mutually exclusive and later materials win", () => {
   assert.equal(buffer.occupiedVoxelCount, 1);
   assert.equal(buffer.overwrittenVoxelCount, 1);
   assert.equal(buffer.getMaterialAt(4, 8, 12), "sandstone");
+});
+
+test("the diffuse voxel shader is opt-in and invalid modes fall back safely", () => {
+  try {
+    assert.equal(setVoxelMaterialMode("diffuse"), "diffuse");
+    const buffer = new VoxelInstanceBuffer("diffuse-shader-test");
+    buffer.addBox("brickRed", 0, 0, 0, 4, 4, 4);
+    const [mesh] = buffer.createMeshes({ strategy: "greedy" });
+    assert.equal(mesh.material.isMeshStandardMaterial, true);
+    assert.equal(mesh.material.userData.voxelShader, "diffuse");
+    assert.equal(mesh.material.customProgramCacheKey(), "voxel-diffuse-v1");
+    const shader = { fragmentShader: "#include <lights_physical_pars_fragment>" };
+    mesh.material.onBeforeCompile(shader);
+    assert.equal(shader.fragmentShader.includes("reflectedLight.directSpecular += irradiance * BRDF_GGX"), false);
+    assert.equal(shader.fragmentShader.includes("#define RE_IndirectSpecular"), false);
+    assert.equal(setVoxelMaterialMode("unknown"), "standard");
+    assert.equal(getVoxelMaterialMode(), "standard");
+  } finally {
+    setVoxelMaterialMode("standard");
+  }
 });
 
 test("semantic voxel priorities reject lower-phase writes but preserve equal-phase last-write-wins", () => {
