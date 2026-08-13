@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { getVoxelSkyState } from "../src/city/voxel-sky.js";
+import * as THREE from "three";
+import { createVoxelSky, getVoxelSkyState } from "../src/city/voxel-sky.js";
 import { voxelDaylightStyle } from "../src/generators/voxelBuildingLab.js";
 
 test("voxel sky exposes distinct noon, sunset, and midnight states", () => {
@@ -38,4 +39,37 @@ test("city daylight keeps structures readable while making midnight darker", () 
   assert.ok(midnight.ambientIntensity >= 0.5);
   assert.equal(noon.nightFactor, 0);
   assert.equal(midnight.nightFactor, 1);
+});
+
+test("sun and moon remain camera-facing while the surface camera moves", () => {
+  const sky = createVoxelSky({ seed: "billboard-test" });
+  const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 500);
+  const target = new THREE.Vector3();
+  const cameraQuaternion = new THREE.Quaternion();
+  const celestialQuaternion = new THREE.Quaternion();
+  const views = [
+    { position: [32, 24, 48], up: [0, 1, 0] },
+    { position: [-44, 36, 18], up: [0.18, 0.97, -0.12] },
+    { position: [12, 52, -38], up: [-0.22, 0.94, 0.25] }
+  ];
+
+  for (const view of views) {
+    camera.position.set(...view.position);
+    camera.up.set(...view.up).normalize();
+    camera.lookAt(target);
+    camera.updateMatrixWorld(true);
+    sky.userData.update({ time: 0.5, elapsed: 0, camera });
+    sky.updateMatrixWorld(true);
+
+    camera.getWorldQuaternion(cameraQuaternion);
+    for (const name of ["VoxelSun", "VoxelMoon"]) {
+      sky.getObjectByName(name).getWorldQuaternion(celestialQuaternion);
+      assert.ok(
+        Math.abs(cameraQuaternion.dot(celestialQuaternion)) > 1 - 1e-6,
+        `${name} should retain the camera's screen-space orientation`
+      );
+    }
+  }
+
+  sky.userData.dispose();
 });

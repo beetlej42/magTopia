@@ -96,6 +96,8 @@ export function createVoxelSky(options = {}) {
 
   const skyUp = new THREE.Vector3();
   const inverseSkyRotation = new THREE.Quaternion();
+  const cameraWorldQuaternion = new THREE.Quaternion();
+  const celestialBillboardQuaternion = new THREE.Quaternion();
   const forward = new THREE.Vector3();
   const forwardLocal = new THREE.Vector3();
   const horizontalForward = new THREE.Vector3();
@@ -116,6 +118,8 @@ export function createVoxelSky(options = {}) {
     skyUp.copy(camera.up).normalize();
     root.quaternion.setFromUnitVectors(WORLD_UP, skyUp);
     inverseSkyRotation.copy(root.quaternion).invert();
+    camera.getWorldQuaternion(cameraWorldQuaternion);
+    celestialBillboardQuaternion.copy(inverseSkyRotation).multiply(cameraWorldQuaternion);
     camera.getWorldDirection(forward);
     forwardLocal.copy(forward).applyQuaternion(inverseSkyRotation);
     horizontalForward.set(forwardLocal.x, 0, forwardLocal.z);
@@ -160,8 +164,8 @@ export function createVoxelSky(options = {}) {
       .addScaledVector(screenRight, horizontal * radius * 0.42)
       .addScaledVector(screenUp, 10 + Math.max(0, elevation) * 40);
     object.position.copy(celestialPosition);
+    object.quaternion.copy(celestialBillboardQuaternion);
     object.visible = opacity > 0.01 && elevation > -0.16;
-    if (object.visible) object.lookAt(0, 0, 0);
   }
 
   function dispose() {
