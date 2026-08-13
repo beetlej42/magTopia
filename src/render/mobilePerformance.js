@@ -25,30 +25,37 @@ export function detectMobileRenderProfile({
   };
 }
 
+export function shouldEnableBokeh({ requestedValue = null, mobile = false } = {}) {
+  if (requestedValue === "1") return true;
+  if (requestedValue === "0") return false;
+  return !mobile;
+}
+
 export function chooseAdaptiveQuality({
   averageFrameMs,
   pixelRatio,
   minPixelRatio,
   maxPixelRatio,
-  bokehQuality = 1
+  bokehQuality = 1,
+  bokehEnabled = true
 }) {
   let nextPixelRatio = pixelRatio;
   let nextBokehQuality = bokehQuality;
   if (averageFrameMs > 22) {
-    if (nextBokehQuality > 0.75) nextBokehQuality = 0.5;
+    if (bokehEnabled && nextBokehQuality > 0.75) nextBokehQuality = 0.5;
     else nextPixelRatio -= 0.1;
   } else if (averageFrameMs > 18.2) {
-    if (nextBokehQuality > 0.75) nextBokehQuality = 0.5;
+    if (bokehEnabled && nextBokehQuality > 0.75) nextBokehQuality = 0.5;
     else nextPixelRatio -= 0.05;
   } else if (averageFrameMs < 15.5) {
-    if (nextBokehQuality < 0.75) nextBokehQuality = 1;
+    if (bokehEnabled && nextBokehQuality < 0.75) nextBokehQuality = 1;
     else nextPixelRatio += 0.05;
   }
   nextPixelRatio = Math.max(minPixelRatio, Math.min(maxPixelRatio, Number(nextPixelRatio.toFixed(2))));
 
   return {
     pixelRatio: nextPixelRatio,
-    depthOfFieldScale: averageFrameMs > 30 ? 0 : 1,
+    depthOfFieldScale: bokehEnabled && averageFrameMs <= 30 ? 1 : 0,
     bokehQuality: nextBokehQuality,
     lodQualityScale: averageFrameMs > 24 ? 1.2 : averageFrameMs > 20 ? 1.1 : 1
   };
