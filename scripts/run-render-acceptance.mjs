@@ -13,7 +13,7 @@ const suppliedUrl = process.env.RENDER_ACCEPTANCE_URL;
 const baseUrl = suppliedUrl || `http://127.0.0.1:${port}`;
 // The default command records interaction performance without pretending that
 // SwiftShader represents a phone GPU. The :60hz package script sets this to
-// 20ms and turns the measurement into a hardware performance gate.
+// 16.7ms and turns the measurement into a hardware performance gate.
 const maximumP95Ms = Number(process.env.RENDER_ACCEPTANCE_MAX_P95_MS || 0);
 const minimumTerrainCoverage = Number(process.env.RENDER_ACCEPTANCE_MIN_TERRAIN_COVERAGE || 0.08);
 const dragFrames = Math.max(30, Number(process.env.RENDER_ACCEPTANCE_DRAG_FRAMES || 90));
