@@ -27,6 +27,7 @@ test("Agent acceptance city renders roads and vegetation entirely as voxel geome
   assert.equal(diagnostics.projection.type, "spherical-local-frame");
   assert.equal(diagnostics.projection.radius, 220);
   assert.ok(diagnostics.projection.projectedObjects > 0);
+  assert.equal(diagnostics.projection.correctedReflectedGeometries, 49);
   assert.equal(city.userData.contract.renderSurface, "spherical voxel world; flat Agent API coordinates remain authoritative");
   assert.equal(city.userData.contract.camera.depthOfField, "bokeh retained");
   assert.equal(city.userData.surfaceNavigation.radius, 220);

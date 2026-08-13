@@ -19,3 +19,15 @@ test("adaptive bokeh scales its cached depth and blur targets before lowering sc
   assert.equal(pass.uniforms.quality.value, 0.5);
   pass.dispose();
 });
+
+test("adaptive bokeh reports main-pass depth reuse before any fallback depth render", () => {
+  const pass = new AdaptiveBokehPass(new THREE.Scene(), new THREE.PerspectiveCamera());
+  assert.deepEqual(pass.getDiagnostics(), {
+    usingSharedDepth: false,
+    sharedDepthFrames: 0,
+    fallbackDepthRenders: 0
+  });
+  assert.equal(pass.uniforms.depthPacking.value, 1);
+  assert.equal(pass.compositeUniforms.depthPacking.value, 1);
+  pass.dispose();
+});

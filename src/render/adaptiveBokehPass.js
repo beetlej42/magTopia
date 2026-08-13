@@ -23,6 +23,7 @@ const ADAPTIVE_BOKEH_SHADER = {
     maxblur: { value: 0.01 },
     nearClip: { value: 0.1 },
     farClip: { value: 1000 },
+    depthPacking: { value: 1 },
     quality: { value: 1 }
   },
   vertexShader: /* glsl */`
@@ -45,10 +46,16 @@ const ADAPTIVE_BOKEH_SHADER = {
     uniform float maxblur;
     uniform float nearClip;
     uniform float farClip;
+    uniform float depthPacking;
     uniform float quality;
 
+    float readSceneDepth(vec2 uv) {
+      vec4 sampleValue = texture2D(tDepth, uv);
+      return depthPacking > 0.5 ? unpackRGBAToDepth(sampleValue) : sampleValue.x;
+    }
+
     void main() {
-      float depth = unpackRGBAToDepth(texture2D(tDepth, vUv));
+      float depth = readSceneDepth(vUv);
       if (depth >= 0.999999 || maxblur <= 0.000001) {
         gl_FragColor = texture2D(tColor, vUv);
         return;
@@ -85,7 +92,8 @@ const BOKEH_COMPOSITE_SHADER = {
     aperture: { value: 0.025 },
     maxblur: { value: 0.01 },
     nearClip: { value: 0.1 },
-    farClip: { value: 1000 }
+    farClip: { value: 1000 },
+    depthPacking: { value: 1 }
   },
   vertexShader: ADAPTIVE_BOKEH_SHADER.vertexShader,
   fragmentShader: /* glsl */`
@@ -100,10 +108,16 @@ const BOKEH_COMPOSITE_SHADER = {
     uniform float maxblur;
     uniform float nearClip;
     uniform float farClip;
+    uniform float depthPacking;
+
+    float readSceneDepth(vec2 uv) {
+      vec4 sampleValue = texture2D(tDepth, uv);
+      return depthPacking > 0.5 ? unpackRGBAToDepth(sampleValue) : sampleValue.x;
+    }
 
     void main() {
       vec4 sharpColor = texture2D(tColor, vUv);
-      float depth = unpackRGBAToDepth(texture2D(tDepth, vUv));
+      float depth = readSceneDepth(vUv);
       if (depth >= 0.999999 || maxblur <= 0.000001) {
         gl_FragColor = sharpColor;
         return;
@@ -154,6 +168,9 @@ export class AdaptiveBokehPass extends Pass {
     this._framesSinceDepthRender = 0;
     this._cachedViewProjection = new Matrix4();
     this._currentViewProjection = new Matrix4();
+    this.sharedDepthFrames = 0;
+    this.fallbackDepthRenders = 0;
+    this.usingSharedDepth = false;
     const uniforms = UniformsUtils.clone(ADAPTIVE_BOKEH_SHADER.uniforms);
     uniforms.focus.value = focus;
     uniforms.aperture.value = aperture;
@@ -207,35 +224,45 @@ export class AdaptiveBokehPass extends Pass {
   }
 
   render(renderer, writeBuffer, readBuffer) {
-    this._currentViewProjection.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
-    const cameraChanged = !matrixApproximatelyEquals(this._currentViewProjection, this._cachedViewProjection);
-    this._framesSinceDepthRender += 1;
-    const shouldRefreshDepth = !this._depthValid
-      || (cameraChanged && this._framesSinceDepthRender >= 2)
-      || this._framesSinceDepthRender >= 15;
-    if (shouldRefreshDepth) {
-      const oldAutoClear = renderer.autoClear;
-      const oldClearAlpha = renderer.getClearAlpha();
-      const oldOverrideMaterial = this.scene.overrideMaterial;
-      renderer.getClearColor(this._oldClearColor);
-      renderer.autoClear = false;
-      this.scene.overrideMaterial = this.depthMaterial;
-      renderer.setClearColor(0xffffff);
-      renderer.setClearAlpha(1);
-      renderer.setRenderTarget(this.depthTarget);
-      renderer.clear();
-      renderer.render(this.scene, this.camera);
-      this.scene.overrideMaterial = oldOverrideMaterial;
-      renderer.setClearColor(this._oldClearColor);
-      renderer.setClearAlpha(oldClearAlpha);
-      renderer.autoClear = oldAutoClear;
-      this._cachedViewProjection.copy(this._currentViewProjection);
-      this._depthValid = true;
-      this._framesSinceDepthRender = 0;
+    const sharedDepthTexture = readBuffer.depthTexture?.isDepthTexture ? readBuffer.depthTexture : null;
+    this.usingSharedDepth = Boolean(sharedDepthTexture);
+    let depthTexture = sharedDepthTexture;
+    if (sharedDepthTexture) {
+      this.sharedDepthFrames += 1;
+    } else {
+      this._currentViewProjection.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+      const cameraChanged = !matrixApproximatelyEquals(this._currentViewProjection, this._cachedViewProjection);
+      this._framesSinceDepthRender += 1;
+      const shouldRefreshDepth = !this._depthValid
+        || (cameraChanged && this._framesSinceDepthRender >= 2)
+        || this._framesSinceDepthRender >= 15;
+      if (shouldRefreshDepth) {
+        const oldAutoClear = renderer.autoClear;
+        const oldClearAlpha = renderer.getClearAlpha();
+        const oldOverrideMaterial = this.scene.overrideMaterial;
+        renderer.getClearColor(this._oldClearColor);
+        renderer.autoClear = false;
+        this.scene.overrideMaterial = this.depthMaterial;
+        renderer.setClearColor(0xffffff);
+        renderer.setClearAlpha(1);
+        renderer.setRenderTarget(this.depthTarget);
+        renderer.clear();
+        renderer.render(this.scene, this.camera);
+        this.scene.overrideMaterial = oldOverrideMaterial;
+        renderer.setClearColor(this._oldClearColor);
+        renderer.setClearAlpha(oldClearAlpha);
+        renderer.autoClear = oldAutoClear;
+        this._cachedViewProjection.copy(this._currentViewProjection);
+        this._depthValid = true;
+        this._framesSinceDepthRender = 0;
+        this.fallbackDepthRenders += 1;
+      }
+      depthTexture = this.depthTarget.texture;
     }
 
     this.uniforms.tColor.value = readBuffer.texture;
-    this.uniforms.tDepth.value = this.depthTarget.texture;
+    this.uniforms.tDepth.value = depthTexture;
+    this.uniforms.depthPacking.value = sharedDepthTexture ? 0 : 1;
     this.uniforms.nearClip.value = this.camera.near;
     this.uniforms.farClip.value = this.camera.far;
     renderer.setRenderTarget(this.bokehTarget);
@@ -244,7 +271,8 @@ export class AdaptiveBokehPass extends Pass {
 
     this.compositeUniforms.tColor.value = readBuffer.texture;
     this.compositeUniforms.tBokeh.value = this.bokehTarget.texture;
-    this.compositeUniforms.tDepth.value = this.depthTarget.texture;
+    this.compositeUniforms.tDepth.value = depthTexture;
+    this.compositeUniforms.depthPacking.value = sharedDepthTexture ? 0 : 1;
     this.compositeUniforms.focus.value = this.uniforms.focus.value;
     this.compositeUniforms.aperture.value = this.uniforms.aperture.value;
     this.compositeUniforms.maxblur.value = this.uniforms.maxblur.value;
@@ -253,6 +281,14 @@ export class AdaptiveBokehPass extends Pass {
     renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
     if (this.clear) renderer.clear();
     this.compositeQuad.render(renderer);
+  }
+
+  getDiagnostics() {
+    return {
+      usingSharedDepth: this.usingSharedDepth,
+      sharedDepthFrames: this.sharedDepthFrames,
+      fallbackDepthRenders: this.fallbackDepthRenders
+    };
   }
 
   dispose() {

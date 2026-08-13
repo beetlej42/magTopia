@@ -102,6 +102,9 @@ const pureViewToggle = document.querySelector("#pure-view-toggle");
 const cityInfoOverlay = createCityInfoOverlay();
 const scene = new THREE.Scene();
 scene.background = new THREE.Color("#fff3f8");
+// The scene root never moves. Keeping it static prevents it from forcing a
+// full matrix-world recomputation through every city object each frame.
+scene.matrixAutoUpdate = false;
 
 const startupParams = new URLSearchParams(window.location.search);
 const adaptiveQualityEnabled = startupParams.get("adaptiveQuality") !== "0";
@@ -173,9 +176,18 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.info.autoReset = false;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = mobilePerformanceProfile ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
+renderer.shadowMap.autoUpdate = false;
+renderer.shadowMap.needsUpdate = true;
 app.appendChild(renderer.domElement);
 
 const composer = new EffectComposer(renderer);
+for (const [target, name] of [
+  [composer.renderTarget1, "EffectComposer.depth1"],
+  [composer.renderTarget2, "EffectComposer.depth2"]
+]) {
+  target.depthTexture = new THREE.DepthTexture(target.width, target.height, THREE.UnsignedIntType);
+  target.depthTexture.name = name;
+}
 const renderPass = new RenderPass(scene, camera);
 const districtBokehDefaults = {
   aperture: mobilePerformanceProfile ? 0.0002 : 0.00028,
@@ -215,6 +227,23 @@ const districtSurfaceNavigation = {
   baseYawDegrees: null,
   compassNeedleAngleDegrees: null
 };
+const createReusableSphereFrame = () => ({
+  normal: new THREE.Vector3(),
+  tangentX: new THREE.Vector3(),
+  tangentZ: new THREE.Vector3(),
+  surface: new THREE.Vector3()
+});
+const districtCameraFrame = createReusableSphereFrame();
+const districtPointerFrame = createReusableSphereFrame();
+const districtCompassFrame = createReusableSphereFrame();
+const districtCameraHorizontal = new THREE.Vector3();
+const districtCameraFocus = new THREE.Vector3();
+const districtSphereCenter = new THREE.Vector3();
+const districtPointerHorizontal = new THREE.Vector3();
+const districtPointerViewDirection = new THREE.Vector3();
+const districtPointerScreenRight = new THREE.Vector3();
+const districtCompassCameraRight = new THREE.Vector3();
+const districtCompassCameraUp = new THREE.Vector3();
 const reducedMotionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 let controls = new OrbitControls(camera, renderer.domElement);
@@ -546,6 +575,24 @@ if (cityViewerContext) document.documentElement.dataset.magicTownViewer = "loadi
 let activeObject = null;
 let activePipeline = null;
 let activeAnimationObjects = [];
+let activeAnimatedShadowCasters = false;
+const activeViewCache = {
+  valid: false,
+  object: null,
+  projectionView: new THREE.Matrix4(),
+  candidateProjectionView: new THREE.Matrix4(),
+  width: 0,
+  height: 0,
+  renderScale: 0,
+  viewMode: "",
+  qualityScale: 0,
+  updates: 0,
+  skipped: 0
+};
+const shadowLightDirection = new THREE.Vector3();
+const candidateShadowLightDirection = new THREE.Vector3();
+let shadowLightDirectionValid = false;
+const SHADOW_DIRECTION_UPDATE_COSINE = Math.cos(THREE.MathUtils.degToRad(0.05));
 const configsByMode = {
   map: normalizeIsometricDevelopmentConfig(ISOMETRIC_DEVELOPMENT_PRESETS.magicLondonRiverfront),
   asset: normalizeIsometricAssetConfig(ISOMETRIC_ASSET_PRESETS.londonShopDepthAnything),
@@ -693,10 +740,14 @@ async function rebuildActive(config) {
   }
 
   scene.add(activeObject);
+  renderer.shadowMap.needsUpdate = true;
+  activeViewCache.valid = false;
   districtDepthOfField.invalidateDepth();
   cityInfoOverlay.setSceneRoot(frontendSurface === "player" && currentMode === "agentcity" ? activeObject : null);
   warmupActiveVoxelLod();
   activeAnimationObjects = collectAnimationObjects(activeObject);
+  activeAnimatedShadowCasters = hasAnimatedShadowCasters(activeAnimationObjects);
+  if (isSurfaceVoxelWorld()) freezeStaticSurfaceTransforms(activeObject, activeAnimationObjects);
   skyClock.time = Number.isFinite(Number(currentConfig.sunTime)) ? Number(currentConfig.sunTime) : skyClock.time;
   voxelSky.visible = isVoxelSkyMode();
   applyWorldLighting(currentConfig.sunTime);
@@ -803,10 +854,23 @@ function applyWorldLighting(sunTime = 0.52, updateActiveObject = true) {
   worldLights.key.color.copy(style.sunColor);
   worldLights.key.intensity = style.sunIntensity * (massingContrast ? 1.2 : 1);
   worldLights.key.position.copy(style.sunPosition);
+  requestShadowRefreshForLight(style.sunPosition);
   worldLights.rim.color.copy(style.rgbTint);
   worldLights.rim.intensity = style.rimIntensity;
   if (updateActiveObject) activeObject?.userData.updateDaylight?.(style);
   return style;
+}
+
+function requestShadowRefreshForLight(position) {
+  candidateShadowLightDirection.copy(position).normalize();
+  if (
+    !shadowLightDirectionValid
+    || candidateShadowLightDirection.dot(shadowLightDirection) < SHADOW_DIRECTION_UPDATE_COSINE
+  ) {
+    shadowLightDirection.copy(candidateShadowLightDirection);
+    shadowLightDirectionValid = true;
+    renderer.shadowMap.needsUpdate = true;
+  }
 }
 
 function rebuildPresetOptions() {
@@ -1609,13 +1673,16 @@ function animate() {
     });
   }
   updateDistrictCompassNeedle();
-  activeObject?.userData?.updateView?.(camera, renderQuality.mobile ? 4 : 8, {
+  const activeViewViewport = {
     width: renderer.domElement.clientWidth,
     height: renderer.domElement.clientHeight,
     renderScale: renderQuality.pixelRatio,
     viewMode: camera.userData?.districtSurface?.viewMode ?? districtSurfaceNavigation.viewMode,
     qualityScale: renderQuality.lodQualityScale
-  });
+  };
+  if (shouldUpdateActiveView(activeObject, camera, activeViewViewport)) {
+    activeObject?.userData?.updateView?.(camera, renderQuality.mobile ? 4 : 8, activeViewViewport);
+  }
   cityInfoOverlay.update({
     camera,
     delta,
@@ -1673,6 +1740,7 @@ function animate() {
     districtDepthOfField.enabled = false;
     renderer.render(scene, camera);
   }
+  if (activeAnimatedShadowCasters) renderer.shadowMap.needsUpdate = true;
   if (adaptiveQualityEnabled) updateDynamicResolution(delta, elapsed);
   if (refreshRuntimeDiagnostics) publishRenderDiagnostics();
 }
@@ -1690,6 +1758,81 @@ function collectAnimationObjects(root) {
     if (object.userData?.spin || object.userData?.float || object.userData?.waterWave) objects.push(object);
   });
   return objects;
+}
+
+function hasAnimatedShadowCasters(objects) {
+  return objects.some((object) => {
+    let castsShadow = false;
+    object.traverse((child) => {
+      if (child.castShadow) castsShadow = true;
+    });
+    return castsShadow;
+  });
+}
+
+function freezeStaticSurfaceTransforms(root, animatedObjects) {
+  const animated = new Set(animatedObjects);
+  const dynamicBranches = new Set();
+  animatedObjects.forEach((object) => {
+    for (let current = object; current; current = current.parent) {
+      dynamicBranches.add(current);
+      if (current === root) break;
+    }
+  });
+  let frozenObjects = 0;
+  let frozenWorldSubtrees = 0;
+  root.updateMatrixWorld(true);
+  root.traverse((object) => {
+    if (!animated.has(object)) {
+      object.updateMatrix();
+      object.matrixAutoUpdate = false;
+      frozenObjects += 1;
+    }
+    if (!dynamicBranches.has(object)) {
+      object.matrixWorldAutoUpdate = false;
+      frozenWorldSubtrees += 1;
+    }
+  });
+  root.updateMatrixWorld(true);
+  root.userData.frozenTransformCount = frozenObjects;
+  root.userData.frozenWorldSubtreeCount = frozenWorldSubtrees;
+}
+
+function shouldUpdateActiveView(object, viewCamera, viewport) {
+  if (!object?.userData?.updateView) return false;
+  activeViewCache.candidateProjectionView.multiplyMatrices(
+    viewCamera.projectionMatrix,
+    viewCamera.matrixWorldInverse
+  );
+  const changed = !activeViewCache.valid
+    || activeViewCache.object !== object
+    || !matrixApproximatelyEquals(activeViewCache.candidateProjectionView, activeViewCache.projectionView)
+    || activeViewCache.width !== viewport.width
+    || activeViewCache.height !== viewport.height
+    || activeViewCache.renderScale !== viewport.renderScale
+    || activeViewCache.viewMode !== viewport.viewMode
+    || activeViewCache.qualityScale !== viewport.qualityScale;
+  if (!changed) {
+    activeViewCache.skipped += 1;
+    return false;
+  }
+  activeViewCache.valid = true;
+  activeViewCache.object = object;
+  activeViewCache.projectionView.copy(activeViewCache.candidateProjectionView);
+  activeViewCache.width = viewport.width;
+  activeViewCache.height = viewport.height;
+  activeViewCache.renderScale = viewport.renderScale;
+  activeViewCache.viewMode = viewport.viewMode;
+  activeViewCache.qualityScale = viewport.qualityScale;
+  activeViewCache.updates += 1;
+  return true;
+}
+
+function matrixApproximatelyEquals(left, right, epsilon = 1e-7) {
+  for (let index = 0; index < 16; index += 1) {
+    if (Math.abs(left.elements[index] - right.elements[index]) > epsilon) return false;
+  }
+  return true;
 }
 
 function updateDynamicResolution(delta, elapsed) {
@@ -1739,6 +1882,13 @@ function publishRenderDiagnostics() {
   document.documentElement.dataset.magicTownFrameMs = renderQuality.averageFrameMs.toFixed(2);
   document.documentElement.dataset.magicTownDepthOfFieldScale = renderQuality.depthOfFieldScale.toFixed(2);
   document.documentElement.dataset.magicTownBokehQuality = renderQuality.depthOfFieldQuality.toFixed(2);
+  document.documentElement.dataset.magicTownBokehDepth = JSON.stringify(districtDepthOfField.getDiagnostics());
+  document.documentElement.dataset.magicTownViewUpdates = JSON.stringify({
+    updates: activeViewCache.updates,
+    skipped: activeViewCache.skipped,
+    frozenTransforms: activeObject?.userData?.frozenTransformCount ?? 0,
+    frozenWorldSubtrees: activeObject?.userData?.frozenWorldSubtreeCount ?? 0
+  });
   document.documentElement.dataset.magicTownLodQualityScale = renderQuality.lodQualityScale.toFixed(2);
   document.documentElement.dataset.magicTownRenderProfile = renderQuality.profile.iosSafari ? "ios-safari-60" : renderQuality.mobile ? "mobile-60" : "desktop";
   document.documentElement.dataset.magicTownDrawCalls = String(renderer.info.render.calls);
@@ -1977,23 +2127,26 @@ function configureDistrictSurfaceCamera(scale = districtSurfaceNavigation.camera
   const frame = getVoxelSphereFrame(
     districtSurfaceNavigation.flatX,
     districtSurfaceNavigation.flatZ,
-    navigation.radius
+    navigation.radius,
+    districtCameraFrame
   );
   const yaw = THREE.MathUtils.degToRad(districtSurfaceNavigation.cameraYawDegrees);
   const elevation = THREE.MathUtils.degToRad(navigation.elevationDegrees);
   const distance = navigation.cameraDistance * scale;
-  const horizontal = frame.tangentX.clone().multiplyScalar(Math.cos(yaw))
+  const horizontal = districtCameraHorizontal.copy(frame.tangentX).multiplyScalar(Math.cos(yaw))
     .addScaledVector(frame.tangentZ, Math.sin(yaw))
     .normalize();
-  const focus = frame.surface.clone().addScaledVector(frame.normal, navigation.targetHeight);
+  const focus = districtCameraFocus.copy(frame.surface).addScaledVector(frame.normal, navigation.targetHeight);
   camera.position.copy(focus)
     .addScaledVector(horizontal, distance * Math.cos(elevation))
     .addScaledVector(frame.normal, distance * Math.sin(elevation));
   camera.up.copy(frame.normal);
   camera.lookAt(focus);
   controls.target.copy(focus);
-  districtSurfaceNavigation.radialDistance = camera.position.distanceTo(new THREE.Vector3(0, -navigation.radius, 0));
-  camera.userData.districtSurface = {
+  districtSphereCenter.set(0, -navigation.radius, 0);
+  districtSurfaceNavigation.radialDistance = camera.position.distanceTo(districtSphereCenter);
+  camera.userData.districtSurface ??= {};
+  Object.assign(camera.userData.districtSurface, {
     flatX: districtSurfaceNavigation.flatX,
     flatZ: districtSurfaceNavigation.flatZ,
     radialDistance: districtSurfaceNavigation.radialDistance,
@@ -2005,7 +2158,7 @@ function configureDistrictSurfaceCamera(scale = districtSurfaceNavigation.camera
     viewMode: districtSurfaceNavigation.viewMode,
     cameraScale: districtSurfaceNavigation.cameraScale,
     targetCameraScale: districtSurfaceNavigation.targetCameraScale
-  };
+  });
   document.documentElement.dataset.magicTownDistrictView = districtSurfaceNavigation.viewMode;
   syncDistrictCompassState();
 }
@@ -2057,10 +2210,11 @@ function updateDistrictCompassNeedle() {
   const frame = getVoxelSphereFrame(
     districtSurfaceNavigation.flatX,
     districtSurfaceNavigation.flatZ,
-    navigation.radius
+    navigation.radius,
+    districtCompassFrame
   );
-  const cameraRight = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
-  const cameraUp = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+  const cameraRight = districtCompassCameraRight.setFromMatrixColumn(camera.matrixWorld, 0);
+  const cameraUp = districtCompassCameraUp.setFromMatrixColumn(camera.matrixWorld, 1);
   const projectedAngle = THREE.MathUtils.radToDeg(Math.atan2(
     frame.tangentZ.dot(cameraRight),
     frame.tangentZ.dot(cameraUp)
@@ -2125,16 +2279,17 @@ function updateDistrictSurfacePointer(event, rect) {
   const frame = getVoxelSphereFrame(
     districtSurfaceNavigation.flatX,
     districtSurfaceNavigation.flatZ,
-    navigation.radius
+    navigation.radius,
+    districtPointerFrame
   );
   const yaw = THREE.MathUtils.degToRad(districtSurfaceNavigation.cameraYawDegrees);
   const elevation = THREE.MathUtils.degToRad(navigation.elevationDegrees);
-  const horizontal = frame.tangentX.clone().multiplyScalar(Math.cos(yaw))
+  const horizontal = districtPointerHorizontal.copy(frame.tangentX).multiplyScalar(Math.cos(yaw))
     .addScaledVector(frame.tangentZ, Math.sin(yaw))
     .normalize();
-  const viewDirection = horizontal.clone().multiplyScalar(-Math.cos(elevation))
+  const viewDirection = districtPointerViewDirection.copy(horizontal).multiplyScalar(-Math.cos(elevation))
     .addScaledVector(frame.normal, -Math.sin(elevation));
-  const screenRight = new THREE.Vector3().crossVectors(viewDirection, frame.normal).normalize();
+  const screenRight = districtPointerScreenRight.crossVectors(viewDirection, frame.normal).normalize();
   const visibleHeight = 2 * navigation.cameraDistance * districtSurfaceNavigation.cameraScale
     * Math.tan(THREE.MathUtils.degToRad(camera.fov) * 0.5);
   const unitsPerPixel = visibleHeight / Math.max(1, rect.height);

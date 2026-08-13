@@ -19,7 +19,8 @@ import {
   createVoxelIntentDistrict,
   createVoxelPrefabDistricts,
   getVoxelSphereFrame,
-  normalizeVoxelIntentDistrictConfig
+  normalizeVoxelIntentDistrictConfig,
+  projectDistrictOntoSphere
 } from "../src/generators/voxelIntentDistrict.js";
 
 test("BuildingIntent keeps arbitrary purpose text while bounding geometric controls", () => {
@@ -276,13 +277,49 @@ test("macro world reaches Magic London scale with a compact base-voxel heightfie
   const terrainChunks = macro.group.children.filter((child) => child.name.startsWith("IntentDistrictMacroChunk-"));
   assert.equal(terrainChunks.length, 49);
   assert.ok(terrainChunks.every((mesh) => mesh.userData.flatVoxelGeometry));
-  assert.ok(terrainChunks.every((mesh) => mesh.material.side === THREE.DoubleSide));
+  assert.ok(terrainChunks.every((mesh) => mesh.material.side === THREE.FrontSide));
   assert.ok(macro.group.getObjectByName("MacroVoxelPlants"));
+});
+
+test("sphere projection repairs winding baked from a mirrored terrain root", () => {
+  const root = new THREE.Group();
+  const mirrored = new THREE.Group();
+  mirrored.scale.z = -1;
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute([
+    -1, 0, -1,
+    -1, 0, 1,
+    1, 0, 1,
+    1, 0, -1
+  ], 3));
+  geometry.setIndex([0, 1, 2, 0, 2, 3]);
+  const terrain = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ side: THREE.FrontSide }));
+  terrain.userData.flatVoxelGeometry = true;
+  mirrored.add(terrain);
+  root.add(mirrored);
+
+  const diagnostics = projectDistrictOntoSphere(root, 220);
+  const index = terrain.geometry.getIndex();
+  const positions = terrain.geometry.getAttribute("position");
+  const a = new THREE.Vector3().fromBufferAttribute(positions, index.getX(0));
+  const b = new THREE.Vector3().fromBufferAttribute(positions, index.getX(1));
+  const c = new THREE.Vector3().fromBufferAttribute(positions, index.getX(2));
+  const normal = new THREE.Vector3().subVectors(b, a).cross(new THREE.Vector3().subVectors(c, a));
+  const radial = a.clone().add(b).add(c).multiplyScalar(1 / 3).sub(new THREE.Vector3(0, -220, 0));
+
+  assert.equal(diagnostics.correctedReflectedGeometries, 1);
+  assert.ok(normal.dot(radial) > 0, "mirrored terrain triangles should face away from the sphere center");
 });
 
 test("sphere frames keep surface navigation orthonormal and at a fixed radius", () => {
   const radius = 44;
-  const frame = getVoxelSphereFrame(12, -9, radius);
+  const reusable = {
+    normal: new THREE.Vector3(),
+    tangentX: new THREE.Vector3(),
+    tangentZ: new THREE.Vector3(),
+    surface: new THREE.Vector3()
+  };
+  const frame = getVoxelSphereFrame(12, -9, radius, reusable);
   const center = { x: 0, y: -radius, z: 0 };
   const radialDistance = Math.hypot(
     frame.surface.x - center.x,
@@ -296,6 +333,7 @@ test("sphere frames keep surface navigation orthonormal and at a fixed radius", 
   assert.ok(Math.abs(frame.tangentZ.length() - 1) < 1e-9);
   assert.ok(Math.abs(frame.normal.dot(frame.tangentX)) < 1e-9);
   assert.ok(Math.abs(frame.normal.dot(frame.tangentZ)) < 1e-9);
+  assert.equal(frame, reusable);
 });
 
 test("voxel district roads derive connections, close exposed continuations, and own terrace lamps", () => {

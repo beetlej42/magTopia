@@ -108,6 +108,7 @@ async function runAcceptance(browser) {
   await delay(1500);
 
   const nearBefore = await captureVisionFrame(page, "near-before-drag");
+  const nearSettledPerformance = await measureSettled(page, Math.max(30, Math.round(dragFrames / 2)));
   const nearPerformance = await measureDrag(page, dragFrames);
   const nearAfter = await captureVisionFrame(page, "near-after-drag");
 
@@ -122,6 +123,7 @@ async function runAcceptance(browser) {
   await page.waitForFunction(() => document.documentElement.dataset.magicTownDistrictView === "far", { timeout: 10000 });
   await delay(1200);
   const farBefore = await captureVisionFrame(page, "far-before-drag");
+  const farSettledPerformance = await measureSettled(page, Math.max(30, Math.round(dragFrames / 2)));
   const farPerformance = await measureDrag(page, dragFrames);
   const farAfter = await captureVisionFrame(page, "far-after-drag");
   await page.close();
@@ -131,8 +133,8 @@ async function runAcceptance(browser) {
     graphics,
     browserErrors,
     thresholds: { minimumTerrainCoverage, maximumP95Ms },
-    near: { vision: { before: nearBefore, after: nearAfter }, performance: nearPerformance },
-    far: { vision: { before: farBefore, after: farAfter }, performance: farPerformance }
+    near: { vision: { before: nearBefore, after: nearAfter }, settledPerformance: nearSettledPerformance, performance: nearPerformance },
+    far: { vision: { before: farBefore, after: farAfter }, settledPerformance: farSettledPerformance, performance: farPerformance }
   };
 }
 
@@ -222,16 +224,7 @@ async function measureDrag(page, frameCount) {
   }), frameCount);
 
   const intervals = dragSample.intervals;
-  const diagnostics = await page.evaluate(() => {
-    const root = document.documentElement.dataset;
-    return {
-      dpr: Number(root.magicTownPixelRatio || 0),
-      drawCalls: Number(root.magicTownDrawCalls || 0),
-      triangles: Number(root.magicTownTriangles || 0),
-      bokehQuality: Number(root.magicTownBokehQuality || 0),
-      depthOfFieldScale: Number(root.magicTownDepthOfFieldScale || 0)
-    };
-  });
+  const diagnostics = await getRenderDiagnostics(page);
   const sorted = [...intervals].sort((left, right) => left - right);
   const meanMs = intervals.reduce((sum, value) => sum + value, 0) / intervals.length;
   return {
@@ -241,6 +234,51 @@ async function measureDrag(page, frameCount) {
     p95Ms: Number(percentile(sorted, 0.95).toFixed(2)),
     meanFps: Number((1000 / meanMs).toFixed(1)),
     bokehSuppressedFrames: dragSample.bokehSuppressedFrames,
+    ...diagnostics
+  };
+}
+
+async function measureSettled(page, frameCount) {
+  const intervals = await page.evaluate((frames) => new Promise((resolve) => {
+    const samples = [];
+    let previous = performance.now();
+    let frame = 0;
+    const sample = (now) => {
+      if (frame > 0) samples.push(now - previous);
+      previous = now;
+      frame += 1;
+      if (frame >= frames) resolve(samples);
+      else requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  }), frameCount);
+  return summarizeIntervals(intervals, await getRenderDiagnostics(page));
+}
+
+async function getRenderDiagnostics(page) {
+  return page.evaluate(() => {
+    const root = document.documentElement.dataset;
+    return {
+      dpr: Number(root.magicTownPixelRatio || 0),
+      drawCalls: Number(root.magicTownDrawCalls || 0),
+      triangles: Number(root.magicTownTriangles || 0),
+      bokehQuality: Number(root.magicTownBokehQuality || 0),
+      depthOfFieldScale: Number(root.magicTownDepthOfFieldScale || 0),
+      bokehDepth: JSON.parse(root.magicTownBokehDepth || "{}"),
+      viewUpdates: JSON.parse(root.magicTownViewUpdates || "{}")
+    };
+  });
+}
+
+function summarizeIntervals(intervals, diagnostics = {}) {
+  const sorted = [...intervals].sort((left, right) => left - right);
+  const meanMs = intervals.reduce((sum, value) => sum + value, 0) / intervals.length;
+  return {
+    frames: intervals.length,
+    meanMs: Number(meanMs.toFixed(2)),
+    p50Ms: Number(percentile(sorted, 0.5).toFixed(2)),
+    p95Ms: Number(percentile(sorted, 0.95).toFixed(2)),
+    meanFps: Number((1000 / meanMs).toFixed(1)),
     ...diagnostics
   };
 }
@@ -262,6 +300,15 @@ function assertAcceptance(report) {
     }
     if (maximumP95Ms > 0 && result.performance.p95Ms > maximumP95Ms) {
       failures.push(`${view} drag p95 ${result.performance.p95Ms}ms > ${maximumP95Ms}ms`);
+    }
+    if (maximumP95Ms > 0 && result.settledPerformance.p95Ms > maximumP95Ms) {
+      failures.push(`${view} settled p95 ${result.settledPerformance.p95Ms}ms > ${maximumP95Ms}ms`);
+    }
+    if (result.settledPerformance.bokehDepth.usingSharedDepth !== true) {
+      failures.push(`${view} settled Bokeh did not reuse the main scene depth texture`);
+    }
+    if (result.settledPerformance.bokehDepth.fallbackDepthRenders !== 0) {
+      failures.push(`${view} rendered ${result.settledPerformance.bokehDepth.fallbackDepthRenders} fallback depth passes`);
     }
   }
   if (report.browserErrors.length) failures.push(`browser errors: ${report.browserErrors.join(" | ")}`);
