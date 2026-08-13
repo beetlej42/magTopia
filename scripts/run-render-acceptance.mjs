@@ -17,6 +17,11 @@ const baseUrl = suppliedUrl || `http://127.0.0.1:${port}`;
 const maximumP95Ms = Number(process.env.RENDER_ACCEPTANCE_MAX_P95_MS || 0);
 const minimumTerrainCoverage = Number(process.env.RENDER_ACCEPTANCE_MIN_TERRAIN_COVERAGE || 0.08);
 const dragFrames = Math.max(30, Number(process.env.RENDER_ACCEPTANCE_DRAG_FRAMES || 90));
+const voxelShader = process.env.RENDER_ACCEPTANCE_VOXEL_SHADER || "diffuse";
+const worldTime = process.env.RENDER_ACCEPTANCE_WORLD_TIME || "0.58";
+const bokeh = process.env.RENDER_ACCEPTANCE_BOKEH || "1";
+const clock = process.env.RENDER_ACCEPTANCE_CLOCK || "0";
+const dayLength = process.env.RENDER_ACCEPTANCE_DAY_LENGTH || "180";
 const server = suppliedUrl ? null : startViteServer(port);
 
 await mkdir(artifactsDir, { recursive: true });
@@ -84,7 +89,7 @@ async function runAcceptance(browser) {
   });
   page.on("pageerror", (error) => browserErrors.push(error.message));
 
-  const query = "?mode=agentcity&worldTime=0.58&clock=0&adaptiveQuality=0";
+  const query = `?mode=agentcity&worldTime=${encodeURIComponent(worldTime)}&clock=${encodeURIComponent(clock)}&dayLength=${encodeURIComponent(dayLength)}&adaptiveQuality=0&bokeh=${encodeURIComponent(bokeh)}&voxelShader=${encodeURIComponent(voxelShader)}`;
   await page.goto(`${baseUrl}/${query}`, { waitUntil: "domcontentloaded", timeout: 120000 });
   await page.waitForFunction(() => {
     if (!window.MAGTOPIA?.getObject?.()) return false;
@@ -126,10 +131,15 @@ async function runAcceptance(browser) {
   const farSettledPerformance = await measureSettled(page, Math.max(30, Math.round(dragFrames / 2)));
   const farPerformance = await measureDrag(page, dragFrames);
   const farAfter = await captureVisionFrame(page, "far-after-drag");
+  const activeVoxelShader = await page.evaluate(() => document.documentElement.dataset.magicTownVoxelShader);
   await page.close();
 
   return {
     viewport: { css: [390, 844], deviceScaleFactor: 3 },
+    voxelShader: activeVoxelShader,
+    worldTime,
+    bokeh,
+    clock,
     graphics,
     browserErrors,
     thresholds: { minimumTerrainCoverage, maximumP95Ms },
@@ -264,6 +274,8 @@ async function getRenderDiagnostics(page) {
       triangles: Number(root.magicTownTriangles || 0),
       bokehQuality: Number(root.magicTownBokehQuality || 0),
       depthOfFieldScale: Number(root.magicTownDepthOfFieldScale || 0),
+      voxelShaderMaterials: JSON.parse(root.magicTownVoxelShaderMaterials || "{}"),
+      shadowRefresh: JSON.parse(root.magicTownShadowRefresh || "{}"),
       bokehDepth: JSON.parse(root.magicTownBokehDepth || "{}"),
       viewUpdates: JSON.parse(root.magicTownViewUpdates || "{}")
     };
@@ -304,10 +316,10 @@ function assertAcceptance(report) {
     if (maximumP95Ms > 0 && result.settledPerformance.p95Ms > maximumP95Ms) {
       failures.push(`${view} settled p95 ${result.settledPerformance.p95Ms}ms > ${maximumP95Ms}ms`);
     }
-    if (result.settledPerformance.bokehDepth.usingSharedDepth !== true) {
+    if (bokeh !== "0" && result.settledPerformance.bokehDepth.usingSharedDepth !== true) {
       failures.push(`${view} settled Bokeh did not reuse the main scene depth texture`);
     }
-    if (result.settledPerformance.bokehDepth.fallbackDepthRenders !== 0) {
+    if (bokeh !== "0" && result.settledPerformance.bokehDepth.fallbackDepthRenders !== 0) {
       failures.push(`${view} rendered ${result.settledPerformance.bokehDepth.fallbackDepthRenders} fallback depth passes`);
     }
   }

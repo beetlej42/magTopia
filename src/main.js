@@ -7,6 +7,11 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { AdaptiveBokehPass } from "./render/adaptiveBokehPass.js";
 import { chooseAdaptiveQuality, detectMobileRenderProfile } from "./render/mobilePerformance.js";
 import {
+  calculateSurfaceShadowRefreshThreshold,
+  defaultShadowRefreshThreshold,
+  shadowDirectionExceedsThreshold
+} from "./render/shadowRefreshScheduler.js";
+import {
   ISOMETRIC_ASSET_PRESETS,
   ISOMETRIC_DEVELOPMENT_PRESETS,
   createIsometricAssetRelief,
@@ -41,8 +46,10 @@ import {
   VOXEL_BUILDING_PRESETS,
   createVoxelBuildingLab,
   createVoxelMassingLab,
+  getVoxelMaterialMode,
   getVoxelBuildingContract,
   normalizeVoxelBuildingConfig,
+  setVoxelMaterialMode,
   voxelDaylightStyle
 } from "./generators/voxelBuildingLab.js";
 import {
@@ -107,6 +114,7 @@ scene.background = new THREE.Color("#fff3f8");
 scene.matrixAutoUpdate = false;
 
 const startupParams = new URLSearchParams(window.location.search);
+setVoxelMaterialMode(startupParams.get("voxelShader") ?? "diffuse");
 const adaptiveQualityEnabled = startupParams.get("adaptiveQuality") !== "0";
 const bokehEnabled = startupParams.get("bokeh") !== "0";
 const startupMode = startupParams.get("mode");
@@ -592,7 +600,18 @@ const activeViewCache = {
 const shadowLightDirection = new THREE.Vector3();
 const candidateShadowLightDirection = new THREE.Vector3();
 let shadowLightDirectionValid = false;
-const SHADOW_DIRECTION_UPDATE_COSINE = Math.cos(THREE.MathUtils.degToRad(0.05));
+const shadowRefreshDiagnostics = {
+  scheduledRefreshes: 0,
+  directionChanges: 0,
+  skippedDirectionChanges: 0,
+  forcedRefreshes: 0,
+  thresholdDegrees: 0.05,
+  allowedWorldDisplacement: null,
+  renderPixelWorldSize: null,
+  voxelDisplacementLimit: null,
+  viewMode: "default",
+  lastReason: "startup"
+};
 const configsByMode = {
   map: normalizeIsometricDevelopmentConfig(ISOMETRIC_DEVELOPMENT_PRESETS.magicLondonRiverfront),
   asset: normalizeIsometricAssetConfig(ISOMETRIC_ASSET_PRESETS.londonShopDepthAnything),
@@ -740,7 +759,7 @@ async function rebuildActive(config) {
   }
 
   scene.add(activeObject);
-  renderer.shadowMap.needsUpdate = true;
+  scheduleShadowRefresh("scene-rebuild", true);
   activeViewCache.valid = false;
   districtDepthOfField.invalidateDepth();
   cityInfoOverlay.setSceneRoot(frontendSurface === "player" && currentMode === "agentcity" ? activeObject : null);
@@ -754,6 +773,8 @@ async function rebuildActive(config) {
   applyDistrictBokeh(currentConfig.bokehStrength ?? 1, currentConfig.bokehBlur ?? 1);
   configureCameraForViewport();
   document.documentElement.dataset.magicTownMode = currentMode;
+  document.documentElement.dataset.magicTownVoxelShader = getVoxelMaterialMode();
+  document.documentElement.dataset.magicTownVoxelShaderMaterials = JSON.stringify(getVoxelShaderMaterialDiagnostics(activeObject));
   document.documentElement.dataset.magicTownConfig = JSON.stringify(currentConfig);
   document.documentElement.dataset.magicTownCityBuildings = currentMode === "map"
     ? String(Object.keys(cityWorkbench.getState().buildings).length)
@@ -782,6 +803,21 @@ async function rebuildActive(config) {
   syncUi();
   syncMapPreview();
   syncApiPill();
+}
+
+function getVoxelShaderMaterialDiagnostics(object) {
+  const materials = new Set();
+  let meshCount = 0;
+  object?.traverse((child) => {
+    if (!child.isMesh) return;
+    const childMaterials = Array.isArray(child.material) ? child.material : [child.material];
+    childMaterials.forEach((material) => {
+      if (material?.userData?.voxelShader !== "diffuse") return;
+      materials.add(material.uuid);
+      meshCount += 1;
+    });
+  });
+  return { mode: getVoxelMaterialMode(), materialCount: materials.size, meshCount };
 }
 
 function warmupActiveVoxelLod() {
@@ -863,14 +899,49 @@ function applyWorldLighting(sunTime = 0.52, updateActiveObject = true) {
 
 function requestShadowRefreshForLight(position) {
   candidateShadowLightDirection.copy(position).normalize();
+  const threshold = getShadowRefreshThreshold();
+  shadowRefreshDiagnostics.thresholdDegrees = threshold.thresholdDegrees;
+  shadowRefreshDiagnostics.allowedWorldDisplacement = threshold.allowedWorldDisplacement;
+  shadowRefreshDiagnostics.renderPixelWorldSize = threshold.renderPixelWorldSize;
+  shadowRefreshDiagnostics.voxelDisplacementLimit = threshold.voxelDisplacementLimit;
+  shadowRefreshDiagnostics.viewMode = isSurfaceVoxelWorld()
+    ? districtSurfaceNavigation.viewMode
+    : "default";
   if (
     !shadowLightDirectionValid
-    || candidateShadowLightDirection.dot(shadowLightDirection) < SHADOW_DIRECTION_UPDATE_COSINE
+    || shadowDirectionExceedsThreshold(
+      candidateShadowLightDirection.dot(shadowLightDirection),
+      threshold.thresholdCosine
+    )
   ) {
     shadowLightDirection.copy(candidateShadowLightDirection);
     shadowLightDirectionValid = true;
-    renderer.shadowMap.needsUpdate = true;
+    shadowRefreshDiagnostics.directionChanges += 1;
+    scheduleShadowRefresh("sun-direction");
+  } else {
+    shadowRefreshDiagnostics.skippedDirectionChanges += 1;
   }
+}
+
+function getShadowRefreshThreshold() {
+  if (!isSurfaceVoxelWorld()) return defaultShadowRefreshThreshold();
+  const navigation = activeObject?.userData?.surfaceNavigation;
+  return calculateSurfaceShadowRefreshThreshold({
+    viewportHeight: renderer.domElement.clientHeight || window.innerHeight,
+    renderScale: renderQuality.pixelRatio,
+    fovDegrees: camera.fov,
+    cameraDistance: navigation?.cameraDistance ?? 58,
+    cameraScale: districtSurfaceNavigation.cameraScale,
+    voxelSize: 0.125,
+    shadowFootprintRadius: 16
+  });
+}
+
+function scheduleShadowRefresh(reason, forced = false) {
+  if (!renderer.shadowMap.needsUpdate) shadowRefreshDiagnostics.scheduledRefreshes += 1;
+  if (forced) shadowRefreshDiagnostics.forcedRefreshes += 1;
+  shadowRefreshDiagnostics.lastReason = reason;
+  renderer.shadowMap.needsUpdate = true;
 }
 
 function rebuildPresetOptions() {
@@ -1740,7 +1811,7 @@ function animate() {
     districtDepthOfField.enabled = false;
     renderer.render(scene, camera);
   }
-  if (activeAnimatedShadowCasters) renderer.shadowMap.needsUpdate = true;
+  if (activeAnimatedShadowCasters) scheduleShadowRefresh("animated-caster", true);
   if (adaptiveQualityEnabled) updateDynamicResolution(delta, elapsed);
   if (refreshRuntimeDiagnostics) publishRenderDiagnostics();
 }
@@ -1888,6 +1959,19 @@ function publishRenderDiagnostics() {
     skipped: activeViewCache.skipped,
     frozenTransforms: activeObject?.userData?.frozenTransformCount ?? 0,
     frozenWorldSubtrees: activeObject?.userData?.frozenWorldSubtreeCount ?? 0
+  });
+  document.documentElement.dataset.magicTownShadowRefresh = JSON.stringify({
+    ...shadowRefreshDiagnostics,
+    thresholdDegrees: Number(shadowRefreshDiagnostics.thresholdDegrees.toFixed(5)),
+    allowedWorldDisplacement: shadowRefreshDiagnostics.allowedWorldDisplacement == null
+      ? null
+      : Number(shadowRefreshDiagnostics.allowedWorldDisplacement.toFixed(6)),
+    renderPixelWorldSize: shadowRefreshDiagnostics.renderPixelWorldSize == null
+      ? null
+      : Number(shadowRefreshDiagnostics.renderPixelWorldSize.toFixed(6)),
+    voxelDisplacementLimit: shadowRefreshDiagnostics.voxelDisplacementLimit == null
+      ? null
+      : Number(shadowRefreshDiagnostics.voxelDisplacementLimit.toFixed(6))
   });
   document.documentElement.dataset.magicTownLodQualityScale = renderQuality.lodQualityScale.toFixed(2);
   document.documentElement.dataset.magicTownRenderProfile = renderQuality.profile.iosSafari ? "ios-safari-60" : renderQuality.mobile ? "mobile-60" : "desktop";

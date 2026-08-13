@@ -47,6 +47,25 @@ test("Agent acceptance city renders roads and vegetation entirely as voxel geome
   assert.equal(city.getObjectByName("MagicLondonBaseTiles"), undefined);
 });
 
+test("projected Agent buildings retain live day and night emissive updates", () => {
+  const city = createAgentAcceptanceCity({ acceptanceSeed: "voxel-daylight-projection-test" });
+  const emissiveMaterials = [];
+  city.traverse((object) => {
+    if (!object.isMesh) return;
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+    materials.forEach((material) => {
+      if (material?.emissive && material.emissive.getHex() !== 0) emissiveMaterials.push(material);
+    });
+  });
+  assert.ok(emissiveMaterials.length > 0);
+
+  city.userData.updateDaylight({ nightFactor: 0 });
+  const dayIntensity = Math.max(...emissiveMaterials.map((material) => material.emissiveIntensity));
+  city.userData.updateDaylight({ nightFactor: 1 });
+  const nightIntensity = Math.max(...emissiveMaterials.map((material) => material.emissiveIntensity));
+  assert.ok(nightIntensity > dayIntensity);
+});
+
 test("Victorian bridge selection is deterministic, span-aware, and visually varied", () => {
   assert.equal(selectVictorianBridgeStyle("same-seed", 3), selectVictorianBridgeStyle("same-seed", 3));
   const shortStyles = new Set(Array.from({ length: 20 }, (_, index) => selectVictorianBridgeStyle(`short-${index}`, 1)));

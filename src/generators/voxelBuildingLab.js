@@ -185,6 +185,19 @@ const MATERIAL_LIBRARY = Object.freeze({
   }
 });
 
+const VOXEL_MATERIAL_MODES = new Set(["standard", "diffuse"]);
+let voxelMaterialMode = "standard";
+
+export function setVoxelMaterialMode(mode = "standard") {
+  const normalized = String(mode).trim().toLowerCase();
+  voxelMaterialMode = VOXEL_MATERIAL_MODES.has(normalized) ? normalized : "standard";
+  return voxelMaterialMode;
+}
+
+export function getVoxelMaterialMode() {
+  return voxelMaterialMode;
+}
+
 export const VOXEL_BUILDING_PRESETS = Object.freeze({
   semanticShopSigns: {
     seed: "semantic-shop-signs-001",
@@ -2071,8 +2084,32 @@ function appendVoxelFaceQuad({ face, plane, u, v, width, height, positions, norm
   indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
 }
 
+const VOXEL_DIRECT_SPECULAR = "reflectedLight.directSpecular += irradiance * BRDF_GGX( directLight.direction, geometryViewDir, geometryNormal, material );";
+const VOXEL_INDIRECT_SPECULAR = "#define RE_IndirectSpecular\t\tRE_IndirectSpecular_Physical";
+const VOXEL_DIFFUSE_LIGHTING_CHUNK = THREE.ShaderChunk.lights_physical_pars_fragment
+  .replace(VOXEL_DIRECT_SPECULAR, "// Voxel diffuse shader: rough opaque surfaces omit direct GGX specular.")
+  .replace(VOXEL_INDIRECT_SPECULAR, "// Voxel diffuse shader: no indirect specular path.");
+
+class VoxelDiffuseMaterial extends THREE.MeshStandardMaterial {
+  constructor(parameters = {}) {
+    super(parameters);
+    this.name = "VoxelDiffuseMaterial";
+    this.userData.voxelShader = "diffuse";
+    this.onBeforeCompile = (shader) => {
+      shader.fragmentShader = shader.fragmentShader.replace(
+        "#include <lights_physical_pars_fragment>",
+        VOXEL_DIFFUSE_LIGHTING_CHUNK
+      );
+    };
+  }
+
+  customProgramCacheKey() {
+    return "voxel-diffuse-v1";
+  }
+}
+
 function createVoxelMaterial(definition) {
-  return new THREE.MeshStandardMaterial({
+  const parameters = {
     color: definition.colors[0],
     roughness: definition.roughness,
     metalness: definition.metalness ?? 0,
@@ -2081,7 +2118,29 @@ function createVoxelMaterial(definition) {
     transparent: Number(definition.opacity ?? 1) < 1,
     opacity: definition.opacity ?? 1,
     flatShading: true
-  });
+  };
+  if (!supportsDiffuseVoxelShader(definition)) return new THREE.MeshStandardMaterial(parameters);
+  if (voxelMaterialMode === "diffuse") return new VoxelDiffuseMaterial(parameters);
+  return new THREE.MeshStandardMaterial(parameters);
+}
+
+function supportsDiffuseVoxelShader(definition) {
+  return voxelMaterialMode !== "standard"
+    && Number(definition.opacity ?? 1) >= 1
+    && Number(definition.metalness ?? 0) <= 0.05
+    && Number(definition.roughness ?? 1) >= 0.8
+    && !definition.emissive;
+}
+
+function createOpaquePaletteMaterial() {
+  const parameters = {
+    vertexColors: true,
+    roughness: 0.94,
+    metalness: 0.02,
+    flatShading: true
+  };
+  if (voxelMaterialMode === "diffuse") return new VoxelDiffuseMaterial(parameters);
+  return new THREE.MeshStandardMaterial(parameters);
 }
 
 function mergeOpaqueGreedyMeshes(meshes) {
@@ -2122,12 +2181,7 @@ function mergeOpaqueGreedyMeshes(meshes) {
       mesh.material.dispose();
     });
     geometry.computeBoundingSphere();
-    const material = new THREE.MeshStandardMaterial({
-      vertexColors: true,
-      roughness: 0.94,
-      metalness: 0.02,
-      flatShading: true
-    });
+    const material = createOpaquePaletteMaterial();
     const mesh = new THREE.Mesh(geometry, material);
     mesh.name = `VoxelGreedy-Opaque-${chunkKey}`;
     mesh.userData.materialId = "opaquePalette";
