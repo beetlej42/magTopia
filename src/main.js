@@ -103,6 +103,13 @@ import {
   createPublicBuildingStyleComparison,
   normalizePublicBuildingStyleComparisonConfig
 } from "./generators/publicBuildingStyleComparison.js";
+import {
+  STREET_LIFE_PRESETS,
+  createRandomStreetLifeConfig,
+  createStreetLifeAssetLab,
+  getStreetLifeContract,
+  normalizeStreetLifeConfig
+} from "./generators/streetLifeAssetLab.js";
 
 const app = document.querySelector("#app");
 const pureViewToggle = document.querySelector("#pure-view-toggle");
@@ -144,7 +151,7 @@ const frontendSurface = isPresentationRequest
     : "studio";
 document.documentElement.dataset.magtopiaSurface = frontendSurface;
 if (isPresentationRequest) document.documentElement.dataset.magicTownPresentation = "true";
-const studioModes = ["map", "asset", "vanishing", "comparison", "voxel", "massing", "styles", "district", "agentcity", "parcel"];
+const studioModes = ["map", "asset", "vanishing", "comparison", "streetlife", "voxel", "massing", "styles", "district", "agentcity", "parcel"];
 let currentMode = frontendSurface === "studio" && studioModes.includes(startupMode)
   ? startupMode
   : frontendSurface === "player" || frontendSurface === "acceptance"
@@ -353,6 +360,23 @@ const MODES = {
       { key: "depthWireframe", label: "Depth Wireframe", min: 0, max: 1, step: 1, live: true }
     ]
   },
+  streetlife: {
+    label: "Street Life Asset Lab",
+    presets: STREET_LIFE_PRESETS,
+    defaultPreset: "mixedLondonStreet",
+    normalize: normalizeStreetLifeConfig,
+    randomize: (seed) => createRandomStreetLifeConfig(seed, configsByMode.streetlife),
+    sliders: [
+      { key: "sunTime", label: "Sun Time", min: 0, max: 1, step: 0.01 },
+      { key: "pedestrianCount", label: "Pedestrians", min: 4, max: 16, step: 1 },
+      { key: "vehicleCount", label: "Vehicles", min: 3, max: 8, step: 1 },
+      { key: "magicRatio", label: "Wizard Share", min: 0, max: 1, step: 0.01, format: "percent" },
+      { key: "capeRatio", label: "Wizard Capes", min: 0, max: 1, step: 0.01, format: "percent" },
+      { key: "flyingCarChance", label: "Flying Car Chance", min: 0, max: 0.4, step: 0.01, format: "percent" },
+      { key: "animationSpeed", label: "Motion Speed", min: 0, max: 2, step: 0.05 },
+      { key: "showMotion", label: "Animate Specimens", min: 0, max: 1, step: 1 }
+    ]
+  },
   voxel: {
     label: "Procedural Voxel Street",
     presets: VOXEL_BUILDING_PRESETS,
@@ -536,6 +560,9 @@ const presetLabels = {
   cottageMetricIndoorSmallVsHunyuan: "Cottage · Metric Indoor Small vs 3D",
   workshopMetricIndoorSmallVsHunyuan: "Workshop · Metric Indoor Small vs 3D",
   herbalistMetricIndoorSmallVsHunyuan: "Herbalist · Metric Indoor Small vs 3D",
+  mixedLondonStreet: "Street Life · Balanced",
+  mostlyMuggles: "Street Life · Mostly Muggles",
+  magicalRushHour: "Street Life · Magical Rush Hour",
   workshopDepthVsHunyuan: "Workshop · Depth vs 3D",
   herbalistDepthVsHunyuan: "Herbalist · Depth vs 3D",
   semanticShopSigns: "Grammar · Semantic Shop Signs",
@@ -627,6 +654,7 @@ const configsByMode = {
   asset: normalizeIsometricAssetConfig(ISOMETRIC_ASSET_PRESETS.londonShopDepthAnything),
   vanishing: normalizeVanishingPointConfig(VANISHING_POINT_PRESETS.twoPointCuboid),
   comparison: normalizeAssetComparisonConfig(ASSET_COMPARISON_PRESETS.cottageMetricIndoorSmallVsHunyuan),
+  streetlife: normalizeStreetLifeConfig(STREET_LIFE_PRESETS.mixedLondonStreet),
   voxel: normalizeVoxelBuildingConfig(VOXEL_BUILDING_PRESETS.connectedTerraceDay),
   massing: normalizeVoxelMassingConfig(VOXEL_MASSING_PRESETS.civicDome),
   styles: normalizePublicBuildingStyleComparisonConfig(
@@ -748,6 +776,8 @@ async function rebuildActive(config) {
     activeObject = vanishingObject;
   } else if (currentMode === "comparison") {
     activeObject = createAssetComparisonLab(currentConfig);
+  } else if (currentMode === "streetlife") {
+    activeObject = createStreetLifeAssetLab(currentConfig);
   } else if (currentMode === "voxel") {
     activeObject = createVoxelBuildingLab(currentConfig);
   } else if (currentMode === "massing") {
@@ -798,6 +828,11 @@ async function rebuildActive(config) {
   document.documentElement.dataset.magicTownComparison = currentMode === "comparison"
     ? JSON.stringify(activeObject.userData.getComparisonDiagnostics?.() ?? {})
     : "{}";
+  document.documentElement.dataset.magicTownStreetLife = currentMode === "streetlife"
+    ? JSON.stringify(activeObject.userData.getStreetLifeDiagnostics?.() ?? {})
+    : currentMode === "agentcity"
+      ? JSON.stringify(activeObject.userData.getStreetLifeDiagnostics?.() ?? {})
+      : "{}";
   document.documentElement.dataset.magicTownVoxel = currentMode === "voxel" || currentMode === "massing" || currentMode === "styles" || currentMode === "district" || currentMode === "agentcity"
     ? JSON.stringify(activeObject.userData.getVoxelDiagnostics?.() ?? {})
     : "{}";
@@ -1412,6 +1447,8 @@ function syncApiPill() {
     apiPill.textContent = "MAGTOPIA.previewVanishingWarp({ leftVanishingDistance, rightVanishingDistance, footprintWidth, footprintDepth })";
   } else if (currentMode === "comparison") {
     apiPill.textContent = "MAGTOPIA.compareAssetRepresentations({ depthStrength, comparisonYaw, showBounds, depthWireframe })";
+  } else if (currentMode === "streetlife") {
+    apiPill.textContent = "MAGTOPIA.previewStreetLife({ magicRatio, capeRatio, flyingCarChance, pedestrianCount, vehicleCount })";
   } else if (currentMode === "voxel") {
     apiPill.textContent = "MAGTOPIA.generateVoxelStreet({ floorPrograms: [{ purpose: 'shop', windowRatio: 0.86 }, { purpose: 'home', windowRatio: 0.32 }], cornerFacades: 'both', roofForm: 'hip' })";
   } else if (currentMode === "massing") {
@@ -1420,6 +1457,8 @@ function syncApiPill() {
     apiPill.textContent = "Five bounded public-building style grammars · silhouette + facade + material identity";
   } else if (currentMode === "district") {
     apiPill.textContent = "BuildingIntent → Street + Massing adapters · MAGTOPIA.generateIntentDistrict({ intents })";
+  } else if (currentMode === "agentcity") {
+    apiPill.textContent = "Agent road graph → routed pedestrians + vehicles · near / medium / culled LOD";
   } else {
     apiPill.textContent = `MAGTOPIA.previewParcel({ footprint: '${currentConfig.footprint}', floors: ${currentConfig.floors}, maxHeight: ${currentConfig.maxHeight} })`;
   }
@@ -1433,6 +1472,7 @@ function exposeAgentApi() {
       asset: ISOMETRIC_ASSET_PRESETS,
       vanishing: VANISHING_POINT_PRESETS,
       comparison: ASSET_COMPARISON_PRESETS,
+      streetlife: STREET_LIFE_PRESETS,
       voxel: VOXEL_BUILDING_PRESETS,
       massing: VOXEL_MASSING_PRESETS,
       styles: PUBLIC_BUILDING_STYLE_COMPARISON_PRESETS,
@@ -1481,6 +1521,10 @@ function exposeAgentApi() {
     },
     comparePublicBuildingStyles(config = {}) {
       setMode("styles", { ...configsByMode.styles, ...config });
+      return this.getParams();
+    },
+    previewStreetLife(config = {}) {
+      setMode("streetlife", { ...configsByMode.streetlife, ...config });
       return this.getParams();
     },
     randomizeVoxelMassing(scope = "all", seed = Date.now()) {
@@ -1553,7 +1597,9 @@ function exposeAgentApi() {
         : MODES.vanishing.presets[name]
           ? "vanishing"
           : MODES.comparison.presets[name]
-            ? "comparison"
+          ? "comparison"
+          : MODES.streetlife.presets[name]
+            ? "streetlife"
             : MODES.voxel.presets[name]
               ? "voxel"
               : MODES.massing.presets[name]
@@ -1605,6 +1651,9 @@ function exposeAgentApi() {
     },
     getAssetComparisonContract(config = configsByMode.comparison) {
       return getAssetComparisonContract(config);
+    },
+    getStreetLifeContract(config = configsByMode.streetlife) {
+      return getStreetLifeContract(config);
     },
     getVoxelBuildingContract(config = configsByMode.voxel) {
       return getVoxelBuildingContract(config);
@@ -1737,6 +1786,8 @@ function animate() {
     document.documentElement.dataset.magicTownHunyuanModels = JSON.stringify(activeObject?.userData?.getModelDiagnostics?.() ?? []);
   } else if (refreshRuntimeDiagnostics && currentMode === "comparison") {
     document.documentElement.dataset.magicTownComparison = JSON.stringify(activeObject?.userData?.getComparisonDiagnostics?.() ?? {});
+  } else if (refreshRuntimeDiagnostics && currentMode === "agentcity") {
+    document.documentElement.dataset.magicTownStreetLife = JSON.stringify(activeObject?.userData?.getStreetLifeDiagnostics?.() ?? {});
   }
 
   controls.update();
@@ -1837,7 +1888,7 @@ function applyDistrictBokeh(strength = 1, blur = 1) {
 function collectAnimationObjects(root) {
   const objects = [];
   root?.traverse((object) => {
-    if (object.userData?.spin || object.userData?.float || object.userData?.waterWave) objects.push(object);
+    if (object.userData?.spin || object.userData?.float || object.userData?.waterWave || object.userData?.dynamicSubtree) objects.push(object);
   });
   return objects;
 }
@@ -1854,6 +1905,7 @@ function hasAnimatedShadowCasters(objects) {
 
 function freezeStaticSurfaceTransforms(root, animatedObjects) {
   const animated = new Set(animatedObjects);
+  const dynamicSubtrees = new Set(animatedObjects.filter((object) => object.userData?.dynamicSubtree));
   const dynamicBranches = new Set();
   animatedObjects.forEach((object) => {
     for (let current = object; current; current = current.parent) {
@@ -1865,6 +1917,17 @@ function freezeStaticSurfaceTransforms(root, animatedObjects) {
   let frozenWorldSubtrees = 0;
   root.updateMatrixWorld(true);
   root.traverse((object) => {
+    let dynamicAncestor = object;
+    let insideDynamicSubtree = false;
+    while (dynamicAncestor) {
+      if (dynamicSubtrees.has(dynamicAncestor)) {
+        insideDynamicSubtree = true;
+        break;
+      }
+      if (dynamicAncestor === root) break;
+      dynamicAncestor = dynamicAncestor.parent;
+    }
+    if (insideDynamicSubtree) return;
     if (!animated.has(object)) {
       object.updateMatrix();
       object.matrixAutoUpdate = false;
@@ -2046,7 +2109,7 @@ function getSkyClockState() {
 }
 
 function isVoxelSkyMode() {
-  return ["map", "voxel", "massing", "styles", "district", "agentcity"].includes(currentMode);
+  return ["map", "streetlife", "voxel", "massing", "styles", "district", "agentcity"].includes(currentMode);
 }
 
 function onResize() {
@@ -2062,10 +2125,11 @@ function configureCameraForViewport() {
   const isVanishing = currentMode === "vanishing";
   const isMassing = currentMode === "massing";
   const isStyles = currentMode === "styles";
+  const isStreetLife = currentMode === "streetlife";
   const isDistrict = currentMode === "district";
   const isAgentCity = currentMode === "agentcity";
   const isSurfaceWorld = isDistrict || isAgentCity;
-  const isVoxel = currentMode === "voxel" || currentMode === "massing" || isStyles;
+  const isVoxel = currentMode === "voxel" || currentMode === "massing" || isStyles || isStreetLife;
   const perspective = isMap ? currentConfig?.perspective ?? 0 : 0;
   if (isParcel || isVanishing || isVoxel || (isMap && perspective <= 0.001)) {
     const aspect = window.innerWidth / window.innerHeight;
@@ -2075,6 +2139,8 @@ function configureCameraForViewport() {
         ? 10
         : isStyles
           ? 38
+          : isStreetLife
+            ? 14.5
           : isVoxel
             ? Math.max(15, (currentConfig?.buildingCount ?? 3) * 4 + 8)
               * (isMassing ? currentConfig?.viewFraming?.zoom ?? 1.12 : 1)
@@ -2099,8 +2165,8 @@ function configureCameraForViewport() {
         ? new THREE.Vector3(0.774, 0, -0.633)
           .multiplyScalar(currentConfig?.viewFraming?.horizontalOffset ?? 1.75)
         : new THREE.Vector3();
-      camera.position.set(isStyles ? 22 : 18, isStyles ? 16 : 14.5, isStyles ? 32 : 22).add(framingOffset);
-      controls.target.set(0, isStyles ? 4.8 : 5.4, 0.4).add(framingOffset);
+      camera.position.set(isStyles ? 22 : isStreetLife ? 15 : 18, isStyles ? 16 : isStreetLife ? 12 : 14.5, isStyles ? 32 : isStreetLife ? 19 : 22).add(framingOffset);
+      controls.target.set(0, isStyles ? 4.8 : isStreetLife ? 1.1 : 5.4, isStreetLife ? 0 : 0.4).add(framingOffset);
     } else {
       camera.position.set(isMap ? 124 : 11, isMap ? groundY + 152 : 22.2, isMap ? 124 : 11);
       controls.target.set(0, groundY, isMap ? -1 : 0);
@@ -2477,6 +2543,7 @@ function createCopyPayload() {
   }
   if (currentMode === "vanishing") return getVanishingPointWarpContract(currentConfig);
   if (currentMode === "comparison") return getAssetComparisonContract(currentConfig);
+  if (currentMode === "streetlife") return getStreetLifeContract(currentConfig);
   if (currentMode === "voxel") return getVoxelBuildingContract(currentConfig);
   if (currentMode === "massing") return activeObject?.userData?.getVoxelContract?.() ?? currentConfig;
   if (currentMode === "district" || currentMode === "agentcity") return activeObject?.userData?.getVoxelContract?.() ?? currentConfig;
@@ -2493,6 +2560,7 @@ function inferMode(config) {
   if ("mapId" in config || "developmentColumns" in config || "developmentRows" in config || "cameraMode" in config || "perspective" in config || "showGrid" in config || "trainSpeed" in config) return "map";
   if ("leftVanishingDistance" in config || "rightVanishingDistance" in config || "footprintWidth" in config || "footprintDepth" in config) return "vanishing";
   if ("comparisonYaw" in config || "depthStrength" in config || "depthWireframe" in config || "showBounds" in config) return "comparison";
+  if ("magicRatio" in config || "flyingCarChance" in config || "pedestrianCount" in config || "vehicleCount" in config) return "streetlife";
   if (
     "buildingCount" in config
     || "expansionFloors" in config

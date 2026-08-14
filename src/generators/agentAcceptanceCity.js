@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { runNonVisualAgentBuildScenario } from "../city/agent-district-simulation.js";
 import { createAgentVoxelRoadLayer, createAgentVoxelVegetationLayer } from "./agentVoxelInfrastructure.js";
 import { createMagicLondonStarterDistrict } from "./magicLondonStarterDistrict.js";
+import { createStreetLifeCityLayer } from "./streetLifeCityLayer.js";
 import {
   createVoxelDistrictMacroSurface,
   normalizeVoxelIntentDistrictConfig,
@@ -56,6 +57,15 @@ export function createAgentAcceptanceCity(config = {}) {
   root.add(vegetation);
 
   const sphericalProjection = projectDistrictOntoSphere(root, params.planetRadius);
+  const streetLife = createStreetLifeCityLayer({
+    state,
+    grid,
+    seed: `${seed}:street-life`,
+    planetRadius: params.planetRadius,
+    sampleGroundHeight: constructionHeight,
+    density: config.streetLifeDensity ?? 1
+  });
+  root.add(streetLife);
 
   root.userData.config = { ...params, acceptanceSeed: seed };
   root.userData.acceptanceReport = structuredClone(report);
@@ -76,6 +86,7 @@ export function createAgentAcceptanceCity(config = {}) {
     roadTopologies: roads.userData.contract?.renderedRoadTopologies ?? {},
     roadRenderer: roads.userData.contract,
     vegetation: vegetation.userData.contract,
+    streetLife: streetLife.userData.getDiagnostics(),
     buildingPlacements: buildings.userData.contract?.placements ?? [],
     skippedBuildings: buildings.userData.contract?.skipped ?? []
   };
@@ -98,6 +109,7 @@ export function createAgentAcceptanceCity(config = {}) {
     renderer: root.userData.diagnostics.renderer,
     renderSurface: "spherical voxel world; flat Agent API coordinates remain authoritative",
     projection: "each rendered voxel object uses the local sphere normal and tangent basis",
+    streetLife: streetLife.userData.getContract(),
     camera: {
       navigation: "fixed-radius surface pan",
       rotation: "locked local isometric",
@@ -109,10 +121,16 @@ export function createAgentAcceptanceCity(config = {}) {
   root.userData.getVoxelDiagnostics = () => structuredClone(root.userData.diagnostics);
   root.userData.getVoxelContract = () => structuredClone(root.userData.contract);
   root.userData.getPrefabLodDiagnostics = () => buildings.userData.getVoxelLodDiagnostics?.() ?? {};
+  root.userData.getStreetLifeDiagnostics = () => streetLife.userData.getDiagnostics();
+  root.userData.update = (elapsed) => {
+    streetLife.userData.update(elapsed);
+  };
   root.userData.updateView = (camera, _maxDynamicLights = 4, viewport = {}) => {
     macro.group.userData.updateView?.(camera);
     buildings.userData.updateView?.(camera, _maxDynamicLights, viewport);
     vegetation.userData.updateView?.(camera);
+    streetLife.userData.updateView(camera, viewport);
+    root.userData.diagnostics.streetLife = streetLife.userData.getDiagnostics();
   };
   root.userData.updateDaylight = (style) => {
     roads.userData.updateDaylight?.(style, params.nightLighting);

@@ -24,6 +24,10 @@ test("Agent acceptance city renders roads and vegetation entirely as voxel geome
   assert.equal(diagnostics.vegetation.clearsRoadsAndEntrances, true);
   assert.ok(diagnostics.vegetation.trees > 0);
   assert.ok(diagnostics.vegetation.renderStats.renderedTriangles > 0);
+  assert.equal(diagnostics.streetLife.renderer, "street-life-routed-lod-v1");
+  assert.ok(diagnostics.streetLife.pedestrianCount > 0);
+  assert.ok(diagnostics.streetLife.vehicleCount > 0);
+  assert.equal(diagnostics.streetLife.lodPolicy.shadowPolicy, "street-life-never-casts-dynamic-shadows");
   assert.equal(diagnostics.projection.type, "spherical-local-frame");
   assert.equal(diagnostics.projection.radius, 220);
   assert.ok(diagnostics.projection.projectedObjects > 0);
@@ -41,8 +45,10 @@ test("Agent acceptance city renders roads and vegetation entirely as voxel geome
 
   const roads = city.getObjectByName("AgentAcceptanceRoads");
   const vegetation = city.getObjectByName("AgentAcceptanceVegetation");
+  const streetLife = city.getObjectByName("AgentAcceptanceStreetLife");
   assert.ok(roads.children.every((child) => child.userData.voxelRenderStrategy === "greedy-chunk"));
   assert.ok(vegetation.children.every((child) => child.userData.voxelRenderStrategy === "greedy-chunk"));
+  assert.ok(streetLife.children.length > 0);
   assert.equal(city.getObjectByName("MagicLondonVegetation"), undefined);
   assert.equal(city.getObjectByName("MagicLondonBaseTiles"), undefined);
 });
