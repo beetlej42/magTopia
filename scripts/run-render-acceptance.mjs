@@ -110,8 +110,8 @@ async function runAcceptance(browser) {
       vendor: debugInfo ? context.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) : "unavailable"
     };
   });
-  // Hold scene resolution at its mobile high-quality starting point. Bokeh is
-  // intentionally bypassed only while the camera is moving, matching runtime.
+  // Hold scene resolution at its mobile high-quality starting point. Bokeh
+  // remains active while the camera is moving, matching runtime.
   await delay(1500);
 
   const nearBefore = await captureVisionFrame(page, "near-before-drag");
@@ -320,11 +320,14 @@ function assertAcceptance(report) {
     if (maximumP95Ms > 0 && result.settledPerformance.p95Ms > maximumP95Ms) {
       failures.push(`${view} settled p95 ${result.settledPerformance.p95Ms}ms > ${maximumP95Ms}ms`);
     }
-    if (bokeh === "1" && result.settledPerformance.bokehDepth.usingSharedDepth !== true) {
+    if (bokeh !== "0" && result.settledPerformance.bokehDepth.usingSharedDepth !== true) {
       failures.push(`${view} settled Bokeh did not reuse the main scene depth texture`);
     }
-    if (bokeh === "1" && result.settledPerformance.bokehDepth.fallbackDepthRenders !== 0) {
+    if (bokeh !== "0" && result.settledPerformance.bokehDepth.fallbackDepthRenders !== 0) {
       failures.push(`${view} rendered ${result.settledPerformance.bokehDepth.fallbackDepthRenders} fallback depth passes`);
+    }
+    if (bokeh !== "0" && result.performance.bokehSuppressedFrames !== 0) {
+      failures.push(`${view} suppressed Bokeh for ${result.performance.bokehSuppressedFrames} moving frames`);
     }
   }
   if (report.browserErrors.length) failures.push(`browser errors: ${report.browserErrors.join(" | ")}`);

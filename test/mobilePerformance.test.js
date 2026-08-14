@@ -19,8 +19,8 @@ test("iPhone Safari uses the largest DPR inside its post-processing pixel budget
   assert.ok(390 * 844 * profile.maxPixelRatio ** 2 <= profile.pixelBudget * 1.01);
 });
 
-test("mobile Bokeh is off by default but remains explicitly testable", () => {
-  assert.equal(shouldEnableBokeh({ mobile: true }), false);
+test("Bokeh is on by default on mobile and remains explicitly controllable", () => {
+  assert.equal(shouldEnableBokeh({ mobile: true }), true);
   assert.equal(shouldEnableBokeh({ mobile: false }), true);
   assert.equal(shouldEnableBokeh({ requestedValue: "1", mobile: true }), true);
   assert.equal(shouldEnableBokeh({ requestedValue: "0", mobile: false }), false);
@@ -78,6 +78,22 @@ test("adaptive quality skips disabled Bokeh and reduces scene resolution immedia
     depthOfFieldScale: 0,
     bokehQuality: 1,
     lodQualityScale: 1.1
+  });
+});
+
+test("adaptive quality keeps low-cost Bokeh active during severe frame pressure", () => {
+  assert.deepEqual(chooseAdaptiveQuality({
+    averageFrameMs: 34,
+    pixelRatio: 1.4,
+    minPixelRatio: 1,
+    maxPixelRatio: 1.8,
+    bokehQuality: 0.5,
+    bokehEnabled: true
+  }), {
+    pixelRatio: 1.3,
+    depthOfFieldScale: 1,
+    bokehQuality: 0.5,
+    lodQualityScale: 1.2
   });
 });
 

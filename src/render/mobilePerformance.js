@@ -25,10 +25,10 @@ export function detectMobileRenderProfile({
   };
 }
 
-export function shouldEnableBokeh({ requestedValue = null, mobile = false } = {}) {
+export function shouldEnableBokeh({ requestedValue = null } = {}) {
   if (requestedValue === "1") return true;
   if (requestedValue === "0") return false;
-  return !mobile;
+  return true;
 }
 
 export function chooseAdaptiveQuality({
@@ -55,7 +55,7 @@ export function chooseAdaptiveQuality({
 
   return {
     pixelRatio: nextPixelRatio,
-    depthOfFieldScale: bokehEnabled && averageFrameMs <= 30 ? 1 : 0,
+    depthOfFieldScale: bokehEnabled ? 1 : 0,
     bokehQuality: nextBokehQuality,
     lodQualityScale: averageFrameMs > 24 ? 1.2 : averageFrameMs > 20 ? 1.1 : 1
   };
