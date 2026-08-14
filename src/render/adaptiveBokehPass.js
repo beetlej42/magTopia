@@ -18,6 +18,7 @@ const ADAPTIVE_BOKEH_SHADER = {
     tColor: { value: null },
     tDepth: { value: null },
     focus: { value: 1 },
+    focusRange: { value: 4 },
     aspect: { value: 1 },
     aperture: { value: 0.025 },
     maxblur: { value: 0.01 },
@@ -41,6 +42,7 @@ const ADAPTIVE_BOKEH_SHADER = {
     uniform sampler2D tColor;
     uniform sampler2D tDepth;
     uniform float focus;
+    uniform float focusRange;
     uniform float aspect;
     uniform float aperture;
     uniform float maxblur;
@@ -54,6 +56,11 @@ const ADAPTIVE_BOKEH_SHADER = {
       return depthPacking > 0.5 ? unpackRGBAToDepth(sampleValue) : sampleValue.x;
     }
 
+    float circleOfConfusionForViewZ(float viewZ) {
+      float distanceFromFocus = max(abs(focus + viewZ) - focusRange, 0.0);
+      return min(distanceFromFocus * aperture, maxblur);
+    }
+
     void main() {
       float depth = readSceneDepth(vUv);
       if (depth >= 0.999999 || maxblur <= 0.000001) {
@@ -62,23 +69,43 @@ const ADAPTIVE_BOKEH_SHADER = {
       }
 
       float viewZ = perspectiveDepthToViewZ(depth, nearClip, farClip);
-      float circleOfConfusion = min(abs(focus + viewZ) * aperture, maxblur);
-      vec2 radius = vec2(circleOfConfusion, circleOfConfusion * aspect);
-
-      vec4 bokeh = texture2D(tColor, vUv) * 1.5;
-      bokeh += texture2D(tColor, vUv + radius * vec2( 1.000,  0.000));
-      bokeh += texture2D(tColor, vUv + radius * vec2(-0.500,  0.866));
-      bokeh += texture2D(tColor, vUv + radius * vec2(-0.500, -0.866));
-      float weight = 4.5;
-
-      if (quality > 0.75) {
-        bokeh += texture2D(tColor, vUv + radius * vec2( 0.500,  0.866));
-        bokeh += texture2D(tColor, vUv + radius * vec2(-1.000,  0.000));
-        bokeh += texture2D(tColor, vUv + radius * vec2( 0.500, -0.866));
-        weight += 3.0;
+      float circleOfConfusion = circleOfConfusionForViewZ(viewZ);
+      vec4 centerColor = texture2D(tColor, vUv);
+      if (circleOfConfusion <= 0.000001) {
+        gl_FragColor = centerColor;
+        return;
       }
 
-      gl_FragColor = bokeh / weight;
+      // A sunflower disk avoids the visible triangular/hexagonal bands produced
+      // by the former six-tap kernel while remaining temporally stable in motion.
+      float sampleCount = quality > 0.75 ? 18.0 : 8.0;
+      float centerDistance = -viewZ;
+      float rejectStart = max(0.75, focusRange * 0.18);
+      float rejectEnd = max(2.5, focusRange * 0.8);
+      vec4 bokeh = centerColor * 1.25;
+      float totalWeight = 1.25;
+      for (int index = 0; index < 18; index += 1) {
+        float sampleIndex = float(index);
+        if (sampleIndex >= sampleCount) continue;
+        float sampleRadius = sqrt((sampleIndex + 0.5) / sampleCount);
+        float angle = (sampleIndex + 0.5) * 2.39996323;
+        vec2 direction = vec2(cos(angle), sin(angle) * aspect);
+        vec2 sampleUv = clamp(
+          vUv + direction * circleOfConfusion * sampleRadius,
+          vec2(0.001),
+          vec2(0.999)
+        );
+        float sampleViewZ = perspectiveDepthToViewZ(readSceneDepth(sampleUv), nearClip, farClip);
+        float closerDepthDelta = max(centerDistance - (-sampleViewZ), 0.0);
+        float depthWeight = 1.0 - smoothstep(rejectStart, rejectEnd, closerDepthDelta);
+        vec4 sampleColor = texture2D(tColor, sampleUv);
+        float luminance = dot(sampleColor.rgb, vec3(0.2126, 0.7152, 0.0722));
+        sampleColor.rgb *= 1.0 + smoothstep(0.72, 1.28, luminance) * 0.12;
+        bokeh += sampleColor * depthWeight;
+        totalWeight += depthWeight;
+      }
+
+      gl_FragColor = bokeh / max(totalWeight, 0.0001);
     }
   `
 };
@@ -89,6 +116,7 @@ const BOKEH_COMPOSITE_SHADER = {
     tBokeh: { value: null },
     tDepth: { value: null },
     focus: { value: 1 },
+    focusRange: { value: 4 },
     aperture: { value: 0.025 },
     maxblur: { value: 0.01 },
     nearClip: { value: 0.1 },
@@ -104,6 +132,7 @@ const BOKEH_COMPOSITE_SHADER = {
     uniform sampler2D tBokeh;
     uniform sampler2D tDepth;
     uniform float focus;
+    uniform float focusRange;
     uniform float aperture;
     uniform float maxblur;
     uniform float nearClip;
@@ -123,8 +152,9 @@ const BOKEH_COMPOSITE_SHADER = {
         return;
       }
       float viewZ = perspectiveDepthToViewZ(depth, nearClip, farClip);
-      float circleOfConfusion = min(abs(focus + viewZ) * aperture, maxblur);
-      float blendAmount = smoothstep(0.12, 0.72, circleOfConfusion / maxblur);
+      float distanceFromFocus = max(abs(focus + viewZ) - focusRange, 0.0);
+      float circleOfConfusion = min(distanceFromFocus * aperture, maxblur);
+      float blendAmount = smoothstep(0.08, 0.68, circleOfConfusion / maxblur);
       gl_FragColor = mix(sharpColor, texture2D(tBokeh, vUv), blendAmount);
     }
   `
@@ -133,6 +163,7 @@ const BOKEH_COMPOSITE_SHADER = {
 export class AdaptiveBokehPass extends Pass {
   constructor(scene, camera, {
     focus = 60,
+    focusRange = 4,
     aperture = 0.0002,
     maxblur = 0.004,
     quality = 1
@@ -173,6 +204,7 @@ export class AdaptiveBokehPass extends Pass {
     this.usingSharedDepth = false;
     const uniforms = UniformsUtils.clone(ADAPTIVE_BOKEH_SHADER.uniforms);
     uniforms.focus.value = focus;
+    uniforms.focusRange.value = focusRange;
     uniforms.aperture.value = aperture;
     uniforms.maxblur.value = maxblur;
     uniforms.quality.value = quality;
@@ -207,7 +239,7 @@ export class AdaptiveBokehPass extends Pass {
     this._width = Math.max(1, width);
     this._height = Math.max(1, height);
     this.uniforms.aspect.value = this._width / this._height;
-    const depthScale = this.quality >= 0.75 ? 0.4 : 0.25;
+    const depthScale = this.quality >= 0.75 ? 0.5 : 0.32;
     this.depthTarget.setSize(
       Math.max(1, Math.round(this._width * depthScale)),
       Math.max(1, Math.round(this._height * depthScale))
@@ -274,6 +306,7 @@ export class AdaptiveBokehPass extends Pass {
     this.compositeUniforms.tDepth.value = depthTexture;
     this.compositeUniforms.depthPacking.value = sharedDepthTexture ? 0 : 1;
     this.compositeUniforms.focus.value = this.uniforms.focus.value;
+    this.compositeUniforms.focusRange.value = this.uniforms.focusRange.value;
     this.compositeUniforms.aperture.value = this.uniforms.aperture.value;
     this.compositeUniforms.maxblur.value = this.uniforms.maxblur.value;
     this.compositeUniforms.nearClip.value = this.camera.near;
@@ -287,7 +320,10 @@ export class AdaptiveBokehPass extends Pass {
     return {
       usingSharedDepth: this.usingSharedDepth,
       sharedDepthFrames: this.sharedDepthFrames,
-      fallbackDepthRenders: this.fallbackDepthRenders
+      fallbackDepthRenders: this.fallbackDepthRenders,
+      focusRange: this.uniforms.focusRange.value,
+      effectScale: this.quality >= 0.75 ? 0.5 : 0.32,
+      samples: this.quality >= 0.75 ? 18 : 8
     };
   }
 

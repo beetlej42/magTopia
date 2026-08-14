@@ -173,7 +173,7 @@ document.documentElement.dataset.magicTownBokehPolicy = requestedBokeh === "1"
   ? "explicit-on"
   : requestedBokeh === "0"
     ? "explicit-off"
-    : mobilePerformanceProfile ? "mobile-default-off" : "desktop-default-on";
+    : "default-on";
 const renderQuality = {
   mobile: mobilePerformanceProfile,
   profile: deviceRenderProfile,
@@ -212,10 +212,13 @@ for (const [target, name] of [
 const renderPass = new RenderPass(scene, camera);
 const districtBokehDefaults = {
   aperture: mobilePerformanceProfile ? 0.0002 : 0.00028,
-  maxblur: mobilePerformanceProfile ? 0.004 : 0.006
+  maxblur: mobilePerformanceProfile ? 0.004 : 0.006,
+  minimumFocusRange: 4,
+  focusRangeRatio: 0.075
 };
 const districtDepthOfField = new AdaptiveBokehPass(scene, camera, {
   focus: 60,
+  focusRange: districtBokehDefaults.minimumFocusRange,
   aperture: districtBokehDefaults.aperture,
   maxblur: districtBokehDefaults.maxblur,
   quality: renderQuality.depthOfFieldQuality
@@ -1847,12 +1850,16 @@ function animate() {
   if (isSurfaceVoxelWorld()) {
     renderPass.camera = camera;
     districtDepthOfField.camera = camera;
-    districtDepthOfField.uniforms.focus.value = camera.position.distanceTo(controls.target);
-    const motionValue = String(cameraInMotion);
-    if (document.documentElement.dataset.magicTownBokehMotionSuppressed !== motionValue) {
-      document.documentElement.dataset.magicTownBokehMotionSuppressed = motionValue;
+    const focusDistance = camera.position.distanceTo(controls.target);
+    districtDepthOfField.uniforms.focus.value = focusDistance;
+    districtDepthOfField.uniforms.focusRange.value = Math.max(
+      districtBokehDefaults.minimumFocusRange,
+      focusDistance * districtBokehDefaults.focusRangeRatio
+    );
+    if (document.documentElement.dataset.magicTownBokehMotionSuppressed !== "false") {
+      document.documentElement.dataset.magicTownBokehMotionSuppressed = "false";
     }
-    districtDepthOfField.enabled = bokehEnabled && !cameraInMotion && renderQuality.depthOfFieldScale > 0
+    districtDepthOfField.enabled = bokehEnabled && renderQuality.depthOfFieldScale > 0
       && (currentConfig?.bokehStrength ?? 1) * (currentConfig?.bokehBlur ?? 1) > 0.001;
     if (activeAnimatedShadowCasters) scheduleShadowRefresh("animated-caster", true);
     commitPendingShadowRefresh(performance.now(), cameraInMotion);
