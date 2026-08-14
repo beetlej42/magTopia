@@ -4,7 +4,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
-import { AdaptiveBokehPass } from "./render/adaptiveBokehPass.js";
+import { AdaptiveBokehPass, calculateBokehViewAmount } from "./render/adaptiveBokehPass.js";
 import { chooseAdaptiveQuality, detectMobileRenderProfile, shouldEnableBokeh } from "./render/mobilePerformance.js";
 import {
   calculateSurfaceShadowRefreshThreshold,
@@ -1856,11 +1856,24 @@ function animate() {
       districtBokehDefaults.minimumFocusRange,
       focusDistance * districtBokehDefaults.focusRangeRatio
     );
+    const bokehViewAmount = calculateBokehViewAmount(
+      districtSurfaceNavigation.cameraScale,
+      districtSurfaceNavigation.nearScale,
+      districtSurfaceNavigation.farScale
+    );
+    districtDepthOfField.uniforms.bokehAmount.value = bokehViewAmount;
+    const bokehConfigured = bokehEnabled && renderQuality.depthOfFieldScale > 0
+      && (currentConfig?.bokehStrength ?? 1) * (currentConfig?.bokehBlur ?? 1) > 0.001;
+    const bokehActive = bokehConfigured && bokehViewAmount > 0.001;
+    const bokehAmountValue = bokehViewAmount.toFixed(3);
+    if (document.documentElement.dataset.magicTownBokehViewAmount !== bokehAmountValue) {
+      document.documentElement.dataset.magicTownBokehViewAmount = bokehAmountValue;
+    }
+    document.documentElement.dataset.magicTownBokehActive = String(bokehActive);
     if (document.documentElement.dataset.magicTownBokehMotionSuppressed !== "false") {
       document.documentElement.dataset.magicTownBokehMotionSuppressed = "false";
     }
-    districtDepthOfField.enabled = bokehEnabled && renderQuality.depthOfFieldScale > 0
-      && (currentConfig?.bokehStrength ?? 1) * (currentConfig?.bokehBlur ?? 1) > 0.001;
+    districtDepthOfField.enabled = bokehActive;
     if (activeAnimatedShadowCasters) scheduleShadowRefresh("animated-caster", true);
     commitPendingShadowRefresh(performance.now(), cameraInMotion);
     if (districtDepthOfField.enabled) composer.render();
