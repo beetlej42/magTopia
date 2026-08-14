@@ -121,6 +121,7 @@ export function createAgentAcceptanceCity(config = {}) {
   root.userData.getVoxelDiagnostics = () => structuredClone(root.userData.diagnostics);
   root.userData.getVoxelContract = () => structuredClone(root.userData.contract);
   root.userData.getPrefabLodDiagnostics = () => buildings.userData.getVoxelLodDiagnostics?.() ?? {};
+  root.userData.getPrefabLodSummaryDiagnostics = () => buildings.userData.getVoxelLodSummaryDiagnostics?.() ?? {};
   root.userData.getStreetLifeDiagnostics = () => streetLife.userData.getDiagnostics();
   root.userData.update = (elapsed) => {
     streetLife.userData.update(elapsed);

@@ -110,8 +110,8 @@ async function runAcceptance(browser) {
       vendor: debugInfo ? context.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) : "unavailable"
     };
   });
-  // Hold scene resolution at its mobile high-quality starting point. Bokeh is
-  // intentionally bypassed only while the camera is moving, matching runtime.
+  // Hold scene resolution at its mobile high-quality starting point. Near-view
+  // Bokeh remains active in motion, then fades out across the far transition.
   await delay(1500);
 
   const nearBefore = await captureVisionFrame(page, "near-before-drag");
@@ -133,6 +133,7 @@ async function runAcceptance(browser) {
   const farSettledPerformance = await measureSettled(page, Math.max(30, Math.round(dragFrames / 2)));
   const farPerformance = await measureDrag(page, dragFrames);
   const farAfter = await captureVisionFrame(page, "far-after-drag");
+  const nearTransition = await captureNearTransition(page);
   const activeVoxelShader = await page.evaluate(() => document.documentElement.dataset.magicTownVoxelShader);
   await page.close();
 
@@ -146,8 +147,31 @@ async function runAcceptance(browser) {
     browserErrors,
     thresholds: { minimumTerrainCoverage, maximumP95Ms },
     near: { vision: { before: nearBefore, after: nearAfter }, settledPerformance: nearSettledPerformance, performance: nearPerformance },
-    far: { vision: { before: farBefore, after: farAfter }, settledPerformance: farSettledPerformance, performance: farPerformance }
+    far: { vision: { before: farBefore, after: farAfter }, settledPerformance: farSettledPerformance, performance: farPerformance },
+    nearTransition
   };
+}
+
+async function captureNearTransition(page) {
+  await page.evaluate(() => {
+    document.querySelector("canvas")?.dispatchEvent(new MouseEvent("dblclick", {
+      bubbles: true,
+      cancelable: true,
+      clientX: innerWidth / 2,
+      clientY: innerHeight / 2
+    }));
+  });
+  await page.waitForFunction(() => {
+    const amount = Number(document.documentElement.dataset.magicTownBokehViewAmount || 0);
+    return amount > 0.05 && amount < 0.995;
+  }, { timeout: 10000, polling: "raf" });
+  const amount = await page.evaluate(() => Number(document.documentElement.dataset.magicTownBokehViewAmount || 0));
+  const vision = await captureVisionFrame(page, "far-to-near-transition");
+  await page.waitForFunction(() => (
+    document.documentElement.dataset.magicTownDistrictView === "near"
+      && Number(document.documentElement.dataset.magicTownBokehViewAmount || 0) >= 0.999
+  ), { timeout: 10000, polling: "raf" });
+  return { amount, vision, settled: await getRenderDiagnostics(page) };
 }
 
 async function captureVisionFrame(page, label) {
@@ -168,6 +192,8 @@ async function captureVisionFrame(page, label) {
     return {
       viewMode: document.documentElement.dataset.magicTownDistrictView,
       focus: document.documentElement.dataset.magicTownDistrictFocus,
+      bokehViewAmount: Number(document.documentElement.dataset.magicTownBokehViewAmount || 0),
+      bokehActive: document.documentElement.dataset.magicTownBokehActive === "true",
       chunks,
       visibleChunks
     };
@@ -277,6 +303,8 @@ async function getRenderDiagnostics(page) {
       bokehQuality: Number(root.magicTownBokehQuality || 0),
       depthOfFieldScale: Number(root.magicTownDepthOfFieldScale || 0),
       bokehEnabled: root.magicTownBokehEnabled === "true",
+      bokehActive: root.magicTownBokehActive === "true",
+      bokehViewAmount: Number(root.magicTownBokehViewAmount || 0),
       bokehPolicy: root.magicTownBokehPolicy || "unknown",
       voxelShaderMaterials: JSON.parse(root.magicTownVoxelShaderMaterials || "{}"),
       shadowRefresh: JSON.parse(root.magicTownShadowRefresh || "{}"),
@@ -320,11 +348,29 @@ function assertAcceptance(report) {
     if (maximumP95Ms > 0 && result.settledPerformance.p95Ms > maximumP95Ms) {
       failures.push(`${view} settled p95 ${result.settledPerformance.p95Ms}ms > ${maximumP95Ms}ms`);
     }
-    if (bokeh === "1" && result.settledPerformance.bokehDepth.usingSharedDepth !== true) {
+    if (view === "near" && bokeh !== "0" && result.settledPerformance.bokehDepth.usingSharedDepth !== true) {
       failures.push(`${view} settled Bokeh did not reuse the main scene depth texture`);
     }
-    if (bokeh === "1" && result.settledPerformance.bokehDepth.fallbackDepthRenders !== 0) {
+    if (view === "near" && bokeh !== "0" && result.settledPerformance.bokehDepth.fallbackDepthRenders !== 0) {
       failures.push(`${view} rendered ${result.settledPerformance.bokehDepth.fallbackDepthRenders} fallback depth passes`);
+    }
+    if (view === "near" && bokeh !== "0" && result.performance.bokehSuppressedFrames !== 0) {
+      failures.push(`${view} suppressed Bokeh for ${result.performance.bokehSuppressedFrames} moving frames`);
+    }
+    if (view === "near" && bokeh !== "0" && (!result.settledPerformance.bokehActive || result.settledPerformance.bokehViewAmount < 0.999)) {
+      failures.push("near view did not retain full Bokeh");
+    }
+    if (view === "far" && (result.settledPerformance.bokehActive || result.settledPerformance.bokehViewAmount > 0.001)) {
+      failures.push("far view retained Bokeh instead of bypassing the post-process");
+    }
+  }
+  if (bokeh !== "0") {
+    const transitionAmount = report.nearTransition.amount;
+    if (!(transitionAmount > 0.05 && transitionAmount < 0.995)) {
+      failures.push(`far-to-near Bokeh transition was not gradual: ${transitionAmount}`);
+    }
+    if (!report.nearTransition.settled.bokehActive || report.nearTransition.settled.bokehViewAmount < 0.999) {
+      failures.push("far-to-near transition did not finish at full Bokeh");
     }
   }
   if (report.browserErrors.length) failures.push(`browser errors: ${report.browserErrors.join(" | ")}`);
