@@ -86,7 +86,18 @@ test("street-life layer keeps pedestrians full-detail while vehicles retain LOD 
   layer.userData.updateView(camera, { width: 1280, height: 720, renderScale: 1, viewMode: "near", qualityScale: 1 });
   const firstPedestrian = pedestrianRoots[0].children[0];
   const leftLeg = firstPedestrian.userData.rig.leftLeg;
+
+  layer.traverse((object) => {
+    object.updateMatrix();
+    object.matrixAutoUpdate = false;
+    object.matrixWorldAutoUpdate = false;
+  });
+  assert.equal(leftLeg.matrixAutoUpdate, false);
   layer.userData.update(1);
+  assert.equal(leftLeg.matrixAutoUpdate, true);
+  assert.equal(leftLeg.matrixWorldAutoUpdate, true);
+  assert.equal(layer.userData.getDiagnostics().animationPolicy.pedestrianWalkIntensity, 0.68);
+
   const firstNearPose = leftLeg.rotation.x;
   layer.userData.update(1.15);
   assert.notEqual(leftLeg.rotation.x, firstNearPose);
