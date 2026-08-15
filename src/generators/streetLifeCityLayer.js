@@ -106,12 +106,12 @@ export function createStreetLifeCityLayer({
     });
     near.name = `${spec.id}-Near`;
     near.traverse(disableDynamicShadows);
-    const medium = createMediumPedestrian(near.userData.variant);
-    const entity = createLodEntity(spec, route, near, medium, {
+    const entity = createLodEntity(spec, route, near, null, {
       planetRadius,
       scale: PERSON_CITY_SCALE,
       forwardAxis: "z",
-      boundingDiameter: 1.45
+      boundingDiameter: 1.45,
+      distanceLod: false
     });
     entities.push(entity);
     group.add(entity.root);
@@ -156,6 +156,8 @@ export function createStreetLifeCityLayer({
     },
     lodPolicy: {
       levels: [...LOD_IDS],
+      pedestrians: "full-detail while inside the view frustum; no distance LOD",
+      vehicles: "near/medium/culled distance LOD",
       nearMinimumDiameterPx: 32,
       mediumMinimumDiameterPx: 7,
       mediumUpdateHz: 15,
@@ -299,9 +301,10 @@ function createLodEntity(spec, route, near, medium, options) {
   const root = new THREE.Group();
   root.name = `StreetLife-${spec.id}`;
   root.scale.setScalar(options.scale);
-  root.add(near, medium);
+  root.add(near);
+  if (medium) root.add(medium);
   near.visible = true;
-  medium.visible = false;
+  if (medium) medium.visible = false;
   return {
     root,
     near,
@@ -312,7 +315,8 @@ function createLodEntity(spec, route, near, medium, options) {
     lastUpdateAt: -Infinity,
     planetRadius: options.planetRadius,
     forwardAxis: options.forwardAxis,
-    boundingDiameter: options.boundingDiameter
+    boundingDiameter: options.boundingDiameter,
+    distanceLod: options.distanceLod !== false
   };
 }
 
@@ -379,9 +383,13 @@ function updateStreetLifeLod(entities, camera, viewport, diagnostics) {
       ? viewportHeight / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * viewDepth)
       : viewportHeight / Math.max(0.001, (camera.top - camera.bottom) / camera.zoom);
     const projectedDiameter = entity.boundingDiameter * pixelsPerWorldUnit;
-    const level = !visible || viewPosition.z >= 0 || projectedDiameter < mediumThreshold
+    const level = !visible || viewPosition.z >= 0
       ? 2
-      : projectedDiameter >= nearThreshold ? 0 : 1;
+      : !entity.distanceLod
+        ? 0
+        : projectedDiameter >= nearThreshold
+          ? 0
+          : projectedDiameter >= mediumThreshold ? 1 : 2;
     setEntityLod(entity, level);
     counts[LOD_IDS[level]] += 1;
   });
@@ -393,24 +401,8 @@ function setEntityLod(entity, level) {
   entity.level = level;
   entity.root.visible = level < 2;
   entity.near.visible = level === 0;
-  entity.medium.visible = level === 1;
+  if (entity.medium) entity.medium.visible = level === 1;
   if (level < 2) entity.lastUpdateAt = -Infinity;
-}
-
-function createMediumPedestrian(variant) {
-  const group = new THREE.Group();
-  group.name = "PedestrianMediumLod";
-  const bodyMaterial = new THREE.MeshLambertMaterial({ color: variant.palette.primary });
-  const darkMaterial = new THREE.MeshLambertMaterial({ color: variant.palette.dark });
-  const skinMaterial = new THREE.MeshLambertMaterial({ color: variant.skin });
-  group.add(meshBox(0.58, 0.76, 0.34, bodyMaterial, 0, 0.94, 0));
-  group.add(meshBox(0.48, 0.58, 0.28, darkMaterial, 0, 0.3, 0));
-  const head = new THREE.Mesh(new THREE.CylinderGeometry(0.29, 0.29, 0.48, 8), skinMaterial);
-  head.position.y = 1.56;
-  group.add(head);
-  group.scale.setScalar(variant.height);
-  group.traverse(disableDynamicShadows);
-  return group;
 }
 
 function createMediumVehicle(variant) {
