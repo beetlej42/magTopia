@@ -166,7 +166,7 @@ export function createStreetLifeCityLayer({
     },
     animationPolicy: {
       pedestrians: "walk-cycle enabled in near view; frozen pose in far view",
-      pedestrianWalkIntensity: 0.9
+      pedestrianWalkIntensity: 0.68
     },
     currentLodCounts: { near: entities.length, medium: 0, culled: 0 },
     updatedEntitiesLastFrame: 0
@@ -175,6 +175,7 @@ export function createStreetLifeCityLayer({
   group.userData.plan = plan;
   group.userData.diagnostics = diagnostics;
   group.userData.update = (elapsed) => {
+    ensureDynamicSubtreeTransforms(group);
     let updated = 0;
     entities.forEach((entity) => {
       if (entity.level === 2) return;
@@ -338,11 +339,25 @@ function updateEntityAlongRoute(entity, elapsed) {
     : Math.atan2(sample.direction.x, sample.direction.z);
   placeOnVoxelSphere(entity.root, sample.position.x, sample.position.z, sample.position.y, yaw, entity.planetRadius);
   if (entity.spec.kind === "pedestrian" && entity.pedestrianAnimationEnabled) {
-    entity.near.userData.updateWalk(elapsed * entity.spec.speed, 0.9);
+    entity.near.userData.updateWalk(elapsed * entity.spec.speed, 0.68);
   }
   if (entity.level === 0 && entity.spec.kind === "vehicle" && entity.spec.flying) {
     entity.near.userData.updateMotion(elapsed);
   }
+}
+
+function ensureDynamicSubtreeTransforms(group) {
+  if (group.userData.dynamicTransformsRestored) return;
+  let frozen = false;
+  group.traverse((object) => {
+    if (object.matrixAutoUpdate === false || object.matrixWorldAutoUpdate === false) frozen = true;
+  });
+  if (!frozen) return;
+  group.traverse((object) => {
+    object.matrixAutoUpdate = true;
+    object.matrixWorldAutoUpdate = true;
+  });
+  group.userData.dynamicTransformsRestored = true;
 }
 
 function sampleRoute(route, distance) {
