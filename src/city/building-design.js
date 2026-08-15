@@ -952,6 +952,11 @@ function designHashSource(design) {
   delete value.compileDiagnostics;
   delete value.actualArchitecture;
   delete value.architectureReview;
+  delete value.cityId;
+  delete value.buildingId;
+  delete value.confirmedRevision;
+  delete value.createdAt;
+  delete value.updatedAt;
   return value;
 }
 
