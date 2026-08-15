@@ -164,6 +164,10 @@ export function createStreetLifeCityLayer({
       culledUpdateHz: 0,
       shadowPolicy: "street-life-never-casts-dynamic-shadows"
     },
+    animationPolicy: {
+      pedestrians: "walk-cycle enabled in near view; frozen pose in far view",
+      pedestrianWalkIntensity: 0.9
+    },
     currentLodCounts: { near: entities.length, medium: 0, culled: 0 },
     updatedEntitiesLastFrame: 0
   };
@@ -182,6 +186,10 @@ export function createStreetLifeCityLayer({
     diagnostics.updatedEntitiesLastFrame = updated;
   };
   group.userData.updateView = (camera, viewport = {}) => {
+    const pedestrianAnimationEnabled = viewport.viewMode !== "far";
+    entities.forEach((entity) => {
+      if (entity.spec.kind === "pedestrian") entity.pedestrianAnimationEnabled = pedestrianAnimationEnabled;
+    });
     updateStreetLifeLod(entities, camera, viewport, diagnostics);
   };
   group.userData.getDiagnostics = () => structuredClone(diagnostics);
@@ -193,7 +201,8 @@ export function createStreetLifeCityLayer({
       flyingCars: "rare road-route vehicle variant with local hover"
     },
     scale: structuredClone(diagnostics.cityScale),
-    lod: structuredClone(diagnostics.lodPolicy)
+    lod: structuredClone(diagnostics.lodPolicy),
+    animation: structuredClone(diagnostics.animationPolicy)
   });
   group.userData.update(0);
   return group;
@@ -316,7 +325,8 @@ function createLodEntity(spec, route, near, medium, options) {
     planetRadius: options.planetRadius,
     forwardAxis: options.forwardAxis,
     boundingDiameter: options.boundingDiameter,
-    distanceLod: options.distanceLod !== false
+    distanceLod: options.distanceLod !== false,
+    pedestrianAnimationEnabled: spec.kind === "pedestrian"
   };
 }
 
@@ -327,8 +337,8 @@ function updateEntityAlongRoute(entity, elapsed) {
     ? Math.atan2(-sample.direction.z, sample.direction.x)
     : Math.atan2(sample.direction.x, sample.direction.z);
   placeOnVoxelSphere(entity.root, sample.position.x, sample.position.z, sample.position.y, yaw, entity.planetRadius);
-  if (entity.level === 0 && entity.spec.kind === "pedestrian") {
-    entity.near.userData.updateWalk(elapsed * entity.spec.speed, 0.68);
+  if (entity.spec.kind === "pedestrian" && entity.pedestrianAnimationEnabled) {
+    entity.near.userData.updateWalk(elapsed * entity.spec.speed, 0.9);
   }
   if (entity.level === 0 && entity.spec.kind === "vehicle" && entity.spec.flying) {
     entity.near.userData.updateMotion(elapsed);
