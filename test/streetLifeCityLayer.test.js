@@ -53,7 +53,7 @@ test("city street-life planning is deterministic and uses only the road graph", 
   });
 });
 
-test("street-life layer applies near, medium, and culled LOD without dynamic shadows", () => {
+test("street-life layer keeps pedestrians full-detail while vehicles retain LOD without dynamic shadows", () => {
   const input = createLinearStreet();
   const layer = createStreetLifeCityLayer({
     ...input,
@@ -66,6 +66,16 @@ test("street-life layer applies near, medium, and culled LOD without dynamic sha
   layer.traverse((object) => {
     if (object.isMesh) assert.equal(object.castShadow, false);
   });
+
+  const pedestrianRoots = layer.children.filter((child) => child.name.startsWith("StreetLife-pedestrian-"));
+  const vehicleRoots = layer.children.filter((child) => child.name.startsWith("StreetLife-vehicle-"));
+  assert.equal(pedestrianRoots.length, layer.userData.plan.pedestrianCount);
+  assert.equal(vehicleRoots.length, layer.userData.plan.vehicleCount);
+  pedestrianRoots.forEach((root) => {
+    assert.equal(root.getObjectByName("PedestrianMediumLod"), undefined);
+    assert.equal(root.children.length, 1);
+  });
+  assert.ok(vehicleRoots.some((root) => root.getObjectByName("VehicleMediumLod")));
 
   const camera = new THREE.PerspectiveCamera(36, 16 / 9, 0.1, 2000);
   camera.position.set(0, 8, 16);
@@ -82,8 +92,13 @@ test("street-life layer applies near, medium, and culled LOD without dynamic sha
   camera.updateMatrixWorld(true);
   camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
   layer.userData.updateView(camera, { width: 1280, height: 720, renderScale: 1, viewMode: "far", qualityScale: 1 });
+  pedestrianRoots.forEach((root) => {
+    assert.equal(root.visible, true);
+    assert.equal(root.children[0].visible, true);
+  });
   const farCounts = layer.userData.getDiagnostics().currentLodCounts;
-  assert.equal(farCounts.culled, layer.children.length);
+  assert.equal(farCounts.near, pedestrianRoots.length);
+  assert.equal(farCounts.culled, vehicleRoots.length);
 });
 
 test("city vehicles remain narrower than one side of the two-lane road", () => {
