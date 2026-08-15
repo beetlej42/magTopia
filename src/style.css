@@ -119,6 +119,7 @@ html[data-magic-town-mode="map"] .control-panel {
 
 html[data-magic-town-mode="vanishing"] .control-panel,
 html[data-magic-town-mode="comparison"] .control-panel,
+html[data-magic-town-mode="streetlife"] .control-panel,
 html[data-magic-town-mode="voxel"] .control-panel,
 html[data-magic-town-mode="massing"] .control-panel,
 html[data-magic-town-mode="styles"] .control-panel,
@@ -134,6 +135,7 @@ html[data-magic-town-mode="massing"] .control-panel {
 html[data-magic-town-mode="map"] .api-pill,
 html[data-magic-town-mode="vanishing"] .api-pill,
 html[data-magic-town-mode="comparison"] .api-pill,
+html[data-magic-town-mode="streetlife"] .api-pill,
 html[data-magic-town-mode="voxel"] .api-pill,
 html[data-magic-town-mode="massing"] .api-pill,
 html[data-magic-town-mode="styles"] .api-pill,
