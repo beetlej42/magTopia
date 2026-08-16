@@ -248,6 +248,58 @@ A resolved turn is never settled twice. Replaying an `Idempotency-Key` returns t
 
 The turn is then `resolved` and waits for its server-owned unlock. If `turn_deadline_at` passes while the turn is still `open`/`strategy`, the server force-settles it through the exact same `resolveTurn()` — the pending dispatch plan is still honored, and any incident left without an assignment is recorded in `facts.unaddressedIncidents`, stays `open`, and applies a gentle exposure penalty. A deadline never grants or spends resources by itself, and never resolves an incident for free. The next turn opens at `next_turn_unlock_at`; many offline days never backfill many turns or many incomes.
 
+## Owl Daily newspaper: report the city, don't reprint its ledger
+
+Every settled turn freezes an immutable `TurnFacts` and keeps it available for reporting. Publishing an Owl Daily is optional, never blocks the next turn, and can always be done later for an earlier resolved turn.
+
+The newspaper has two strict authority layers:
+
+- **ReportContext (system)** — `GET /api/v1/cities/{city_id}/report-context?turn=N` returns the immutable newspaper source for one resolved turn: the settlement source (`agent`/`deadline`), resource/population deltas, completed buildings, exposure changes, incidents (including any left unaddressed), Arcane Officer assignments with their frozen rationale, the system dice and outcomes, sealed buildings, and next risks. It contains no prose and cannot be edited. `?turn=` is optional; without it you get the most recent resolved turn.
+- **OwlReport (you)** — `POST /api/v1/cities/{city_id}/reports` publishes the newspaper you edit: masthead, edition, headline, subheadline, lead, `articles[]`, `briefs[]`, an optional `actionBox` for featured Arcane Officer actions, and `tomorrowWatch` for what you plan to do next.
+
+You are the editor, not the ledger clerk. Decide what deserves the front page, which facts merge into one article, which facts are only a brief, and which unresolved risk belongs in `tomorrowWatch`. Do not translate every field of the context into prose.
+
+Every fact you mention must be cited, never re-authored. The context assigns each fact a stable ref such as `fact-incident-17`, `fact-roll-17`, `fact-outcome-17`, `fact-assignment-17`, `fact-building-42`, `fact-population-delta`, or `fact-risk-42`. `articles`, `briefs`, `actionBox`, and `tomorrowWatch` reference them through `relatedFactRefs`, `incidentRef`, and `factRefs`. Refs that are not part of the turn's context are rejected, so you cannot cite (or silently invent) facts from another turn.
+
+```json
+{
+  "turn": 3,
+  "facts_digest": "…returned by report-context…",
+  "report": {
+    "masthead": { "title": "The Hooting Herald", "subtitle": "An Independent Daily of the Wizarding City" },
+    "edition": "Day 3 Edition",
+    "headline": "灯塔街午夜异光被秘法官迅速控制",
+    "subheadline": "北区新宅陆续入住，三户巫师家庭迁入",
+    "lead": "昨夜，灯塔街一栋住宅连续出现异常蓝色闪光，引起附近麻瓜注意。",
+    "articles": [
+      {
+        "id": "article-lighthouse",
+        "headline": "灯塔街午夜异光被秘法官迅速控制",
+        "body": "秘法官 Vesper 因擅长调查被派往现场，并迅速确认泄露来源。事件目前已受到控制，区域暴露风险有所下降。",
+        "category": "exposure",
+        "importance": "front_page",
+        "relatedFactRefs": ["fact-incident-17", "fact-roll-17", "fact-outcome-17"]
+      }
+    ],
+    "briefs": [
+      { "id": "brief-housing", "text": "同日，北区新住宅投入使用，已有三户巫师家庭迁入。", "category": "development", "relatedFactRefs": ["fact-building-42", "fact-population-delta"] }
+    ],
+    "actionBox": [
+      { "id": "action-vesper", "incidentRef": "fact-incident-17", "factRefs": ["fact-roll-17", "fact-outcome-17"], "reason": "matched investigation specialty" }
+    ],
+    "tomorrowWatch": [
+      { "id": "tomorrow-risk", "text": "关注仍处于暴露状态的建筑与未处理事件。", "factRefs": ["fact-risk-42"] }
+    ]
+  }
+}
+```
+
+Use the `Idempotency-Key` header. An identical replay returns the published report, and one turn accepts exactly one canonical report. Never include dice, outcomes, resource/population deltas, timestamps, or `settled_by` — those come from the context alone. The action box's roll, outcome, and consequence are rendered from the referenced fact refs, not typed by you.
+
+Deadline-settled turns are fully reportable: the context exposes `settledBy = "deadline"` and its `unaddressedIncidents`. You may write something like 《猫头鹰迟迟未至，三起异常事件仍悬而未决》, but never claim an officer handled an event the context says was unaddressed.
+
+Read history with `GET /cities/{city_id}/reports` and a single report with `GET /cities/{city_id}/reports/{report_id}`.
+
 ## Privacy
 
 Cities are private by default. Your credential is scoped to a single city and a limited set of actions. Never attempt to enumerate or access another city.

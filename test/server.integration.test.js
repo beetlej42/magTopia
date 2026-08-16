@@ -7,6 +7,7 @@ import { createApp } from "../apps/server/app.js";
 import { createDatabase, migrateDatabase } from "../apps/server/database.js";
 import { createRepository } from "../apps/server/repository.js";
 import { createWorker } from "../apps/server/worker.js";
+import { factsDigest } from "../src/gameplay/owl-report.js";
 
 const databaseUrl = process.env.MAGICTOWN_TEST_DATABASE_URL;
 
@@ -464,6 +465,123 @@ test("Agent strategy API settles assignments through the authoritative simulatio
     assert.equal(after.turn, 1);
     assert.ok(after.last_turn_facts);
     assert.equal(after.strategy.incidents.filter((incident) => incident.id === "incident-1").length, 0);
+  } finally {
+    await app.close();
+    await database.close();
+  }
+});
+
+test("Owl Daily reports bind to resolved turns and stay canonical (PostgreSQL)", { skip: !databaseUrl, timeout: 120_000 }, async () => {
+  const config = {
+    publicBaseUrl: "http://127.0.0.1:4183",
+    capabilityTtlMinutes: 30,
+    credentialTtlDays: 90,
+    assetProvider: "fixture",
+    assetOutputRoot: "/tmp/magictown-owl-integration",
+    workerPollMs: 5,
+    gameplaySeed: 2024
+  };
+  const database = createDatabase(databaseUrl);
+  await migrateDatabase(database);
+  await database.query("TRUNCATE agent_action_log, outbox_jobs, construction_orders, asset_jobs, command_receipts, city_events, agent_credentials, agent_capabilities, city_memberships, cities, asset_definitions, players CASCADE");
+  const repository = createRepository(database, config);
+  await repository.seedBuiltinAssets();
+  const app = await createApp({ repository, config });
+  try {
+    const player = await json(app, { method: "POST", url: "/api/v1/players", payload: { display_name: "Owl Integration Owner" } }, 201);
+    const city = await json(app, auth(player, { method: "POST", url: "/api/v1/cities", payload: { name: "Owl Integration City", map_seed: "owl-integration-test" } }), 201);
+    const link = await json(app, auth(player, { method: "POST", url: `/api/v1/cities/${city.id}/agent-links`, payload: {} }), 201);
+    const connected = await json(app, { method: "GET", url: `/connect/${link.connect_url.split("/").at(-1)}` }, 200);
+    const agent = { access_token: connected.access_token };
+    const owner = await repository.authenticate(player.access_token);
+
+    await repository.transactCity({
+      principal: owner,
+      cityId: city.id,
+      endpoint: "integration/seed-owl",
+      idempotencyKey: "seed-owl-1",
+      requestBody: {},
+      expectedVersion: 0
+    }, async ({ state }) => {
+      const cell = Object.values(state.cells).find((entry) => entry.buildable && entry.strictBuildable && !entry.node);
+      state.cells[cell.id].occupancy = "building-1";
+      state.buildings["building-1"] = {
+        id: "building-1", footprintCells: [cell.id], site: { lotId: cell.id, footprint: "1x1" },
+        program: { name: "Lantern Tower", purpose: "residential", intent: { magicLevel: 0.6, prominence: "important" } },
+        status: "completed", exposure: 40
+      };
+      state.gameplay.arcaneOfficers = {
+        "officer-vesper": { id: "officer-vesper", name: "Vesper", archetype: "investigation", investigation: 3, containment: 1, concealment: 2, specialties: ["investigation"], status: "available", hiredAtTurn: 0 }
+      };
+      state.gameplay.incidents = {
+        "incident-1": { id: "incident-1", buildingId: "building-1", type: "investigation", attribute: "investigation", difficulty: 3, severity: 3, exposureAtCreation: 40, summary: "Magical anomaly near Lantern Tower.", status: "open", createdAtTurn: 0 }
+      };
+      state.gameplay.turnStatus = "strategy";
+      return { nextState: state, response: { seeded: true } };
+    });
+
+    const before = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
+    const assigned = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/strategy/assignments`,
+      headers: { "idempotency-key": "owl-dispatch" },
+      payload: { expected_city_version: before.city_version, assignments: [{ incident_id: "incident-1", arcane_officer_id: "officer-vesper", rationale: "investigation specialist" }] }
+    }), 200);
+    const settled = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/strategy/resolve`,
+      headers: { "idempotency-key": "owl-resolve" },
+      payload: { expected_city_version: assigned.city_version_after }
+    }), 200);
+    assert.equal(settled.status, "resolved");
+
+    const context = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/report-context` }), 200);
+    assert.equal(context.factsDigest, factsDigest(settled.facts));
+    assert.equal(context.assignments[0].rationale, "investigation specialist");
+
+    const report = {
+      masthead: { title: "The Hooting Herald" },
+      edition: "Day 1 Edition",
+      headline: "Lantern Tower Anomaly Brought Under Control",
+      lead: "A brief dispatch from the wizarding city.",
+      articles: [{ id: "article-1", headline: "Lantern Tower Anomaly Contained", body: "Vesper confirmed the source of the leak.", category: "exposure", importance: "front_page", relatedFactRefs: ["fact-incident-incident-1", "fact-roll-incident-1", "fact-outcome-incident-1"] }],
+      briefs: [{ id: "brief-1", text: "New homes are settling in.", category: "development", relatedFactRefs: ["fact-population-delta"] }]
+    };
+    const payload = { turn: 1, facts_digest: context.factsDigest, report };
+
+    const published = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/reports`,
+      headers: { "idempotency-key": "owl-report" },
+      payload
+    }), 201);
+    assert.equal(published.status, "published");
+
+    const replay = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/reports`,
+      headers: { "idempotency-key": "owl-report" },
+      payload
+    }), 200);
+    assert.equal(replay.idempotent_replay, true);
+    assert.equal(replay.report_id, published.report_id);
+
+    const second = await app.inject(auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/reports`,
+      headers: { "idempotency-key": "owl-report-2" },
+      payload: { ...payload, report: { ...report, headline: "A Different Edition" } }
+    }));
+    assert.equal(second.statusCode, 409);
+    assert.equal(second.json().code, "REPORT_ALREADY_EXISTS");
+
+    const history = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/reports` }), 200);
+    assert.equal(history.data.length, 1);
+    const rows = await database.query("SELECT turn, facts_digest, report_jsonb FROM owl_reports WHERE city_id = $1", [city.id]);
+    assert.equal(rows.rowCount, 1);
+    assert.equal(rows.rows[0].turn, 1);
+    assert.equal(rows.rows[0].facts_digest, context.factsDigest);
+    assert.equal(rows.rows[0].report_jsonb.headline, report.headline);
   } finally {
     await app.close();
     await database.close();

@@ -27,6 +27,24 @@ import {
 export const DEFAULT_BASE_COINS = 24;
 export const DEFAULT_BASE_MAGIC = 0;
 
+// How many resolved turns keep their frozen facts available for backfilled Owl
+// Daily reports. Older turns stop being reportable; gameplay never depends on
+// this history.
+export const MAX_TURN_FACTS_HISTORY = 200;
+
+// Records a freshly frozen settlement into the per-turn history, keeping the
+// most recent MAX_TURN_FACTS_HISTORY entries.
+export function appendTurnFacts(history = {}, facts) {
+  const turn = Number(facts?.turn);
+  if (!Number.isFinite(turn)) return history;
+  const next = { ...history, [turn]: facts };
+  const turns = Object.keys(next).map(Number).sort((a, b) => a - b);
+  if (turns.length > MAX_TURN_FACTS_HISTORY) {
+    for (const stale of turns.slice(0, turns.length - MAX_TURN_FACTS_HISTORY)) delete next[stale];
+  }
+  return next;
+}
+
 function asMap(state, field) {
   return Object.fromEntries(Object.entries(state?.buildings ?? {}).map(([id, building]) => [
     id,
@@ -337,6 +355,28 @@ export function resolveTurn(state, input = {}, context = {}) {
     .slice(0, Number(options.maxRisks ?? 5))
     .map(([buildingId, change]) => ({ buildingId, exposure: change.to, pressure: change.pressure, concealment: change.concealment }));
 
+  // Freeze a complete incident snapshot into the facts so a later backfilled
+  // report reads exactly what this turn saw. The frozen facts must be the only
+  // source of historical gameplay content: incidents generated this turn, the
+  // ones the Agent dispatched (post-settlement status), and the ones left
+  // unaddressed are all captured here. A later live change to an incident can
+  // never rewrite an earlier turn's ReportContext.
+  const factsIncidentsById = new Map();
+  for (const incident of incidents) {
+    factsIncidentsById.set(incident.id, next.gameplay.incidents[incident.id] ?? incident);
+  }
+  for (const outcome of assignmentSettlement.outcomes) {
+    if (factsIncidentsById.has(outcome.incidentId)) continue;
+    const full = next.gameplay.incidents[outcome.incidentId];
+    if (full) factsIncidentsById.set(outcome.incidentId, full);
+  }
+  for (const entry of unaddressed) {
+    if (factsIncidentsById.has(entry.incidentId)) continue;
+    const full = next.gameplay.incidents[entry.incidentId];
+    if (full) factsIncidentsById.set(entry.incidentId, full);
+  }
+  const factsIncidents = [...factsIncidentsById.values()].sort((a, b) => String(a.id).localeCompare(String(b.id)));
+
   const resolvedAt = now();
   const schedule = normalizeTurnSchedule(options);
   // The next unlock is anchored to the current turn's wall-clock slot, not to
@@ -372,7 +412,7 @@ export function resolveTurn(state, input = {}, context = {}) {
     buildingsStarted: [...(input.buildingsStarted ?? [])],
     buildingsCompleted: [...(input.buildingsCompleted ?? [])],
     exposureChanges,
-    incidents: incidents.map((incident) => next.gameplay.incidents[incident.id] ?? incident),
+    incidents: factsIncidents,
     unaddressedIncidents: unaddressed,
     assignments: assignmentSettlement.assignments,
     rolls: assignmentSettlement.rolls,
@@ -382,6 +422,7 @@ export function resolveTurn(state, input = {}, context = {}) {
   });
 
   next.gameplay.lastTurnFacts = deepFreeze(facts);
+  next.gameplay.turnFacts = appendTurnFacts(next.gameplay.turnFacts, facts);
   next.gameplay.turnStatus = "resolved";
   next.gameplay.turnOpenedAt = next.gameplay.turnOpenedAt ?? resolvedAt;
   next.gameplay.turnDeadlineAt = next.gameplay.turnDeadlineAt ?? null;
@@ -426,6 +467,7 @@ function migrateGameplay(state) {
       population: { muggles: { current: 0, capacity: 0 }, wizards: { current: 0, capacity: 0 } },
       arcaneOfficers: {},
       incidents: {},
+      turnFacts: {},
       lastTurnFacts: null
     };
   }
@@ -436,5 +478,6 @@ function migrateGameplay(state) {
     migrated.arcaneOfficers = migrated.wardens;
   }
   delete migrated.wardens;
+  if (migrated.turnFacts == null) migrated.turnFacts = {};
   return migrated;
 }
