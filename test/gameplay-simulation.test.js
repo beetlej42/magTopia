@@ -74,6 +74,20 @@ test("resolving against a mismatched expectedTurn is rejected", () => {
   assert.equal(matched.facts.turn, 1);
 });
 
+test("a persisted state with schemaVersion and a legacy wardens placeholder migrates its roster", () => {
+  const state = cityWithBuildings([
+    { id: "b1", cellId: "cell-3-3", name: "House", purpose: "residential", magicLevel: 0.2 }
+  ]);
+  state.gameplay.schemaVersion = 1;
+  delete state.gameplay.arcaneOfficers;
+  state.gameplay.wardens = { "warden-1": { id: "warden-1", name: "Vesper", investigation: 3, containment: 1, concealment: 2, specialties: ["investigation"], status: "available", hiredAtTurn: 0 } };
+  const { nextState } = resolveTurn(state, {}, context());
+  assert.ok(nextState.gameplay.arcaneOfficers["warden-1"], "legacy warden roster survives into arcaneOfficers");
+  assert.equal(nextState.gameplay.arcaneOfficers["warden-1"].investigation, 3);
+  assert.ok(!("wardens" in nextState.gameplay), "legacy wardens field is removed after migration");
+  assert.equal(nextState.gameplay.arcaneOfficers["warden-1"].status, "available");
+});
+
 test("one resolveTurn() settles income exactly once", () => {
   const state = cityWithBuildings([
     { id: "b1", cellId: "cell-3-3", name: "House", purpose: "residential", magicLevel: 0.2 }

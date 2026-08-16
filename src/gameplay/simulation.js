@@ -252,7 +252,7 @@ export function resolveTurn(state, input = {}, context = {}) {
   const guardError = guardTurnResolve(state, input);
   if (guardError) return { nextState: state, facts: null, error: guardError };
   const gameplay = migrateGameplay(state);
-  const options = { ...(input.options ?? {}), ...(context.options ?? {}) };
+  const options = { ...(context.options ?? {}) };
   const createId = context.createId ?? ((prefix) => `${prefix}-${state.turn}`);
   const now = context.now ?? (() => new Date().toISOString());
   const roller = createRoller(context);
@@ -362,17 +362,27 @@ function guardTurnResolve(state, input) {
 }
 
 function migrateGameplay(state) {
-  if (state.gameplay?.schemaVersion) return state.gameplay;
-  const legacy = state.resources ?? {};
-  const coins = Number.isFinite(Number(legacy.coins)) ? Number(legacy.coins) : 0;
-  return {
-    schemaVersion: 1,
-    turnStatus: "open",
-    turnOpenedAt: null,
-    resources: { coins, magic: 0 },
-    population: { muggles: { current: 0, capacity: 0 }, wizards: { current: 0, capacity: 0 } },
-    arcaneOfficers: { ...(state.gameplay?.wardens ?? {}) },
-    incidents: {},
-    lastTurnFacts: null
-  };
+  const existing = state.gameplay;
+  if (!existing?.schemaVersion) {
+    const legacy = state.resources ?? {};
+    const coins = Number.isFinite(Number(legacy.coins)) ? Number(legacy.coins) : 0;
+    return {
+      schemaVersion: 1,
+      turnStatus: "open",
+      turnOpenedAt: null,
+      resources: { coins, magic: 0 },
+      population: { muggles: { current: 0, capacity: 0 }, wizards: { current: 0, capacity: 0 } },
+      arcaneOfficers: {},
+      incidents: {},
+      lastTurnFacts: null
+    };
+  }
+  const migrated = { ...existing };
+  const legacyRoster = migrated.wardens != null && Object.keys(migrated.wardens).length > 0;
+  const newRoster = migrated.arcaneOfficers != null && Object.keys(migrated.arcaneOfficers).length > 0;
+  if (legacyRoster && !newRoster) {
+    migrated.arcaneOfficers = migrated.wardens;
+  }
+  delete migrated.wardens;
+  return migrated;
 }

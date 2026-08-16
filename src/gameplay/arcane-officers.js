@@ -3,6 +3,18 @@ import { normalizeArcaneOfficer } from "./schema.js";
 export const ARCANE_OFFICER_HIRE_COST_COINS = 50;
 export const ARCANE_OFFICER_CAPACITY_DIVISOR = 10;
 
+export const ARCANE_OFFICER_ARCHETYPES = Object.freeze({
+  trainee: Object.freeze({ label: "Trainee", investigation: 1, containment: 1, concealment: 1, specialties: [] }),
+  investigation: Object.freeze({ label: "Investigation Officer", investigation: 3, containment: 1, concealment: 2, specialties: ["investigation"] }),
+  containment: Object.freeze({ label: "Containment Officer", investigation: 1, containment: 3, concealment: 2, specialties: ["containment"] }),
+  concealment: Object.freeze({ label: "Concealment Officer", investigation: 1, containment: 2, concealment: 3, specialties: ["concealment"] }),
+  veteran: Object.freeze({ label: "Veteran", investigation: 3, containment: 3, concealment: 3, specialties: ["investigation", "containment", "concealment"] })
+});
+
+export function arcaneOfficerArchetype(archetype) {
+  return ARCANE_OFFICER_ARCHETYPES[archetype] ?? ARCANE_OFFICER_ARCHETYPES.trainee;
+}
+
 export function arcaneOfficerCapacity(state) {
   const wizards = state?.gameplay?.population?.wizards?.current ?? 0;
   return Math.floor(wizards / ARCANE_OFFICER_CAPACITY_DIVISOR);
@@ -24,13 +36,20 @@ export function hireArcaneOfficer(state, input = {}, context = {}) {
   if (coins < cost) {
     return { accepted: false, error: { code: "INSUFFICIENT_COINS", message: `Hiring an arcane officer requires ${cost} coins but only ${coins} available` } };
   }
+  const archetypeId = String(input.archetype ?? "trainee");
+  const profile = context.profile
+    ?? arcaneOfficerArchetype(archetypeId);
+  if (!Number.isFinite(Number(profile.investigation)) || !Number.isFinite(Number(profile.containment)) || !Number.isFinite(Number(profile.concealment))) {
+    return { accepted: false, error: { code: "INVALID_OFFICER_PROFILE", message: "Officer profile requires numeric investigation, containment, and concealment" } };
+  }
   const officer = normalizeArcaneOfficer({
     id: String(input.id ?? context.createId?.("arcaneOfficer") ?? `arcaneOfficer-${rosterSize + 1}`),
-    name: String(input.name ?? "Unnamed Arcane Officer"),
-    investigation: input.investigation ?? 1,
-    containment: input.containment ?? 1,
-    concealment: input.concealment ?? 1,
-    specialties: input.specialties ?? [],
+    name: String(input.name ?? profile.label ?? "Unnamed Arcane Officer"),
+    investigation: profile.investigation,
+    containment: profile.containment,
+    concealment: profile.concealment,
+    specialties: profile.specialties ?? [],
+    archetype: archetypeId,
     status: "available",
     hiredAtTurn: state.turn
   });

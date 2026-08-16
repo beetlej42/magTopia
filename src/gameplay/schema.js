@@ -62,6 +62,7 @@ export function normalizeArcaneOfficer(value = {}) {
   return {
     id: String(value.id ?? ""),
     name: String(value.name ?? ""),
+    archetype: String(value.archetype ?? "trainee"),
     investigation: clampNumber(value.investigation, 0, 0, 5),
     containment: clampNumber(value.containment, 0, 0, 5),
     concealment: clampNumber(value.concealment, 0, 0, 5),

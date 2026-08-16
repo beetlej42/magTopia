@@ -29,17 +29,45 @@ test("arcane officer roster capacity scales with wizard population by ten", () =
 
 test("hiring an arcane officer deducts the system price and adds an available officer", () => {
   const state = stateWithWizardPopulation(20);
-  const result = hireArcaneOfficer(state, { id: "officer-1", name: "Vesper", investigation: 4, specialties: ["investigation"] }, context());
+  const result = hireArcaneOfficer(state, { id: "officer-1", name: "Vesper", archetype: "investigation" }, context());
   assert.equal(result.accepted, true);
   assert.equal(result.cost, ARCANE_OFFICER_HIRE_COST_COINS);
   assert.equal(result.nextState.gameplay.resources.coins, 99999 - ARCANE_OFFICER_HIRE_COST_COINS);
   assert.equal(result.nextState.gameplay.arcaneOfficers["officer-1"].status, "available");
-  assert.equal(result.nextState.gameplay.arcaneOfficers["officer-1"].investigation, 4);
+  assert.equal(result.nextState.gameplay.arcaneOfficers["officer-1"].investigation, 3);
+  assert.equal(result.nextState.gameplay.arcaneOfficers["officer-1"].archetype, "investigation");
   assert.deepEqual(result.nextState.gameplay.arcaneOfficers["officer-1"].specialties, ["investigation"]);
   assert.equal(state.gameplay.resources.coins, 99999, "source state stays untouched");
 });
 
-test("a caller cannot override or bypass the system hire price", () => {
+test("a caller cannot raise officer attributes through the hire input", () => {
+  const state = stateWithWizardPopulation(20);
+  const result = hireArcaneOfficer(state, {
+    id: "officer-1",
+    name: "Would-Be Elite",
+    investigation: 5,
+    containment: 5,
+    concealment: 5,
+    specialties: ["investigation", "containment", "concealment"]
+  }, context());
+  assert.equal(result.accepted, true);
+  const officer = result.nextState.gameplay.arcaneOfficers["officer-1"];
+  assert.equal(officer.investigation, 1, "trainee default, not the injected 5");
+  assert.equal(officer.containment, 1);
+  assert.equal(officer.concealment, 1);
+  assert.deepEqual(officer.specialties, []);
+});
+
+test("a trusted context profile can define a system-approved officer", () => {
+  const state = stateWithWizardPopulation(20);
+  const ctx = { ...context(), profile: { label: "Field Marshal", investigation: 4, containment: 4, concealment: 4, specialties: ["investigation"] } };
+  const result = hireArcaneOfficer(state, { id: "officer-1", name: "Mira" }, ctx);
+  assert.equal(result.accepted, true);
+  assert.equal(result.nextState.gameplay.arcaneOfficers["officer-1"].investigation, 4);
+  assert.deepEqual(result.nextState.gameplay.arcaneOfficers["officer-1"].specialties, ["investigation"]);
+});
+
+test("a caller cannot bypass the system price", () => {
   const state = stateWithWizardPopulation(20);
   const free = hireArcaneOfficer(state, { id: "officer-free", cost: 0 }, context());
   const negative = hireArcaneOfficer(state, { id: "officer-negative", cost: -999 }, context());

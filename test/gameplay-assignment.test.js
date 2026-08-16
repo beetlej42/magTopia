@@ -104,11 +104,19 @@ test("an assignment that carries a modifier is rejected so agents cannot control
 
 test("system-determined modifier is the only modifier source during settlement", () => {
   const state = cityWithIncidentAndOfficers();
-  const { nextState, facts, error } = resolveTurn(state, { assignments: [{ incidentId: "incident-1", arcaneOfficerId: "officer-strong" }], options: { modifier: 2 } }, context());
+  const ctx = { ...context(), options: { modifier: 2 } };
+  const { nextState, facts, error } = resolveTurn(state, { assignments: [{ incidentId: "incident-1", arcaneOfficerId: "officer-strong" }] }, ctx);
   assert.equal(error, null);
   assert.equal(facts.rolls[0].modifier, 2);
   assert.equal(facts.outcomes[0].arcaneOfficerStatus, "available");
   assert.equal(nextState.gameplay.incidents["incident-1"].status, facts.outcomes[0].incidentStatus);
+});
+
+test("a caller cannot inject balance options through the assignment input", () => {
+  const state = cityWithIncidentAndOfficers();
+  const clean = resolveTurn(state, { assignments: [{ incidentId: "incident-1", arcaneOfficerId: "officer-strong" }] }, context("no-injected-options"));
+  const injected = resolveTurn(state, { assignments: [{ incidentId: "incident-1", arcaneOfficerId: "officer-strong" }], options: { modifier: 99 } }, context("no-injected-options"));
+  assert.deepEqual(injected.facts.rolls, clean.facts.rolls, "input.options must not influence the roll");
 });
 
 test("resolveTurn settles an assignment and records rolls and outcomes in facts", () => {
@@ -158,10 +166,9 @@ test("settleAssignments applies exposure deltas per outcome", () => {
 
 test("a critical failure escalates the incident and grounds the officer in the turn state", () => {
   const state = cityWithIncidentAndOfficers({ difficulty: 12 });
-  const ctx = { ...context("critical-failure-seed"), roller: () => 0.0 };
+  const ctx = { ...context("critical-failure-seed"), roller: () => 0.0, options: { baseCoins: 0 } };
   const { nextState, facts, error } = resolveTurn(state, {
-    assignments: [{ incidentId: "incident-1", arcaneOfficerId: "officer-weak" }],
-    options: { baseCoins: 0 }
+    assignments: [{ incidentId: "incident-1", arcaneOfficerId: "officer-weak" }]
   }, ctx);
   assert.equal(error, null);
   assert.equal(facts.outcomes[0].outcome, "critical_failure");
