@@ -91,6 +91,81 @@ export function createRepository(database, config) {
       return { row, state: row.state_jsonb };
     },
 
+    async getCityForScheduler(cityId) {
+      const result = await database.query("SELECT * FROM cities WHERE id = $1", [cityId]);
+      if (!result.rowCount) return null;
+      const row = result.rows[0];
+      return { row, state: row.state_jsonb };
+    },
+
+    async scanCitiesForScheduler(nowIso) {
+      const result = await database.query(
+        `SELECT id, city_version, state_jsonb FROM cities
+         WHERE (state_jsonb->'gameplay'->>'turnStatus' IN ('open', 'building', 'strategy')
+                AND (state_jsonb->'gameplay'->>'turnDeadlineAt' IS NULL
+                     OR state_jsonb->'gameplay'->>'turnDeadlineAt' <= $1))
+            OR (state_jsonb->'gameplay'->>'turnStatus' IN ('resolved', 'reported', 'closed')
+                AND state_jsonb->'gameplay'->>'nextTurnUnlockAt' IS NOT NULL
+                AND state_jsonb->'gameplay'->>'nextTurnUnlockAt' <= $1)
+         ORDER BY updated_at ASC LIMIT 500`,
+        [nowIso]
+      );
+      return result.rows;
+    },
+
+    async schedulerTransact({ cityId, endpoint, idempotencyKey, requestBody = {}, expectedVersion, action, reason }, handler) {
+      if (!idempotencyKey) throw new ServiceError(400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required for scheduler transactions");
+      const requestHash = hashRequest({ ...requestBody, cityId, endpoint });
+      return database.transaction(async (client) => {
+        const prior = await client.query(
+          `SELECT request_hash, response_jsonb FROM command_receipts
+           WHERE principal_kind = 'system' AND principal_id = 'turn-scheduler' AND endpoint = $1 AND idempotency_key = $2`,
+          [endpoint, idempotencyKey]
+        );
+        if (prior.rowCount) {
+          if (prior.rows[0].request_hash !== requestHash) throw new ServiceError(409, "IDEMPOTENCY_KEY_REUSED", "Scheduler idempotency key was already used with different work");
+          return { ...prior.rows[0].response_jsonb, idempotent_replay: true };
+        }
+        const cityResult = await client.query("SELECT * FROM cities WHERE id = $1 FOR UPDATE", [cityId]);
+        if (!cityResult.rowCount) throw new ServiceError(404, "CITY_NOT_FOUND", "City not found");
+        const city = cityResult.rows[0];
+        const actualVersion = Number(city.city_version);
+        if (expectedVersion !== undefined && Number(expectedVersion) !== actualVersion) {
+          throw new ServiceError(409, "CITY_VERSION_CONFLICT", "City changed since the scheduler read it", { expected: Number(expectedVersion), actual: actualVersion });
+        }
+        const state = city.state_jsonb;
+        const eventCount = state.events?.length ?? 0;
+        const handled = await handler({ client, state, city });
+        const response = handled.response;
+        if (handled.nextState) {
+          await client.query(
+            "UPDATE cities SET state_jsonb = $1, city_version = $2, updated_at = now() WHERE id = $3",
+            [JSON.stringify(handled.nextState), handled.nextState.version, cityId]
+          );
+          await writeCityProjections(client, cityId, handled.nextState);
+          const events = handled.nextState.events.slice(eventCount);
+          for (const event of events) {
+            await client.query(
+              `INSERT INTO city_events(id, city_id, city_version, event_type, payload_jsonb, created_at)
+               VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING`,
+              [event.id, cityId, event.cityVersion ?? handled.nextState.version, event.type, JSON.stringify(event), event.at]
+            );
+          }
+        }
+        await client.query(
+          `INSERT INTO command_receipts(id, principal_kind, principal_id, endpoint, idempotency_key, request_hash, response_jsonb)
+           VALUES ($1, 'system', 'turn-scheduler', $2, $3, $4, $5)`,
+          [createId("receipt"), endpoint, idempotencyKey, requestHash, JSON.stringify(response)]
+        );
+        await client.query(
+          `INSERT INTO agent_action_log(id, city_id, principal_kind, principal_id, action, reason, result, command_id)
+           VALUES ($1, $2, 'system', 'turn-scheduler', $3, $4, $5, $6)`,
+          [createId("action"), cityId, action ?? endpoint, reason ?? null, response.status ?? "completed", response.command_id ?? null]
+        );
+        return response;
+      });
+    },
+
     async getEvents(principal, cityId, afterVersion = 0, limit = 100) {
       await this.getCity(principal, cityId);
       const result = await database.query(

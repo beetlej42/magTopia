@@ -30,7 +30,7 @@ const GENERATED_ROOT = path.resolve(SERVER_DIR, "../../public/generated");
 const DIST_ROOT = path.resolve(SERVER_DIR, "../../dist");
 const DIST_ASSETS_ROOT = path.join(DIST_ROOT, "assets");
 
-export async function createApp({ repository, config, logger = false }) {
+export async function createApp({ repository, config, logger = false, now = () => new Date() }) {
   const app = Fastify({ logger, bodyLimit: 12 * 1024 * 1024 });
 
   app.setErrorHandler((error, request, reply) => {
@@ -558,6 +558,9 @@ export async function createApp({ repository, config, logger = false }) {
       turn: state.turn,
       turn_status: gameplay.turnStatus ?? "open",
       turn_opened_at: gameplay.turnOpenedAt ?? null,
+      turn_deadline_at: gameplay.turnDeadlineAt ?? null,
+      next_turn_unlock_at: gameplay.nextTurnUnlockAt ?? null,
+      settled_by: gameplay.scheduler?.settledBy ?? null,
       strategy: strategyPayload(state),
       last_turn_facts: gameplay.lastTurnFacts ?? null
     };
@@ -616,7 +619,7 @@ export async function createApp({ repository, config, logger = false }) {
       action: "strategy_resolve",
       reason: body.actor_note ?? "request_system_settlement"
     }, async ({ state }) => {
-      const result = resolveTurn(state, { assignments: state.gameplay?.pendingAssignments ?? [], expectedTurn: state.turn }, strategyContext(config));
+      const result = resolveTurn(state, { assignments: state.gameplay?.pendingAssignments ?? [], expectedTurn: state.turn }, strategyContext(config, now));
       if (result.error) {
         return { nextState: null, response: rejectedStrategyResponse(result.error.code, result.error.message, result.error.assignmentErrors ?? null) };
       }
@@ -919,9 +922,17 @@ function normalizeStrategyAssignments(input) {
   });
 }
 
-function strategyContext(config) {
+function strategyContext(config, now) {
   const seed = config?.gameplaySeed != null ? Number(config.gameplaySeed) : randomInt(0, 0xffffffff);
-  return { seed, now: () => new Date().toISOString(), options: {} };
+  return {
+    seed,
+    now: () => now().toISOString(),
+    options: {
+      turnIntervalMs: config.turnIntervalMs,
+      turnDeadlineMs: config.turnDeadlineMs,
+      settlementSource: "agent"
+    }
+  };
 }
 
 function rejectedStrategyResponse(code, message, assignmentErrors = null) {

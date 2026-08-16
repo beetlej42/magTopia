@@ -11,6 +11,7 @@ import {
 } from "./exposure.js";
 import { incidentAttribute, incidentDefinition } from "./incidents.js";
 import { chance, createRoller, pick, rollDice } from "./random.js";
+import { normalizeTurnSchedule } from "./turn.js";
 import {
   deepFreeze,
   INCIDENT_TYPES,
@@ -18,6 +19,7 @@ import {
   normalizeGameplayResources,
   normalizePopulationState,
   normalizeRollRecord,
+  normalizeScheduler,
   normalizeTurnFacts,
   SEALED_EXPOSURE_THRESHOLD
 } from "./schema.js";
@@ -297,6 +299,30 @@ export function resolveTurn(state, input = {}, context = {}) {
     }
   }
 
+  const assignedIncidentIds = new Set(assignmentSettlement.outcomes.map((outcome) => outcome.incidentId));
+  const unaddressed = Object.entries(next.gameplay.incidents ?? {})
+    .filter(([, incident]) => incident.status === "open" && !assignedIncidentIds.has(incident.id))
+    .map(([, incident]) => ({
+      incidentId: incident.id,
+      buildingId: incident.buildingId,
+      type: incident.type,
+      severity: incident.severity,
+      status: "open",
+      createdAtTurn: incident.createdAtTurn
+    }));
+  const unaddressedExposure = Number(options.unaddressedExposure ?? 1);
+  const penalizedBuildings = new Set();
+  for (const entry of unaddressed) {
+    if (penalizedBuildings.has(entry.buildingId)) continue;
+    penalizedBuildings.add(entry.buildingId);
+    const change = exposureChanges[entry.buildingId];
+    if (change) {
+      change.to = applyExposureChange(change.to, unaddressedExposure);
+      change.delta = change.to - change.from;
+      change.sealed = isSealedExposure(change.to);
+    }
+  }
+
   const sealedBuildings = Object.entries(exposureChanges)
     .filter(([, change]) => change.sealed)
     .map(([id]) => id);
@@ -312,9 +338,19 @@ export function resolveTurn(state, input = {}, context = {}) {
     .map(([buildingId, change]) => ({ buildingId, exposure: change.to, pressure: change.pressure, concealment: change.concealment }));
 
   const resolvedAt = now();
+  const schedule = normalizeTurnSchedule(options);
+  const resolvedMs = new Date(resolvedAt).getTime();
+  const nextTurnUnlockAt = new Date(resolvedMs + schedule.turnIntervalMs).toISOString();
+  const settledBy = options.settlementSource === "deadline" ? "deadline" : "agent";
   const facts = normalizeTurnFacts({
     turn: state.turn + 1,
-    wallClock: { openedAt: state.gameplay?.turnOpenedAt ?? null, resolvedAt },
+    wallClock: {
+      openedAt: state.gameplay?.turnOpenedAt ?? null,
+      resolvedAt,
+      settledBy,
+      nextTurnUnlockAt,
+      turnDeadlineAt: state.gameplay?.turnDeadlineAt ?? null
+    },
     resourceDelta: {
       coins: resourceSettlement.income.coins,
       magic: resourceSettlement.income.magic
@@ -333,6 +369,7 @@ export function resolveTurn(state, input = {}, context = {}) {
     buildingsCompleted: [...(input.buildingsCompleted ?? [])],
     exposureChanges,
     incidents: incidents.map((incident) => next.gameplay.incidents[incident.id] ?? incident),
+    unaddressedIncidents: unaddressed,
     assignments: assignmentSettlement.assignments,
     rolls: assignmentSettlement.rolls,
     outcomes: assignmentSettlement.outcomes,
@@ -343,6 +380,14 @@ export function resolveTurn(state, input = {}, context = {}) {
   next.gameplay.lastTurnFacts = deepFreeze(facts);
   next.gameplay.turnStatus = "resolved";
   next.gameplay.turnOpenedAt = next.gameplay.turnOpenedAt ?? resolvedAt;
+  next.gameplay.turnDeadlineAt = next.gameplay.turnDeadlineAt ?? null;
+  next.gameplay.nextTurnUnlockAt = nextTurnUnlockAt;
+  next.gameplay.scheduler = normalizeScheduler({
+    ...(next.gameplay.scheduler ?? {}),
+    openedAt: next.gameplay.turnOpenedAt ?? null,
+    resolvedAt,
+    settledBy
+  });
   next.resources = { ...next.resources, coins: resourceSettlement.after.coins, magic: resourceSettlement.after.magic };
   next.turn = state.turn + 1;
   next.version = (next.version ?? 0) + 1;
@@ -370,6 +415,9 @@ function migrateGameplay(state) {
       schemaVersion: 1,
       turnStatus: "open",
       turnOpenedAt: null,
+      turnDeadlineAt: null,
+      nextTurnUnlockAt: null,
+      scheduler: null,
       resources: { coins, magic: 0 },
       population: { muggles: { current: 0, capacity: 0 }, wizards: { current: 0, capacity: 0 } },
       arcaneOfficers: {},

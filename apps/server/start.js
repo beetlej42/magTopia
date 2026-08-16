@@ -3,6 +3,7 @@ import { loadConfig } from "./config.js";
 import { createDatabase, migrateDatabase } from "./database.js";
 import { createRepository } from "./repository.js";
 import { createWorker } from "./worker.js";
+import { createTurnScheduler } from "./turn-scheduler.js";
 import { installPlayerSessions } from "./player-session.js";
 
 const config = loadConfig();
@@ -13,13 +14,16 @@ await repository.seedBuiltinAssets();
 const app = await createApp({ repository, config, logger: true });
 installPlayerSessions({ app, repository, config });
 const worker = createWorker({ repository, config });
+const turnScheduler = createTurnScheduler({ repository, config });
 
 await app.listen({ host: config.host, port: config.port });
 worker.run().catch((error) => app.log.error(error));
+turnScheduler.run().catch((error) => app.log.error(error));
 
 async function shutdown(signal) {
   app.log.info({ signal }, "Shutting down MAGTOPIA");
   worker.stop();
+  turnScheduler.stop();
   await app.close();
   await database.close();
   process.exit(0);

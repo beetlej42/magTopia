@@ -31,6 +31,9 @@ export function loadConfig(env = process.env) {
     capabilityTtlMinutes: Number(env.MAGICTOWN_CAPABILITY_TTL_MINUTES ?? 30),
     credentialTtlDays: Number(env.MAGICTOWN_CREDENTIAL_TTL_DAYS ?? 90),
     workerPollMs: Number(env.MAGICTOWN_WORKER_POLL_MS ?? 1000),
+    turnIntervalMs: Number(env.MAGICTOWN_TURN_INTERVAL_MS ?? 86_400_000),
+    turnDeadlineMs: Number(env.MAGICTOWN_TURN_DEADLINE_MS ?? 86_400_000),
+    turnSchedulerPollMs: Number(env.MAGICTOWN_TURN_SCHEDULER_POLL_MS ?? 1000),
     autoMigrate: env.MAGICTOWN_AUTO_MIGRATE !== "0"
   };
 }

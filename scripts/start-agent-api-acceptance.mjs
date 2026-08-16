@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createApp } from "../apps/server/app.js";
 import { createMemoryRepository } from "../apps/server/memory-repository.js";
+import { createTurnScheduler } from "../apps/server/turn-scheduler.js";
 
 const host = process.env.MAGICTOWN_HOST ?? "0.0.0.0";
 const port = Number(process.env.MAGICTOWN_PORT ?? 4183);
@@ -28,7 +29,9 @@ const bootstrap = await repository.ensureSandbox({
   scopes: ["city:read", "city:build", "city:connect", "asset:request"]
 });
 const app = await createApp({ repository, config, logger: false });
+const turnScheduler = createTurnScheduler({ repository, config });
 await app.listen({ host, port });
+turnScheduler.run().catch((error) => console.error("Turn scheduler failed", error));
 const viewerUrl = `${publicBaseUrl}/cities/${encodeURIComponent(bootstrap.city.id)}?view=1#token=${encodeURIComponent(bootstrap.player.access_token)}`;
 const readyInfo = {
   ready: true,
@@ -47,6 +50,7 @@ console.log(JSON.stringify(readyInfo));
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, async () => {
+    turnScheduler.stop();
     await app.close();
     process.exit(0);
   });

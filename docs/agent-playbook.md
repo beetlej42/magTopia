@@ -190,7 +190,7 @@ High-magic development creates exposure pressure. Each settlement freezes an imm
 GET /api/v1/cities/{city_id}/strategy
 ```
 
-The response lists unresolved incidents (`id`, `type`, `attribute`, `difficulty`, `severity`, `status`, `building_id`, `summary`), every Arcane Officer with their attributes, `specialties`, and `status`, the current pending dispatch plan, and `last_turn_facts` from the last settlement.
+The response lists unresolved incidents (`id`, `type`, `attribute`, `difficulty`, `severity`, `status`, `building_id`, `summary`), every Arcane Officer with their attributes, `specialties`, and `status`, the current pending dispatch plan, and `last_turn_facts` from the last settlement. It also reports the server-owned wall-clock schedule read-only: `turn_status`, `turn_opened_at`, `turn_deadline_at`, `next_turn_unlock_at`, and `settled_by` (`agent` or `deadline`). You cannot move these times; the server reopens the next turn only after its `next_turn_unlock_at`, and auto-settles a turn once `turn_deadline_at` passes without your resolve.
 
 Submit your dispatch plan (idempotent; each successful submission replaces the previous plan and advances the city version by one):
 
@@ -244,7 +244,9 @@ The system settles the pending assignments through the same deterministic simula
 - `facts.exposureChanges` — per-building exposure movement;
 - `strategy` — the post-settlement incident and officer state.
 
-A resolved turn is never settled twice. Replaying an `Idempotency-Key` returns the original response, and a fresh resolve request after settlement is rejected with `TURN_ALREADY_RESOLVED`. Read `/strategy` again to inspect the frozen facts and the latest incident/officer state. Incidents generated during a settlement belong to the next turn; the turn scheduler that reopens future turns is a separate milestone.
+A resolved turn is never settled twice. Replaying an `Idempotency-Key` returns the original response, and a fresh resolve request after settlement is rejected with `TURN_ALREADY_RESOLVED`. Read `/strategy` again to inspect the frozen facts and the latest incident/officer state. Incidents generated during a settlement belong to the next turn.
+
+The turn is then `resolved` and waits for its server-owned unlock. If `turn_deadline_at` passes while the turn is still `open`/`strategy`, the server force-settles it through the exact same `resolveTurn()` — the pending dispatch plan is still honored, and any incident left without an assignment is recorded in `facts.unaddressedIncidents`, stays `open`, and applies a gentle exposure penalty. A deadline never grants or spends resources by itself, and never resolves an incident for free. The next turn opens at `next_turn_unlock_at`; many offline days never backfill many turns or many incomes.
 
 ## Privacy
 
