@@ -11,6 +11,8 @@ export const ARCANE_OFFICER_ARCHETYPES = Object.freeze({
   veteran: Object.freeze({ label: "Veteran", investigation: 3, containment: 3, concealment: 3, specialties: ["investigation", "containment", "concealment"] })
 });
 
+export const HIREABLE_ARCANE_OFFICER_ARCHETYPES = Object.freeze(["trainee", "investigation", "containment", "concealment"]);
+
 export function arcaneOfficerArchetype(archetype) {
   return ARCANE_OFFICER_ARCHETYPES[archetype] ?? ARCANE_OFFICER_ARCHETYPES.trainee;
 }
@@ -39,6 +41,9 @@ export function hireArcaneOfficer(state, input = {}, context = {}) {
   const archetypeId = String(input.archetype ?? "trainee");
   const profile = context.profile
     ?? arcaneOfficerArchetype(archetypeId);
+  if (!context.profile && !HIREABLE_ARCANE_OFFICER_ARCHETYPES.includes(archetypeId)) {
+    return { accepted: false, error: { code: "ARCANE_OFFICER_ARCHETYPE_NOT_ALLOWED", message: `Archetype ${archetypeId} cannot be hired directly; it requires a trusted profile or promotion` } };
+  }
   if (!Number.isFinite(Number(profile.investigation)) || !Number.isFinite(Number(profile.containment)) || !Number.isFinite(Number(profile.concealment))) {
     return { accepted: false, error: { code: "INVALID_OFFICER_PROFILE", message: "Officer profile requires numeric investigation, containment, and concealment" } };
   }
@@ -49,7 +54,7 @@ export function hireArcaneOfficer(state, input = {}, context = {}) {
     containment: profile.containment,
     concealment: profile.concealment,
     specialties: profile.specialties ?? [],
-    archetype: archetypeId,
+    archetype: profile.archetype ?? archetypeId,
     status: "available",
     hiredAtTurn: state.turn
   });

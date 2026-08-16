@@ -40,6 +40,24 @@ test("hiring an arcane officer deducts the system price and adds an available of
   assert.equal(state.gameplay.resources.coins, 99999, "source state stays untouched");
 });
 
+test("a caller cannot hire the veteran archetype directly", () => {
+  const state = stateWithWizardPopulation(20);
+  const blocked = hireArcaneOfficer(state, { id: "officer-veteran", archetype: "veteran" }, context());
+  assert.equal(blocked.accepted, false);
+  assert.equal(blocked.error.code, "ARCANE_OFFICER_ARCHETYPE_NOT_ALLOWED");
+  assert.equal(state.gameplay.resources.coins, 99999, "no coins are deducted for a rejected hire");
+});
+
+test("a veteran profile is only reachable through a trusted context profile", () => {
+  const state = stateWithWizardPopulation(20);
+  const ctx = { ...context(), profile: { archetype: "veteran", label: "Veteran", investigation: 3, containment: 3, concealment: 3, specialties: ["investigation", "containment", "concealment"] } };
+  const result = hireArcaneOfficer(state, { id: "officer-1", name: "Cassian" }, ctx);
+  assert.equal(result.accepted, true);
+  assert.equal(result.nextState.gameplay.arcaneOfficers["officer-1"].archetype, "veteran");
+  assert.equal(result.nextState.gameplay.arcaneOfficers["officer-1"].investigation, 3);
+  assert.deepEqual(result.nextState.gameplay.arcaneOfficers["officer-1"].specialties, ["investigation", "containment", "concealment"]);
+});
+
 test("a caller cannot raise officer attributes through the hire input", () => {
   const state = stateWithWizardPopulation(20);
   const result = hireArcaneOfficer(state, {
