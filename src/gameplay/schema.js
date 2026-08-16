@@ -72,6 +72,19 @@ export function normalizeArcaneOfficer(value = {}) {
   };
 }
 
+export function normalizeScheduler(value = {}) {
+  const settledBy = value.settledBy == null ? null : String(value.settledBy);
+  if (settledBy != null && !["agent", "deadline"].includes(settledBy)) {
+    throw new Error(`Unsupported settlement source: ${settledBy}`);
+  }
+  return {
+    schemaVersion: 1,
+    openedAt: value.openedAt != null ? String(value.openedAt) : null,
+    resolvedAt: value.resolvedAt != null ? String(value.resolvedAt) : null,
+    settledBy
+  };
+}
+
 export function normalizeExposureIncident(value = {}) {
   const type = String(value.type ?? "investigation");
   if (!INCIDENT_TYPES.includes(type)) throw new Error(`Unsupported incident type: ${type}`);
@@ -116,6 +129,7 @@ export function normalizeTurnFacts(value = {}) {
     buildingsCompleted: [...(value.buildingsCompleted ?? [])],
     exposureChanges: Object.fromEntries(Object.entries(value.exposureChanges ?? {}).map(([id, change]) => [id, { ...change }])),
     incidents: [...(value.incidents ?? [])].map(normalizeExposureIncident),
+    unaddressedIncidents: [...(value.unaddressedIncidents ?? [])].map((entry) => ({ ...entry })),
     assignments: [...(value.assignments ?? [])].map((entry) => ({ ...entry })),
     rolls: [...(value.rolls ?? [])].map(normalizeRollRecord),
     outcomes: [...(value.outcomes ?? [])].map((entry) => ({ ...entry })),

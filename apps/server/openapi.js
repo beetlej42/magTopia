@@ -380,6 +380,7 @@ export function createOpenApiDocument(baseUrl) {
             buildingsCompleted: { type: "array", items: { type: "string" } },
             exposureChanges: { type: "object", additionalProperties: true },
             incidents: { type: "array", items: { $ref: "#/components/schemas/StrategyIncident" } },
+            unaddressedIncidents: { type: "array", items: { type: "object", properties: { incidentId: { type: "string" }, buildingId: { type: "string" }, type: { type: "string" }, severity: { type: "number" }, status: { type: "string" }, createdAtTurn: { type: "number" } } }, description: "Open incidents that were not assigned this turn; they take the uniform conservative unaddressed path." },
             assignments: { type: "array", items: { type: "object", properties: { incidentId: { type: "string" }, arcaneOfficerId: { type: "string" } } } },
             rolls: {
               type: "array",
@@ -426,6 +427,9 @@ export function createOpenApiDocument(baseUrl) {
             turn: { type: "integer" },
             turn_status: { type: "string" },
             turn_opened_at: { type: ["string", "null"] },
+            turn_deadline_at: { type: ["string", "null"], description: "Server-owned wall-clock deadline of the current turn. Agents cannot change it." },
+            next_turn_unlock_at: { type: ["string", "null"], description: "Server-owned earliest wall-clock time the next turn may open. Agents cannot change it." },
+            settled_by: { type: ["string", "null"], description: "Which authority settled the last turn: agent or the deadline scheduler." },
             strategy: {
               type: "object",
               required: ["incidents", "arcane_officers", "pending_assignments"],

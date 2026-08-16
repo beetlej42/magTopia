@@ -32,6 +32,9 @@ export function createCityState(worldContract, options = {}) {
       schemaVersion: 1,
       turnStatus: "open",
       turnOpenedAt: null,
+      turnDeadlineAt: null,
+      nextTurnUnlockAt: null,
+      scheduler: null,
       resources: { coins: (options.resources?.coins ?? 600), magic: 0 },
       population: {
         muggles: { current: 0, capacity: 0 },

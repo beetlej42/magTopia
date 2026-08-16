@@ -3,6 +3,7 @@ import path from "node:path";
 import { createCityState } from "../../src/city/state.js";
 import { getAssetRegistry } from "../../src/city/assets.js";
 import { createServiceWorldContract } from "./world.js";
+import { ACTIVE_TURN_STATUSES, SETTLED_TURN_STATUSES } from "../../src/gameplay/turn.js";
 import { createId, createSecret, hashRequest } from "./ids.js";
 import { ServiceError } from "./errors.js";
 
@@ -179,6 +180,48 @@ export function createMemoryRepository(config, options = {}) {
 
     async getOrder(principal, cityId, orderId) { await this.getCity(principal, cityId); const order = orders.get(orderId); if (!order || order.city_id !== cityId) throw new ServiceError(404, "ORDER_NOT_FOUND", "Order not found"); return structuredClone(order); },
     async listOrders(principal, cityId) { await this.getCity(principal, cityId); return [...orders.values()].filter((order) => order.city_id === cityId).map((order) => structuredClone(order)); },
+
+    async getCityForScheduler(cityId) {
+      const row = cities.get(cityId);
+      return row ? { row, state: row.state_jsonb } : null;
+    },
+
+    async scanCitiesForScheduler(nowIso) {
+      const due = [];
+      for (const row of cities.values()) {
+        const gameplay = row.state_jsonb.gameplay ?? {};
+        const active = ACTIVE_TURN_STATUSES.has(gameplay.turnStatus);
+        const settled = SETTLED_TURN_STATUSES.has(gameplay.turnStatus);
+        if (active && (gameplay.turnDeadlineAt == null || gameplay.turnDeadlineAt <= nowIso)) due.push(row);
+        else if (settled && gameplay.nextTurnUnlockAt != null && gameplay.nextTurnUnlockAt <= nowIso) due.push(row);
+      }
+      return due;
+    },
+
+    async schedulerTransact({ cityId, endpoint, idempotencyKey, requestBody = {}, expectedVersion, action, reason }, handler) {
+      if (!idempotencyKey) throw new ServiceError(400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required for scheduler transactions");
+      const receiptKey = `system:turn-scheduler:${endpoint}:${idempotencyKey}`;
+      const requestHash = hashRequest({ ...requestBody, cityId, endpoint });
+      const prior = receipts.get(receiptKey);
+      if (prior) {
+        if (prior.hash !== requestHash) throw new ServiceError(409, "IDEMPOTENCY_KEY_REUSED", "Scheduler idempotency key was already used with different work");
+        return { ...structuredClone(prior.response), idempotent_replay: true };
+      }
+      const row = cities.get(cityId);
+      if (!row) throw new ServiceError(404, "CITY_NOT_FOUND", "City not found");
+      if (expectedVersion !== undefined && Number(expectedVersion) !== Number(row.state_jsonb.version)) {
+        throw new ServiceError(409, "CITY_VERSION_CONFLICT", "City changed since the scheduler read it", { expected: Number(expectedVersion), actual: Number(row.state_jsonb.version) });
+      }
+      const client = memoryClient({ cityId, row, designs, orders });
+      const handled = await handler({ client, state: row.state_jsonb, city: row });
+      if (handled.nextState) {
+        row.state_jsonb = handled.nextState;
+        row.city_version = handled.nextState.version;
+      }
+      receipts.set(receiptKey, { hash: requestHash, response: structuredClone(handled.response) });
+      persist();
+      return handled.response;
+    },
 
     async transactCity({ principal, cityId, endpoint, idempotencyKey, requestBody, expectedVersion }, handler) {
       if (!idempotencyKey) throw new ServiceError(400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key header is required");

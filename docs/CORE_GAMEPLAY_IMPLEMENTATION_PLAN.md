@@ -415,6 +415,18 @@ nextRisks
 
 验收：自然时间到期不会直接累计资源，只会触发一次标准回合收尾。
 
+已实现（`apps/server/turn-scheduler.js` + `src/gameplay/turn.js`）：
+
+- `turnStatus` 保持 `open / building / strategy -> resolved -> (unlock 后) next open`，新增持久化字段 `turnDeadlineAt`、`nextTurnUnlockAt` 与最小 `scheduler` 元数据（`settledBy` / `openedAt` / `resolvedAt`）。
+- wall clock 只做解锁与截止；资源、人口、暴露、incident 仍只由唯一 `resolveTurn()` 结算。
+- Agent 主动 resolve 与 deadline 自动收尾都调用同一个 `resolveTurn()`。未分配人员且仍 `open` 的 incident 进入统一保守路径：记入 `facts.unaddressedIncidents`、保持 `open`、对所在建筑施加温和暴露惩罚——超时不等于免费跳过风险，且不存在第二套事件逻辑。
+- exactly-once：`schedulerTransact` 对城市行 `FOR UPDATE` 加锁 + `expectedVersion` 校验 + 确定性 idempotency key（`resolve-deadline-<turn>`），并发或重试不会双结算；输家收到 `TURN_ALREADY_RESOLVED` / `CITY_VERSION_CONFLICT`。
+- 重启安全：unlock/deadline 以持久化时间戳为准；轮询 worker 重启后重新扫描并处理 overdue / 已解锁回合。
+- 时间策略属于 server/world config（`MAGICTOWN_TURN_INTERVAL_MS` / `MAGICTOWN_TURN_DEADLINE_MS`），不写死时区；测试使用 injectable clock，不 sleep。
+- 下一回合 unlock 锚定当前回合的 wall-clock slot（`turnOpenedAt + turnIntervalMs`），而非结算时刻：Agent 提前 resolve 与拖到 deadline 自动收尾得到同一 cadence，连续缺席仍是“一自然日一回合”，deadline 收尾不会再多罚一整个 interval。
+- Agent 无法伪造 `force` / `nextTurnUnlockAt` / `turnDeadlineAt` / scheduler trigger（strategy 请求体白名单只允许 assignments/expected_city_version/actor_note）。
+- 卡牌（PR F）未实现：无卡牌是合法可结束状态。
+
 ## PR E — Owl report facts interface
 
 验收：Agent 能基于冻结 facts 写日报，且 facts 与叙事严格分离。
