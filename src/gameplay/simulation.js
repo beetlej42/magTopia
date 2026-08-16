@@ -6,17 +6,18 @@ import {
   incidentDifficulty,
   incidentProbability,
   incidentSeverity,
-  incidentSummary,
   isSealedExposure,
   neighborhoodConcealment
 } from "./exposure.js";
-import { chance, createRoller, pick } from "./random.js";
+import { incidentAttribute, incidentDefinition } from "./incidents.js";
+import { chance, createRoller, pick, rollDice } from "./random.js";
 import {
   deepFreeze,
   INCIDENT_TYPES,
   normalizeExposureIncident,
   normalizeGameplayResources,
   normalizePopulationState,
+  normalizeRollRecord,
   normalizeTurnFacts,
   SEALED_EXPOSURE_THRESHOLD
 } from "./schema.js";
@@ -98,14 +99,16 @@ export function generateIncidents(state, metadataMap, roller, options = {}) {
     const severity = incidentSeverity(metadata.exposure);
     const difficulty = incidentDifficulty(severity, options);
     const buildingName = state.buildings?.[id]?.program?.name;
+    const definition = incidentDefinition(type);
     incidents.push(normalizeExposureIncident({
       id: options.createId?.("incident") ?? `incident-${id}-${options.turn ?? 0}`,
       buildingId: id,
       type,
+      attribute: incidentAttribute(type),
       difficulty,
       severity,
       exposureAtCreation: metadata.exposure,
-      summary: incidentSummary(type, buildingName),
+      summary: definition.summaryTemplate(buildingName),
       status: "open",
       createdAtTurn: options.turn ?? state.turn
     }));
@@ -113,11 +116,143 @@ export function generateIncidents(state, metadataMap, roller, options = {}) {
   return incidents;
 }
 
+export function gradeRoll(roll, total, difficulty) {
+  if (roll === 20) return "critical_success";
+  if (roll === 1) return "critical_failure";
+  if (total >= difficulty + 5) return "critical_success";
+  if (total >= difficulty) return "success";
+  if (total <= difficulty - 5) return "critical_failure";
+  return "failure";
+}
+
+export function resolveIncidentRoll({ incident, officer, modifier = 0, roller, options = {} }) {
+  const definition = incidentDefinition(incident.type);
+  const attribute = definition.attribute;
+  const attributeValue = Number(officer?.[attribute] ?? 0);
+  const specialtyBonus = (officer?.specialties ?? []).includes(incident.type)
+    ? Number(options.specialtyBonus ?? 2)
+    : 0;
+  const roll = rollDice(roller, 20);
+  const difficulty = Number(incident.difficulty ?? 3);
+  const modifierValue = Number(modifier ?? 0);
+  const total = roll + attributeValue + specialtyBonus + modifierValue;
+  const outcome = gradeRoll(roll, total, difficulty);
+  return { roll, total, attribute, attributeValue, specialtyBonus, modifier: modifierValue, difficulty, outcome };
+}
+
+export function validateAssignments(state, incidents, assignments = []) {
+  if (!Array.isArray(assignments) || assignments.length === 0) return { ok: true, errors: [] };
+  const errors = [];
+  const usedOfficers = new Set();
+  const usedIncidents = new Set();
+  for (const assignment of assignments) {
+    const incidentId = String(assignment.incidentId ?? assignment.incident_id ?? "");
+    const officerId = String(assignment.arcaneOfficerId ?? assignment.arcane_officer_id ?? "");
+    if (!incidentId || !officerId) {
+      errors.push({ incidentId, officerId, code: "ASSIGNMENT_INCOMPLETE", message: "Assignment requires both incidentId and arcaneOfficerId" });
+      continue;
+    }
+    if (assignment.roll != null || assignment.outcome != null || assignment.total != null) {
+      errors.push({ incidentId, officerId, code: "ASSIGNMENT_CARRIES_OUTCOME", message: "Assignment must not include dice roll or outcome" });
+    }
+    if (assignment.modifier != null) {
+      errors.push({ incidentId, officerId, code: "ASSIGNMENT_CARRIES_MODIFIER", message: "Assignment must not carry a modifier; modifiers are system-determined" });
+    }
+    const incident = state.gameplay?.incidents?.[incidentId] ?? incidents.find((entry) => entry.id === incidentId);
+    if (!incident) {
+      errors.push({ incidentId, officerId, code: "INCIDENT_NOT_FOUND", message: `Unknown incident ${incidentId}` });
+      continue;
+    }
+    if (incident.status !== "open") {
+      errors.push({ incidentId, officerId, code: "INCIDENT_NOT_OPEN", message: `Incident ${incidentId} is not open for assignment` });
+    }
+    if (usedIncidents.has(incidentId)) {
+      errors.push({ incidentId, officerId, code: "INCIDENT_ALREADY_ASSIGNED", message: `Incident ${incidentId} is assigned more than once` });
+    }
+    usedIncidents.add(incidentId);
+    const officer = state.gameplay?.arcaneOfficers?.[officerId];
+    if (!officer) {
+      errors.push({ incidentId, officerId, code: "ARCANE_OFFICER_NOT_FOUND", message: `Unknown arcane officer ${officerId}` });
+      continue;
+    }
+    if (officer.status !== "available") {
+      errors.push({ incidentId, officerId, code: "ARCANE_OFFICER_UNAVAILABLE", message: `Arcane officer ${officerId} is not available` });
+    }
+    if (usedOfficers.has(officerId)) {
+      errors.push({ incidentId, officerId, code: "ARCANE_OFFICER_ALREADY_ASSIGNED", message: `Arcane officer ${officerId} is assigned to more than one incident` });
+    }
+    usedOfficers.add(officerId);
+  }
+  return { ok: errors.length === 0, errors };
+}
+
+export function settleAssignments(state, incidents, assignments = [], roller, options = {}) {
+  const rolls = [];
+  const outcomes = [];
+  const normalized = [];
+  if (!Array.isArray(assignments)) return { assignments: normalized, rolls, outcomes };
+  const modifier = Number(options.modifier ?? 0);
+  for (const assignment of assignments) {
+    const incidentId = String(assignment.incidentId ?? assignment.incident_id ?? "");
+    const officerId = String(assignment.arcaneOfficerId ?? assignment.arcane_officer_id ?? "");
+    const incident = state.gameplay?.incidents?.[incidentId] ?? incidents.find((entry) => entry.id === incidentId);
+    const officer = state.gameplay?.arcaneOfficers?.[officerId];
+    if (!incident || !officer) continue;
+    const result = resolveIncidentRoll({ incident, officer, modifier, roller, options });
+    const outcome = applyOutcome(result.outcome, options);
+    normalized.push({ incidentId, arcaneOfficerId: officerId });
+    rolls.push(normalizeRollRecord({ ...result, incidentId, arcaneOfficerId: officerId }));
+    outcomes.push({
+      incidentId,
+      buildingId: incident.buildingId,
+      arcaneOfficerId: officerId,
+      outcome: result.outcome,
+      exposureDelta: outcome.exposureDelta,
+      incidentStatus: outcome.incidentStatus,
+      arcaneOfficerStatus: outcome.arcaneOfficerStatus
+    });
+    if (state.gameplay?.incidents?.[incidentId]) state.gameplay.incidents[incidentId] = { ...incident, status: outcome.incidentStatus };
+    if (state.gameplay?.arcaneOfficers?.[officerId]) state.gameplay.arcaneOfficers[officerId] = { ...officer, status: outcome.arcaneOfficerStatus };
+  }
+  return { assignments: normalized, rolls, outcomes };
+}
+
+function applyOutcome(outcome, options = {}) {
+  switch (outcome) {
+    case "critical_success":
+      return {
+        exposureDelta: -Number(options.criticalSuccessExposure ?? 5),
+        incidentStatus: "resolved",
+        arcaneOfficerStatus: "available"
+      };
+    case "success":
+      return {
+        exposureDelta: -Number(options.successExposure ?? 2),
+        incidentStatus: "resolved",
+        arcaneOfficerStatus: "available"
+      };
+    case "failure":
+      return {
+        exposureDelta: Number(options.failureExposure ?? 1),
+        incidentStatus: "open",
+        arcaneOfficerStatus: "available"
+      };
+    case "critical_failure":
+      return {
+        exposureDelta: Number(options.criticalFailureExposure ?? 3),
+        incidentStatus: "escalated",
+        arcaneOfficerStatus: "unavailable"
+      };
+    default:
+      return { exposureDelta: 0, incidentStatus: "open", arcaneOfficerStatus: "available" };
+  }
+}
+
 export function resolveTurn(state, input = {}, context = {}) {
   const guardError = guardTurnResolve(state, input);
   if (guardError) return { nextState: state, facts: null, error: guardError };
   const gameplay = migrateGameplay(state);
-  const options = { ...(input.options ?? {}), ...(context.options ?? {}) };
+  const options = { ...(context.options ?? {}) };
   const createId = context.createId ?? ((prefix) => `${prefix}-${state.turn}`);
   const now = context.now ?? (() => new Date().toISOString());
   const roller = createRoller(context);
@@ -127,7 +262,7 @@ export function resolveTurn(state, input = {}, context = {}) {
       ...gameplay,
       resources: normalizeGameplayResources(gameplay.resources),
       population: normalizePopulationState(gameplay.population),
-      wardens: { ...(gameplay.wardens ?? {}) },
+      arcaneOfficers: { ...(gameplay.arcaneOfficers ?? {}) },
       incidents: { ...(gameplay.incidents ?? {}) }
     }
   };
@@ -147,6 +282,20 @@ export function resolveTurn(state, input = {}, context = {}) {
     turn: state.turn
   });
   for (const incident of incidents) next.gameplay.incidents[incident.id] = incident;
+
+  const assignmentValidation = validateAssignments(next, incidents, input.assignments);
+  if (!assignmentValidation.ok) {
+    return { nextState: state, facts: null, error: { code: "INVALID_ASSIGNMENT", message: assignmentValidation.errors.map((entry) => entry.message).join("; "), assignmentErrors: assignmentValidation.errors } };
+  }
+  const assignmentSettlement = settleAssignments(next, incidents, input.assignments, roller, options);
+  for (const outcome of assignmentSettlement.outcomes) {
+    const change = exposureChanges[outcome.buildingId];
+    if (change) {
+      change.to = applyExposureChange(change.to, outcome.exposureDelta);
+      change.delta = change.to - change.from;
+      change.sealed = isSealedExposure(change.to);
+    }
+  }
 
   const sealedBuildings = Object.entries(exposureChanges)
     .filter(([, change]) => change.sealed)
@@ -183,10 +332,10 @@ export function resolveTurn(state, input = {}, context = {}) {
     buildingsStarted: [...(input.buildingsStarted ?? [])],
     buildingsCompleted: [...(input.buildingsCompleted ?? [])],
     exposureChanges,
-    incidents,
-    assignments: [...(input.assignments ?? [])].map((entry) => ({ ...entry })),
-    rolls: [],
-    outcomes: [],
+    incidents: incidents.map((incident) => next.gameplay.incidents[incident.id] ?? incident),
+    assignments: assignmentSettlement.assignments,
+    rolls: assignmentSettlement.rolls,
+    outcomes: assignmentSettlement.outcomes,
     sealedBuildings,
     nextRisks
   });
@@ -213,17 +362,27 @@ function guardTurnResolve(state, input) {
 }
 
 function migrateGameplay(state) {
-  if (state.gameplay?.schemaVersion) return state.gameplay;
-  const legacy = state.resources ?? {};
-  const coins = Number.isFinite(Number(legacy.coins)) ? Number(legacy.coins) : 0;
-  return {
-    schemaVersion: 1,
-    turnStatus: "open",
-    turnOpenedAt: null,
-    resources: { coins, magic: 0 },
-    population: { muggles: { current: 0, capacity: 0 }, wizards: { current: 0, capacity: 0 } },
-    wardens: {},
-    incidents: {},
-    lastTurnFacts: null
-  };
+  const existing = state.gameplay;
+  if (!existing?.schemaVersion) {
+    const legacy = state.resources ?? {};
+    const coins = Number.isFinite(Number(legacy.coins)) ? Number(legacy.coins) : 0;
+    return {
+      schemaVersion: 1,
+      turnStatus: "open",
+      turnOpenedAt: null,
+      resources: { coins, magic: 0 },
+      population: { muggles: { current: 0, capacity: 0 }, wizards: { current: 0, capacity: 0 } },
+      arcaneOfficers: {},
+      incidents: {},
+      lastTurnFacts: null
+    };
+  }
+  const migrated = { ...existing };
+  const legacyRoster = migrated.wardens != null && Object.keys(migrated.wardens).length > 0;
+  const newRoster = migrated.arcaneOfficers != null && Object.keys(migrated.arcaneOfficers).length > 0;
+  if (legacyRoster && !newRoster) {
+    migrated.arcaneOfficers = migrated.wardens;
+  }
+  delete migrated.wardens;
+  return migrated;
 }
