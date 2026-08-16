@@ -89,7 +89,8 @@ test("turn scheduler settles overdue turns and discovers them after restart", { 
       assert.equal(state.gameplay.lastTurnFacts.unaddressedIncidents.length, 1, "the unassigned incident took the conservative path");
 
       const second = await scheduler2.pollOnce();
-      assert.equal(second.length, 0, "re-polling does not settle the turn again");
+      assert.equal(second.filter((entry) => entry.status === "deadline_resolved").length, 0, "re-polling does not settle the turn again");
+      assert.equal(second.filter((entry) => entry.status === "opened").length, 1, "the settled turn opens its next turn once its unlock slot is reached");
     } finally {
       scheduler2.stop();
       await app2.close();
@@ -147,7 +148,8 @@ test("concurrent scheduler and Agent settlements settle a turn exactly once", { 
     const agentWon = winner.status === "resolved";
     if (agentWon) {
       assert.equal(winner.turn, 1);
-      assert.ok(schedulerSweep.every((entry) => entry.status === "noop"), "the scheduler has nothing to settle once the Agent won");
+      assert.equal(schedulerSweep.filter((entry) => entry.status === "deadline_resolved").length, 0, "the scheduler does not re-settle once the Agent won");
+      assert.equal(schedulerSweep.filter((entry) => entry.status === "opened").length, 1, "the scheduler only opens the next turn after the Agent's settle");
     } else {
       assert.equal(agentSettled.statusCode, 409, "the losing Agent resolve reports a version conflict");
       assert.equal(winner.code, "CITY_VERSION_CONFLICT");
@@ -156,7 +158,7 @@ test("concurrent scheduler and Agent settlements settle a turn exactly once", { 
 
     const { state } = await repository.getCityForScheduler(city.id);
     assert.equal(state.turn, 1, "the turn was settled exactly once under concurrency");
-    assert.equal(state.gameplay.turnStatus, "resolved");
+    assert.ok(["resolved", "open"].includes(state.gameplay.turnStatus), `settled once, then possibly reopened at its slot (got ${state.gameplay.turnStatus})`);
     assert.equal(state.gameplay.resources.coins, 600 + state.gameplay.lastTurnFacts.resourceDelta.coins, "income was granted exactly once");
   } finally {
     scheduler.stop();

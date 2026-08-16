@@ -339,8 +339,12 @@ export function resolveTurn(state, input = {}, context = {}) {
 
   const resolvedAt = now();
   const schedule = normalizeTurnSchedule(options);
-  const resolvedMs = new Date(resolvedAt).getTime();
-  const nextTurnUnlockAt = new Date(resolvedMs + schedule.turnIntervalMs).toISOString();
+  // The next unlock is anchored to the current turn's wall-clock slot, not to
+  // the settlement moment, so an Agent resolving early and a deadline settle
+  // produce the same cadence: a turn always unlocks one turnIntervalMs after it
+  // opened, no matter when it was settled.
+  const turnOpenedAt = next.gameplay.turnOpenedAt ?? resolvedAt;
+  const nextTurnUnlockAt = new Date(new Date(turnOpenedAt).getTime() + schedule.turnIntervalMs).toISOString();
   const settledBy = options.settlementSource === "deadline" ? "deadline" : "agent";
   const facts = normalizeTurnFacts({
     turn: state.turn + 1,

@@ -6,6 +6,7 @@ import test from "node:test";
 import { createApp } from "../apps/server/app.js";
 import { createMemoryRepository } from "../apps/server/memory-repository.js";
 import { createTurnScheduler } from "../apps/server/turn-scheduler.js";
+import { resolveTurn } from "../src/gameplay/simulation.js";
 import { dueActionFor, initializeTurnSchedule, isTurnOverdue, openNextTurn, shouldOpenNextTurn } from "../src/gameplay/turn.js";
 
 const TURN_INTERVAL_MS = 60_000;
@@ -177,11 +178,13 @@ test("a deadline that passes without an Agent settlement auto-resolves exactly o
     const incomeGrantedOnce = state.gameplay.resources.coins;
 
     const second = await scheduler.pollOnce();
-    assert.equal(second.length, 0, "an already settled turn is not settled twice");
+    assert.equal(second.length, 1, "the settled turn opens its next turn once its unlock slot is reached");
+    assert.equal(second[0].status, "opened", "the deadline settle does not re-settle; it only opens the next turn");
+    assert.equal(second[0].settled_by, undefined, "an opened turn has no settlement source");
 
     const { state: after } = await repository.getCityForScheduler(city.id);
     assert.equal(after.gameplay.resources.coins, incomeGrantedOnce, "resources did not change on the second poll");
-    assert.equal(after.turn, 1);
+    assert.equal(after.turn, 1, "opening the next turn does not grant another turn's income");
   } finally {
     await app.close();
   }
@@ -244,7 +247,8 @@ test("an Agent resolve and a deadline settle race but only one settlement wins",
     assert.equal(agentSettled.facts.assignments.length, 1, "the pending dispatch plan was honored");
 
     const schedulerSweep = await scheduler.pollOnce();
-    assert.equal(schedulerSweep.length, 0, "the deadline scheduler finds nothing left to settle");
+    assert.equal(schedulerSweep.filter((entry) => entry.status === "deadline_resolved").length, 0, "the deadline scheduler finds nothing left to settle");
+    assert.equal(schedulerSweep.filter((entry) => entry.status === "opened").length, 1, "the sweep only opens the next turn now that its unlock slot is reached");
 
     const after = await repository.getCityForScheduler(city.id);
     assert.equal(after.state.turn, 1, "the turn was settled exactly once");
@@ -294,7 +298,7 @@ test("a stale deadline settle hits a version conflict and never double-settles",
         conflictObserved = true;
       }
       const latest = await repository.getCityForScheduler(row.id);
-      assert.equal(dueActionFor(latest.state, clock.now()), null, "after the Agent settle the scheduler has nothing to do");
+      assert.equal(dueActionFor(latest.state, clock.now()), "open-next", "after the Agent settle the scheduler only opens the next turn, never re-settles");
       return { city_id: row.id, status: "noop" };
     } };
     await patched.processCity(staleRow);
@@ -519,6 +523,78 @@ test("pure domain transitions are deterministic and injectable-clock driven", ()
   const opened = openNextTurn(resolved, clock.now(), config);
   assert.equal(opened.gameplay.turnStatus, "open");
   assert.equal(opened.gameplay.nextTurnUnlockAt, null);
+});
+
+test("an immediate Agent resolve and a deadline settle share the same next-turn unlock slot", () => {
+  const clock = fakeClock("2026-08-01T00:00:00.000Z");
+  const openedAt = clock.iso();
+  const base = { version: 0, turn: 0, gameplay: { schemaVersion: 1, turnStatus: "open", turnOpenedAt: openedAt, turnDeadlineAt: new Date(clock.now().getTime() + TURN_DEADLINE_MS).toISOString(), nextTurnUnlockAt: null, scheduler: { schemaVersion: 1, openedAt, resolvedAt: null, settledBy: null } } };
+  const immediate = resolveTurn(structuredClone(base), {}, {
+    seed: "cadence-test",
+    now: () => clock.iso(),
+    options: { turnIntervalMs: TURN_INTERVAL_MS, turnDeadlineMs: TURN_DEADLINE_MS }
+  });
+  assert.equal(immediate.error, null);
+  const immediateUnlock = immediate.nextState.gameplay.nextTurnUnlockAt;
+  assert.equal(immediateUnlock, new Date(clock.now().getTime() + TURN_INTERVAL_MS).toISOString(), "immediate resolve anchors the next unlock to the openedAt slot");
+
+  // The same turn, left untouched until its deadline, settles later but must
+  // anchor to the same turnOpenedAt slot rather than resolvedAt + interval.
+  clock.advance(TURN_DEADLINE_MS + 1000);
+  const late = resolveTurn(structuredClone(base), {}, {
+    seed: "cadence-test",
+    now: () => clock.iso(),
+    options: { turnIntervalMs: TURN_INTERVAL_MS, turnDeadlineMs: TURN_DEADLINE_MS, settlementSource: "deadline" }
+  });
+  assert.equal(late.error, null);
+  assert.equal(late.nextState.gameplay.nextTurnUnlockAt, immediateUnlock, "deadline resolve produces the same next-turn cadence as an immediate resolve");
+  assert.notEqual(new Date(clock.now().getTime() + TURN_INTERVAL_MS).toISOString(), immediateUnlock, "the cadence is not resolvedAt-anchored anymore");
+
+  // Because the unlock slot was already reached, the settled turn can reopen
+  // on the very next poll: continuous absence is one turn per interval.
+  assert.equal(shouldOpenNextTurn(late.nextState, clock.now()), true, "deadline-settled turn may reopen immediately once its slot arrived");
+  const reopened = openNextTurn(late.nextState, clock.now(), config);
+  assert.equal(reopened.gameplay.turnStatus, "open");
+  assert.equal(reopened.turn, 1, "opening the next turn does not manufacture an extra settlement");
+});
+
+test("opening a new turn clears the previous turn's settled_by from the scheduler metadata", async () => {
+  const clock = fakeClock();
+  const repository = createMemoryRepository(config);
+  const { app, scheduler } = await setup(clock, repository);
+  try {
+    const { city, agent } = await openCity(app, repository);
+    await scheduler.pollOnce();
+    const before = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
+    assert.equal(before.settled_by, null);
+
+    const settled = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/strategy/resolve`,
+      headers: { "idempotency-key": "resolve-reopen" },
+      payload: { expected_city_version: before.city_version }
+    }), 200);
+    assert.equal(settled.status, "resolved");
+    assert.equal(settled.facts.wallClock.settledBy, "agent");
+    let state = (await repository.getCityForScheduler(city.id)).state;
+    assert.equal(state.gameplay.scheduler.settledBy, "agent", "the resolved turn records who settled it");
+    assert.ok(state.gameplay.scheduler.resolvedAt);
+
+    clock.advance(TURN_INTERVAL_MS + 1000);
+    const results = await scheduler.pollOnce();
+    assert.equal(results.filter((entry) => entry.status === "opened").length, 1, "the next turn opened at its slot");
+
+    const after = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
+    assert.equal(after.turn_status, "open");
+    assert.equal(after.settled_by, null, "an open turn no longer reports the previous settlement");
+
+    state = (await repository.getCityForScheduler(city.id)).state;
+    assert.equal(state.gameplay.scheduler.settledBy, null, "settledBy is cleared on reopen");
+    assert.equal(state.gameplay.scheduler.resolvedAt, null, "resolvedAt is cleared on reopen");
+    assert.equal(state.gameplay.scheduler.openedAt, after.turn_opened_at, "only the new openedAt remains");
+  } finally {
+    await app.close();
+  }
 });
 
 function auth(account, request) {

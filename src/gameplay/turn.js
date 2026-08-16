@@ -35,7 +35,7 @@ export function initializeTurnSchedule(state, now, config = {}) {
     return withGameplay(state, {
       turnOpenedAt: openedAt,
       turnDeadlineAt: new Date(at + schedule.turnDeadlineMs).toISOString(),
-      scheduler: normalizeScheduler({ ...(gameplay.scheduler ?? {}), openedAt })
+      scheduler: normalizeScheduler({ openedAt })
     });
   }
   return withGameplay(state, {
@@ -61,7 +61,9 @@ export function openNextTurn(state, now, config = {}) {
     turnOpenedAt: openedAt,
     turnDeadlineAt: new Date(at + schedule.turnDeadlineMs).toISOString(),
     nextTurnUnlockAt: null,
-    scheduler: normalizeScheduler({ ...(gameplay.scheduler ?? {}), openedAt })
+    // The scheduler metadata describes the *current* turn: the previous turn's
+    // settlement (settledBy/resolvedAt) already lives in lastTurnFacts.wallClock.
+    scheduler: normalizeScheduler({ openedAt })
   });
 }
 
