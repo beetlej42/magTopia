@@ -28,6 +28,19 @@ export function createCityState(worldContract, options = {}) {
     turn: 0,
     elapsedHours: 0,
     resources: { coins: 600, timber: 120, stone: 120, ...(options.resources ?? {}) },
+    gameplay: {
+      schemaVersion: 1,
+      turnStatus: "open",
+      turnOpenedAt: null,
+      resources: { coins: (options.resources?.coins ?? 600), magic: 0 },
+      population: {
+        muggles: { current: 0, capacity: 0 },
+        wizards: { current: 0, capacity: 0 }
+      },
+      wardens: {},
+      incidents: {},
+      lastTurnFacts: null
+    },
     economy: { lastIncome: { coins: 0, timber: 0, stone: 0 }, lifetimeIncome: { coins: 0, timber: 0, stone: 0 } },
     cells,
     districts: {},
@@ -44,6 +57,7 @@ export function cloneCityState(state) {
     ...state,
     schemaVersion: Math.max(3, Number(state.schemaVersion ?? 0)),
     resources: { ...state.resources },
+    gameplay: structuredClone(state.gameplay ?? null),
     cells: Object.fromEntries(Object.entries(state.cells).map(([id, cell]) => [id, { ...cell }])),
     districts: structuredClone(state.districts ?? {}),
     buildings: { ...state.buildings },

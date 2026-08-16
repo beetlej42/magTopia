@@ -1,0 +1,156 @@
+import { normalizeGameplayBuilding } from "./schema.js";
+
+const CATEGORY_BY_PURPOSE = Object.freeze({
+  residential: "residential",
+  home: "residential",
+  housing: "residential",
+  shop: "commercial",
+  commercial: "commercial",
+  retail: "commercial",
+  visitor_service: "commercial",
+  market: "commercial",
+  workshop: "workshop",
+  storage: "workshop",
+  industry: "workshop",
+  laboratory: "workshop",
+  civic: "civic",
+  institutional: "civic",
+  education: "civic",
+  school: "civic",
+  library: "civic",
+  office: "civic",
+  theatre: "civic",
+  theater: "civic",
+  park: "green",
+  garden: "green",
+  plaza: "green",
+  open_space: "green"
+});
+
+const CATEGORY_BY_FRONTAGE = Object.freeze({
+  residential: "residential",
+  display: "commercial",
+  workshop: "workshop",
+  large_bay: "workshop",
+  institutional: "civic"
+});
+
+const COIN_OUTPUT_BY_CATEGORY = Object.freeze({
+  residential: 6,
+  commercial: 12,
+  workshop: 12,
+  civic: 4,
+  green: 2,
+  mixed: 4
+});
+
+const MAGIC_OUTPUT_BY_CATEGORY = Object.freeze({
+  residential: 4,
+  commercial: 5,
+  workshop: 6,
+  civic: 3,
+  green: 1,
+  mixed: 4
+});
+
+const MUGGLE_CAPACITY_BY_CATEGORY = Object.freeze({
+  residential: 4,
+  commercial: 2,
+  workshop: 1,
+  civic: 6,
+  green: 0,
+  mixed: 3
+});
+
+const CONCEALMENT_BY_CATEGORY = Object.freeze({
+  residential: 1.2,
+  commercial: 2,
+  workshop: 1,
+  civic: 1.8,
+  green: 0.6,
+  mixed: 1
+});
+
+const JOBS_BY_CATEGORY = Object.freeze({
+  residential: 1,
+  commercial: 4,
+  workshop: 6,
+  civic: 5,
+  green: 1,
+  mixed: 2
+});
+
+const VISIBILITY_BY_PROMINENCE = Object.freeze({ ordinary: 0.5, important: 0.8, landmark: 1.2 });
+
+export function getMagicLevel(building, fallback = 0.35) {
+  const candidates = [
+    building?.program?.attributes?.magicLevel,
+    building?.program?.intent?.magicLevel,
+    building?.program?.magicLevel,
+    building?.voxelDesign?.intent?.magicLevel,
+    building?.voxelDesign?.generation?.sourceSpec?.intent?.magicLevel,
+    building?.voxelDesign?.generation?.sourceSpec?.magicLevel,
+    building?.attributes?.magicLevel
+  ];
+  for (const value of candidates) {
+    const number = Number(value);
+    if (Number.isFinite(number)) return Math.min(1, Math.max(0, number));
+  }
+  return fallback;
+}
+
+export function getProminence(building) {
+  const value = building?.program?.intent?.prominence
+    ?? building?.voxelDesign?.intent?.prominence
+    ?? building?.program?.attributes?.prominence
+    ?? "ordinary";
+  return VISIBILITY_BY_PROMINENCE[value] ?? VISIBILITY_BY_PROMINENCE.ordinary;
+}
+
+export function getBuildingCategory(building) {
+  const purpose = String(building?.program?.purpose ?? building?.purpose ?? "").toLowerCase();
+  const archetype = String(building?.program?.archetype ?? building?.archetype ?? "").toLowerCase();
+  const frontage = String(building?.program?.intent?.frontage ?? building?.intent?.frontage ?? "").toLowerCase();
+  const matched = [purpose, archetype, frontage]
+    .map((text) => CATEGORY_BY_PURPOSE[text] ?? CATEGORY_BY_FRONTAGE[text])
+    .find(Boolean);
+  return matched ?? "mixed";
+}
+
+export function footprintArea(building) {
+  const cells = building?.footprintCells?.length;
+  if (Number.isInteger(cells) && cells > 0) return cells;
+  const footprint = String(building?.program?.footprint ?? building?.site?.footprint ?? "1x1");
+  const match = /^(\d+)x(\d+)$/.exec(footprint);
+  if (match) return Number(match[1]) * Number(match[2]);
+  return 1;
+}
+
+export function deriveGameplayBuilding(building, options = {}) {
+  const category = options.category ?? getBuildingCategory(building);
+  const magicLevel = options.magicLevel ?? getMagicLevel(building);
+  const area = footprintArea(building);
+  const numeric = (value, fallback) => {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : fallback;
+  };
+  const raw = {
+    category,
+    magicLevel,
+    muggleCapacity: numeric(options.muggleCapacity, Math.round(MUGGLE_CAPACITY_BY_CATEGORY[category] * area)),
+    wizardCapacity: numeric(options.wizardCapacity, Math.ceil(area * magicLevel * 8)),
+    coinOutput: numeric(options.coinOutput, Math.round(COIN_OUTPUT_BY_CATEGORY[category] * area * (1 - magicLevel * 0.2))),
+    magicOutput: numeric(options.magicOutput, Math.round(MAGIC_OUTPUT_BY_CATEGORY[category] * area * magicLevel)),
+    concealment: numeric(options.concealment, CONCEALMENT_BY_CATEGORY[category] * (1 - magicLevel * 0.8)),
+    activity: numeric(options.activity, 0.2 + magicLevel * 0.8),
+    visibility: numeric(options.visibility, getProminence(building)),
+    jobs: numeric(options.jobs, Math.round(JOBS_BY_CATEGORY[category] * area)),
+    exposure: numeric(options.exposure, numeric(building?.exposure ?? building?.attributes?.exposure, 0)),
+    status: options.status ?? building?.status ?? "active"
+  };
+  return normalizeGameplayBuilding(raw);
+}
+
+export function isSealedMetadata(metadata) {
+  return metadata?.status === "sealed" || metadata?.exposure >= 100;
+}
