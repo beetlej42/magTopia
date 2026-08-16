@@ -422,9 +422,19 @@ test("Agent strategy API settles assignments through the authoritative simulatio
       method: "POST",
       url: `/api/v1/cities/${city.id}/strategy/assignments`,
       headers: { "idempotency-key": "dispatch-1" },
-      payload: { expected_city_version: before.city_version, assignments: [{ incident_id: "incident-1", arcane_officer_id: "officer-vesper" }] }
+      payload: { expected_city_version: before.city_version, assignments: [{ incident_id: "incident-1", arcane_officer_id: "officer-vesper", rationale: "matched investigation specialty" }] }
     }), 200);
     assert.equal(assigned.status, "accepted");
+    assert.equal(assigned.city_version_after, assigned.city_version_before + 1);
+
+    const staleDispatch = await app.inject(auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/strategy/assignments`,
+      headers: { "idempotency-key": "dispatch-stale" },
+      payload: { expected_city_version: before.city_version, assignments: [{ incident_id: "incident-1", arcane_officer_id: "officer-vesper", rationale: "stale plan" }] }
+    }));
+    assert.equal(staleDispatch.statusCode, 409);
+    assert.equal(staleDispatch.json().code, "CITY_VERSION_CONFLICT");
 
     const injected = await app.inject(auth(agent, {
       method: "POST",
@@ -443,6 +453,7 @@ test("Agent strategy API settles assignments through the authoritative simulatio
     }), 200);
     assert.equal(settled.status, "resolved");
     assert.equal(settled.facts.assignments.length, 1);
+    assert.equal(settled.facts.assignments[0].rationale, "matched investigation specialty");
     assert.equal(settled.facts.rolls.length, 1);
     const roll = settled.facts.rolls[0];
     assert.ok(roll.rawRoll >= 1 && roll.rawRoll <= 20);

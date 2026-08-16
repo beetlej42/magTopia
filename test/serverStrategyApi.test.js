@@ -98,6 +98,7 @@ test("an Agent completes the closed loop: read incidents, dispatch an officer, s
       }
     }), 200);
     assert.equal(assigned.status, "accepted");
+    assert.equal(assigned.city_version_after, assigned.city_version_before + 1, "accepting the plan advances the city version");
     assert.equal(assigned.strategy.pending_assignments.length, 1);
     assert.equal(assigned.strategy.pending_assignments[0].rationale, "matched investigation specialty");
 
@@ -113,6 +114,7 @@ test("an Agent completes the closed loop: read incidents, dispatch an officer, s
     assert.equal(settled.facts.assignments.length, 1);
     assert.equal(settled.facts.assignments[0].incidentId, "incident-1");
     assert.equal(settled.facts.assignments[0].arcaneOfficerId, "officer-vesper");
+    assert.equal(settled.facts.assignments[0].rationale, "matched investigation specialty", "rationale survives settlement into the frozen facts");
     assert.equal(settled.facts.rolls.length, 1);
     const roll = settled.facts.rolls[0];
     assert.ok(roll.rawRoll >= 1 && roll.rawRoll <= 20);
@@ -130,6 +132,7 @@ test("an Agent completes the closed loop: read incidents, dispatch an officer, s
     assert.equal(after.turn_status, "resolved");
     assert.ok(after.last_turn_facts);
     assert.equal(after.last_turn_facts.assignments.length, 1);
+    assert.equal(after.last_turn_facts.assignments[0].rationale, "matched investigation specialty", "rationale stays readable from last_turn_facts after resolve");
     const vesper = after.strategy.arcane_officers.find((officer) => officer.id === "officer-vesper");
     assert.equal(vesper.status, outcome.arcaneOfficerStatus);
   } finally {
@@ -271,13 +274,13 @@ test("a resolved turn is never settled twice, replays return the original respon
     await seedState(repository, owner, city.id, 0);
     const before = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
 
-    await json(app, auth(agent, {
+    const dispatch = await json(app, auth(agent, {
       method: "POST",
       url: `/api/v1/cities/${city.id}/strategy/assignments`,
       headers: { "idempotency-key": "dispatch-1" },
       payload: { expected_city_version: before.city_version, assignments: [{ incident_id: "incident-1", arcane_officer_id: "officer-vesper" }] }
     }), 200);
-    const resolvePayload = { expected_city_version: before.city_version };
+    const resolvePayload = { expected_city_version: dispatch.city_version_after };
     const resolve1 = await json(app, auth(agent, {
       method: "POST",
       url: `/api/v1/cities/${city.id}/strategy/resolve`,
@@ -375,6 +378,41 @@ test("a failed settlement writes no state and a corrected plan can still resolve
   }
 });
 
+test("a stale dispatch plan cannot silently overwrite a newer plan", async () => {
+  const repository = createMemoryRepository(config);
+  const app = await createApp({ repository, config });
+  try {
+    const { city, agent, owner } = await openCity(repository, app);
+    await seedState(repository, owner, city.id, 0);
+    const before = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
+
+    const first = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/strategy/assignments`,
+      headers: { "idempotency-key": "dispatch-a" },
+      payload: { expected_city_version: before.city_version, assignments: [{ incident_id: "incident-1", arcane_officer_id: "officer-vesper", rationale: "first plan" }] }
+    }), 200);
+    assert.equal(first.status, "accepted");
+    assert.equal(first.city_version_after, before.city_version + 1, "the first submission advanced the version");
+
+    const stale = await app.inject(auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/strategy/assignments`,
+      headers: { "idempotency-key": "dispatch-b" },
+      payload: { expected_city_version: before.city_version, assignments: [{ incident_id: "incident-1", arcane_officer_id: "officer-milo", rationale: "stale second plan" }] }
+    }));
+    assert.equal(stale.statusCode, 409);
+    assert.equal(stale.json().code, "CITY_VERSION_CONFLICT");
+
+    const after = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
+    assert.equal(after.strategy.pending_assignments.length, 1, "the first plan is still the pending plan");
+    assert.equal(after.strategy.pending_assignments[0].arcane_officer_id, "officer-vesper", "the stale plan was not applied");
+    assert.equal(after.city_version, before.city_version + 1, "the rejected stale write left no version behind");
+  } finally {
+    await app.close();
+  }
+});
+
 test("an Agent can finish the strategy phase without dispatching anyone", async () => {
   const repository = createMemoryRepository(config);
   const app = await createApp({ repository, config });
@@ -398,35 +436,44 @@ test("an Agent can finish the strategy phase without dispatching anyone", async 
   }
 });
 
-test("resolve request bodies cannot inject balance parameters into the settlement", async () => {
+test("resolve request bodies that carry unknown fields or balance parameters are rejected, and a clean resolve keeps the system's dice", async () => {
   const repository = createMemoryRepository(config);
   const app = await createApp({ repository, config });
   try {
     const { city, agent, owner } = await openCity(repository, app);
     await seedState(repository, owner, city.id, 0);
     const before = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
-    await json(app, auth(agent, {
+    const dispatch = await json(app, auth(agent, {
       method: "POST",
       url: `/api/v1/cities/${city.id}/strategy/assignments`,
       headers: { "idempotency-key": "dispatch-1" },
       payload: { expected_city_version: before.city_version, assignments: [{ incident_id: "incident-1", arcane_officer_id: "officer-vesper" }] }
     }), 200);
 
-    const settled = await json(app, auth(agent, {
+    const injected = await app.inject(auth(agent, {
       method: "POST",
       url: `/api/v1/cities/${city.id}/strategy/resolve`,
       headers: { "idempotency-key": "resolve-injected" },
       payload: {
-        expected_city_version: before.city_version,
+        expected_city_version: dispatch.city_version_after,
         options: { modifier: 99, baseCoins: 9999 },
         force: true,
         roll: 20,
         outcome: "critical_success"
       }
+    }));
+    assert.equal(injected.statusCode, 400);
+    assert.equal(injected.json().code, "UNKNOWN_STRATEGY_REQUEST_FIELD");
+
+    const settled = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/strategy/resolve`,
+      headers: { "idempotency-key": "resolve-clean" },
+      payload: { expected_city_version: dispatch.city_version_after }
     }), 200);
     assert.equal(settled.status, "resolved");
     const roll = settled.facts.rolls[0];
-    assert.equal(roll.modifier, 0, "injected modifier is ignored");
+    assert.equal(roll.modifier, 0, "the system owns the modifier");
     assert.ok(roll.rawRoll >= 1 && roll.rawRoll <= 20, "the system rolled its own dice");
     assert.equal(gradeRoll(roll.rawRoll, roll.rawRoll + roll.attributeValue + roll.specialtyBonus, roll.difficulty), roll.outcome, "outcome derives from the real roll");
   } finally {

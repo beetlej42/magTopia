@@ -374,7 +374,7 @@ export function createRepository(database, config) {
         await client.query(
           `INSERT INTO agent_action_log(id, city_id, principal_kind, principal_id, action, reason, result, command_id)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [createId("action"), cityId, principal.kind, principal.id, action, reason ?? null, response.status ?? "completed", response.command_id ?? null]
+          [createId("action"), cityId, principal.kind, principal.id, action ?? endpoint, reason ?? null, response.status ?? "completed", response.command_id ?? null]
         );
         return response;
       });

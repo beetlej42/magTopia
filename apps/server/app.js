@@ -566,6 +566,7 @@ export async function createApp({ repository, config, logger = false }) {
   app.post("/api/v1/cities/:cityId/strategy/assignments", async (request, reply) => {
     const principal = await authenticate(repository, request, "city:build");
     const body = request.body ?? {};
+    assertStrategyTopLevelFields(body, STRATEGY_ASSIGNMENTS_TOP_FIELDS, "Strategy assignments request");
     const assignments = normalizeStrategyAssignments(body.assignments);
     const response = await repository.transactCity({
       principal,
@@ -585,14 +586,14 @@ export async function createApp({ repository, config, logger = false }) {
       if (!validation.ok) {
         return { nextState: null, response: rejectedStrategyResponse("INVALID_ASSIGNMENT", validation.errors.map((entry) => entry.message).join("; "), validation.errors) };
       }
-      const nextState = { ...state, gameplay: { ...gameplay, turnStatus: "strategy", pendingAssignments: assignments } };
+      const nextState = { ...state, version: (state.version ?? 0) + 1, gameplay: { ...gameplay, turnStatus: "strategy", pendingAssignments: assignments } };
       return {
         nextState,
         response: {
           command_id: createId("command"),
           status: "accepted",
           city_version_before: state.version,
-          city_version_after: state.version,
+          city_version_after: (state.version ?? 0) + 1,
           turn: state.turn,
           strategy: strategyPayload(nextState)
         }
@@ -604,6 +605,7 @@ export async function createApp({ repository, config, logger = false }) {
   app.post("/api/v1/cities/:cityId/strategy/resolve", async (request, reply) => {
     const principal = await authenticate(repository, request, "city:build");
     const body = request.body ?? {};
+    assertStrategyTopLevelFields(body, STRATEGY_RESOLVE_TOP_FIELDS, "Strategy resolve request");
     const response = await repository.transactCity({
       principal,
       cityId: request.params.cityId,
@@ -881,6 +883,16 @@ const STRATEGY_ASSIGNMENT_FORBIDDEN_FIELDS = new Set([
 ]);
 
 const STRATEGY_ASSIGNMENT_ALLOWED_FIELDS = new Set(["incident_id", "incidentId", "arcane_officer_id", "arcaneOfficerId", "rationale"]);
+
+const STRATEGY_ASSIGNMENTS_TOP_FIELDS = new Set(["assignments", "expected_city_version", "actor_note"]);
+const STRATEGY_RESOLVE_TOP_FIELDS = new Set(["expected_city_version", "actor_note"]);
+
+function assertStrategyTopLevelFields(body, allowed, label) {
+  const unknown = Object.keys(body ?? {}).filter((key) => !allowed.has(key));
+  if (unknown.length > 0) {
+    throw new ServiceError(400, "UNKNOWN_STRATEGY_REQUEST_FIELD", `${label} contains unsupported field${unknown.length > 1 ? "s" : ""}: ${unknown.join(", ")}; only ${[...allowed].sort().join(", ")} are accepted`);
+  }
+}
 
 function normalizeStrategyAssignments(input) {
   const entries = input == null ? [] : Array.isArray(input) ? input : [input];
