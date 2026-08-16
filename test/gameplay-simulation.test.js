@@ -34,6 +34,46 @@ function context() {
   };
 }
 
+test("legacy city state migrates coins into gameplay without losing balance on first resolve", () => {
+  const legacy = cityWithBuildings([
+    { id: "b1", cellId: "cell-3-3", name: "House", purpose: "residential", magicLevel: 0.2 }
+  ]);
+  delete legacy.gameplay;
+  legacy.resources = { coins: 123, timber: 12, stone: 12 };
+  const { nextState, facts, error } = resolveTurn(legacy, {}, context());
+  assert.equal(error, null);
+  assert.equal(nextState.gameplay.schemaVersion, 1);
+  assert.equal(nextState.gameplay.resources.coins, 123 + 30);
+  assert.equal(nextState.resources.coins, 123 + 30, "legacy coins follow the gameplay balance");
+  assert.equal(legacy.resources.coins, 123, "source state stays untouched");
+});
+
+test("an already resolved turn cannot be resolved twice", () => {
+  const state = cityWithBuildings([
+    { id: "b1", cellId: "cell-3-3", name: "House", purpose: "residential", magicLevel: 0.2 }
+  ]);
+  const first = resolveTurn(state, {}, context());
+  const second = resolveTurn(first.nextState, {}, context());
+  assert.equal(first.facts.turn, 1);
+  assert.equal(second.error.code, "TURN_ALREADY_RESOLVED");
+  assert.equal(second.nextState, first.nextState, "resolving again changes nothing");
+  assert.equal(second.facts, null);
+  assert.equal(second.nextState.gameplay.resources.coins, 99999 + 30, "income was not granted twice");
+});
+
+test("resolving against a mismatched expectedTurn is rejected", () => {
+  const state = cityWithBuildings([
+    { id: "b1", cellId: "cell-3-3", name: "House", purpose: "residential", magicLevel: 0.2 }
+  ]);
+  const mismatched = resolveTurn(state, { expectedTurn: 5 }, context());
+  assert.equal(mismatched.error.code, "TURN_MISMATCH");
+  assert.equal(mismatched.facts, null);
+  assert.equal(mismatched.nextState, state);
+  const matched = resolveTurn(state, { expectedTurn: 0 }, context());
+  assert.equal(matched.error, null);
+  assert.equal(matched.facts.turn, 1);
+});
+
 test("one resolveTurn() settles income exactly once", () => {
   const state = cityWithBuildings([
     { id: "b1", cellId: "cell-3-3", name: "House", purpose: "residential", magicLevel: 0.2 }
@@ -41,8 +81,8 @@ test("one resolveTurn() settles income exactly once", () => {
   const { nextState, facts } = resolveTurn(state, {}, context());
   assert.equal(facts.resourceDelta.coins, 24 + 6);
   assert.equal(facts.resourceDelta.magic, 1);
-  assert.equal(nextState.gameplay.resources.coins, facts.resourceDelta.coins);
-  assert.equal(state.gameplay.resources.coins, 0, "source state stays untouched");
+  assert.equal(nextState.gameplay.resources.coins, 99999 + 30);
+  assert.equal(state.gameplay.resources.coins, 99999, "source state stays untouched");
   assert.equal(facts.turn, 1);
   assert.equal(nextState.turn, 1);
 });

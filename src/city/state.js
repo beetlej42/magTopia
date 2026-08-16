@@ -32,7 +32,7 @@ export function createCityState(worldContract, options = {}) {
       schemaVersion: 1,
       turnStatus: "open",
       turnOpenedAt: null,
-      resources: { coins: 0, magic: 0 },
+      resources: { coins: (options.resources?.coins ?? 600), magic: 0 },
       population: {
         muggles: { current: 0, capacity: 0 },
         wizards: { current: 0, capacity: 0 }

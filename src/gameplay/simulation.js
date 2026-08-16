@@ -114,6 +114,9 @@ export function generateIncidents(state, metadataMap, roller, options = {}) {
 }
 
 export function resolveTurn(state, input = {}, context = {}) {
+  const guardError = guardTurnResolve(state, input);
+  if (guardError) return { nextState: state, facts: null, error: guardError };
+  const gameplay = migrateGameplay(state);
   const options = { ...(input.options ?? {}), ...(context.options ?? {}) };
   const createId = context.createId ?? ((prefix) => `${prefix}-${state.turn}`);
   const now = context.now ?? (() => new Date().toISOString());
@@ -121,11 +124,11 @@ export function resolveTurn(state, input = {}, context = {}) {
   const next = {
     ...state,
     gameplay: {
-      ...(state.gameplay ?? {}),
-      resources: normalizeGameplayResources(state.gameplay?.resources),
-      population: normalizePopulationState(state.gameplay?.population),
-      wardens: { ...(state.gameplay?.wardens ?? {}) },
-      incidents: { ...(state.gameplay?.incidents ?? {}) }
+      ...gameplay,
+      resources: normalizeGameplayResources(gameplay.resources),
+      population: normalizePopulationState(gameplay.population),
+      wardens: { ...(gameplay.wardens ?? {}) },
+      incidents: { ...(gameplay.incidents ?? {}) }
     }
   };
 
@@ -195,5 +198,32 @@ export function resolveTurn(state, input = {}, context = {}) {
   next.turn = state.turn + 1;
   next.version = (next.version ?? 0) + 1;
 
-  return { nextState: next, facts };
+  return { nextState: next, facts, error: null };
+}
+
+function guardTurnResolve(state, input) {
+  const expectedTurn = input.expectedTurn;
+  if (expectedTurn != null && Number(expectedTurn) !== Number(state.turn ?? 0)) {
+    return { code: "TURN_MISMATCH", message: `resolveTurn expected turn ${expectedTurn} but state is at turn ${state.turn}` };
+  }
+  if (state.gameplay?.turnStatus === "resolved" && input.force !== true) {
+    return { code: "TURN_ALREADY_RESOLVED", message: `Turn ${state.turn} is already resolved; refusing to resolve twice` };
+  }
+  return null;
+}
+
+function migrateGameplay(state) {
+  if (state.gameplay?.schemaVersion) return state.gameplay;
+  const legacy = state.resources ?? {};
+  const coins = Number.isFinite(Number(legacy.coins)) ? Number(legacy.coins) : 0;
+  return {
+    schemaVersion: 1,
+    turnStatus: "open",
+    turnOpenedAt: null,
+    resources: { coins, magic: 0 },
+    population: { muggles: { current: 0, capacity: 0 }, wizards: { current: 0, capacity: 0 } },
+    wardens: {},
+    incidents: {},
+    lastTurnFacts: null
+  };
 }
