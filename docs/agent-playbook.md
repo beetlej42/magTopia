@@ -182,6 +182,63 @@ Preview first. For the order request, reuse the same body with the latest `expec
 - `IDEMPOTENCY_KEY_REUSED`: use the original request or a new key for a genuinely new command.
 - `CAPABILITY_*` or `INVALID_CREDENTIAL`: ask the player for a new connection link.
 
+## Strategy phase: incidents and Arcane Officers
+
+High-magic development creates exposure pressure. Each settlement freezes an immutable `TurnFacts` record and leaves unresolved incidents open in the city. Read the current strategy context with:
+
+```http
+GET /api/v1/cities/{city_id}/strategy
+```
+
+The response lists unresolved incidents (`id`, `type`, `attribute`, `difficulty`, `severity`, `status`, `building_id`, `summary`), every Arcane Officer with their attributes, `specialties`, and `status`, the current pending dispatch plan, and `last_turn_facts` from the last settlement.
+
+Submit your dispatch plan (idempotent; each submission replaces the previous plan):
+
+```http
+POST /api/v1/cities/{city_id}/strategy/assignments
+```
+
+```json
+{
+  "expected_city_version": 5,
+  "assignments": [
+    {
+      "incident_id": "incident-...",
+      "arcane_officer_id": "arcaneOfficer-...",
+      "rationale": "matched investigation specialty and relevant training"
+    }
+  ]
+}
+```
+
+The system validates the whole plan before accepting it:
+
+- the incident must exist and be `open`;
+- the officer must exist and be `available`;
+- one incident cannot receive two officers, and one officer cannot be dispatched twice;
+- the plan can be empty (leave some or all incidents for a later turn).
+
+The system owns every number that affects an outcome. An assignment is rejected if it carries `roll`, `raw_roll`, `outcome`, `total`, `modifier`, `specialty_bonus`, `attribute`, `difficulty`, `success_probability`, an officer `profile`, `cost`, `price`, or any `options`/balance parameter. The API never accepts dice results, success probabilities, officer attributes/specialties, hire prices, or system balance inputs.
+
+When the plan is ready, request the single authoritative settlement:
+
+```http
+POST /api/v1/cities/{city_id}/strategy/resolve
+```
+
+```json
+{ "expected_city_version": 5 }
+```
+
+The system settles the pending assignments through the same deterministic simulation that owns all gameplay: it derives the relevant attribute and specialty bonus, rolls, grades the outcome into `critical_success` / `success` / `failure` / `critical_failure`, applies exposure and status changes, and freezes the `TurnFacts`. The response returns:
+
+- `facts.rolls` — `rawRoll`, `attributeValue`, `specialtyBonus`, `modifier`, `difficulty`, `outcome`;
+- `facts.outcomes` — `exposureDelta`, `incidentStatus`, `arcaneOfficerStatus`;
+- `facts.exposureChanges` — per-building exposure movement;
+- `strategy` — the post-settlement incident and officer state.
+
+A resolved turn is never settled twice. Replaying an `Idempotency-Key` returns the original response, and a fresh resolve request after settlement is rejected with `TURN_ALREADY_RESOLVED`. Read `/strategy` again to inspect the frozen facts and the latest incident/officer state. Incidents generated during a settlement belong to the next turn; the turn scheduler that reopens future turns is a separate milestone.
+
 ## Privacy
 
 Cities are private by default. Your credential is scoped to a single city and a limited set of actions. Never attempt to enumerate or access another city.

@@ -307,6 +307,156 @@ export function createOpenApiDocument(baseUrl) {
               }
             }
           }
+        },
+        StrategyIncident: {
+          type: "object",
+          required: ["id", "building_id", "type", "attribute", "difficulty", "severity", "summary", "status"],
+          properties: {
+            id: { type: "string" },
+            building_id: { type: "string" },
+            building_name: { type: ["string", "null"] },
+            type: { enum: ["investigation", "containment", "concealment"] },
+            attribute: { enum: ["investigation", "containment", "concealment"] },
+            difficulty: { type: "integer", minimum: 1, maximum: 10 },
+            severity: { type: "integer", minimum: 1, maximum: 5 },
+            exposure_at_creation: { type: "number" },
+            summary: { type: "string" },
+            status: { enum: ["open", "assigned", "resolved", "failed", "escalated"] },
+            created_at_turn: { type: "integer" }
+          }
+        },
+        ArcaneOfficer: {
+          type: "object",
+          required: ["id", "name", "archetype", "investigation", "containment", "concealment", "specialties", "status"],
+          properties: {
+            id: { type: "string" },
+            name: { type: "string" },
+            archetype: { type: "string" },
+            investigation: { type: "integer", minimum: 0, maximum: 5 },
+            containment: { type: "integer", minimum: 0, maximum: 5 },
+            concealment: { type: "integer", minimum: 0, maximum: 5 },
+            specialties: { type: "array", items: { type: "string" } },
+            status: { enum: ["available", "assigned", "unavailable"] },
+            hired_at_turn: { type: "integer" }
+          }
+        },
+        StrategyAssignment: {
+          type: "object",
+          description: "A dispatch instruction. Only these fields are accepted; the system owns every numeric balance parameter.",
+          required: ["incident_id", "arcane_officer_id"],
+          properties: {
+            incident_id: { type: "string" },
+            arcane_officer_id: { type: "string" },
+            rationale: { type: "string", description: "Optional advisory dispatch reason. Never affects the roll, outcome, or balance." }
+          }
+        },
+        StrategyAssignmentsRequest: {
+          type: "object",
+          required: ["expected_city_version", "assignments"],
+          properties: {
+            expected_city_version: { type: "integer", minimum: 0 },
+            assignments: { type: "array", maxItems: 20, items: { $ref: "#/components/schemas/StrategyAssignment" } },
+            actor_note: { type: "string" }
+          }
+        },
+        StrategyResolveRequest: {
+          type: "object",
+          required: ["expected_city_version"],
+          properties: {
+            expected_city_version: { type: "integer", minimum: 0 },
+            actor_note: { type: "string" }
+          }
+        },
+        TurnFacts: {
+          type: "object",
+          description: "Immutable system-generated settlement record. Agents read rolls, outcomes, and state changes here; they never author them.",
+          required: ["turn", "resourceDelta", "populationDelta", "exposureChanges", "incidents", "assignments", "rolls", "outcomes", "sealedBuildings", "nextRisks"],
+          properties: {
+            turn: { type: "integer" },
+            wallClock: { type: "object", nullable: true, additionalProperties: true },
+            resourceDelta: { type: "object", additionalProperties: true },
+            populationDelta: { type: "object", additionalProperties: true },
+            buildingsStarted: { type: "array", items: { type: "string" } },
+            buildingsCompleted: { type: "array", items: { type: "string" } },
+            exposureChanges: { type: "object", additionalProperties: true },
+            incidents: { type: "array", items: { $ref: "#/components/schemas/StrategyIncident" } },
+            assignments: { type: "array", items: { type: "object", properties: { incidentId: { type: "string" }, arcaneOfficerId: { type: "string" } } } },
+            rolls: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  incidentId: { type: "string" },
+                  arcaneOfficerId: { type: "string" },
+                  attribute: { type: "string" },
+                  rawRoll: { type: "integer", minimum: 1, maximum: 20 },
+                  attributeValue: { type: "integer" },
+                  specialtyBonus: { type: "integer" },
+                  modifier: { type: "integer" },
+                  difficulty: { type: "integer" },
+                  outcome: { enum: ["critical_success", "success", "failure", "critical_failure"] }
+                }
+              }
+            },
+            outcomes: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  incidentId: { type: "string" },
+                  buildingId: { type: "string" },
+                  arcaneOfficerId: { type: "string" },
+                  outcome: { enum: ["critical_success", "success", "failure", "critical_failure"] },
+                  exposureDelta: { type: "number" },
+                  incidentStatus: { type: "string" },
+                  arcaneOfficerStatus: { type: "string" }
+                }
+              }
+            },
+            sealedBuildings: { type: "array", items: { type: "string" } },
+            nextRisks: { type: "array", items: { type: "object", additionalProperties: true } }
+          }
+        },
+        StrategyContext: {
+          type: "object",
+          required: ["city_id", "city_version", "turn", "turn_status", "strategy"],
+          properties: {
+            city_id: { type: "string" },
+            city_version: { type: "integer" },
+            turn: { type: "integer" },
+            turn_status: { type: "string" },
+            turn_opened_at: { type: ["string", "null"] },
+            strategy: {
+              type: "object",
+              required: ["incidents", "arcane_officers", "pending_assignments"],
+              properties: {
+                incidents: { type: "array", items: { $ref: "#/components/schemas/StrategyIncident" } },
+                arcane_officers: { type: "array", items: { $ref: "#/components/schemas/ArcaneOfficer" } },
+                pending_assignments: { type: "array", items: { type: "object", properties: { incident_id: { type: "string" }, arcane_officer_id: { type: "string" }, rationale: { type: ["string", "null"] } } } }
+              }
+            },
+            last_turn_facts: { oneOf: [{ $ref: "#/components/schemas/TurnFacts" }, { type: "null" }] }
+          }
+        },
+        StrategyResolveResponse: {
+          type: "object",
+          required: ["command_id", "status", "city_version_before", "city_version_after", "turn", "facts", "strategy"],
+          properties: {
+            command_id: { type: "string" },
+            status: { const: "resolved" },
+            city_version_before: { type: "integer" },
+            city_version_after: { type: "integer" },
+            turn: { type: "integer" },
+            facts: { $ref: "#/components/schemas/TurnFacts" },
+            strategy: {
+              type: "object",
+              properties: {
+                incidents: { type: "array", items: { $ref: "#/components/schemas/StrategyIncident" } },
+                arcane_officers: { type: "array", items: { $ref: "#/components/schemas/ArcaneOfficer" } },
+                pending_assignments: { type: "array", items: { type: "object" } }
+              }
+            }
+          }
         }
       }
     },
@@ -346,6 +496,9 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}/connection-previews": { post: operation("Preview a building/cell/node road connection", "roads", { $ref: "#/components/schemas/ConnectionRequest" }) },
       "/cities/{city_id}/connections": { post: commandOperation("Submit an idempotent road connection", "roads", { $ref: "#/components/schemas/ConnectionRequest" }) },
       "/cities/{city_id}/time-advances": { post: commandOperation("Advance city time and recover output-based resources", "simulation") },
+      "/cities/{city_id}/strategy": { get: operation("Read the strategy context: open incidents, Arcane Officers, and the last frozen settlement facts", "strategy", null, { $ref: "#/components/schemas/StrategyContext" }) },
+      "/cities/{city_id}/strategy/assignments": { post: commandOperation("Submit the Arcane Officer dispatch plan for the strategy phase", "strategy", { $ref: "#/components/schemas/StrategyAssignmentsRequest" }) },
+      "/cities/{city_id}/strategy/resolve": { post: commandOperation("Request the single authoritative system settlement of the strategy phase", "strategy", { $ref: "#/components/schemas/StrategyResolveRequest" }) },
       "/cities/{city_id}/agent-links": { post: operation("Create a one-time Agent connection link", "credentials", json) },
       "/cities/{city_id}/agent-credentials": { get: operation("List Agent credentials", "credentials") },
       "/cities/{city_id}/agent-credentials/{credential_id}": { delete: operation("Revoke an Agent credential", "credentials") },

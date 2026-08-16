@@ -1,3 +1,4 @@
+import { randomInt } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +20,7 @@ import {
   createBuildingUpgradeDraft,
   reviseBuildingDesign
 } from "../../src/city/building-design.js";
+import { resolveTurn, validateAssignments } from "../../src/gameplay/simulation.js";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PLAYBOOK_PATH = path.resolve(SERVER_DIR, "../../docs/agent-playbook.md");
@@ -546,6 +548,93 @@ export async function createApp({ repository, config, logger = false }) {
     return reply.code(response.status === "rejected" ? 422 : 201).send(response);
   });
 
+  app.get("/api/v1/cities/:cityId/strategy", async (request) => {
+    const principal = await authenticate(repository, request, "city:read");
+    const { row, state } = await repository.getCity(principal, request.params.cityId);
+    const gameplay = state.gameplay ?? {};
+    return {
+      city_id: row.id,
+      city_version: Number(row.city_version),
+      turn: state.turn,
+      turn_status: gameplay.turnStatus ?? "open",
+      turn_opened_at: gameplay.turnOpenedAt ?? null,
+      strategy: strategyPayload(state),
+      last_turn_facts: gameplay.lastTurnFacts ?? null
+    };
+  });
+
+  app.post("/api/v1/cities/:cityId/strategy/assignments", async (request, reply) => {
+    const principal = await authenticate(repository, request, "city:build");
+    const body = request.body ?? {};
+    const assignments = normalizeStrategyAssignments(body.assignments);
+    const response = await repository.transactCity({
+      principal,
+      cityId: request.params.cityId,
+      endpoint: "strategy/assignments",
+      idempotencyKey: request.headers["idempotency-key"],
+      requestBody: body,
+      expectedVersion: expectedCityVersion(request, body),
+      action: "strategy_assignments",
+      reason: body.actor_note ?? "agent_dispatch_plan"
+    }, async ({ state }) => {
+      const gameplay = state.gameplay ?? {};
+      if (CLOSED_TURN_STATUSES.has(gameplay.turnStatus)) {
+        return { nextState: null, response: rejectedStrategyResponse("TURN_ALREADY_RESOLVED", `Turn ${state.turn} is already resolved; the strategy phase is closed`) };
+      }
+      const validation = validateAssignments(state, [], assignments);
+      if (!validation.ok) {
+        return { nextState: null, response: rejectedStrategyResponse("INVALID_ASSIGNMENT", validation.errors.map((entry) => entry.message).join("; "), validation.errors) };
+      }
+      const nextState = { ...state, gameplay: { ...gameplay, turnStatus: "strategy", pendingAssignments: assignments } };
+      return {
+        nextState,
+        response: {
+          command_id: createId("command"),
+          status: "accepted",
+          city_version_before: state.version,
+          city_version_after: state.version,
+          turn: state.turn,
+          strategy: strategyPayload(nextState)
+        }
+      };
+    });
+    return reply.code(response.status === "rejected" ? 422 : 200).send(response);
+  });
+
+  app.post("/api/v1/cities/:cityId/strategy/resolve", async (request, reply) => {
+    const principal = await authenticate(repository, request, "city:build");
+    const body = request.body ?? {};
+    const response = await repository.transactCity({
+      principal,
+      cityId: request.params.cityId,
+      endpoint: "strategy/resolve",
+      idempotencyKey: request.headers["idempotency-key"],
+      requestBody: body,
+      expectedVersion: expectedCityVersion(request, body),
+      action: "strategy_resolve",
+      reason: body.actor_note ?? "request_system_settlement"
+    }, async ({ state }) => {
+      const result = resolveTurn(state, { assignments: state.gameplay?.pendingAssignments ?? [], expectedTurn: state.turn }, strategyContext(config));
+      if (result.error) {
+        return { nextState: null, response: rejectedStrategyResponse(result.error.code, result.error.message, result.error.assignmentErrors ?? null) };
+      }
+      const nextState = { ...result.nextState, gameplay: { ...result.nextState.gameplay, pendingAssignments: [] } };
+      return {
+        nextState,
+        response: {
+          command_id: createId("command"),
+          status: "resolved",
+          city_version_before: state.version,
+          city_version_after: nextState.version,
+          turn: nextState.turn,
+          facts: result.facts,
+          strategy: strategyPayload(nextState)
+        }
+      };
+    });
+    return reply.code(response.status === "rejected" ? 422 : 200).send(response);
+  });
+
   app.post("/api/v1/cities/:cityId/agent-links", async (request, reply) => {
     const principal = await authenticate(repository, request);
     return reply.code(201).send(await repository.createCapability(principal, request.params.cityId, request.body ?? {}));
@@ -780,6 +869,108 @@ function commandEnvelope(commandId, result, resource) {
 
 function rejectedCommand(result) {
   return { nextState: null, response: { command_id: createId("command"), status: "rejected", code: result.code, errors: result.errors, details: { preview: result.preview, plan: result.plan } } };
+}
+
+const CLOSED_TURN_STATUSES = new Set(["resolved", "reported", "closed"]);
+
+const STRATEGY_ASSIGNMENT_FORBIDDEN_FIELDS = new Set([
+  "roll", "raw_roll", "rawRoll", "outcome", "total", "modifier", "specialty_bonus", "specialtyBonus",
+  "attribute", "attribute_value", "attributeValue", "investigation", "containment", "concealment",
+  "specialties", "difficulty", "success_probability", "successProbability", "expected_outcome",
+  "cost", "price", "profile", "options"
+]);
+
+const STRATEGY_ASSIGNMENT_ALLOWED_FIELDS = new Set(["incident_id", "incidentId", "arcane_officer_id", "arcaneOfficerId", "rationale"]);
+
+function normalizeStrategyAssignments(input) {
+  const entries = input == null ? [] : Array.isArray(input) ? input : [input];
+  if (entries.length > 20) throw new ServiceError(400, "INVALID_ASSIGNMENT", "A strategy phase accepts at most 20 assignments");
+  return entries.map((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new ServiceError(400, "INVALID_ASSIGNMENT", `assignments[${index}] must be an object`);
+    }
+    for (const key of Object.keys(entry)) {
+      if (STRATEGY_ASSIGNMENT_FORBIDDEN_FIELDS.has(key)) {
+        throw new ServiceError(400, "ASSIGNMENT_CARRIES_SYSTEM_PARAMETER", `Assignment must not carry ${key}; dice, modifiers, outcomes, officer profiles, and balance parameters are system-controlled`);
+      }
+      if (!STRATEGY_ASSIGNMENT_ALLOWED_FIELDS.has(key)) {
+        throw new ServiceError(400, "INVALID_ASSIGNMENT", `assignments[${index}] contains unsupported field "${key}"; only incident_id, arcane_officer_id, and rationale are accepted`);
+      }
+    }
+    const incidentId = String(entry.incident_id ?? entry.incidentId ?? "");
+    const arcaneOfficerId = String(entry.arcane_officer_id ?? entry.arcaneOfficerId ?? "");
+    if (!incidentId || !arcaneOfficerId) {
+      throw new ServiceError(400, "INVALID_ASSIGNMENT", `assignments[${index}] requires incident_id and arcane_officer_id`);
+    }
+    const rationale = entry.rationale != null ? String(entry.rationale).slice(0, 200) : null;
+    return { incidentId, arcaneOfficerId, rationale };
+  });
+}
+
+function strategyContext(config) {
+  const seed = config?.gameplaySeed != null ? Number(config.gameplaySeed) : randomInt(0, 0xffffffff);
+  return { seed, now: () => new Date().toISOString(), options: {} };
+}
+
+function rejectedStrategyResponse(code, message, assignmentErrors = null) {
+  return {
+    command_id: createId("command"),
+    status: "rejected",
+    code,
+    message,
+    errors: assignmentErrors ?? [{ code, message }]
+  };
+}
+
+function strategyPayload(state) {
+  const gameplay = state.gameplay ?? {};
+  const incidents = Object.values(gameplay.incidents ?? {})
+    .filter((incident) => incident.status !== "resolved")
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)))
+    .map((incident) => strategyIncidentResponse(state, incident));
+  const arcaneOfficers = Object.values(gameplay.arcaneOfficers ?? {})
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)))
+    .map((officer) => strategyOfficerResponse(officer));
+  return {
+    incidents,
+    arcane_officers: arcaneOfficers,
+    pending_assignments: (gameplay.pendingAssignments ?? []).map((entry) => ({
+      incident_id: entry.incidentId,
+      arcane_officer_id: entry.arcaneOfficerId,
+      rationale: entry.rationale ?? null
+    }))
+  };
+}
+
+function strategyIncidentResponse(state, incident) {
+  const building = state.buildings?.[incident.buildingId];
+  return {
+    id: incident.id,
+    building_id: incident.buildingId,
+    building_name: building?.program?.name ?? null,
+    type: incident.type,
+    attribute: incident.attribute,
+    difficulty: incident.difficulty,
+    severity: incident.severity,
+    exposure_at_creation: incident.exposureAtCreation,
+    summary: incident.summary,
+    status: incident.status,
+    created_at_turn: incident.createdAtTurn
+  };
+}
+
+function strategyOfficerResponse(officer) {
+  return {
+    id: officer.id,
+    name: officer.name,
+    archetype: officer.archetype,
+    investigation: officer.investigation,
+    containment: officer.containment,
+    concealment: officer.concealment,
+    specialties: [...(officer.specialties ?? [])],
+    status: officer.status,
+    hired_at_turn: officer.hiredAtTurn
+  };
 }
 
 function engineContext() {

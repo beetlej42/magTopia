@@ -34,7 +34,7 @@ before running the commands above.
 
 ## Agent city service
 
-The Phase 0–3 network service is implemented as a Fastify modular monolith backed by PostgreSQL. It exposes private per-player city saves, one-time Agent connection links, bounded spatial/building queries, idempotent construction and road commands, output-based budget recovery, and asynchronous asset orders.
+The Phase 0–3 network service is implemented as a Fastify modular monolith backed by PostgreSQL. It exposes private per-player city saves, one-time Agent connection links, bounded spatial/building queries, idempotent construction and road commands, output-based budget recovery, asynchronous asset orders, and the Agent strategy API (`GET /cities/{city_id}/strategy`, `POST /strategy/assignments`, `POST /strategy/resolve`) that reads open incidents and Arcane Officers, accepts dispatch plans, and lets the system own the dice, modifiers, and balance while settling each turn.
 
 ```bash
 cp .env.example .env
