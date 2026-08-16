@@ -125,11 +125,11 @@ export function gradeRoll(roll, total, difficulty) {
   return "failure";
 }
 
-export function resolveIncidentRoll({ incident, warden, modifier = 0, roller, options = {} }) {
+export function resolveIncidentRoll({ incident, officer, modifier = 0, roller, options = {} }) {
   const definition = incidentDefinition(incident.type);
   const attribute = definition.attribute;
-  const attributeValue = Number(warden?.[attribute] ?? 0);
-  const specialtyBonus = (warden?.specialties ?? []).includes(incident.type)
+  const attributeValue = Number(officer?.[attribute] ?? 0);
+  const specialtyBonus = (officer?.specialties ?? []).includes(incident.type)
     ? Number(options.specialtyBonus ?? 2)
     : 0;
   const roll = rollDice(roller, 20);
@@ -143,42 +143,45 @@ export function resolveIncidentRoll({ incident, warden, modifier = 0, roller, op
 export function validateAssignments(state, incidents, assignments = []) {
   if (!Array.isArray(assignments) || assignments.length === 0) return { ok: true, errors: [] };
   const errors = [];
-  const usedWardens = new Set();
+  const usedOfficers = new Set();
   const usedIncidents = new Set();
   for (const assignment of assignments) {
     const incidentId = String(assignment.incidentId ?? assignment.incident_id ?? "");
-    const wardenId = String(assignment.wardenId ?? assignment.warden_id ?? "");
-    if (!incidentId || !wardenId) {
-      errors.push({ incidentId, wardenId, code: "ASSIGNMENT_INCOMPLETE", message: "Assignment requires both incidentId and wardenId" });
+    const officerId = String(assignment.arcaneOfficerId ?? assignment.arcane_officer_id ?? "");
+    if (!incidentId || !officerId) {
+      errors.push({ incidentId, officerId, code: "ASSIGNMENT_INCOMPLETE", message: "Assignment requires both incidentId and arcaneOfficerId" });
       continue;
     }
     if (assignment.roll != null || assignment.outcome != null || assignment.total != null) {
-      errors.push({ incidentId, wardenId, code: "ASSIGNMENT_CARRIES_OUTCOME", message: "Assignment must not include dice roll or outcome" });
+      errors.push({ incidentId, officerId, code: "ASSIGNMENT_CARRIES_OUTCOME", message: "Assignment must not include dice roll or outcome" });
+    }
+    if (assignment.modifier != null) {
+      errors.push({ incidentId, officerId, code: "ASSIGNMENT_CARRIES_MODIFIER", message: "Assignment must not carry a modifier; modifiers are system-determined" });
     }
     const incident = state.gameplay?.incidents?.[incidentId] ?? incidents.find((entry) => entry.id === incidentId);
     if (!incident) {
-      errors.push({ incidentId, wardenId, code: "INCIDENT_NOT_FOUND", message: `Unknown incident ${incidentId}` });
+      errors.push({ incidentId, officerId, code: "INCIDENT_NOT_FOUND", message: `Unknown incident ${incidentId}` });
       continue;
     }
     if (incident.status !== "open") {
-      errors.push({ incidentId, wardenId, code: "INCIDENT_NOT_OPEN", message: `Incident ${incidentId} is not open for assignment` });
+      errors.push({ incidentId, officerId, code: "INCIDENT_NOT_OPEN", message: `Incident ${incidentId} is not open for assignment` });
     }
     if (usedIncidents.has(incidentId)) {
-      errors.push({ incidentId, wardenId, code: "INCIDENT_ALREADY_ASSIGNED", message: `Incident ${incidentId} is assigned more than once` });
+      errors.push({ incidentId, officerId, code: "INCIDENT_ALREADY_ASSIGNED", message: `Incident ${incidentId} is assigned more than once` });
     }
     usedIncidents.add(incidentId);
-    const warden = state.gameplay?.wardens?.[wardenId];
-    if (!warden) {
-      errors.push({ incidentId, wardenId, code: "WARDEN_NOT_FOUND", message: `Unknown warden ${wardenId}` });
+    const officer = state.gameplay?.arcaneOfficers?.[officerId];
+    if (!officer) {
+      errors.push({ incidentId, officerId, code: "ARCANE_OFFICER_NOT_FOUND", message: `Unknown arcane officer ${officerId}` });
       continue;
     }
-    if (warden.status !== "available") {
-      errors.push({ incidentId, wardenId, code: "WARDEN_UNAVAILABLE", message: `Warden ${wardenId} is not available` });
+    if (officer.status !== "available") {
+      errors.push({ incidentId, officerId, code: "ARCANE_OFFICER_UNAVAILABLE", message: `Arcane officer ${officerId} is not available` });
     }
-    if (usedWardens.has(wardenId)) {
-      errors.push({ incidentId, wardenId, code: "WARDEN_ALREADY_ASSIGNED", message: `Warden ${wardenId} is assigned to more than one incident` });
+    if (usedOfficers.has(officerId)) {
+      errors.push({ incidentId, officerId, code: "ARCANE_OFFICER_ALREADY_ASSIGNED", message: `Arcane officer ${officerId} is assigned to more than one incident` });
     }
-    usedWardens.add(wardenId);
+    usedOfficers.add(officerId);
   }
   return { ok: errors.length === 0, errors };
 }
@@ -188,28 +191,28 @@ export function settleAssignments(state, incidents, assignments = [], roller, op
   const outcomes = [];
   const normalized = [];
   if (!Array.isArray(assignments)) return { assignments: normalized, rolls, outcomes };
+  const modifier = Number(options.modifier ?? 0);
   for (const assignment of assignments) {
     const incidentId = String(assignment.incidentId ?? assignment.incident_id ?? "");
-    const wardenId = String(assignment.wardenId ?? assignment.warden_id ?? "");
+    const officerId = String(assignment.arcaneOfficerId ?? assignment.arcane_officer_id ?? "");
     const incident = state.gameplay?.incidents?.[incidentId] ?? incidents.find((entry) => entry.id === incidentId);
-    const warden = state.gameplay?.wardens?.[wardenId];
-    if (!incident || !warden) continue;
-    const modifier = Number(assignment.modifier ?? 0);
-    const result = resolveIncidentRoll({ incident, warden, modifier, roller, options });
+    const officer = state.gameplay?.arcaneOfficers?.[officerId];
+    if (!incident || !officer) continue;
+    const result = resolveIncidentRoll({ incident, officer, modifier, roller, options });
     const outcome = applyOutcome(result.outcome, options);
-    normalized.push({ incidentId, wardenId, modifier });
-    rolls.push(normalizeRollRecord({ ...result, incidentId, wardenId }));
+    normalized.push({ incidentId, arcaneOfficerId: officerId });
+    rolls.push(normalizeRollRecord({ ...result, incidentId, arcaneOfficerId: officerId }));
     outcomes.push({
       incidentId,
       buildingId: incident.buildingId,
-      wardenId,
+      arcaneOfficerId: officerId,
       outcome: result.outcome,
       exposureDelta: outcome.exposureDelta,
       incidentStatus: outcome.incidentStatus,
-      wardenStatus: outcome.wardenStatus
+      arcaneOfficerStatus: outcome.arcaneOfficerStatus
     });
     if (state.gameplay?.incidents?.[incidentId]) state.gameplay.incidents[incidentId] = { ...incident, status: outcome.incidentStatus };
-    if (state.gameplay?.wardens?.[wardenId]) state.gameplay.wardens[wardenId] = { ...warden, status: outcome.wardenStatus };
+    if (state.gameplay?.arcaneOfficers?.[officerId]) state.gameplay.arcaneOfficers[officerId] = { ...officer, status: outcome.arcaneOfficerStatus };
   }
   return { assignments: normalized, rolls, outcomes };
 }
@@ -220,28 +223,28 @@ function applyOutcome(outcome, options = {}) {
       return {
         exposureDelta: -Number(options.criticalSuccessExposure ?? 5),
         incidentStatus: "resolved",
-        wardenStatus: "available"
+        arcaneOfficerStatus: "available"
       };
     case "success":
       return {
         exposureDelta: -Number(options.successExposure ?? 2),
         incidentStatus: "resolved",
-        wardenStatus: "available"
+        arcaneOfficerStatus: "available"
       };
     case "failure":
       return {
         exposureDelta: Number(options.failureExposure ?? 1),
         incidentStatus: "open",
-        wardenStatus: "available"
+        arcaneOfficerStatus: "available"
       };
     case "critical_failure":
       return {
         exposureDelta: Number(options.criticalFailureExposure ?? 3),
         incidentStatus: "escalated",
-        wardenStatus: "unavailable"
+        arcaneOfficerStatus: "unavailable"
       };
     default:
-      return { exposureDelta: 0, incidentStatus: "open", wardenStatus: "available" };
+      return { exposureDelta: 0, incidentStatus: "open", arcaneOfficerStatus: "available" };
   }
 }
 
@@ -259,7 +262,7 @@ export function resolveTurn(state, input = {}, context = {}) {
       ...gameplay,
       resources: normalizeGameplayResources(gameplay.resources),
       population: normalizePopulationState(gameplay.population),
-      wardens: { ...(gameplay.wardens ?? {}) },
+      arcaneOfficers: { ...(gameplay.arcaneOfficers ?? {}) },
       incidents: { ...(gameplay.incidents ?? {}) }
     }
   };
@@ -368,7 +371,7 @@ function migrateGameplay(state) {
     turnOpenedAt: null,
     resources: { coins, magic: 0 },
     population: { muggles: { current: 0, capacity: 0 }, wizards: { current: 0, capacity: 0 } },
-    wardens: {},
+    arcaneOfficers: { ...(state.gameplay?.wardens ?? {}) },
     incidents: {},
     lastTurnFacts: null
   };

@@ -2,7 +2,7 @@ export const GAMEPLAY_SCHEMA_VERSION = 1;
 
 export const TURN_STATUSES = Object.freeze(["open", "building", "strategy", "resolved", "reported", "closed"]);
 
-export const WARDEN_STATUSES = Object.freeze(["available", "assigned", "unavailable"]);
+export const ARCANE_OFFICER_STATUSES = Object.freeze(["available", "assigned", "unavailable"]);
 
 export const INCIDENT_TYPES = Object.freeze(["investigation", "containment", "concealment"]);
 
@@ -56,9 +56,9 @@ export function normalizeGameplayBuilding(value = {}) {
   };
 }
 
-export function normalizeVeilWarden(value = {}) {
+export function normalizeArcaneOfficer(value = {}) {
   const status = String(value.status ?? "available");
-  if (!WARDEN_STATUSES.includes(status)) throw new Error(`Unsupported warden status: ${status}`);
+  if (!ARCANE_OFFICER_STATUSES.includes(status)) throw new Error(`Unsupported arcane officer status: ${status}`);
   return {
     id: String(value.id ?? ""),
     name: String(value.name ?? ""),
@@ -93,7 +93,7 @@ export function normalizeExposureIncident(value = {}) {
 export function normalizeRollRecord(value = {}) {
   return {
     incidentId: String(value.incidentId ?? ""),
-    wardenId: String(value.wardenId ?? ""),
+    arcaneOfficerId: String(value.arcaneOfficerId ?? ""),
     attribute: String(value.attribute ?? ""),
     rawRoll: clampNumber(value.rawRoll ?? value.roll, 0, 0, 100),
     attributeValue: clampNumber(value.attributeValue, 0, 0, 5),

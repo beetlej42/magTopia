@@ -37,7 +37,7 @@ export function createCityState(worldContract, options = {}) {
         muggles: { current: 0, capacity: 0 },
         wizards: { current: 0, capacity: 0 }
       },
-      wardens: {},
+      arcaneOfficers: {},
       incidents: {},
       lastTurnFacts: null
     },

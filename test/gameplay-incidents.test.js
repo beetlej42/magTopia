@@ -11,7 +11,7 @@ test("exactly three structured incident types exist", () => {
   }
 });
 
-test("each incident definition maps to the matching warden attribute", () => {
+test("each incident definition maps to the matching arcane officer attribute", () => {
   assert.equal(incidentAttribute("investigation"), "investigation");
   assert.equal(incidentAttribute("containment"), "containment");
   assert.equal(incidentAttribute("concealment"), "concealment");
