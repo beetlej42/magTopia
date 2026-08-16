@@ -6,17 +6,18 @@ import {
   incidentDifficulty,
   incidentProbability,
   incidentSeverity,
-  incidentSummary,
   isSealedExposure,
   neighborhoodConcealment
 } from "./exposure.js";
-import { chance, createRoller, pick } from "./random.js";
+import { incidentAttribute, incidentDefinition } from "./incidents.js";
+import { chance, createRoller, pick, rollDice } from "./random.js";
 import {
   deepFreeze,
   INCIDENT_TYPES,
   normalizeExposureIncident,
   normalizeGameplayResources,
   normalizePopulationState,
+  normalizeRollRecord,
   normalizeTurnFacts,
   SEALED_EXPOSURE_THRESHOLD
 } from "./schema.js";
@@ -98,19 +99,150 @@ export function generateIncidents(state, metadataMap, roller, options = {}) {
     const severity = incidentSeverity(metadata.exposure);
     const difficulty = incidentDifficulty(severity, options);
     const buildingName = state.buildings?.[id]?.program?.name;
+    const definition = incidentDefinition(type);
     incidents.push(normalizeExposureIncident({
       id: options.createId?.("incident") ?? `incident-${id}-${options.turn ?? 0}`,
       buildingId: id,
       type,
+      attribute: incidentAttribute(type),
       difficulty,
       severity,
       exposureAtCreation: metadata.exposure,
-      summary: incidentSummary(type, buildingName),
+      summary: definition.summaryTemplate(buildingName),
       status: "open",
       createdAtTurn: options.turn ?? state.turn
     }));
   }
   return incidents;
+}
+
+export function gradeRoll(roll, total, difficulty) {
+  if (roll === 20) return "critical_success";
+  if (roll === 1) return "critical_failure";
+  if (total >= difficulty + 5) return "critical_success";
+  if (total >= difficulty) return "success";
+  if (total <= difficulty - 5) return "critical_failure";
+  return "failure";
+}
+
+export function resolveIncidentRoll({ incident, warden, modifier = 0, roller, options = {} }) {
+  const definition = incidentDefinition(incident.type);
+  const attribute = definition.attribute;
+  const attributeValue = Number(warden?.[attribute] ?? 0);
+  const specialtyBonus = (warden?.specialties ?? []).includes(incident.type)
+    ? Number(options.specialtyBonus ?? 2)
+    : 0;
+  const roll = rollDice(roller, 20);
+  const difficulty = Number(incident.difficulty ?? 3);
+  const modifierValue = Number(modifier ?? 0);
+  const total = roll + attributeValue + specialtyBonus + modifierValue;
+  const outcome = gradeRoll(roll, total, difficulty);
+  return { roll, total, attribute, attributeValue, specialtyBonus, modifier: modifierValue, difficulty, outcome };
+}
+
+export function validateAssignments(state, incidents, assignments = []) {
+  if (!Array.isArray(assignments) || assignments.length === 0) return { ok: true, errors: [] };
+  const errors = [];
+  const usedWardens = new Set();
+  const usedIncidents = new Set();
+  for (const assignment of assignments) {
+    const incidentId = String(assignment.incidentId ?? assignment.incident_id ?? "");
+    const wardenId = String(assignment.wardenId ?? assignment.warden_id ?? "");
+    if (!incidentId || !wardenId) {
+      errors.push({ incidentId, wardenId, code: "ASSIGNMENT_INCOMPLETE", message: "Assignment requires both incidentId and wardenId" });
+      continue;
+    }
+    if (assignment.roll != null || assignment.outcome != null || assignment.total != null) {
+      errors.push({ incidentId, wardenId, code: "ASSIGNMENT_CARRIES_OUTCOME", message: "Assignment must not include dice roll or outcome" });
+    }
+    const incident = state.gameplay?.incidents?.[incidentId] ?? incidents.find((entry) => entry.id === incidentId);
+    if (!incident) {
+      errors.push({ incidentId, wardenId, code: "INCIDENT_NOT_FOUND", message: `Unknown incident ${incidentId}` });
+      continue;
+    }
+    if (incident.status !== "open") {
+      errors.push({ incidentId, wardenId, code: "INCIDENT_NOT_OPEN", message: `Incident ${incidentId} is not open for assignment` });
+    }
+    if (usedIncidents.has(incidentId)) {
+      errors.push({ incidentId, wardenId, code: "INCIDENT_ALREADY_ASSIGNED", message: `Incident ${incidentId} is assigned more than once` });
+    }
+    usedIncidents.add(incidentId);
+    const warden = state.gameplay?.wardens?.[wardenId];
+    if (!warden) {
+      errors.push({ incidentId, wardenId, code: "WARDEN_NOT_FOUND", message: `Unknown warden ${wardenId}` });
+      continue;
+    }
+    if (warden.status !== "available") {
+      errors.push({ incidentId, wardenId, code: "WARDEN_UNAVAILABLE", message: `Warden ${wardenId} is not available` });
+    }
+    if (usedWardens.has(wardenId)) {
+      errors.push({ incidentId, wardenId, code: "WARDEN_ALREADY_ASSIGNED", message: `Warden ${wardenId} is assigned to more than one incident` });
+    }
+    usedWardens.add(wardenId);
+  }
+  return { ok: errors.length === 0, errors };
+}
+
+export function settleAssignments(state, incidents, assignments = [], roller, options = {}) {
+  const rolls = [];
+  const outcomes = [];
+  const normalized = [];
+  if (!Array.isArray(assignments)) return { assignments: normalized, rolls, outcomes };
+  for (const assignment of assignments) {
+    const incidentId = String(assignment.incidentId ?? assignment.incident_id ?? "");
+    const wardenId = String(assignment.wardenId ?? assignment.warden_id ?? "");
+    const incident = state.gameplay?.incidents?.[incidentId] ?? incidents.find((entry) => entry.id === incidentId);
+    const warden = state.gameplay?.wardens?.[wardenId];
+    if (!incident || !warden) continue;
+    const modifier = Number(assignment.modifier ?? 0);
+    const result = resolveIncidentRoll({ incident, warden, modifier, roller, options });
+    const outcome = applyOutcome(result.outcome, options);
+    normalized.push({ incidentId, wardenId, modifier });
+    rolls.push(normalizeRollRecord({ ...result, incidentId, wardenId }));
+    outcomes.push({
+      incidentId,
+      buildingId: incident.buildingId,
+      wardenId,
+      outcome: result.outcome,
+      exposureDelta: outcome.exposureDelta,
+      incidentStatus: outcome.incidentStatus,
+      wardenStatus: outcome.wardenStatus
+    });
+    if (state.gameplay?.incidents?.[incidentId]) state.gameplay.incidents[incidentId] = { ...incident, status: outcome.incidentStatus };
+    if (state.gameplay?.wardens?.[wardenId]) state.gameplay.wardens[wardenId] = { ...warden, status: outcome.wardenStatus };
+  }
+  return { assignments: normalized, rolls, outcomes };
+}
+
+function applyOutcome(outcome, options = {}) {
+  switch (outcome) {
+    case "critical_success":
+      return {
+        exposureDelta: -Number(options.criticalSuccessExposure ?? 5),
+        incidentStatus: "resolved",
+        wardenStatus: "available"
+      };
+    case "success":
+      return {
+        exposureDelta: -Number(options.successExposure ?? 2),
+        incidentStatus: "resolved",
+        wardenStatus: "available"
+      };
+    case "failure":
+      return {
+        exposureDelta: Number(options.failureExposure ?? 1),
+        incidentStatus: "open",
+        wardenStatus: "available"
+      };
+    case "critical_failure":
+      return {
+        exposureDelta: Number(options.criticalFailureExposure ?? 3),
+        incidentStatus: "escalated",
+        wardenStatus: "unavailable"
+      };
+    default:
+      return { exposureDelta: 0, incidentStatus: "open", wardenStatus: "available" };
+  }
 }
 
 export function resolveTurn(state, input = {}, context = {}) {
@@ -148,6 +280,20 @@ export function resolveTurn(state, input = {}, context = {}) {
   });
   for (const incident of incidents) next.gameplay.incidents[incident.id] = incident;
 
+  const assignmentValidation = validateAssignments(next, incidents, input.assignments);
+  if (!assignmentValidation.ok) {
+    return { nextState: state, facts: null, error: { code: "INVALID_ASSIGNMENT", message: assignmentValidation.errors.map((entry) => entry.message).join("; "), assignmentErrors: assignmentValidation.errors } };
+  }
+  const assignmentSettlement = settleAssignments(next, incidents, input.assignments, roller, options);
+  for (const outcome of assignmentSettlement.outcomes) {
+    const change = exposureChanges[outcome.buildingId];
+    if (change) {
+      change.to = applyExposureChange(change.to, outcome.exposureDelta);
+      change.delta = change.to - change.from;
+      change.sealed = isSealedExposure(change.to);
+    }
+  }
+
   const sealedBuildings = Object.entries(exposureChanges)
     .filter(([, change]) => change.sealed)
     .map(([id]) => id);
@@ -183,10 +329,10 @@ export function resolveTurn(state, input = {}, context = {}) {
     buildingsStarted: [...(input.buildingsStarted ?? [])],
     buildingsCompleted: [...(input.buildingsCompleted ?? [])],
     exposureChanges,
-    incidents,
-    assignments: [...(input.assignments ?? [])].map((entry) => ({ ...entry })),
-    rolls: [],
-    outcomes: [],
+    incidents: incidents.map((incident) => next.gameplay.incidents[incident.id] ?? incident),
+    assignments: assignmentSettlement.assignments,
+    rolls: assignmentSettlement.rolls,
+    outcomes: assignmentSettlement.outcomes,
     sealedBuildings,
     nextRisks
   });
