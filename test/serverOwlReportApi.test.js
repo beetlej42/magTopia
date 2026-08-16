@@ -651,6 +651,90 @@ test("validateOwlReport is a pure function and normalization fills defaults dete
   assert.ok(importance.errors.some((entry) => entry.code === "UNSUPPORTED_IMPORTANCE"));
 });
 
+test("a later change to an incident never rewrites an earlier turn's ReportContext", async () => {
+  const repository = createMemoryRepository(config);
+  const app = await createApp({ repository, config });
+  try {
+    const { city, agent, owner } = await openCity(repository, app);
+    await seedState(repository, owner, city.id, 0);
+    const before = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
+    await dispatchAndResolve(app, agent, city.id, before);
+
+    const turnOne = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/report-context?turn=1` }), 200);
+    const frozenIncident = turnOne.incidents.find((entry) => entry.id === "incident-1");
+    assert.ok(frozenIncident, "the dispatched incident is snapshotted into the frozen facts");
+    assert.equal(frozenIncident.status, "resolved", "the frozen snapshot records the settlement-time status");
+    assert.equal(frozenIncident.difficulty, 3);
+    assert.equal(frozenIncident.summary, "Unresolved magical anomaly reported near Lantern Tower; origin requires investigation.");
+    const frozenDigest = turnOne.factsDigest;
+
+    // The live city keeps evolving: the same incident escalates, changes
+    // difficulty, and gains a different summary after turn 1.
+    const current = await repository.getCity(owner, city.id);
+    await repository.transactCity({
+      principal: owner,
+      cityId: city.id,
+      endpoint: "test/drift-incident",
+      idempotencyKey: "drift-1",
+      requestBody: {},
+      expectedVersion: current.state.version
+    }, async ({ state }) => {
+      state.gameplay.incidents["incident-1"] = {
+        ...state.gameplay.incidents["incident-1"],
+        status: "escalated",
+        difficulty: 9,
+        summary: "A completely different, escalated story."
+      };
+      return { nextState: state, response: { drifted: true } };
+    });
+
+    const reread = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/report-context?turn=1` }), 200);
+    assert.equal(reread.factsDigest, frozenDigest, "the facts digest is unchanged after the live incident drifted");
+    const rereadIncident = reread.incidents.find((entry) => entry.id === "incident-1");
+    assert.deepEqual(rereadIncident, frozenIncident, "turn 1's incident content is byte-identical after the city moved on");
+  } finally {
+    await app.close();
+  }
+});
+
+test("system-looking extra fields inside every newspaper section are rejected", async () => {
+  const repository = createMemoryRepository(config);
+  const app = await createApp({ repository, config });
+  try {
+    const { city, agent, owner } = await openCity(repository, app);
+    await seedState(repository, owner, city.id, 0);
+    const before = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
+    await dispatchAndResolve(app, agent, city.id, before);
+    const context = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/report-context` }), 200);
+    const base = sampleReport(context);
+
+    const cases = [
+      { key: "masthead", mutate: (r) => ({ ...r, masthead: { title: "Herald", roll: 20, outcome: "success" } }) },
+      { key: "article", mutate: (r) => ({ ...r, articles: [{ id: "a1", headline: "H", body: "B", roll: 20, outcome: "critical_success", resourceDelta: { coins: 9 } }] }) },
+      { key: "brief", mutate: (r) => ({ ...r, briefs: [{ id: "b1", text: "T", exposure_delta: -5, modifier: 3 }] }) },
+      { key: "actionbox", mutate: (r) => ({ ...r, actionBox: [{ id: "ab1", incidentRef: "fact-incident-incident-1", factRefs: [], modifier: 99, difficulty: 3, settled_by: "deadline" }] }) },
+      { key: "tomorrow", mutate: (r) => ({ ...r, tomorrowWatch: [{ id: "t1", text: "watch", settled_by: "agent", raw_roll: 16 }] }) }
+    ];
+    for (const { key, mutate } of cases) {
+      const response = await app.inject(auth(agent, {
+        method: "POST",
+        url: `/api/v1/cities/${city.id}/reports`,
+        headers: { "idempotency-key": `nested-forge-${key}` },
+        payload: { turn: 1, facts_digest: context.factsDigest, report: mutate(structuredClone(base)) }
+      }));
+      assert.equal(response.statusCode, 422, key);
+      assert.equal(response.json().code, "INVALID_OWL_REPORT", key);
+      const codes = (response.json().details?.errors ?? []).map((entry) => entry.code);
+      assert.ok(codes.includes("UNKNOWN_REPORT_FIELD"), `${key} surfaced unknown-field rejection: ${codes.join(",")}`);
+    }
+
+    const history = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/reports` }), 200);
+    assert.equal(history.data.length, 0, "no forged report was stored");
+  } finally {
+    await app.close();
+  }
+});
+
 function fakeClock(start = "2026-08-01T00:00:00.000Z") {
   let ms = new Date(start).getTime();
   return {

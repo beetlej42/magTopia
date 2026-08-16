@@ -514,7 +514,7 @@ export function createOpenApiDocument(baseUrl) {
             headline: { type: "string", minLength: 1, maxLength: 240 },
             dek: { type: "string", maxLength: 400 },
             body: { type: "string", minLength: 1, maxLength: 12000 },
-            category: { type: "string", maxLength: 60, description: "Suggested: development, exposure, warden, population, economy, community, other. Any short label is accepted." },
+            category: { type: "string", maxLength: 60, description: "Suggested: development, exposure, arcane_officer, population, economy, community, other. Any short label is accepted." },
             importance: { enum: ["front_page", "secondary", "brief"] },
             relatedFactRefs: { type: "array", maxItems: 40, items: { type: "string" }, description: "Stable fact refs from this turn's ReportContext that this article is based on. Unknown refs are rejected." }
           }

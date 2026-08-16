@@ -432,8 +432,9 @@ nextRisks
 已实现（`src/gameplay/owl-report.js` + `apps/server/migrations/004_owl_reports.sql` + 三个 API 端点）：
 
 - 双层模型：`ReportContext`（SYSTEM 拥有，从 immutable TurnFacts + 只读 city metadata 确定性投影，deep-freeze，无 prose、不重算 gameplay）与 `OwlReport`（Agent 编辑的报纸：masthead / edition / headline / subheadline? / lead / articles[] / briefs[] / actionBox? / tomorrowWatch?）。新闻价值排序、section 选择与叙事完全属于 Agent。
+- 历史事实冻结：`resolveTurn()` 结算时把本回合相关 incident 的完整 snapshot（新生成、已派遣、未处理）固化进 `facts.incidents`，历史 `ReportContext` 只从该 turn 的 frozen facts 投影，绝不回读当前 gameplay state——turn 1 之后 incident 的状态/难度/summary 再变，也不会改写 turn 1 的日报内容与 factsDigest。
 - 稳定事实引用：`fact-incident-<id>`、`fact-roll-<id>`、`fact-outcome-<id>`、`fact-assignment-<id>`、`fact-building-<id>`、`fact-unaddressed-<id>`、`fact-risk-<id>`、`fact-resource-delta`、`fact-population-delta`。article/brief/actionBox/tomorrowWatch 通过 `relatedFactRefs` / `incidentRef` / `factRefs` 声明 provenance；引用不属于该回合 context 的 ref 会被拒绝（`UNKNOWN_FACT_REF` / `UNKNOWN_INCIDENT_REF`）。
-- Agent 不可提交或覆盖任何 system facts：请求体只接受 `turn` / `facts_digest` / `report`，report 顶层字段白名单只允许报纸组成字段；dice / modifier / outcome / delta / incident/officer status / settledBy / timestamp / gameplay state 全部拒绝。
+- Agent 不可提交或覆盖任何 system facts：请求体只接受 `turn` / `facts_digest` / `report`，report 顶层字段白名单只允许报纸组成字段；dice / modifier / outcome / delta / incident/officer status / settledBy / timestamp / gameplay state 全部拒绝，且嵌套结构（masthead / articles / briefs / actionBox / tomorrowWatch）也做 strict allowlist，伪造的 system-looking 字段被 `UNKNOWN_REPORT_FIELD` 明确拒绝而不是静默丢弃。
 - 绑定与防篡改：`GET /report-context?turn=N` 返回该回合冻结 facts 的 `factsDigest`；提交必须携带同一 digest，否则 `FACTS_DIGEST_MISMATCH`；未解析回合 `TURN_NOT_RESOLVED`。
 - canonical：一个 settled turn 只允许一份报告（`owl_reports` 表 `UNIQUE(city_id, turn)` + `REPORT_ALREADY_EXISTS`），相同 Idempotency-Key 重放返回原响应，不产生第二份日报。
 - scheduler 独立：发布报告不写 city row、不推进 city_version，因此绝不阻塞 turn scheduler 开启下一回合。deadline turn 同样可报告，context 明确暴露 `settledBy="deadline"` 与 `unaddressedIncidents`（哪些事件无人处理、风险因此上升），Agent 不得虚构秘法官处理过未派遣事件。

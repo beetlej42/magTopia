@@ -24,13 +24,14 @@ export const OWL_REPORT_SCHEMA_VERSION = 1;
 
 export const ARTICLE_IMPORTANCE = Object.freeze(["front_page", "secondary", "brief"]);
 export const SUGGESTED_ARTICLE_CATEGORIES = Object.freeze([
-  "development", "exposure", "warden", "population", "economy", "community", "other"
+  "development", "exposure", "arcane_officer", "population", "economy", "community", "other"
 ]);
 
 const OWL_REPORT_TOP_LEVEL_FIELDS = Object.freeze(new Set([
   "masthead", "edition", "headline", "subheadline", "lead", "articles", "briefs", "actionBox", "tomorrowWatch"
 ]));
 
+const MASTHEAD_FIELDS = Object.freeze(new Set(["title", "subtitle"]));
 const ARTICLE_FIELDS = Object.freeze(new Set(["id", "headline", "dek", "body", "category", "importance", "relatedFactRefs"]));
 const BRIEF_FIELDS = Object.freeze(new Set(["id", "text", "category", "relatedFactRefs"]));
 const ACTION_BOX_FIELDS = Object.freeze(new Set(["id", "incidentRef", "factRefs", "reason"]));
@@ -102,30 +103,14 @@ export function buildReportContext({ cityId = null, state = {}, facts, options =
     return [id, { factRef: factRef("building", id), buildingId: id, name: buildingName(id), ...change }];
   }));
 
-  // The frozen facts carry only the incidents that were *generated* during
-  // this settlement. Incidents dispatched, handled, or left unaddressed this
-  // turn are referenced by id in facts.assignments/outcomes/unaddressed but
-  // not restated there, so we project their full record from the read-only
-  // city gameplay state. This keeps the editor's source complete without ever
-  // recomputing gameplay or re-authoring a dice outcome.
-  const incidentsById = new Map();
-  for (const incident of facts.incidents ?? []) incidentsById.set(incident.id, { ...incident });
-  const touchedIncidentIds = new Set([
-    ...(facts.assignments ?? []).map((entry) => entry.incidentId),
-    ...(facts.outcomes ?? []).map((entry) => entry.incidentId),
-    ...(facts.unaddressedIncidents ?? []).map((entry) => entry.incidentId)
-  ]);
-  for (const id of touchedIncidentIds) {
-    if (incidentsById.has(id)) continue;
-    const fromState = state?.gameplay?.incidents?.[id];
-    if (fromState) incidentsById.set(id, { ...fromState });
-  }
-  const incidents = [...incidentsById.values()]
-    .sort((a, b) => String(a.id).localeCompare(String(b.id)))
-    .map((incident) => {
-      refs.add(factRef("incident", incident.id));
-      return { ...incident, factRef: factRef("incident", incident.id), buildingName: buildingName(incident.buildingId) };
-    });
+  // Incidents come strictly from the frozen facts. resolveTurn snapshots every
+  // incident relevant to the turn (generated, dispatched, and unaddressed) into
+  // facts.incidents at settlement time, so a historical backfill never reads
+  // live gameplay state and cannot drift as the city changes later.
+  const incidents = (facts.incidents ?? []).map((incident) => {
+    refs.add(factRef("incident", incident.id));
+    return { ...incident, factRef: factRef("incident", incident.id), buildingName: buildingName(incident.buildingId) };
+  });
 
   const unaddressedIncidents = (facts.unaddressedIncidents ?? []).map((entry) => {
     refs.add(factRef("unaddressed", entry.incidentId));
@@ -211,6 +196,7 @@ export function validateOwlReport(input, context) {
   const masthead = input.masthead;
   requireObject(masthead, "masthead", errors);
   if (masthead && typeof masthead === "object" && !Array.isArray(masthead)) {
+    rejectUnknownFields(masthead, MASTHEAD_FIELDS, "masthead", errors);
     requireString(masthead, "title", true, LIMITS.mastheadTitle, errors, "masthead.title");
     requireString(masthead, "subtitle", false, LIMITS.mastheadSubtitle, errors, "masthead.subtitle");
   }
@@ -236,6 +222,7 @@ function validateArticleArray(value, errors, allowedRefs) {
     const path = `articles[${index}]`;
     const valid = requireObject(article, path, errors);
     if (!valid) return;
+    rejectUnknownFields(article, ARTICLE_FIELDS, path, errors);
     if (!isNonEmptyString(article.id)) { errors.push({ code: "ARTICLE_ID_REQUIRED", message: "article.id is required", path }); }
     else if (ids.has(article.id)) { errors.push({ code: "DUPLICATE_ARTICLE_ID", message: `duplicate article id ${article.id}`, path }); }
     else ids.add(article.id);
@@ -259,6 +246,7 @@ function validateBriefArray(value, errors, allowedRefs) {
     const path = `briefs[${index}]`;
     const valid = requireObject(brief, path, errors);
     if (!valid) return;
+    rejectUnknownFields(brief, BRIEF_FIELDS, path, errors);
     if (!isNonEmptyString(brief.id)) { errors.push({ code: "BRIEF_ID_REQUIRED", message: "brief.id is required", path }); }
     else if (ids.has(brief.id)) { errors.push({ code: "DUPLICATE_BRIEF_ID", message: `duplicate brief id ${brief.id}`, path }); }
     else ids.add(brief.id);
@@ -277,6 +265,7 @@ function validateActionBox(value, errors, allowedRefs, incidentRefs) {
     const path = `actionBox[${index}]`;
     const valid = requireObject(entry, path, errors);
     if (!valid) return;
+    rejectUnknownFields(entry, ACTION_BOX_FIELDS, path, errors);
     if (!isNonEmptyString(entry.id)) { errors.push({ code: "ACTION_BOX_ID_REQUIRED", message: "actionBox entry id is required", path }); }
     else if (ids.has(entry.id)) { errors.push({ code: "DUPLICATE_ACTION_BOX_ID", message: `duplicate actionBox id ${entry.id}`, path }); }
     else ids.add(entry.id);
@@ -297,6 +286,7 @@ function validateTomorrowWatch(value, errors, allowedRefs) {
     const path = `tomorrowWatch[${index}]`;
     const valid = requireObject(entry, path, errors);
     if (!valid) return;
+    rejectUnknownFields(entry, TOMORROW_WATCH_FIELDS, path, errors);
     if (!isNonEmptyString(entry.id)) { errors.push({ code: "TOMORROW_WATCH_ID_REQUIRED", message: "tomorrowWatch entry id is required", path }); }
     else if (ids.has(entry.id)) { errors.push({ code: "DUPLICATE_TOMORROW_WATCH_ID", message: `duplicate tomorrowWatch id ${entry.id}`, path }); }
     else ids.add(entry.id);
@@ -320,6 +310,14 @@ function requireObject(value, path, errors) {
   if (value != null && typeof value === "object" && !Array.isArray(value)) return true;
   errors.push({ code: "FIELD_NOT_OBJECT", message: `${path} must be an object`, path });
   return false;
+}
+
+function rejectUnknownFields(object, allowed, path, errors) {
+  for (const key of Object.keys(object)) {
+    if (!allowed.has(key)) {
+      errors.push({ code: "UNKNOWN_REPORT_FIELD", message: `${path} contains unsupported field "${key}"; agents may only author newspaper composition, never system facts`, path: `${path}.${key}` });
+    }
+  }
 }
 
 function requireString(object, key, required, maxLength, errors, path) {

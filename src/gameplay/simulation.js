@@ -355,6 +355,28 @@ export function resolveTurn(state, input = {}, context = {}) {
     .slice(0, Number(options.maxRisks ?? 5))
     .map(([buildingId, change]) => ({ buildingId, exposure: change.to, pressure: change.pressure, concealment: change.concealment }));
 
+  // Freeze a complete incident snapshot into the facts so a later backfilled
+  // report reads exactly what this turn saw. The frozen facts must be the only
+  // source of historical gameplay content: incidents generated this turn, the
+  // ones the Agent dispatched (post-settlement status), and the ones left
+  // unaddressed are all captured here. A later live change to an incident can
+  // never rewrite an earlier turn's ReportContext.
+  const factsIncidentsById = new Map();
+  for (const incident of incidents) {
+    factsIncidentsById.set(incident.id, next.gameplay.incidents[incident.id] ?? incident);
+  }
+  for (const outcome of assignmentSettlement.outcomes) {
+    if (factsIncidentsById.has(outcome.incidentId)) continue;
+    const full = next.gameplay.incidents[outcome.incidentId];
+    if (full) factsIncidentsById.set(outcome.incidentId, full);
+  }
+  for (const entry of unaddressed) {
+    if (factsIncidentsById.has(entry.incidentId)) continue;
+    const full = next.gameplay.incidents[entry.incidentId];
+    if (full) factsIncidentsById.set(entry.incidentId, full);
+  }
+  const factsIncidents = [...factsIncidentsById.values()].sort((a, b) => String(a.id).localeCompare(String(b.id)));
+
   const resolvedAt = now();
   const schedule = normalizeTurnSchedule(options);
   // The next unlock is anchored to the current turn's wall-clock slot, not to
@@ -390,7 +412,7 @@ export function resolveTurn(state, input = {}, context = {}) {
     buildingsStarted: [...(input.buildingsStarted ?? [])],
     buildingsCompleted: [...(input.buildingsCompleted ?? [])],
     exposureChanges,
-    incidents: incidents.map((incident) => next.gameplay.incidents[incident.id] ?? incident),
+    incidents: factsIncidents,
     unaddressedIncidents: unaddressed,
     assignments: assignmentSettlement.assignments,
     rolls: assignmentSettlement.rolls,
