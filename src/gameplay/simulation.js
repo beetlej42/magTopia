@@ -200,7 +200,7 @@ export function settleAssignments(state, incidents, assignments = [], roller, op
     if (!incident || !officer) continue;
     const result = resolveIncidentRoll({ incident, officer, modifier, roller, options });
     const outcome = applyOutcome(result.outcome, options);
-    normalized.push({ incidentId, arcaneOfficerId: officerId });
+    normalized.push({ incidentId, arcaneOfficerId: officerId, ...(assignment.rationale != null ? { rationale: String(assignment.rationale) } : {}) });
     rolls.push(normalizeRollRecord({ ...result, incidentId, arcaneOfficerId: officerId }));
     outcomes.push({
       incidentId,

@@ -357,6 +357,119 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
   }
 });
 
+test("Agent strategy API settles assignments through the authoritative simulation (PostgreSQL)", { skip: !databaseUrl, timeout: 120_000 }, async () => {
+  const config = {
+    publicBaseUrl: "http://127.0.0.1:4183",
+    capabilityTtlMinutes: 30,
+    credentialTtlDays: 90,
+    assetProvider: "fixture",
+    assetOutputRoot: "/tmp/magictown-strategy-integration",
+    workerPollMs: 5,
+    gameplaySeed: 2024
+  };
+  const database = createDatabase(databaseUrl);
+  await migrateDatabase(database);
+  await database.query("TRUNCATE agent_action_log, outbox_jobs, construction_orders, asset_jobs, command_receipts, city_events, agent_credentials, agent_capabilities, city_memberships, cities, asset_definitions, players CASCADE");
+  const repository = createRepository(database, config);
+  await repository.seedBuiltinAssets();
+  const app = await createApp({ repository, config });
+  try {
+    const player = await json(app, { method: "POST", url: "/api/v1/players", payload: { display_name: "Strategy Integration Owner" } }, 201);
+    const city = await json(app, auth(player, { method: "POST", url: "/api/v1/cities", payload: { name: "Strategy Integration City", map_seed: "strategy-integration-test" } }), 201);
+    const link = await json(app, auth(player, { method: "POST", url: `/api/v1/cities/${city.id}/agent-links`, payload: {} }), 201);
+    const connected = await json(app, { method: "GET", url: `/connect/${link.connect_url.split("/").at(-1)}` }, 200);
+    const agent = { access_token: connected.access_token };
+    const owner = await repository.authenticate(player.access_token);
+
+    await repository.transactCity({
+      principal: owner,
+      cityId: city.id,
+      endpoint: "integration/seed-strategy",
+      idempotencyKey: "seed-strategy-1",
+      requestBody: {},
+      expectedVersion: 0
+    }, async ({ state }) => {
+      const cell = Object.values(state.cells).find((entry) => entry.buildable && entry.strictBuildable && !entry.node);
+      state.cells[cell.id].occupancy = "building-1";
+      state.buildings["building-1"] = {
+        id: "building-1",
+        footprintCells: [cell.id],
+        site: { lotId: cell.id, footprint: "1x1" },
+        program: { name: "Lantern Tower", purpose: "residential", intent: { magicLevel: 0.9, prominence: "important" } },
+        status: "completed",
+        exposure: 70
+      };
+      state.gameplay.arcaneOfficers = {
+        "officer-vesper": { id: "officer-vesper", name: "Vesper", archetype: "investigation", investigation: 3, containment: 1, concealment: 2, specialties: ["investigation"], status: "available", hiredAtTurn: 0 }
+      };
+      state.gameplay.incidents = {
+        "incident-1": {
+          id: "incident-1", buildingId: "building-1", type: "investigation", attribute: "investigation",
+          difficulty: 3, severity: 3, exposureAtCreation: 70,
+          summary: "Unresolved magical anomaly near Lantern Tower; origin requires investigation.",
+          status: "open", createdAtTurn: 0
+        }
+      };
+      state.gameplay.turnStatus = "strategy";
+      return { nextState: state, response: { seeded: true } };
+    });
+
+    const before = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
+    assert.equal(before.strategy.incidents.length, 1);
+    assert.equal(before.strategy.arcane_officers.length, 1);
+
+    const assigned = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/strategy/assignments`,
+      headers: { "idempotency-key": "dispatch-1" },
+      payload: { expected_city_version: before.city_version, assignments: [{ incident_id: "incident-1", arcane_officer_id: "officer-vesper", rationale: "matched investigation specialty" }] }
+    }), 200);
+    assert.equal(assigned.status, "accepted");
+    assert.equal(assigned.city_version_after, assigned.city_version_before + 1);
+
+    const staleDispatch = await app.inject(auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/strategy/assignments`,
+      headers: { "idempotency-key": "dispatch-stale" },
+      payload: { expected_city_version: before.city_version, assignments: [{ incident_id: "incident-1", arcane_officer_id: "officer-vesper", rationale: "stale plan" }] }
+    }));
+    assert.equal(staleDispatch.statusCode, 409);
+    assert.equal(staleDispatch.json().code, "CITY_VERSION_CONFLICT");
+
+    const injected = await app.inject(auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/strategy/assignments`,
+      headers: { "idempotency-key": "dispatch-injected" },
+      payload: { expected_city_version: before.city_version, assignments: [{ incident_id: "incident-1", arcane_officer_id: "officer-vesper", roll: 20, outcome: "critical_success" }] }
+    }));
+    assert.equal(injected.statusCode, 400);
+    assert.equal(injected.json().code, "ASSIGNMENT_CARRIES_SYSTEM_PARAMETER");
+
+    const settled = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/strategy/resolve`,
+      headers: { "idempotency-key": "resolve-1" },
+      payload: { expected_city_version: assigned.city_version_after }
+    }), 200);
+    assert.equal(settled.status, "resolved");
+    assert.equal(settled.facts.assignments.length, 1);
+    assert.equal(settled.facts.assignments[0].rationale, "matched investigation specialty");
+    assert.equal(settled.facts.rolls.length, 1);
+    const roll = settled.facts.rolls[0];
+    assert.ok(roll.rawRoll >= 1 && roll.rawRoll <= 20);
+    assert.equal(settled.facts.outcomes[0].outcome, roll.outcome);
+    assert.equal(settled.facts.outcomes[0].incidentStatus, "resolved");
+
+    const after = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
+    assert.equal(after.turn, 1);
+    assert.ok(after.last_turn_facts);
+    assert.equal(after.strategy.incidents.filter((incident) => incident.id === "incident-1").length, 0);
+  } finally {
+    await app.close();
+    await database.close();
+  }
+});
+
 function auth(account, request) {
   return { ...request, headers: { ...(request.headers ?? {}), authorization: `Bearer ${account.access_token}` } };
 }
