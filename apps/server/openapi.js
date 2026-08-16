@@ -461,6 +461,151 @@ export function createOpenApiDocument(baseUrl) {
               }
             }
           }
+        },
+        ReportContext: {
+          type: "object",
+          description: "SYSTEM-owned immutable newspaper source for one resolved turn. A deterministic projection of the frozen TurnFacts plus read-only city metadata. Never contains prose and never recomputes gameplay. The Agent edits an OwlReport from it and references facts through factRefs.",
+          required: ["schemaVersion", "cityId", "turn", "worldDay", "factsDigest", "settlement", "resourceDelta", "populationDelta", "incidents", "factRefs"],
+          properties: {
+            schemaVersion: { type: "integer" },
+            cityId: { type: "string" },
+            turn: { type: "integer" },
+            worldDay: { type: "integer", description: "One resolved turn is one city day; worldDay equals turn." },
+            factsDigest: { type: "string", description: "Stable digest of the frozen TurnFacts; an OwlReport must bind to it." },
+            settlement: {
+              type: "object",
+              properties: {
+                settledBy: { enum: ["agent", "deadline", null] },
+                openedAt: { type: ["string", "null"] },
+                resolvedAt: { type: ["string", "null"] },
+                turnDeadlineAt: { type: ["string", "null"] },
+                nextTurnUnlockAt: { type: ["string", "null"] }
+              }
+            },
+            resourceDelta: { type: "object", properties: { factRef: { type: "string" }, coins: { type: "number" }, magic: { type: "number" } } },
+            populationDelta: { type: "object", additionalProperties: true },
+            buildingsStarted: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, buildingId: { type: "string" }, name: { type: "string" }, archetype: { type: ["string", "null"] }, purpose: { type: ["string", "null"] } } } },
+            buildingsCompleted: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, buildingId: { type: "string" }, name: { type: "string" }, archetype: { type: ["string", "null"] }, purpose: { type: ["string", "null"] } } } },
+            exposureChanges: { type: "object", additionalProperties: { type: "object", properties: { factRef: { type: "string" }, buildingId: { type: "string" }, name: { type: "string" }, from: { type: "number" }, to: { type: "number" }, delta: { type: "number" }, pressure: { type: "number" }, concealment: { type: "number" }, sealed: { type: "boolean" } } } },
+            incidents: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, id: { type: "string" }, buildingId: { type: "string" }, buildingName: { type: "string" }, type: { type: "string" }, difficulty: { type: "number" }, severity: { type: "number" }, summary: { type: "string" }, status: { type: "string" }, createdAtTurn: { type: "number" } } } },
+            unresolvedIncidents: { type: "array", items: { type: "object" } },
+            unaddressedIncidents: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, incidentId: { type: "string" }, buildingId: { type: "string" }, buildingName: { type: "string" }, type: { type: "string" }, severity: { type: "number" }, status: { type: "string" }, createdAtTurn: { type: "number" } } } },
+            assignments: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, incidentId: { type: "string" }, arcaneOfficerId: { type: "string" }, arcaneOfficerName: { type: "string" }, rationale: { type: ["string", "null"] } } } },
+            rolls: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, incidentId: { type: "string" }, arcaneOfficerId: { type: "string" }, arcaneOfficerName: { type: "string" }, attribute: { type: "string" }, rawRoll: { type: "integer" }, attributeValue: { type: "integer" }, specialtyBonus: { type: "integer" }, modifier: { type: "integer" }, difficulty: { type: "integer" }, outcome: { type: "string" } } } },
+            outcomes: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, incidentId: { type: "string" }, buildingId: { type: "string" }, arcaneOfficerId: { type: "string" }, arcaneOfficerName: { type: "string" }, outcome: { type: "string" }, exposureDelta: { type: "number" }, incidentStatus: { type: "string" }, arcaneOfficerStatus: { type: "string" } } } },
+            sealedBuildings: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, buildingId: { type: "string" }, name: { type: "string" } } } },
+            nextRisks: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, buildingId: { type: "string" }, name: { type: "string" }, exposure: { type: "number" }, pressure: { type: "number" }, concealment: { type: "number" } } } },
+            factRefs: { type: "array", items: { type: "string" }, description: "Every stable fact ref valid for this turn's ReportContext." }
+          }
+        },
+        OwlReportMasthead: {
+          type: "object",
+          required: ["title"],
+          properties: {
+            title: { type: "string", minLength: 1, maxLength: 120 },
+            subtitle: { type: "string", maxLength: 200 }
+          }
+        },
+        OwlReportArticle: {
+          type: "object",
+          required: ["id", "headline", "body"],
+          properties: {
+            id: { type: "string", minLength: 1, maxLength: 80, description: "Stable author-chosen id, unique within the edition." },
+            headline: { type: "string", minLength: 1, maxLength: 240 },
+            dek: { type: "string", maxLength: 400 },
+            body: { type: "string", minLength: 1, maxLength: 12000 },
+            category: { type: "string", maxLength: 60, description: "Suggested: development, exposure, warden, population, economy, community, other. Any short label is accepted." },
+            importance: { enum: ["front_page", "secondary", "brief"] },
+            relatedFactRefs: { type: "array", maxItems: 40, items: { type: "string" }, description: "Stable fact refs from this turn's ReportContext that this article is based on. Unknown refs are rejected." }
+          }
+        },
+        OwlReportBrief: {
+          type: "object",
+          required: ["id", "text"],
+          properties: {
+            id: { type: "string", minLength: 1, maxLength: 80 },
+            text: { type: "string", minLength: 1, maxLength: 2000 },
+            category: { type: "string", maxLength: 60 },
+            relatedFactRefs: { type: "array", maxItems: 40, items: { type: "string" } }
+          }
+        },
+        OwlReportActionBoxEntry: {
+          type: "object",
+          description: "A featured Arcane Officer action. The Agent selects which incident to highlight and writes the reason; roll/outcome/consequence are rendered from the referenced system fact refs, never authored.",
+          required: ["id", "incidentRef"],
+          properties: {
+            id: { type: "string", minLength: 1, maxLength: 80 },
+            incidentRef: { type: "string", description: "A fact-incident-* ref from this turn's ReportContext." },
+            factRefs: { type: "array", maxItems: 40, items: { type: "string" }, description: "System facts surfaced by the box, for example fact-roll-* and fact-outcome-* refs." },
+            reason: { type: "string", maxLength: 2000, description: "Authored dispatch explanation. The frozen assignment rationale stays authoritative in the ReportContext." }
+          }
+        },
+        OwlReportTomorrowWatchEntry: {
+          type: "object",
+          required: ["id", "text"],
+          properties: {
+            id: { type: "string", minLength: 1, maxLength: 80 },
+            text: { type: "string", minLength: 1, maxLength: 4000 },
+            factRefs: { type: "array", maxItems: 40, items: { type: "string" }, description: "Unresolved or risky facts this plan responds to, e.g. fact-unaddressed-* or fact-risk-* refs." }
+          }
+        },
+        OwlReport: {
+          type: "object",
+          description: "AGENT-owned newspaper composition edited from a ReportContext. The Agent owns news value and narration; every gameplay value it mentions must be referenced through a fact ref rather than re-authored.",
+          required: ["masthead", "edition", "headline", "lead", "articles", "briefs"],
+          properties: {
+            schemaVersion: { type: "integer" },
+            masthead: { $ref: "#/components/schemas/OwlReportMasthead" },
+            edition: { type: "string", minLength: 1, maxLength: 120 },
+            headline: { type: "string", minLength: 1, maxLength: 240 },
+            subheadline: { type: "string", maxLength: 320 },
+            lead: { type: "string", minLength: 1, maxLength: 4000 },
+            articles: { type: "array", maxItems: 20, items: { $ref: "#/components/schemas/OwlReportArticle" } },
+            briefs: { type: "array", maxItems: 40, items: { $ref: "#/components/schemas/OwlReportBrief" } },
+            actionBox: { type: "array", maxItems: 10, items: { $ref: "#/components/schemas/OwlReportActionBoxEntry" } },
+            tomorrowWatch: { type: "array", maxItems: 10, items: { $ref: "#/components/schemas/OwlReportTomorrowWatchEntry" } }
+          }
+        },
+        OwlReportSubmitRequest: {
+          type: "object",
+          required: ["turn", "facts_digest", "report"],
+          properties: {
+            turn: { type: "integer", minimum: 1, description: "The resolved turn this edition reports on." },
+            facts_digest: { type: "string", description: "factsDigest returned by GET /report-context for this turn. A stale digest is rejected." },
+            report: { $ref: "#/components/schemas/OwlReport" }
+          }
+        },
+        OwlReportResponse: {
+          type: "object",
+          required: ["report_id", "city_id", "turn", "facts_digest", "status", "edition", "report"],
+          properties: {
+            report_id: { type: "string" },
+            city_id: { type: "string" },
+            turn: { type: "integer" },
+            facts_digest: { type: "string" },
+            status: { const: "published" },
+            edition: { type: "string" },
+            report: { $ref: "#/components/schemas/OwlReport" },
+            created_at: { type: "string" },
+            updated_at: { type: "string" },
+            idempotent_replay: { type: "boolean", description: "true when an identical Idempotency-Key submission replays the original published report." }
+          }
+        },
+        OwlReportSummary: {
+          type: "object",
+          required: ["report_id", "city_id", "turn", "facts_digest", "status", "edition", "headline"],
+          properties: {
+            report_id: { type: "string" },
+            city_id: { type: "string" },
+            turn: { type: "integer" },
+            facts_digest: { type: "string" },
+            status: { const: "published" },
+            edition: { type: "string" },
+            masthead_title: { type: ["string", "null"] },
+            headline: { type: "string" },
+            created_at: { type: "string" },
+            updated_at: { type: "string" }
+          }
         }
       }
     },
@@ -503,6 +648,12 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}/strategy": { get: operation("Read the strategy context: open incidents, Arcane Officers, and the last frozen settlement facts", "strategy", null, { $ref: "#/components/schemas/StrategyContext" }) },
       "/cities/{city_id}/strategy/assignments": { post: commandOperation("Submit the Arcane Officer dispatch plan for the strategy phase", "strategy", { $ref: "#/components/schemas/StrategyAssignmentsRequest" }) },
       "/cities/{city_id}/strategy/resolve": { post: commandOperation("Request the single authoritative system settlement of the strategy phase", "strategy", { $ref: "#/components/schemas/StrategyResolveRequest" }) },
+      "/cities/{city_id}/report-context": { get: operation("Read the immutable SYSTEM newspaper source facts for a resolved turn", "reports", null, { $ref: "#/components/schemas/ReportContext" }) },
+      "/cities/{city_id}/reports": {
+        get: operation("Read the Owl Daily report history for this city", "reports", null, { type: "object", properties: { data: { type: "array", items: { $ref: "#/components/schemas/OwlReportSummary" } } } }),
+        post: commandOperation("Publish the canonical Owl Daily newspaper for a resolved turn", "reports", { $ref: "#/components/schemas/OwlReportSubmitRequest" })
+      },
+      "/cities/{city_id}/reports/{report_id}": { get: operation("Read one published Owl Daily report", "reports", null, { $ref: "#/components/schemas/OwlReportResponse" }) },
       "/cities/{city_id}/agent-links": { post: operation("Create a one-time Agent connection link", "credentials", json) },
       "/cities/{city_id}/agent-credentials": { get: operation("List Agent credentials", "credentials") },
       "/cities/{city_id}/agent-credentials/{credential_id}": { delete: operation("Revoke an Agent credential", "credentials") },

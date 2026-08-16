@@ -427,9 +427,20 @@ nextRisks
 - Agent 无法伪造 `force` / `nextTurnUnlockAt` / `turnDeadlineAt` / scheduler trigger（strategy 请求体白名单只允许 assignments/expected_city_version/actor_note）。
 - 卡牌（PR F）未实现：无卡牌是合法可结束状态。
 
-## PR E — Owl report facts interface
+## PR E — Owl Daily newspaper / narrative interface
 
-验收：Agent 能基于冻结 facts 写日报，且 facts 与叙事严格分离。
+已实现（`src/gameplay/owl-report.js` + `apps/server/migrations/004_owl_reports.sql` + 三个 API 端点）：
+
+- 双层模型：`ReportContext`（SYSTEM 拥有，从 immutable TurnFacts + 只读 city metadata 确定性投影，deep-freeze，无 prose、不重算 gameplay）与 `OwlReport`（Agent 编辑的报纸：masthead / edition / headline / subheadline? / lead / articles[] / briefs[] / actionBox? / tomorrowWatch?）。新闻价值排序、section 选择与叙事完全属于 Agent。
+- 稳定事实引用：`fact-incident-<id>`、`fact-roll-<id>`、`fact-outcome-<id>`、`fact-assignment-<id>`、`fact-building-<id>`、`fact-unaddressed-<id>`、`fact-risk-<id>`、`fact-resource-delta`、`fact-population-delta`。article/brief/actionBox/tomorrowWatch 通过 `relatedFactRefs` / `incidentRef` / `factRefs` 声明 provenance；引用不属于该回合 context 的 ref 会被拒绝（`UNKNOWN_FACT_REF` / `UNKNOWN_INCIDENT_REF`）。
+- Agent 不可提交或覆盖任何 system facts：请求体只接受 `turn` / `facts_digest` / `report`，report 顶层字段白名单只允许报纸组成字段；dice / modifier / outcome / delta / incident/officer status / settledBy / timestamp / gameplay state 全部拒绝。
+- 绑定与防篡改：`GET /report-context?turn=N` 返回该回合冻结 facts 的 `factsDigest`；提交必须携带同一 digest，否则 `FACTS_DIGEST_MISMATCH`；未解析回合 `TURN_NOT_RESOLVED`。
+- canonical：一个 settled turn 只允许一份报告（`owl_reports` 表 `UNIQUE(city_id, turn)` + `REPORT_ALREADY_EXISTS`），相同 Idempotency-Key 重放返回原响应，不产生第二份日报。
+- scheduler 独立：发布报告不写 city row、不推进 city_version，因此绝不阻塞 turn scheduler 开启下一回合。deadline turn 同样可报告，context 明确暴露 `settledBy="deadline"` 与 `unaddressedIncidents`（哪些事件无人处理、风险因此上升），Agent 不得虚构秘法官处理过未派遣事件。
+- 补写：`state.gameplay.turnFacts` 保留最近 200 个已结算回合的冻结 facts，Agent 可在后续任意时刻为较早的 resolved turn 补写日报；重启后报告与 facts binding 仍然成立。
+- 端点：`GET /cities/{city_id}/report-context`、`POST /cities/{city_id}/reports`（Idempotency-Key）、`GET /cities/{city_id}/reports`、`GET /cities/{city_id}/reports/{report_id}`。
+- 测试：`test/serverOwlReportApi.test.js` 覆盖 context 完整性 / 严格来自 frozen facts / rationale-roll-outcome-exposure / deadline + unaddressed / 无法覆盖 system facts / 非法 fact ref 拒绝 / stale turn 拒绝 / 单 canonical 报告 / idempotent replay / report 失败不改 gameplay / report 不阻塞 scheduler / 重启后 binding 仍存在 / OpenAPI 与 playbook 描述。
+- 明确不在本 PR：真实 LLM 调用、自动生成文案、报纸 UI、图片生成、Player cards、Officer XP/rank、新 gameplay mechanics，以及魔法天气 / 小广告 / 流言 / 读者来信 / 社会版等扩展版块（schema 通过白名单 + 校验扩展，未来 PR 只需加入新字段与其校验）。
 
 ## PR F — Player cards
 

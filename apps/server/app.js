@@ -21,6 +21,7 @@ import {
   reviseBuildingDesign
 } from "../../src/city/building-design.js";
 import { resolveTurn, validateAssignments } from "../../src/gameplay/simulation.js";
+import { buildReportContext, factsDigest, normalizeOwlReport, validateOwlReport } from "../../src/gameplay/owl-report.js";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PLAYBOOK_PATH = path.resolve(SERVER_DIR, "../../docs/agent-playbook.md");
@@ -640,6 +641,62 @@ export async function createApp({ repository, config, logger = false, now = () =
     return reply.code(response.status === "rejected" ? 422 : 200).send(response);
   });
 
+  app.get("/api/v1/cities/:cityId/report-context", async (request) => {
+    const principal = await authenticate(repository, request, "city:read");
+    const { row, state } = await repository.getCity(principal, request.params.cityId);
+    const requestedTurn = request.query.turn == null ? null : Number(request.query.turn);
+    if (requestedTurn != null && (!Number.isInteger(requestedTurn) || requestedTurn < 1)) {
+      throw new ServiceError(400, "INVALID_TURN", "turn must be a positive integer");
+    }
+    const turn = requestedTurn ?? state.gameplay?.lastTurnFacts?.turn ?? null;
+    const facts = turn == null ? null : state.gameplay?.turnFacts?.[turn] ?? null;
+    if (!facts) {
+      throw new ServiceError(
+        404,
+        "REPORT_CONTEXT_NOT_FOUND",
+        turn == null ? "No resolved turn has produced a ReportContext yet" : `No resolved turn facts exist for turn ${turn}`
+      );
+    }
+    return buildReportContext({ cityId: row.id, state, facts });
+  });
+
+  app.post("/api/v1/cities/:cityId/reports", async (request, reply) => {
+    const principal = await authenticate(repository, request, "city:build");
+    const body = request.body ?? {};
+    assertReportTopLevelFields(body);
+    const { row, state } = await repository.getCity(principal, request.params.cityId);
+    const turn = Number(body.turn);
+    if (!Number.isInteger(turn) || turn < 1) throw new ServiceError(400, "INVALID_TURN", "turn must be a positive integer");
+    const facts = state.gameplay?.turnFacts?.[turn] ?? null;
+    if (!facts) throw new ServiceError(422, "TURN_NOT_RESOLVED", `Turn ${turn} has no resolved facts; a report requires a resolved turn`);
+    const digest = factsDigest(facts);
+    if (String(body.facts_digest ?? "") !== digest) {
+      throw new ServiceError(422, "FACTS_DIGEST_MISMATCH", "facts_digest does not match the resolved turn facts; re-read the report-context for this turn");
+    }
+    const context = buildReportContext({ cityId: row.id, state, facts });
+    const validation = validateOwlReport(body.report, context);
+    if (!validation.ok) {
+      throw new ServiceError(422, "INVALID_OWL_REPORT", validation.errors.map((entry) => entry.message).join("; "), { errors: validation.errors });
+    }
+    const created = await repository.createOwlReport(
+      principal,
+      request.params.cityId,
+      { turn, factsDigest: digest, report: normalizeOwlReport(body.report) },
+      request.headers["idempotency-key"]
+    );
+    return reply.code(created.idempotent_replay ? 200 : 201).send(created);
+  });
+
+  app.get("/api/v1/cities/:cityId/reports", async (request) => {
+    const principal = await authenticate(repository, request, "city:read");
+    return { data: await repository.listOwlReports(principal, request.params.cityId) };
+  });
+
+  app.get("/api/v1/cities/:cityId/reports/:reportId", async (request) => {
+    const principal = await authenticate(repository, request, "city:read");
+    return repository.getOwlReport(principal, request.params.cityId, request.params.reportId);
+  });
+
   app.post("/api/v1/cities/:cityId/agent-links", async (request, reply) => {
     const principal = await authenticate(repository, request);
     return reply.code(201).send(await repository.createCapability(principal, request.params.cityId, request.body ?? {}));
@@ -877,6 +934,18 @@ function rejectedCommand(result) {
 }
 
 const CLOSED_TURN_STATUSES = new Set(["resolved", "reported", "closed"]);
+
+const REPORT_TOP_LEVEL_FIELDS = new Set(["turn", "facts_digest", "report"]);
+
+function assertReportTopLevelFields(body) {
+  const unknown = Object.keys(body ?? {}).filter((key) => !REPORT_TOP_LEVEL_FIELDS.has(key));
+  if (unknown.length > 0) {
+    throw new ServiceError(400, "UNKNOWN_REPORT_REQUEST_FIELD", `Report request contains unsupported field${unknown.length > 1 ? "s" : ""}: ${unknown.join(", ")}; only turn, facts_digest, and report are accepted`);
+  }
+  if (!body?.report || typeof body.report !== "object" || Array.isArray(body.report)) {
+    throw new ServiceError(400, "REPORT_REQUIRED", "report must be an object");
+  }
+}
 
 const STRATEGY_ASSIGNMENT_FORBIDDEN_FIELDS = new Set([
   "roll", "raw_roll", "rawRoll", "outcome", "total", "modifier", "specialty_bonus", "specialtyBonus",

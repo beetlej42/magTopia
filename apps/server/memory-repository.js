@@ -19,10 +19,11 @@ export function createMemoryRepository(config, options = {}) {
   const designs = new Map();
   const orders = new Map();
   const receipts = new Map();
+  const owlReports = new Map();
   const assets = new Map(getAssetRegistry().map((asset) => [asset.assetId, asset]));
-  hydratePersistentState(storagePath, { players, credentials, capabilities, cities, designs, orders, receipts });
+  hydratePersistentState(storagePath, { players, credentials, capabilities, cities, designs, orders, receipts, owlReports });
 
-  const persist = () => persistState(storagePath, { players, credentials, capabilities, cities, designs, orders, receipts });
+  const persist = () => persistState(storagePath, { players, credentials, capabilities, cities, designs, orders, receipts, owlReports });
 
   const repository = {
     async createPlayer(displayName) {
@@ -278,6 +279,59 @@ export function createMemoryRepository(config, options = {}) {
       }));
     },
 
+    async createOwlReport(principal, cityId, submission, idempotencyKey) {
+      if (!idempotencyKey) throw new ServiceError(400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key header is required");
+      const receiptKey = `${principal.kind}:${principal.id}:owl-reports:${idempotencyKey}`;
+      const requestHash = hashRequest(submission);
+      const prior = receipts.get(receiptKey);
+      if (prior) {
+        if (prior.hash !== requestHash) throw new ServiceError(409, "IDEMPOTENCY_KEY_REUSED", "Idempotency key was already used with a different report");
+        return { ...structuredClone(prior.response), idempotent_replay: true };
+      }
+      await this.getCity(principal, cityId);
+      const existing = [...owlReports.values()].find((entry) => entry.city_id === cityId && entry.turn === submission.turn);
+      if (existing) {
+        if (existing.request_hash === requestHash) {
+          return { ...reportResponse(existing), idempotent_replay: true };
+        }
+        throw new ServiceError(409, "REPORT_ALREADY_EXISTS", `A canonical Owl Report already exists for turn ${submission.turn}`);
+      }
+      const report = submission.report;
+      const entry = {
+        id: createId("report"),
+        city_id: cityId,
+        turn: submission.turn,
+        facts_digest: submission.factsDigest,
+        edition: report.edition,
+        request_hash: requestHash,
+        report_jsonb: report,
+        created_by_principal_kind: principal.kind,
+        created_by_principal_id: principal.id,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      owlReports.set(entry.id, entry);
+      receipts.set(receiptKey, { hash: requestHash, response: structuredClone(reportResponse(entry)) });
+      persist();
+      return reportResponse(entry);
+    },
+
+    async listOwlReports(principal, cityId) {
+      await this.getCity(principal, cityId);
+      return [...owlReports.values()]
+        .filter((entry) => entry.city_id === cityId)
+        .sort((a, b) => Number(b.turn) - Number(a.turn))
+        .slice(0, 100)
+        .map(reportSummary);
+    },
+
+    async getOwlReport(principal, cityId, reportId) {
+      await this.getCity(principal, cityId);
+      const entry = owlReports.get(reportId);
+      if (!entry || entry.city_id !== cityId) throw new ServiceError(404, "REPORT_NOT_FOUND", "Owl Report not found");
+      return reportResponse(entry);
+    },
+
     persistence: { enabled: Boolean(storagePath), storagePath },
 
     async getAssetJob() { throw new ServiceError(404, "ASSET_JOB_NOT_FOUND", "Asset job not found"); }
@@ -314,6 +368,35 @@ function canAccess(principal, row) { return principal?.kind === "agent" ? princi
 function requirePlayer(principal) { if (principal?.kind !== "player") throw new ServiceError(403, "PLAYER_CREDENTIAL_REQUIRED", "This action requires a player credential"); }
 function citySummary(row) { return { id: row.id, name: row.name, visibility: row.visibility, ruleset_version: row.ruleset_version, city_version: Number(row.city_version), turn: row.state_jsonb.turn, resources: row.state_jsonb.resources, counts: { districts: Object.keys(row.state_jsonb.districts ?? {}).length, buildings: Object.keys(row.state_jsonb.buildings ?? {}).length, roads: Object.values(row.state_jsonb.cells).filter((cell) => cell.infrastructure === "road").length, pending_orders: 0 } }; }
 function assetResponse(asset) { return { id: asset.assetId, owner_player_id: null, archetype: asset.archetype, footprint: asset.footprint, district_style: "london_common", tags: asset.tags, status: "validated", source: "builtin", manifest: asset, match: { score: 1, exact: true, differences: [], recommendation: "reuse" } }; }
+function reportResponse(row) {
+  const report = row.report_jsonb;
+  return {
+    report_id: row.id,
+    city_id: row.city_id,
+    turn: Number(row.turn),
+    facts_digest: row.facts_digest,
+    status: "published",
+    edition: report.edition,
+    report,
+    created_at: row.created_at,
+    updated_at: row.updated_at
+  };
+}
+function reportSummary(row) {
+  const report = row.report_jsonb;
+  return {
+    report_id: row.id,
+    city_id: row.city_id,
+    turn: Number(row.turn),
+    facts_digest: row.facts_digest,
+    status: "published",
+    edition: report.edition,
+    masthead_title: report.masthead?.title ?? null,
+    headline: report.headline,
+    created_at: row.created_at,
+    updated_at: row.updated_at
+  };
+}
 
 function hydratePersistentState(storagePath, stores) {
   if (!storagePath || !existsSync(storagePath)) return;
@@ -324,7 +407,7 @@ function hydratePersistentState(storagePath, stores) {
     throw new Error(`Failed to read persistent Agent LAN state at ${storagePath}: ${error.message}`);
   }
   if (snapshot.schemaVersion !== 1) throw new Error(`Unsupported Agent LAN state schema: ${snapshot.schemaVersion}`);
-  for (const name of ["players", "credentials", "cities", "designs", "orders", "receipts"]) {
+  for (const name of ["players", "credentials", "cities", "designs", "orders", "receipts", "owlReports"]) {
     for (const [key, value] of snapshot[name] ?? []) stores[name].set(key, value);
   }
   for (const [key, value] of snapshot.capabilities ?? []) {
@@ -347,7 +430,8 @@ function persistState(storagePath, stores) {
     cities: [...stores.cities],
     designs: [...stores.designs],
     orders: [...stores.orders],
-    receipts: [...stores.receipts]
+    receipts: [...stores.receipts],
+    owlReports: [...stores.owlReports]
   };
   const temporaryPath = `${storagePath}.${process.pid}.tmp`;
   writeFileSync(temporaryPath, `${JSON.stringify(snapshot)}\n`, { mode: 0o600 });

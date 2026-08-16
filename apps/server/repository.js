@@ -455,7 +455,105 @@ export function createRepository(database, config) {
       });
     },
 
+    // Writes the canonical Owl Daily report for a resolved turn. The binding to
+    // city + turn + facts_digest is validated by the caller against the frozen
+    // facts; this method enforces exactly-one-canonical-report per turn and
+    // replays identical idempotency-key submissions. It never touches the city
+    // row, so publishing a report can never block the turn scheduler.
+    async createOwlReport(principal, cityId, submission, idempotencyKey) {
+      if (!idempotencyKey) throw new ServiceError(400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key header is required");
+      const requestHash = hashRequest(submission);
+      return database.transaction(async (client) => {
+        await assertCityAccess(client, principal, cityId, true);
+        const prior = await client.query(
+          `SELECT request_hash, response_jsonb FROM command_receipts
+           WHERE principal_kind = $1 AND principal_id = $2 AND endpoint = 'owl-reports' AND idempotency_key = $3`,
+          [principal.kind, principal.id, idempotencyKey]
+        );
+        if (prior.rowCount) {
+          if (prior.rows[0].request_hash !== requestHash) throw new ServiceError(409, "IDEMPOTENCY_KEY_REUSED", "Idempotency key was already used with a different report");
+          return { ...prior.rows[0].response_jsonb, idempotent_replay: true };
+        }
+        const existing = await client.query(
+          "SELECT * FROM owl_reports WHERE city_id = $1 AND turn = $2",
+          [cityId, submission.turn]
+        );
+        if (existing.rowCount) {
+          if (existing.rows[0].request_hash === requestHash) {
+            return { ...reportResponse(existing.rows[0]), idempotent_replay: true };
+          }
+          throw new ServiceError(409, "REPORT_ALREADY_EXISTS", `A canonical Owl Report already exists for turn ${submission.turn}`);
+        }
+        const id = createId("report");
+        const report = submission.report;
+        await client.query(
+          `INSERT INTO owl_reports(id, city_id, turn, facts_digest, edition, request_hash, report_jsonb, created_by_principal_kind, created_by_principal_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [id, cityId, submission.turn, submission.factsDigest, report.edition, requestHash, JSON.stringify(report), principal.kind, principal.id]
+        );
+        const response = reportResponse({ id, city_id: cityId, turn: submission.turn, facts_digest: submission.factsDigest, report_jsonb: report, created_at: new Date(), updated_at: new Date() });
+        await client.query(
+          `INSERT INTO command_receipts(id, principal_kind, principal_id, endpoint, idempotency_key, request_hash, response_jsonb)
+           VALUES ($1, $2, $3, 'owl-reports', $4, $5, $6)`,
+          [createId("receipt"), principal.kind, principal.id, idempotencyKey, requestHash, JSON.stringify(response)]
+        );
+        await client.query(
+          `INSERT INTO agent_action_log(id, city_id, principal_kind, principal_id, action, reason, result, command_id)
+           VALUES ($1, $2, $3, $4, 'publish_owl_report', $5, 'published', $6)`,
+          [createId("action"), cityId, principal.kind, principal.id, `report-for-turn-${submission.turn}`, id]
+        );
+        return response;
+      });
+    },
+
+    async listOwlReports(principal, cityId) {
+      await this.getCity(principal, cityId);
+      const result = await database.query(
+        "SELECT * FROM owl_reports WHERE city_id = $1 ORDER BY turn DESC LIMIT 100",
+        [cityId]
+      );
+      return result.rows.map(reportSummary);
+    },
+
+    async getOwlReport(principal, cityId, reportId) {
+      await this.getCity(principal, cityId);
+      const result = await database.query("SELECT * FROM owl_reports WHERE id = $1 AND city_id = $2", [reportId, cityId]);
+      if (!result.rowCount) throw new ServiceError(404, "REPORT_NOT_FOUND", "Owl Report not found");
+      return reportResponse(result.rows[0]);
+    },
+
     database
+  };
+}
+
+function reportResponse(row) {
+  const report = row.report_jsonb;
+  return {
+    report_id: row.id,
+    city_id: row.city_id,
+    turn: Number(row.turn),
+    facts_digest: row.facts_digest,
+    status: "published",
+    edition: report.edition,
+    report,
+    created_at: row.created_at,
+    updated_at: row.updated_at
+  };
+}
+
+function reportSummary(row) {
+  const report = row.report_jsonb;
+  return {
+    report_id: row.id,
+    city_id: row.city_id,
+    turn: Number(row.turn),
+    facts_digest: row.facts_digest,
+    status: "published",
+    edition: report.edition,
+    masthead_title: report.masthead?.title ?? null,
+    headline: report.headline,
+    created_at: row.created_at,
+    updated_at: row.updated_at
   };
 }
 

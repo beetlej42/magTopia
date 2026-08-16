@@ -42,6 +42,10 @@ export function createCityState(worldContract, options = {}) {
       },
       arcaneOfficers: {},
       incidents: {},
+      // Bounded per-turn history of the frozen settlement facts. Every resolved
+      // turn keeps its facts here so an Agent can write a backfilled Owl Daily
+      // report for a previously settled turn, not only the most recent one.
+      turnFacts: {},
       lastTurnFacts: null
     },
     economy: { lastIncome: { coins: 0, timber: 0, stone: 0 }, lifetimeIncome: { coins: 0, timber: 0, stone: 0 } },

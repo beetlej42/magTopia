@@ -27,6 +27,24 @@ import {
 export const DEFAULT_BASE_COINS = 24;
 export const DEFAULT_BASE_MAGIC = 0;
 
+// How many resolved turns keep their frozen facts available for backfilled Owl
+// Daily reports. Older turns stop being reportable; gameplay never depends on
+// this history.
+export const MAX_TURN_FACTS_HISTORY = 200;
+
+// Records a freshly frozen settlement into the per-turn history, keeping the
+// most recent MAX_TURN_FACTS_HISTORY entries.
+export function appendTurnFacts(history = {}, facts) {
+  const turn = Number(facts?.turn);
+  if (!Number.isFinite(turn)) return history;
+  const next = { ...history, [turn]: facts };
+  const turns = Object.keys(next).map(Number).sort((a, b) => a - b);
+  if (turns.length > MAX_TURN_FACTS_HISTORY) {
+    for (const stale of turns.slice(0, turns.length - MAX_TURN_FACTS_HISTORY)) delete next[stale];
+  }
+  return next;
+}
+
 function asMap(state, field) {
   return Object.fromEntries(Object.entries(state?.buildings ?? {}).map(([id, building]) => [
     id,
@@ -382,6 +400,7 @@ export function resolveTurn(state, input = {}, context = {}) {
   });
 
   next.gameplay.lastTurnFacts = deepFreeze(facts);
+  next.gameplay.turnFacts = appendTurnFacts(next.gameplay.turnFacts, facts);
   next.gameplay.turnStatus = "resolved";
   next.gameplay.turnOpenedAt = next.gameplay.turnOpenedAt ?? resolvedAt;
   next.gameplay.turnDeadlineAt = next.gameplay.turnDeadlineAt ?? null;
@@ -426,6 +445,7 @@ function migrateGameplay(state) {
       population: { muggles: { current: 0, capacity: 0 }, wizards: { current: 0, capacity: 0 } },
       arcaneOfficers: {},
       incidents: {},
+      turnFacts: {},
       lastTurnFacts: null
     };
   }
@@ -436,5 +456,6 @@ function migrateGameplay(state) {
     migrated.arcaneOfficers = migrated.wardens;
   }
   delete migrated.wardens;
+  if (migrated.turnFacts == null) migrated.turnFacts = {};
   return migrated;
 }
