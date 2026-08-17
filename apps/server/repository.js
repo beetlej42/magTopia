@@ -522,6 +522,29 @@ export function createRepository(database, config) {
       return reportResponse(result.rows[0]);
     },
 
+    // PR G — player-facing report acknowledgement. Remembers which completed
+    // day's Owl Daily the player has dismissed so the dawn presentation never
+    // replays the same report across reloads or devices.
+    async listReportDismissals(principal, cityId) {
+      await this.getCity(principal, cityId);
+      const result = await database.query(
+        "SELECT report_turn, dismissed_at FROM report_dismissals WHERE city_id = $1 AND player_id = $2",
+        [cityId, principal.id]
+      );
+      return Object.fromEntries(result.rows.map((row) => [Number(row.report_turn), row.dismissed_at]));
+    },
+
+    async acknowledgeReportDismissal(principal, cityId, reportTurn) {
+      requirePlayer(principal);
+      await this.getCity(principal, cityId);
+      await database.query(
+        `INSERT INTO report_dismissals(city_id, player_id, report_turn)
+         VALUES ($1, $2, $3) ON CONFLICT (city_id, player_id, report_turn) DO NOTHING`,
+        [cityId, principal.id, Number(reportTurn)]
+      );
+      return { city_id: cityId, player_id: principal.id, report_turn: Number(reportTurn), dismissed: true };
+    },
+
     database
   };
 }
