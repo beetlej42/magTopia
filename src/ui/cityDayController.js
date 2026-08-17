@@ -6,19 +6,28 @@
 // server-derived phase. After a reload it restores from the city-day read model,
 // so an acknowledged report is never replayed and a second card is never
 // offered for the same turn.
+//
+// Path convention: every path is relative to `api.baseUrl` (e.g. `/api/v1`).
+// `api.token` may be a string or a function returning the current token.
 
 import { phaseLightTarget } from "./cityDayExperience.js";
 
-export function createCityDayController({ experience, api, setLight, onPlayerTurnComplete = () => {} }) {
+export function createCityDayController({ experience, api, setLight, placementLayer = null, onPlayerTurnComplete = () => {} }) {
   let syncing = false;
   let cardCatalog = null;
   let activeOffer = null;
+  let placement = null;
 
-  async function fetchJson(path, init = {}) {
+  function pathFor(relative) {
+    const base = String(api.baseUrl ?? "").replace(/\/+$/, "");
+    return `${base}${relative.startsWith("/") ? relative : `/${relative}`}`;
+  }
+
+  async function fetchJson(relative, init = {}) {
     const headers = new Headers(init.headers ?? {});
     const token = typeof api.token === "function" ? api.token() : api.token;
     if (token) headers.set("Authorization", `Bearer ${token}`);
-    const response = await fetch(`${api.baseUrl}${path}`, { ...init, headers, cache: "no-store" });
+    const response = await fetch(pathFor(relative), { ...init, headers, cache: "no-store" });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       const error = new Error(payload.message ?? `${payload.code ?? response.status}`);
@@ -31,7 +40,7 @@ export function createCityDayController({ experience, api, setLight, onPlayerTur
 
   async function ensureCardCatalog() {
     if (cardCatalog) return cardCatalog;
-    const payload = await fetchJson("/api/v1/cards");
+    const payload = await fetchJson("/cards");
     cardCatalog = Object.fromEntries((payload.data ?? []).map((card) => [card.card_id, card]));
     return cardCatalog;
   }
@@ -45,7 +54,7 @@ export function createCityDayController({ experience, api, setLight, onPlayerTur
     if (syncing) return;
     syncing = true;
     try {
-      const day = await fetchJson(`/api/v1/cities/${api.cityId}/city-day`);
+      const day = await fetchJson(`/cities/${api.cityId}/city-day`);
       experience.applyPresentation(day);
       setLight(day.phase);
 
@@ -83,7 +92,7 @@ export function createCityDayController({ experience, api, setLight, onPlayerTur
     let report = null;
     if (day.report.report_id) {
       try {
-        const payload = await fetchJson(`/api/v1/cities/${api.cityId}/reports/${day.report.report_id}`);
+        const payload = await fetchJson(`/cities/${api.cityId}/reports/${day.report.report_id}`);
         report = payload.report ?? null;
       } catch {
         report = null;
@@ -93,10 +102,18 @@ export function createCityDayController({ experience, api, setLight, onPlayerTur
   }
 
   async function openCards() {
-    const payload = await fetchJson(`/api/v1/cities/${api.cityId}/cards/current`);
-    activeOffer = payload.offer;
+    // /cards/current returns { city_version, turn, turn_status, offer, choice }.
+    // The authoritative city_version is top-level, not inside offer. Preserve it
+    // alongside the offer so every selection submits the correct concurrency
+    // guard instead of undefined.
+    const payload = await fetchJson(`/cities/${api.cityId}/cards/current`);
+    activeOffer = {
+      ...payload.offer,
+      city_version: payload.city_version,
+      turn: payload.turn
+    };
     await ensureCardCatalog();
-    experience.presentCards(payload.offer, onCardPick);
+    experience.presentCards(activeOffer, onCardPick);
   }
 
   async function onCardPick(card, offer) {
@@ -108,11 +125,12 @@ export function createCityDayController({ experience, api, setLight, onPlayerTur
   }
 
   async function submitCardSelection(card, offer, decisionMode) {
+    const expectedCityVersion = offer?.city_version ?? offer?.expectedCityVersion;
     try {
-      const payload = await fetchJson(`/api/v1/cities/${api.cityId}/cards/select`, {
+      const payload = await fetchJson(`/cities/${api.cityId}/cards/select`, {
         method: "POST",
         body: JSON.stringify({
-          expected_city_version: offer.city_version,
+          expected_city_version: expectedCityVersion,
           offer_id: offer.offer_id,
           selected_card_id: card.card_id,
           decision_mode: decisionMode
@@ -129,58 +147,78 @@ export function createCityDayController({ experience, api, setLight, onPlayerTur
     } catch (error) {
       experience.showIdleNote(error.message);
       // A version conflict / stale offer: refresh authoritative state.
+      activeOffer = null;
       await sync();
     }
   }
 
+  // ---- Placement mode -------------------------------------------------------
+
   async function openPendingPlacement() {
-    const day = await fetchJson(`/api/v1/cities/${api.cityId}/city-day`);
+    const day = await fetchJson(`/cities/${api.cityId}/city-day`);
     const choice = day.card;
-    const cardsCurrent = await fetchJson(`/api/v1/cities/${api.cityId}/cards/current`);
+    const cardsCurrent = await fetchJson(`/cities/${api.cityId}/cards/current`);
     const placementId = cardsCurrent.choice?.card_effects?.placement?.placement_id ?? null;
     await ensureCardCatalog();
     const card = cardForId(choice.selectedCardId);
     const footprint = card?.structure?.footprint ?? "1x1";
     let candidates = [];
+    let cityVersion = cardsCurrent.city_version;
     try {
-      const payload = await fetchJson(`/api/v1/cities/${api.cityId}/site-searches`, {
+      const payload = await fetchJson(`/cities/${api.cityId}/site-searches`, {
         method: "POST",
-        body: JSON.stringify({ footprint, limit: 24 })
+        body: JSON.stringify({ footprint, limit: 40 })
       });
       candidates = payload.data ?? [];
+      cityVersion = payload.city_version ?? cityVersion;
     } catch {
       candidates = [];
     }
+    placement = { card: card ?? { title: "特殊建筑", card_id: choice.selectedCardId }, cardId: choice.selectedCardId, placementId, cityVersion, footprint };
+    if (placementLayer) {
+      placementLayer.setCandidates(candidates, {
+        radius: placementLayer.radius ?? undefined,
+        cellWorldSize: placementLayer.cellWorldSize ?? undefined
+      });
+    }
     experience.presentPlacementMode({
-      card: card ?? { title: "特殊建筑", card_id: choice.selectedCardId },
+      card: placement.card,
       candidates,
-      onPlace: (candidate) => placeCard(card, choice.selectedCardId, placementId, candidate),
-      onCancel: () => closeChoiceLayers()
+      onPlace: (candidate) => placeCard(placement, candidate),
+      onPickCandidate: (candidate) => placementLayer?.select(candidate),
+      onCancel: () => closePlacement()
     });
   }
 
-  async function placeCard(card, cardId, placementId, candidate) {
-    const day = await fetchJson(`/api/v1/cities/${api.cityId}/city-day`);
+  async function placeCard(activePlacement, candidate) {
     try {
-      const payload = await fetchJson(`/api/v1/cities/${api.cityId}/cards/place`, {
+      const payload = await fetchJson(`/cities/${api.cityId}/cards/place`, {
         method: "POST",
         body: JSON.stringify({
-          expected_city_version: day.city_version,
-          card_id: cardId,
-          placement_id: placementId,
+          expected_city_version: activePlacement.cityVersion,
+          card_id: activePlacement.cardId,
+          placement_id: activePlacement.placementId,
           lot_id: candidate.lotId,
-          footprint: card?.structure?.footprint ?? "1x1",
-          entrance: "south"
+          footprint: activePlacement.footprint,
+          entrance: candidate.entranceDirections?.[0] ?? "south"
         })
       });
       if (payload.status !== "placed") throw new Error(payload.message ?? "放置被拒绝");
       experience.closePlacement();
+      placementLayer?.clear();
       closeChoiceLayers();
       onPlayerTurnComplete();
       await sync();
     } catch (error) {
       experience.showIdleNote(error.message);
+      await sync();
     }
+  }
+
+  function closePlacement() {
+    placement = null;
+    placementLayer?.clear();
+    experience.closePlacement();
   }
 
   async function dismissReport() {
@@ -188,7 +226,7 @@ export function createCityDayController({ experience, api, setLight, onPlayerTur
     const reportTurn = day?.report?.turn;
     if (reportTurn != null) {
       try {
-        await fetchJson(`/api/v1/cities/${api.cityId}/city-day/report-dismissed`, {
+        await fetchJson(`/cities/${api.cityId}/city-day/report-dismissed`, {
           method: "POST",
           body: JSON.stringify({ report_turn: reportTurn })
         });
@@ -200,7 +238,7 @@ export function createCityDayController({ experience, api, setLight, onPlayerTur
   }
 
   function closeChoiceLayers() {
-    experience.closePlacement();
+    closePlacement();
     if (experience.state.cardOpen) {
       experience.layers.cards.hidden = true;
       experience.state.cardOpen = false;
@@ -208,5 +246,5 @@ export function createCityDayController({ experience, api, setLight, onPlayerTur
     }
   }
 
-  return { sync, dismissReport, closeChoiceLayers, phaseLightTarget };
+  return { sync, dismissReport, closeChoiceLayers, closePlacement, phaseLightTarget };
 }

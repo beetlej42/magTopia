@@ -64,12 +64,15 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
 
   const layers = {
     phase: document.createElement("div"),
+    owl: document.createElement("div"),
     newspaper: document.createElement("section"),
     cards: document.createElement("section"),
     placement: document.createElement("section"),
     toast: document.createElement("div")
   };
   layers.phase.className = "city-day-phase-chip";
+  layers.owl.className = "city-day-owl";
+  layers.owl.setAttribute("aria-hidden", "true");
   layers.newspaper.className = "city-day-newspaper";
   layers.cards.className = "city-day-cards";
   layers.placement.className = "city-day-placement";
@@ -169,6 +172,10 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     buildNewspaper(report, reportMeta);
     layers.newspaper.hidden = false;
     layers.newspaper.classList.add("is-entering");
+    layers.owl.classList.remove("is-flying");
+    // Restart the fly-through on each fresh presentation.
+    void layers.owl.offsetWidth;
+    layers.owl.classList.add("is-flying");
     state.reportOpen = true;
     attachSwipe(layers.newspaper);
     root.hidden = false;
@@ -178,6 +185,7 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     if (!state.reportOpen) return;
     state.reportOpen = false;
     layers.newspaper.classList.add("is-dismissing");
+    layers.owl.classList.remove("is-flying");
     onReportDismissed();
     window.setTimeout(() => {
       layers.newspaper.hidden = true;
@@ -281,17 +289,17 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
 
   // ---- Manual placement mode (keeps existing camera) ------------------------
 
-  function presentPlacementMode({ card, candidates = [], onPlace, onCancel }) {
+  function presentPlacementMode({ card, candidates = [], onPlace, onPickCandidate, onCancel }) {
     layers.placement.replaceChildren();
     state.placementOpen = true;
-    state.activePlacement = { card, candidates, onPlace, onCancel };
+    state.activePlacement = { card, candidates, onPlace, onPickCandidate, onCancel, selectedCandidate: null };
 
     const heading = document.createElement("div");
     heading.className = "city-day-cards-heading";
     const title = document.createElement("h2");
     title.textContent = `放置 ${card.title}`;
     const description = document.createElement("p");
-    description.textContent = "选择一块合法的空地完成放置。你可以自由旋转/缩放城市，选择位置后提交。";
+    description.textContent = "在城市中点选高亮地块预览位置，确认后完成放置。你可以自由旋转/缩放城市。";
     heading.append(title, description);
     layers.placement.append(heading);
 
@@ -319,8 +327,11 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
         : "可建造空地";
       item.append(name, note);
       item.addEventListener("click", () => {
-        const { onPlace: place } = state.activePlacement ?? {};
-        place?.(candidate);
+        selectCandidate(candidate);
+        item.classList.add("is-selected");
+        list.querySelectorAll(".city-day-lot-item").forEach((other) => {
+          if (other !== item) other.classList.remove("is-selected");
+        });
       });
       list.append(item);
     });
@@ -328,6 +339,15 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
 
     const footer = document.createElement("div");
     footer.className = "city-day-lot-footer";
+    const confirm = document.createElement("button");
+    confirm.type = "button";
+    confirm.className = "city-day-placement-action is-primary";
+    confirm.textContent = "确认放置";
+    confirm.disabled = true;
+    confirm.addEventListener("click", () => {
+      const { onPlace: place, selectedCandidate } = state.activePlacement ?? {};
+      if (place && selectedCandidate) place(selectedCandidate);
+    });
     const cancel = document.createElement("button");
     cancel.type = "button";
     cancel.className = "city-day-placement-action";
@@ -337,14 +357,20 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
       closePlacement();
       cancelPlacement?.();
     });
-    footer.append(cancel);
+    footer.append(cancel, confirm);
     layers.placement.append(footer);
     layers.placement.hidden = false;
     root.hidden = false;
     layers.cards.hidden = true;
+    state.activePlacement.confirmButton = confirm;
   }
 
-  function closePlacement() {
+  function selectCandidate(candidate) {
+    if (!state.activePlacement) return;
+    state.activePlacement.selectedCandidate = candidate;
+    state.activePlacement.onPickCandidate?.(candidate);
+    if (state.activePlacement.confirmButton) state.activePlacement.confirmButton.disabled = false;
+  }  function closePlacement() {
     state.placementOpen = false;
     state.activePlacement = null;
     layers.placement.hidden = true;
@@ -392,6 +418,7 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     presentCards,
     presentPlacementChoice,
     presentPlacementMode,
+    selectCandidateFromLayer: selectCandidate,
     closePlacement,
     showIdleNote,
     setHidden,

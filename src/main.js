@@ -107,6 +107,7 @@ import {
 } from "./generators/publicBuildingStyleComparison.js";
 import { createCityDayExperience, phaseLightTarget } from "./ui/cityDayExperience.js";
 import { createCityDayController } from "./ui/cityDayController.js";
+import { createCityPlacementLayer } from "./ui/cityPlacementLayer.js";
 
 const app = document.querySelector("#app");
 const pureViewToggle = document.querySelector("#pure-view-toggle");
@@ -702,6 +703,7 @@ let cityDayExperience = null;
 let cityDayController = null;
 let cityDayLightTarget = null;
 let cityDayExperienceActive = false;
+let cityPlacementLayer = null;
 const clock = new THREE.Clock();
 let lastRuntimeDiagnosticsAt = 0;
 
@@ -1158,6 +1160,20 @@ function bindUi() {
     updateDistrictSurfacePointer(event, rect);
   });
   renderer.domElement.addEventListener("pointerdown", (event) => {
+    if (cityPlacementLayer?.object?.visible && event.button === 0) {
+      // Placement mode: a tap on a highlighted lot selects it (footprint
+      // preview) without disturbing the camera; dragging still orbits.
+      districtSurfacePointer.id = event.pointerId;
+      districtSurfacePointer.x = event.clientX;
+      districtSurfacePointer.y = event.clientY;
+      districtSurfacePointer.startX = event.clientX;
+      districtSurfacePointer.startY = event.clientY;
+      districtSurfacePointer.moved = false;
+      districtSurfacePointer.pointerType = event.pointerType;
+      districtSurfacePointer.pendingPlacementPick = true;
+      renderer.domElement.setPointerCapture?.(event.pointerId);
+      return;
+    }
     if (!isSurfaceVoxelWorld() || districtSurfacePointer.id != null) return;
     districtSurfaceLastMotionAt = performance.now();
     districtSurfacePointer.id = event.pointerId;
@@ -1172,6 +1188,15 @@ function bindUi() {
   const releaseDistrictPointer = (event) => {
     if (districtSurfacePointer.id !== event.pointerId) return;
     renderer.domElement.releasePointerCapture?.(event.pointerId);
+    const placementPick = districtSurfacePointer.pendingPlacementPick;
+    delete districtSurfacePointer.pendingPlacementPick;
+    if (placementPick && event.type === "pointerup" && !districtSurfacePointer.moved && cityPlacementLayer) {
+      const picked = cityPlacementLayer.pick(event.clientX, event.clientY, camera, {
+        width: renderer.domElement.clientWidth,
+        height: renderer.domElement.clientHeight
+      });
+      if (picked) cityDayExperience?.selectCandidateFromLayer?.(picked);
+    }
     if (event.type === "pointerup" && districtSurfacePointer.pointerType === "touch" && !districtSurfacePointer.moved) {
       const now = performance.now();
       const closeInTime = now - districtViewGesture.lastTapTime <= 360;
@@ -1282,6 +1307,7 @@ function initializeCityDayExperience() {
 
 function initializeCityDayController() {
   const experience = initializeCityDayExperience();
+  if (!cityPlacementLayer) cityPlacementLayer = createCityPlacementLayer();
   cityDayController = createCityDayController({
     experience,
     api: {
@@ -1292,6 +1318,7 @@ function initializeCityDayController() {
     setLight: (phase) => {
       cityDayLightTarget = phaseLightTarget(phase);
     },
+    placementLayer: cityPlacementLayer,
     onPlayerTurnComplete: () => {
       loadCityViewerState({ force: true });
     }
@@ -1309,6 +1336,21 @@ async function loadCityDayState() {
     // HUD already covers the essential city state.
     cityDayExperience?.setHidden(true);
   }
+}
+
+function syncCityPlacementLayer() {
+  if (frontendSurface !== "player" || !activeObject) {
+    cityPlacementLayer?.setSceneRoot(null);
+    return;
+  }
+  if (!cityPlacementLayer) cityPlacementLayer = createCityPlacementLayer();
+  cityPlacementLayer.setSceneRoot(activeObject);
+  const navigation = activeObject.userData?.surfaceNavigation;
+  cityPlacementLayer.configure({
+    radius: navigation?.radius ?? 220,
+    cellWorldSize: cityViewerRuntimeState?.world?.grid?.cellWorldSize ?? 4
+  });
+  cityPlacementLayer.clear();
 }
 
 async function loadCityViewerState({ force = false } = {}) {
@@ -1346,6 +1388,7 @@ async function loadCityViewerState({ force = false } = {}) {
       buildSliderUi();
       await rebuildActive(viewerConfig);
       cityViewerLoadedVersion = payload.city_version;
+      syncCityPlacementLayer();
     }
     renderCityViewerSummary(payload);
     document.documentElement.dataset.magicTownViewer = "ready";
