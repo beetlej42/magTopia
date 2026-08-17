@@ -387,10 +387,11 @@ export function createOpenApiDocument(baseUrl) {
         },
         CardPlaceRequest: {
           type: "object",
-          required: ["expected_city_version", "card_id", "lot_id"],
+          required: ["expected_city_version", "card_id"],
           properties: {
             expected_city_version: { type: "integer", minimum: 0 },
             card_id: { type: "string", description: "the selected special structure card with a pending placement" },
+            placement_id: { type: "string", description: "stable placement id from the strategy context. Required when the city holds several pending delegated placements so an older mandate is never shadowed." },
             lot_id: { type: "string", description: "legal lot id for the structure footprint; validated through the authoritative cell system" },
             footprint: { type: "string", description: "defaults to the system-owned structure footprint" },
             entrance: { enum: ["north", "east", "south", "west"], description: "defaults to south" },

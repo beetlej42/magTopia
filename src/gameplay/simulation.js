@@ -173,11 +173,15 @@ export function resolveIncidentRoll({ incident, officer, modifier = 0, roller, o
   return { roll, total, attribute, attributeValue, specialtyBonus, modifier: modifierValue, difficulty, outcome };
 }
 
-export function validateAssignments(state, incidents, assignments = []) {
+export function validateAssignments(state, incidents, assignments = [], options = {}) {
   if (!Array.isArray(assignments) || assignments.length === 0) return { ok: true, errors: [] };
   const errors = [];
-  const usedOfficers = new Set();
   const usedIncidents = new Set();
+  // Per-officer response capacity. By default one Arcane Officer responds to
+  // one incident per turn. The Arcane Officer Special Duty Order policy grants
+  // +1 response slot per officer (a capacity increase, never a dice modifier).
+  const responseCapacityBonus = Math.max(0, Math.floor(Number(options.responseCapacityBonus ?? 0)));
+  const officerLoad = new Map();
   for (const assignment of assignments) {
     const incidentId = String(assignment.incidentId ?? assignment.incident_id ?? "");
     const officerId = String(assignment.arcaneOfficerId ?? assignment.arcane_officer_id ?? "");
@@ -211,10 +215,12 @@ export function validateAssignments(state, incidents, assignments = []) {
     if (officer.status !== "available") {
       errors.push({ incidentId, officerId, code: "ARCANE_OFFICER_UNAVAILABLE", message: `Arcane officer ${officerId} is not available` });
     }
-    if (usedOfficers.has(officerId)) {
-      errors.push({ incidentId, officerId, code: "ARCANE_OFFICER_ALREADY_ASSIGNED", message: `Arcane officer ${officerId} is assigned to more than one incident` });
+    const officerCapacity = 1 + responseCapacityBonus;
+    const load = (officerLoad.get(officerId) ?? 0) + 1;
+    officerLoad.set(officerId, load);
+    if (load > officerCapacity) {
+      errors.push({ incidentId, officerId, code: "ARCANE_OFFICER_ALREADY_ASSIGNED", message: `Arcane officer ${officerId} is already at response capacity (${officerCapacity} incident${officerCapacity === 1 ? "" : "s"} this turn${responseCapacityBonus ? ", including the special duty bonus" : ""})` });
     }
-    usedOfficers.add(officerId);
   }
   return { ok: errors.length === 0, errors };
 }
@@ -333,14 +339,13 @@ export function resolveTurn(state, input = {}, context = {}) {
   });
   for (const incident of incidents) next.gameplay.incidents[incident.id] = incident;
 
-  const assignmentValidation = validateAssignments(next, incidents, input.assignments);
+  const assignmentValidation = validateAssignments(next, incidents, input.assignments, {
+    responseCapacityBonus: policyEffects.incidentResponseBonus
+  });
   if (!assignmentValidation.ok) {
     return { nextState: state, facts: null, error: { code: "INVALID_ASSIGNMENT", message: assignmentValidation.errors.map((entry) => entry.message).join("; "), assignmentErrors: assignmentValidation.errors } };
   }
-  const assignmentSettlement = settleAssignments(next, incidents, input.assignments, roller, {
-    ...options,
-    modifier: Number(options.modifier ?? 0) + policyEffects.incidentResponseBonus
-  });
+  const assignmentSettlement = settleAssignments(next, incidents, input.assignments, roller, options);
   for (const outcome of assignmentSettlement.outcomes) {
     const change = exposureChanges[outcome.buildingId];
     if (change) {

@@ -173,11 +173,30 @@ export function specialStructureBuildings(state) {
   return Object.values(state?.buildings ?? {}).filter((building) => building?.specialStructure?.cardId);
 }
 
-// Concealment bonus granted to a magical building by nearby special structures
-// (Diagon Alley Entrance: broad; Concealment Statue: smaller, stronger).
+// Deterministic city-wide block partition used to scope block effects such as
+// the Diagon Alley Entrance. A block is a fixed cell rectangle; two buildings
+// are in the same block iff their block ids match.
+export const CITY_BLOCK_COLUMNS = 8;
+export const CITY_BLOCK_ROWS = 8;
+
+export function cityBlockId(building) {
+  const cellId = building?.site?.lotId ?? building?.footprintCells?.[0] ?? building?.id;
+  const match = /^cell-(\d+)-(\d+)$/.exec(String(cellId ?? ""));
+  if (!match) return null;
+  const column = Math.floor(Number(match[1]) / CITY_BLOCK_COLUMNS);
+  const row = Math.floor(Number(match[2]) / CITY_BLOCK_ROWS);
+  return `block-c${column}-r${row}`;
+}
+
+// Concealment bonus granted to a magical building by nearby special structures.
+// Diagon Alley Entrance is block-scoped: every magical building in the same
+// block receives the bonus regardless of distance, and an adjacent block never
+// does even when physically close. The Concealment Statue keeps local-area
+// (radius) semantics.
 export function specialStructureConcealment(state, building) {
   const magicLevel = Number(building?.program?.attributes?.magicLevel ?? building?.metadata?.magicLevel ?? 0);
   if (magicLevel <= 0) return 0;
+  const ownBlockId = cityBlockId(building);
   const ownFootprint = cellFootprint(building);
   let total = 0;
   for (const structure of specialStructureBuildings(state)) {
@@ -185,6 +204,10 @@ export function specialStructureConcealment(state, building) {
     const effect = structure.specialStructure.effect ?? {};
     const bonus = Number(effect.concealmentBonus ?? 0);
     if (!bonus) continue;
+    if (effect.scope === "same_block") {
+      if (ownBlockId != null && cityBlockId(structure) === ownBlockId) total += bonus;
+      continue;
+    }
     const radius = Number(effect.concealmentRadius ?? 3);
     const distance = cellFootprint(structure)
       .map((cellId) => Math.min(...ownFootprint.map((ownCell) => manhattanDistance(ownCell, cellId))))
@@ -307,6 +330,11 @@ export function markChoiceSkipped(state, { now = () => new Date().toISOString() 
 // The player or Agent places a pending special structure at a legal location.
 // Placement goes through the authoritative cell/block occupancy and entrance
 // validation; the system owns the structure's effects.
+//
+// The placement is located by its stable `placement_id` inside
+// `cardState.placements` so that multiple deferred (delegate_to_agent) mandates
+// stay independently actionable — a new selection or a new turn never shadows
+// an older deferred mandate.
 export function placeSpecialStructure(state, cityId, input = {}, context = {}) {
   const cardState = normalizeCardState(state.gameplay?.cardState);
   const cardId = String(input.cardId ?? input.selectedCardId ?? "");
@@ -314,9 +342,13 @@ export function placeSpecialStructure(state, cityId, input = {}, context = {}) {
   if (!card || card.type !== CARD_TYPES.special_structure) {
     return { accepted: false, code: "NOT_SPECIAL_CARD", message: `Card ${cardId || "(missing)"} is not a special structure card` };
   }
-  const placement = cardState.pendingPlacement;
-  if (!placement || placement.cardId !== cardId) {
-    return { accepted: false, code: "NO_PENDING_PLACEMENT", message: `No pending placement exists for ${cardId}` };
+  const placementId = String(input.placementId ?? input.placement_id ?? cardState.pendingPlacement?.placementId ?? "");
+  const placement = placementId && cardState.placements[placementId] ? cardState.placements[placementId] : null;
+  if (!placement) {
+    return { accepted: false, code: "PLACEMENT_NOT_FOUND", message: `No pending placement exists for id ${placementId || "(none)"}` };
+  }
+  if (placement.cardId !== cardId) {
+    return { accepted: false, code: "PLACEMENT_CARD_MISMATCH", message: `Placement ${placement.placementId} belongs to card ${placement.cardId}, not ${cardId}` };
   }
   if (placement.status === "completed") {
     return { accepted: false, code: "PLACEMENT_ALREADY_COMPLETED", message: `Placement ${placement.placementId} was already completed` };
@@ -377,14 +409,18 @@ export function placeSpecialStructure(state, cityId, input = {}, context = {}) {
     });
   }
   const completed = normalizePendingPlacement({ ...placement, status: "completed", buildingId, lotId, footprint, entrance });
+  const placements = { ...cardState.placements, [placement.placementId]: completed };
+  const pendingPlacement = cardState.pendingPlacement?.placementId === placement.placementId
+    ? completed
+    : cardState.pendingPlacement;
   next.gameplay = {
     ...next.gameplay,
     cardState: normalizeCardState({
       offer: cardState.offer,
       choice: normalizeCardChoice({ ...cardState.choice, specialPlacementCompleted: buildingId }),
       activePolicies: cardState.activePolicies,
-      pendingPlacement: completed,
-      placements: { ...cardState.placements, [placement.placementId]: completed }
+      pendingPlacement,
+      placements
     })
   };
   return { accepted: true, code: "OK", nextState: next, buildingId, placement: completed };

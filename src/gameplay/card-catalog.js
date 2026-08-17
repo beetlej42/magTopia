@@ -99,6 +99,7 @@ export const CARD_CATALOG = Object.freeze([
     {
       kind: "special_structure",
       magicLevel: 0.6,
+      scope: "same_block",
       concealmentBonus: EFFECT_VALUES.diagonAlleyConcealment,
       concealmentRadius: EFFECT_VALUES.diagonAlleyRadius
     },
@@ -138,6 +139,7 @@ export const CARD_CATALOG = Object.freeze([
     {
       kind: "special_structure",
       magicLevel: 0.7,
+      scope: "radius",
       concealmentBonus: EFFECT_VALUES.concealmentStatueConcealment,
       concealmentRadius: EFFECT_VALUES.concealmentStatueRadius
     },

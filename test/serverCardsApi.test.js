@@ -7,11 +7,12 @@ import { createApp } from "../apps/server/app.js";
 import { createMemoryRepository } from "../apps/server/memory-repository.js";
 import { createCityState } from "../src/city/state.js";
 import { createServiceWorldContract } from "../apps/server/world.js";
-import { resolveTurn } from "../src/gameplay/simulation.js";
-import { generateOffer, ensureCardOffer, openTurnCardState, selectCard, activeConstructionDiscountRate } from "../src/gameplay/cards.js";
+import { resolveTurn, validateAssignments, settleAssignments } from "../src/gameplay/simulation.js";
+import { generateOffer, ensureCardOffer, openTurnCardState, selectCard, activeConstructionDiscountRate, placeSpecialStructure, specialStructureConcealment } from "../src/gameplay/cards.js";
 import { CARD_TYPES, getCard, getCardsByCategory } from "../src/gameplay/card-catalog.js";
 import { openNextTurn } from "../src/gameplay/turn.js";
 import { previewConstruction } from "../src/city/solver.js";
+import { createRoller } from "../src/gameplay/random.js";
 
 const config = {
   publicBaseUrl: "http://127.0.0.1:4183",
@@ -776,6 +777,235 @@ test("card state is exposed read-only in the Agent strategy context", async () =
       payload: { expected_city_version: state.version, assignments: [], cards: { choice: { selected_card_id: "ministry-grant" } } }
     }));
     assert.equal(forged.statusCode, 400, "strategy request bodies reject card fields");
+  } finally {
+    await app.close();
+  }
+});
+
+test("multiple deferred delegated placements stay independently actionable via placement_id", () => {
+  const world = createServiceWorldContract({ seed: "multi-mandate", columns: 30, rows: 30 });
+  let state = createCityState(world, { cityId: "multi-0", mapSeed: "multi-mandate" });
+  const now = () => new Date().toISOString();
+  state = ensureCardOffer(state, "multi-0");
+  const specialA = state.gameplay.cardState.offer.offeredCardIds.find((id) => getCard(id).type === CARD_TYPES.special_structure);
+  const selA = selectCard(state, "multi-0", {
+    offerId: state.gameplay.cardState.offer.offerId,
+    selectedCardId: specialA,
+    decisionMode: "delegate_to_agent"
+  }, { now, createId: (prefix) => `${prefix}-a` });
+  assert.ok(selA.accepted, selA.message);
+  const placementA = selA.nextState.gameplay.cardState.pendingPlacement;
+  assert.equal(placementA.status, "deferred");
+
+  const resolved1 = resolveTurn(selA.nextState, { assignments: [], expectedTurn: 0 }, {
+    seed: 1, now,
+    options: { turnIntervalMs: 86_400_000, turnDeadlineMs: 86_400_000, settlementSource: "agent" }
+  });
+  assert.equal(resolved1.error, null);
+  assert.equal(resolved1.facts.specialPlacementMandate.cardId, specialA);
+
+  const unlocked1 = openNextTurn(resolved1.nextState, new Date(Date.now() + 90 * 86_400_000), { turnIntervalMs: 86_400_000, turnDeadlineMs: 86_400_000 });
+  let next = openTurnCardState(unlocked1, "multi-0", { turn: unlocked1.turn });
+  assert.equal(next.gameplay.cardState.placements[placementA.placementId].status, "deferred", "mandate A survives the turn boundary");
+
+  const specialB = next.gameplay.cardState.offer.offeredCardIds.find((id) => getCard(id).type === CARD_TYPES.special_structure);
+  assert.notEqual(specialB, specialA, "multi-0 offers a different special structure on turn 1");
+  const selB = selectCard(next, "multi-0", {
+    offerId: next.gameplay.cardState.offer.offerId,
+    selectedCardId: specialB,
+    decisionMode: "delegate_to_agent"
+  }, { now, createId: (prefix) => `${prefix}-b` });
+  assert.ok(selB.accepted, selB.message);
+  const placementB = selB.nextState.gameplay.cardState.pendingPlacement;
+  assert.notEqual(placementA.placementId, placementB.placementId);
+  assert.ok(selB.nextState.gameplay.cardState.placements[placementA.placementId], "mandate A is still tracked");
+  assert.ok(selB.nextState.gameplay.cardState.placements[placementB.placementId], "mandate B is tracked");
+
+  const lotA = findLegalLot(selB.nextState, getCard(specialA).structure.footprint, "south");
+  assert.ok(lotA);
+  const placedA = placeSpecialStructure(selB.nextState, "multi-0", {
+    cardId: specialA,
+    placementId: placementA.placementId,
+    lotId: lotA,
+    footprint: getCard(specialA).structure.footprint,
+    entrance: "south"
+  }, { now, createId: (prefix) => `${prefix}-pa` });
+  assert.ok(placedA.accepted, placedA.message);
+  assert.equal(placedA.nextState.gameplay.cardState.placements[placementA.placementId].status, "completed", "mandate A can be completed while B is still pending");
+  assert.equal(placedA.nextState.gameplay.cardState.placements[placementB.placementId].status, "deferred");
+
+  const lotB = findLegalLot(placedA.nextState, getCard(specialB).structure.footprint, "east");
+  assert.ok(lotB);
+  const placedB = placeSpecialStructure(placedA.nextState, "multi-0", {
+    cardId: specialB,
+    placementId: placementB.placementId,
+    lotId: lotB,
+    footprint: getCard(specialB).structure.footprint,
+    entrance: "east"
+  }, { now, createId: (prefix) => `${prefix}-pb` });
+  assert.ok(placedB.accepted, placedB.message);
+  assert.equal(placedB.nextState.gameplay.cardState.placements[placementB.placementId].status, "completed");
+  assert.equal(placedB.nextState.gameplay.cardState.placements[placementA.placementId].status, "completed");
+});
+
+test("Arcane Officer Special Duty Order adds a response slot without touching the dice modifier", () => {
+  const world = createServiceWorldContract({ seed: "duty-test", columns: 30, rows: 30 });
+  let state = createCityState(world, { cityId: "duty-4", mapSeed: "duty-test" });
+  state = ensureCardOffer(state, "duty-4");
+  const offer = state.gameplay.cardState.offer;
+  assert.ok(offer.offeredCardIds.includes("arcane-officer-special-duty-order"), "duty-4 offers the special duty order at turn 0");
+  const now = () => new Date().toISOString();
+
+  const officer = { id: "officer-vesper", name: "Vesper", archetype: "investigation", investigation: 3, containment: 1, concealment: 2, specialties: ["investigation"], status: "available", hiredAtTurn: 0 };
+  state.gameplay.arcaneOfficers["officer-vesper"] = officer;
+  state.gameplay.incidents = {
+    "incident-1": { id: "incident-1", buildingId: "b1", type: "investigation", attribute: "investigation", difficulty: 3, severity: 3, exposureAtCreation: 70, summary: "x", status: "open", createdAtTurn: 0 },
+    "incident-2": { id: "incident-2", buildingId: "b1", type: "containment", attribute: "containment", difficulty: 3, severity: 3, exposureAtCreation: 70, summary: "x", status: "open", createdAtTurn: 0 },
+    "incident-3": { id: "incident-3", buildingId: "b1", type: "concealment", attribute: "concealment", difficulty: 3, severity: 3, exposureAtCreation: 70, summary: "x", status: "open", createdAtTurn: 0 }
+  };
+
+  const twoAssignments = [
+    { incidentId: "incident-1", arcaneOfficerId: "officer-vesper" },
+    { incidentId: "incident-2", arcaneOfficerId: "officer-vesper" }
+  ];
+  const withoutPolicy = validateAssignments(state, [], twoAssignments);
+  assert.ok(!withoutPolicy.ok, "without the policy one officer cannot handle two incidents");
+  assert.ok(withoutPolicy.errors.some((entry) => entry.code === "ARCANE_OFFICER_ALREADY_ASSIGNED"));
+
+  const withPolicy = validateAssignments(state, [], twoAssignments, { responseCapacityBonus: 1 });
+  assert.ok(withPolicy.ok, "with the policy one officer gains exactly one extra response slot");
+
+  const threeAssignments = [
+    { incidentId: "incident-1", arcaneOfficerId: "officer-vesper" },
+    { incidentId: "incident-2", arcaneOfficerId: "officer-vesper" },
+    { incidentId: "incident-3", arcaneOfficerId: "officer-vesper" }
+  ];
+  const withPolicyThree = validateAssignments(state, [], threeAssignments, { responseCapacityBonus: 1 });
+  assert.ok(!withPolicyThree.ok, "the +1 slot is exactly one extra response, not unlimited");
+
+  // The policy never changes the dice: same seed + same officer produce the
+  // same raw roll and the same system modifier whether the policy is active.
+  const selected = selectCard(state, "duty-4", { offerId: offer.offerId, selectedCardId: "arcane-officer-special-duty-order" }, { now, createId: (prefix) => `${prefix}-1` });
+  assert.ok(selected.accepted, selected.message);
+  const rollerA = createRoller({ seed: 42 });
+  const rollerB = createRoller({ seed: 42 });
+  const baseRoll = settleAssignments(selected.nextState, [], [{ incidentId: "incident-1", arcaneOfficerId: "officer-vesper" }], rollerA, {});
+  const policyRoll = settleAssignments(selected.nextState, [], [{ incidentId: "incident-1", arcaneOfficerId: "officer-vesper" }], rollerB, {});
+  assert.equal(baseRoll.rolls[0].modifier, 0, "no dice modifier without the policy");
+  assert.equal(policyRoll.rolls[0].modifier, 0, "the policy is a capacity increase, never a dice modifier");
+  assert.equal(policyRoll.rolls[0].rawRoll, baseRoll.rolls[0].rawRoll, "the roll itself is unchanged by the policy");
+  assert.equal(policyRoll.rolls[0].outcome, baseRoll.rolls[0].outcome);
+});
+
+test("Diagon Alley Entrance is block-scoped while the Concealment Statue keeps local radius semantics", () => {
+  const world = createServiceWorldContract({ seed: "block-scope", columns: 30, rows: 30 });
+  const state = createCityState(world, { cityId: "block-scope-1", mapSeed: "block-scope" });
+  const diagonEffect = getCard("diagon-alley-entrance").effect;
+  state.buildings["diagon"] = {
+    id: "diagon",
+    site: { lotId: "cell-1-1", footprint: "1x1" },
+    footprintCells: ["cell-1-1"],
+    program: { attributes: { magicLevel: 0.6 } },
+    specialStructure: { cardId: "diagon-alley-entrance", effect: diagonEffect }
+  };
+  // Same block (0,0), far away at column 7 -> block floor(7/8)=0.
+  state.buildings["same-block"] = {
+    id: "same-block",
+    site: { lotId: "cell-7-5", footprint: "1x1" },
+    footprintCells: ["cell-7-5"],
+    program: { attributes: { magicLevel: 0.8 } }
+  };
+  // Adjacent block (1,0), physically closer to the entrance.
+  state.buildings["adjacent-block"] = {
+    id: "adjacent-block",
+    site: { lotId: "cell-8-1", footprint: "1x1" },
+    footprintCells: ["cell-8-1"],
+    program: { attributes: { magicLevel: 0.8 } }
+  };
+  assert.equal(specialStructureConcealment(state, state.buildings["same-block"]), diagonEffect.concealmentBonus, "same-block magical building receives the bonus regardless of distance");
+  assert.equal(specialStructureConcealment(state, state.buildings["adjacent-block"]), 0, "adjacent block does not receive the bonus even though physically close");
+  assert.equal(specialStructureConcealment(state, state.buildings["diagon"]), 0, "the structure does not conceal itself");
+
+  // Concealment Statue: radius scoped, strong local bonus.
+  const statueEffect = getCard("concealment-statue").effect;
+  state.buildings["statue"] = {
+    id: "statue",
+    site: { lotId: "cell-20-20", footprint: "1x1" },
+    footprintCells: ["cell-20-20"],
+    program: { attributes: { magicLevel: 0.7 } },
+    specialStructure: { cardId: "concealment-statue", effect: statueEffect }
+  };
+  state.buildings["near"] = { id: "near", site: { lotId: "cell-21-20", footprint: "1x1" }, footprintCells: ["cell-21-20"], program: { attributes: { magicLevel: 0.8 } } };
+  state.buildings["far"] = { id: "far", site: { lotId: "cell-23-20", footprint: "1x1" }, footprintCells: ["cell-23-20"], program: { attributes: { magicLevel: 0.8 } } };
+  assert.equal(specialStructureConcealment(state, state.buildings["near"]), statueEffect.concealmentBonus, "radius structure conceals buildings within its local area");
+  assert.equal(specialStructureConcealment(state, state.buildings["far"]), 0, "radius structure does not conceal beyond its local area");
+});
+
+test("the special duty order policy is enforced at assignment submission through the strategy route", async () => {
+  const repository = createMemoryRepository(config);
+  const app = await createApp({ repository, config });
+  try {
+    const { city, player, agent, owner } = await openCity(repository, app);
+    const officer = { id: "officer-vesper", name: "Vesper", archetype: "investigation", investigation: 3, containment: 1, concealment: 2, specialties: ["investigation"], status: "available", hiredAtTurn: 0 };
+    await repository.transactCity({
+      principal: owner,
+      cityId: city.id,
+      endpoint: "test/seed-duty",
+      idempotencyKey: "seed-duty-1",
+      requestBody: {},
+      expectedVersion: 0
+    }, async ({ state }) => {
+      state.gameplay.arcaneOfficers["officer-vesper"] = officer;
+      state.gameplay.incidents = {
+        "incident-1": { id: "incident-1", buildingId: "b1", type: "investigation", attribute: "investigation", difficulty: 3, severity: 3, exposureAtCreation: 70, summary: "x", status: "open", createdAtTurn: 0 },
+        "incident-2": { id: "incident-2", buildingId: "b1", type: "containment", attribute: "containment", difficulty: 3, severity: 3, exposureAtCreation: 70, summary: "x", status: "open", createdAtTurn: 0 }
+      };
+      return { nextState: state, response: { seeded: true } };
+    });
+
+    const twoAssignments = [
+      { incident_id: "incident-1", arcane_officer_id: "officer-vesper" },
+      { incident_id: "incident-2", arcane_officer_id: "officer-vesper" }
+    ];
+    const before = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
+    const withoutPolicy = await app.inject(auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/strategy/assignments`,
+      headers: { "idempotency-key": "duty-none" },
+      payload: { expected_city_version: before.city_version, assignments: twoAssignments }
+    }));
+    assert.equal(withoutPolicy.statusCode, 422, "without the policy a single officer cannot take two incidents");
+    assert.ok(withoutPolicy.json().errors.some((entry) => entry.code === "ARCANE_OFFICER_ALREADY_ASSIGNED"));
+
+    await repository.transactCity({
+      principal: owner,
+      cityId: city.id,
+      endpoint: "test/seed-duty-policy",
+      idempotencyKey: "seed-duty-policy-1",
+      requestBody: {},
+      expectedVersion: before.city_version
+    }, async ({ state }) => {
+      state.gameplay.cardState.activePolicies = [{
+        policyId: "arcane-officer-special-duty-order",
+        sourceCardId: "arcane-officer-special-duty-order",
+        startedAtTurn: 0,
+        durationType: "turns",
+        durationTurns: 2,
+        remainingTurns: 2,
+        effects: [{ kind: "incident_response_bonus", value: 1 }]
+      }];
+      return { nextState: state, response: { seeded: true } };
+    });
+
+    const withPolicy = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
+    assert.equal(withPolicy.strategy.cards.active_policies.length, 1);
+    const accepted = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/strategy/assignments`,
+      headers: { "idempotency-key": "duty-active" },
+      payload: { expected_city_version: withPolicy.city_version, assignments: twoAssignments }
+    }), 200);
+    assert.equal(accepted.status, "accepted", "the active policy grants exactly one extra response slot at submission");
   } finally {
     await app.close();
   }

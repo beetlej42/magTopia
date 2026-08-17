@@ -319,7 +319,7 @@ Active policies are real modifiers you must plan around, not decoration:
 - `statute-of-secrecy-reinforcement` — magical buildings gain extra concealment (3 turns).
 - `city-construction-mobilization` — construction costs are reduced (2 turns). The discount is applied by the server to every construction preview and order; you never submit the discount.
 - `wizard-settlement-initiative` — wizard population growth is accelerated (3 turns).
-- `arcane-officer-special-duty-order` — Arcane Officers gain incident-response capacity (2 turns).
+- `arcane-officer-special-duty-order` — each Arcane Officer gains one extra incident-response slot (2 turns). It is a capacity increase enforced at dispatch validation — it never changes dice, modifiers, or outcomes.
 
 Re-selecting the same policy refreshes its duration instead of stacking its effect. The strategy context reports the exact `remaining_turns`, and settlement freezes `policyStarted` / `policyRefreshed` / `policyExpired` into the immutable `TurnFacts`.
 
@@ -330,10 +330,10 @@ Special structure cards (Diagon Alley Entrance, Owl Tower, Floo Fireplace Statio
 When you see a `deferred` placement in `strategy.cards.pending_placements`:
 
 1. The mandate tells you which structure the player selected and that you own the location decision.
-2. Choose a legal lot and resolve the placement through `POST /api/v1/cities/{city_id}/cards/place` with `card_id`, `lot_id`, `footprint`, and `entrance`. The server validates the site against the same authoritative cell/block occupancy and entrance rules as normal construction.
+2. Choose a legal lot and resolve the placement through `POST /api/v1/cities/{city_id}/cards/place` with `placement_id` (from the strategy context), `card_id`, `lot_id`, `footprint`, and `entrance`. The server validates the site against the same authoritative cell/block occupancy and entrance rules as normal construction.
 3. The system owns every effect value — concealment bonuses, resource production, exposure modifiers. Never submit them.
 
-A delegated mandate that is not placed by turn end is deliberately kept `deferred` in the frozen facts; it never silently disappears and can be resolved in a later turn. If the player manually placed the structure, you see it as a completed building like any other.
+The `placement_id` is stable: if the player delegates several special structures across consecutive turns, each mandate stays independently actionable and an older mandate is never shadowed by a newer one. A delegated mandate that is not placed by turn end is deliberately kept `deferred` in the frozen facts and in the strategy context; it never silently disappears and can be resolved in a later turn. If the player manually placed the structure, you see it as a completed building like any other.
 
 ### Card facts in the newspaper
 

@@ -25,6 +25,7 @@ import { buildReportContext, factsDigest, normalizeOwlReport, validateOwlReport 
 import {
   activeConstructionDiscountRate,
   activePolicies,
+  collectPolicyEffects,
   currentChoice,
   currentOffer,
   ensureCardOffer,
@@ -598,7 +599,7 @@ export async function createApp({ repository, config, logger = false, now = () =
       if (CLOSED_TURN_STATUSES.has(gameplay.turnStatus)) {
         return { nextState: null, response: rejectedStrategyResponse("TURN_ALREADY_RESOLVED", `Turn ${state.turn} is already resolved; the strategy phase is closed`) };
       }
-      const validation = validateAssignments(state, [], assignments);
+      const validation = validateAssignments(state, [], assignments, { responseCapacityBonus: collectPolicyEffects(state).incidentResponseBonus });
       if (!validation.ok) {
         return { nextState: null, response: rejectedStrategyResponse("INVALID_ASSIGNMENT", validation.errors.map((entry) => entry.message).join("; "), validation.errors) };
       }
@@ -726,15 +727,20 @@ export async function createApp({ repository, config, logger = false, now = () =
       reason: "special_structure_placement"
     }, async ({ state }) => {
       const cardState = state.gameplay?.cardState ?? {};
-      const placementMode = cardState.pendingPlacement?.mode ?? null;
-      if (placementMode === "player_place" && principal.kind !== "player") {
+      const placementId = body.placement_id ?? cardState.pendingPlacement?.placementId ?? null;
+      const placement = placementId ? cardState.placements?.[placementId] ?? null : null;
+      if (!placement) {
+        return { nextState: null, response: rejectedCardPlacement("PLACEMENT_NOT_FOUND", "No pending placement matches the request; pass placement_id from the strategy context") };
+      }
+      if (placement.mode === "player_place" && principal.kind !== "player") {
         return { nextState: null, response: rejectedCardPlacement("PLACEMENT_ACTOR_NOT_ALLOWED", "A player-owned placement must be resolved by the city owner") };
       }
-      if (placementMode === "delegate_to_agent" && principal.kind === "player") {
+      if (placement.mode === "delegate_to_agent" && principal.kind === "player") {
         return { nextState: null, response: rejectedCardPlacement("PLACEMENT_ACTOR_NOT_ALLOWED", "A delegated placement must be resolved by the city Agent") };
       }
       const result = placeSpecialStructure(state, request.params.cityId, {
         cardId: body.card_id,
+        placementId,
         lotId: body.lot_id,
         footprint: body.footprint,
         entrance: body.entrance
@@ -1153,12 +1159,12 @@ function assertCardSelectTopLevelFields(body) {
   }
 }
 
-const CARD_PLACE_TOP_FIELDS = new Set(["card_id", "lot_id", "lotId", "footprint", "entrance", "expected_city_version", "expectedCityVersion", "actor_note"]);
+const CARD_PLACE_TOP_FIELDS = new Set(["card_id", "placement_id", "placementId", "lot_id", "lotId", "footprint", "entrance", "expected_city_version", "expectedCityVersion", "actor_note"]);
 
 function assertCardPlaceTopLevelFields(body) {
   const unknown = Object.keys(body ?? {}).filter((key) => !CARD_PLACE_TOP_FIELDS.has(key));
   if (unknown.length > 0) {
-    throw new ServiceError(400, "UNKNOWN_CARD_PLACE_FIELD", `Card placement contains unsupported field${unknown.length > 1 ? "s" : ""}: ${unknown.join(", ")}; only card_id, lot_id, footprint, entrance, and expected_city_version are accepted`);
+    throw new ServiceError(400, "UNKNOWN_CARD_PLACE_FIELD", `Card placement contains unsupported field${unknown.length > 1 ? "s" : ""}: ${unknown.join(", ")}; only card_id, placement_id, lot_id, footprint, entrance, and expected_city_version are accepted`);
   }
   for (const key of ["concealment", "concealment_bonus", "bonus", "coin_output", "magic_output", "exposure", "policy", "duration"]) {
     if (body[key] != null) {
