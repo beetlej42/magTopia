@@ -12,6 +12,7 @@ import { generateOffer, ensureCardOffer, openTurnCardState, selectCard, activeCo
 import { CARD_TYPES, getCard, getCardsByCategory } from "../src/gameplay/card-catalog.js";
 import { openNextTurn } from "../src/gameplay/turn.js";
 import { previewConstruction } from "../src/city/solver.js";
+import { sameCityBlock } from "../src/city/blocks.js";
 import { createRoller } from "../src/gameplay/random.js";
 
 const config = {
@@ -897,46 +898,55 @@ test("Arcane Officer Special Duty Order adds a response slot without touching th
   assert.equal(policyRoll.rolls[0].outcome, baseRoll.rolls[0].outcome);
 });
 
-test("Diagon Alley Entrance is block-scoped while the Concealment Statue keeps local radius semantics", () => {
+test("Diagon Alley Entrance is scoped to the real road-bounded city block while the Concealment Statue keeps local radius semantics", () => {
   const world = createServiceWorldContract({ seed: "block-scope", columns: 30, rows: 30 });
   const state = createCityState(world, { cityId: "block-scope-1", mapSeed: "block-scope" });
+  // A road column at column 22 divides the buildable land into two real blocks:
+  // cols 20-21 (west) and cols 23-29 (east).
+  for (let row = 0; row < 30; row += 1) {
+    state.cells[`cell-22-${row}`].infrastructure = "road";
+  }
   const diagonEffect = getCard("diagon-alley-entrance").effect;
   state.buildings["diagon"] = {
     id: "diagon",
-    site: { lotId: "cell-1-1", footprint: "1x1" },
-    footprintCells: ["cell-1-1"],
+    site: { lotId: "cell-20-20", footprint: "1x1" },
+    footprintCells: ["cell-20-20"],
     program: { attributes: { magicLevel: 0.6 } },
     specialStructure: { cardId: "diagon-alley-entrance", effect: diagonEffect }
   };
-  // Same block (0,0), far away at column 7 -> block floor(7/8)=0.
+  // Same road-bounded block (west of the road), far from the entrance.
   state.buildings["same-block"] = {
     id: "same-block",
-    site: { lotId: "cell-7-5", footprint: "1x1" },
-    footprintCells: ["cell-7-5"],
+    site: { lotId: "cell-21-25", footprint: "1x1" },
+    footprintCells: ["cell-21-25"],
     program: { attributes: { magicLevel: 0.8 } }
   };
-  // Adjacent block (1,0), physically closer to the entrance.
+  // Adjacent parcel on the other side of the road (east block), physically close.
   state.buildings["adjacent-block"] = {
     id: "adjacent-block",
-    site: { lotId: "cell-8-1", footprint: "1x1" },
-    footprintCells: ["cell-8-1"],
+    site: { lotId: "cell-23-25", footprint: "1x1" },
+    footprintCells: ["cell-23-25"],
     program: { attributes: { magicLevel: 0.8 } }
   };
+  // The test asserts against the authoritative city-domain block identity, not
+  // any fixed grid: a road-separated parcel is a different block.
+  assert.equal(sameCityBlock(state, state.buildings["diagon"], state.buildings["same-block"]), true);
+  assert.equal(sameCityBlock(state, state.buildings["diagon"], state.buildings["adjacent-block"]), false);
   assert.equal(specialStructureConcealment(state, state.buildings["same-block"]), diagonEffect.concealmentBonus, "same-block magical building receives the bonus regardless of distance");
-  assert.equal(specialStructureConcealment(state, state.buildings["adjacent-block"]), 0, "adjacent block does not receive the bonus even though physically close");
+  assert.equal(specialStructureConcealment(state, state.buildings["adjacent-block"]), 0, "a road-separated block does not receive the bonus even though physically close");
   assert.equal(specialStructureConcealment(state, state.buildings["diagon"]), 0, "the structure does not conceal itself");
 
   // Concealment Statue: radius scoped, strong local bonus.
   const statueEffect = getCard("concealment-statue").effect;
   state.buildings["statue"] = {
     id: "statue",
-    site: { lotId: "cell-20-20", footprint: "1x1" },
-    footprintCells: ["cell-20-20"],
+    site: { lotId: "cell-25-25", footprint: "1x1" },
+    footprintCells: ["cell-25-25"],
     program: { attributes: { magicLevel: 0.7 } },
     specialStructure: { cardId: "concealment-statue", effect: statueEffect }
   };
-  state.buildings["near"] = { id: "near", site: { lotId: "cell-21-20", footprint: "1x1" }, footprintCells: ["cell-21-20"], program: { attributes: { magicLevel: 0.8 } } };
-  state.buildings["far"] = { id: "far", site: { lotId: "cell-23-20", footprint: "1x1" }, footprintCells: ["cell-23-20"], program: { attributes: { magicLevel: 0.8 } } };
+  state.buildings["near"] = { id: "near", site: { lotId: "cell-26-25", footprint: "1x1" }, footprintCells: ["cell-26-25"], program: { attributes: { magicLevel: 0.8 } } };
+  state.buildings["far"] = { id: "far", site: { lotId: "cell-28-25", footprint: "1x1" }, footprintCells: ["cell-28-25"], program: { attributes: { magicLevel: 0.8 } } };
   assert.equal(specialStructureConcealment(state, state.buildings["near"]), statueEffect.concealmentBonus, "radius structure conceals buildings within its local area");
   assert.equal(specialStructureConcealment(state, state.buildings["far"]), 0, "radius structure does not conceal beyond its local area");
 });
@@ -1009,6 +1019,70 @@ test("the special duty order policy is enforced at assignment submission through
   } finally {
     await app.close();
   }
+});
+
+test("a later turn completing an older deferred mandate is attributed correctly in the frozen facts", () => {
+  const world = createServiceWorldContract({ seed: "attribution-test", columns: 30, rows: 30 });
+  let state = createCityState(world, { cityId: "multi-0", mapSeed: "attribution-test" });
+  const now = () => new Date().toISOString();
+  state = ensureCardOffer(state, "multi-0");
+  const specialA = state.gameplay.cardState.offer.offeredCardIds.find((id) => getCard(id).type === CARD_TYPES.special_structure);
+
+  const selA = selectCard(state, "multi-0", {
+    offerId: state.gameplay.cardState.offer.offerId,
+    selectedCardId: specialA,
+    decisionMode: "delegate_to_agent"
+  }, { now, createId: (prefix) => `${prefix}-a` });
+  assert.ok(selA.accepted, selA.message);
+  const placementA = selA.nextState.gameplay.cardState.pendingPlacement;
+
+  const resolved1 = resolveTurn(selA.nextState, { assignments: [], expectedTurn: 0 }, {
+    seed: 1, now,
+    options: { turnIntervalMs: 86_400_000, turnDeadlineMs: 86_400_000, settlementSource: "agent" }
+  });
+  assert.equal(resolved1.error, null);
+
+  const unlocked1 = openNextTurn(resolved1.nextState, new Date(Date.now() + 90 * 86_400_000), { turnIntervalMs: 86_400_000, turnDeadlineMs: 86_400_000 });
+  let next = openTurnCardState(unlocked1, "multi-0", { turn: unlocked1.turn });
+  const specialB = next.gameplay.cardState.offer.offeredCardIds.find((id) => getCard(id).type === CARD_TYPES.special_structure);
+
+  const selB = selectCard(next, "multi-0", {
+    offerId: next.gameplay.cardState.offer.offerId,
+    selectedCardId: specialB,
+    decisionMode: "delegate_to_agent"
+  }, { now, createId: (prefix) => `${prefix}-b` });
+  assert.ok(selB.accepted, selB.message);
+  assert.equal(selB.nextState.gameplay.cardState.choice.selectedCardId, specialB, "turn 1 selected B");
+
+  // The Agent completes only the OLD mandate A while B stays deferred.
+  const lotA = findLegalLot(selB.nextState, getCard(specialA).structure.footprint, "south");
+  assert.ok(lotA);
+  const placedA = placeSpecialStructure(selB.nextState, "multi-0", {
+    cardId: specialA,
+    placementId: placementA.placementId,
+    lotId: lotA,
+    footprint: getCard(specialA).structure.footprint,
+    entrance: "south"
+  }, { now, createId: (prefix) => `${prefix}-pa` });
+  assert.ok(placedA.accepted, placedA.message);
+  assert.equal(placedA.nextState.gameplay.cardState.placements[placementA.placementId].status, "completed");
+  const placementB = Object.values(placedA.nextState.gameplay.cardState.placements).find((entry) => entry.placementId !== placementA.placementId);
+  assert.ok(placementB, "mandate B remains tracked");
+  assert.equal(placementB.status, "deferred", "B stays deferred while the older A is completed");
+
+  const resolved2 = resolveTurn(placedA.nextState, { assignments: [], expectedTurn: 1 }, {
+    seed: 2, now,
+    options: { turnIntervalMs: 86_400_000, turnDeadlineMs: 86_400_000, settlementSource: "agent" }
+  });
+  assert.equal(resolved2.error, null);
+  assert.equal(resolved2.facts.selectedCardId, specialB, "the frozen facts record that turn 1 selected B");
+  assert.equal(resolved2.facts.specialPlacementsCompleted.length, 1, "exactly one placement completed this turn");
+  const completion = resolved2.facts.specialPlacementsCompleted[0];
+  assert.equal(completion.cardId, specialA, "the completed placement is attributed to A, not B");
+  assert.equal(completion.placementId, placementA.placementId);
+  assert.equal(completion.buildingId, placedA.buildingId);
+  assert.ok(resolved2.facts.specialPlacementMandate, "B's mandate is still tracked");
+  assert.equal(resolved2.facts.specialPlacementMandate.cardId, specialB, "B remains the pending delegated mandate, not completed");
 });
 
 function auth(account, request) {

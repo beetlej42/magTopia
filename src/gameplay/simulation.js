@@ -473,7 +473,7 @@ export function resolveTurn(state, input = {}, context = {}) {
     policyRefreshed: cardStateFacts.policyRefreshed,
     policyExpired: cardStateFacts.policyExpired,
     specialPlacementMandate: cardStateFacts.specialPlacementMandate,
-    specialPlacementCompleted: cardStateFacts.specialPlacementCompleted
+    specialPlacementsCompleted: cardStateFacts.specialPlacementsCompleted
   });
 
   next.gameplay.lastTurnFacts = deepFreeze(facts);
@@ -526,7 +526,7 @@ function migrateGameplay(state) {
       lastTurnFacts: null,
       cardState: {
         offer: null,
-        choice: { offerId: null, status: "pending", selectedCardId: null, decisionMode: null, choiceResolvedAt: null, cardEffects: {}, policyStarted: [], policyRefreshed: [], policyExpired: [], officerRecruitedId: null, specialPlacementMandate: null, specialPlacementCompleted: null },
+        choice: { offerId: null, status: "pending", selectedCardId: null, decisionMode: null, choiceResolvedAt: null, cardEffects: {}, policyStarted: [], policyRefreshed: [], policyExpired: [], officerRecruitedId: null, specialPlacementMandate: null, specialPlacementsCompleted: [] },
         activePolicies: [],
         pendingPlacement: null,
         placements: {}
@@ -544,7 +544,7 @@ function migrateGameplay(state) {
   if (migrated.cardState == null) {
     migrated.cardState = {
       offer: null,
-      choice: { offerId: null, status: "pending", selectedCardId: null, decisionMode: null, choiceResolvedAt: null, cardEffects: {}, policyStarted: [], policyRefreshed: [], policyExpired: [], officerRecruitedId: null, specialPlacementMandate: null, specialPlacementCompleted: null },
+      choice: { offerId: null, status: "pending", selectedCardId: null, decisionMode: null, choiceResolvedAt: null, cardEffects: {}, policyStarted: [], policyRefreshed: [], policyExpired: [], officerRecruitedId: null, specialPlacementMandate: null, specialPlacementsCompleted: [] },
       activePolicies: [],
       pendingPlacement: null,
       placements: {}

@@ -213,8 +213,7 @@ export function buildReportContext({ cityId = null, state = {}, facts, options =
         selectedCardId: facts.selectedCardId ?? null,
         selectedCardTitle,
         choiceResolvedAt: facts.choiceResolvedAt ?? null,
-        cardEffects: { ...(facts.cardEffects ?? {}) },
-        specialPlacementCompleted: facts.specialPlacementCompleted ?? null
+        cardEffects: { ...(facts.cardEffects ?? {}) }
       },
       policy: {
         factRef: factRef("card-policy"),
@@ -223,15 +222,24 @@ export function buildReportContext({ cityId = null, state = {}, facts, options =
         expired: facts.policyExpired ?? [],
         active: policyActive
       },
-      placement: facts.specialPlacementMandate
-        ? {
-          factRef: factRef("card-placement"),
-          cardId: facts.specialPlacementMandate.cardId,
-          mode: facts.specialPlacementMandate.mode,
-          status: facts.specialPlacementMandate.status,
-          placementId: facts.specialPlacementMandate.placementId
-        }
-        : { factRef: factRef("card-placement"), status: null }
+      placement: {
+        factRef: factRef("card-placement"),
+        mandate: facts.specialPlacementMandate
+          ? {
+            cardId: facts.specialPlacementMandate.cardId,
+            mode: facts.specialPlacementMandate.mode,
+            status: facts.specialPlacementMandate.status,
+            placementId: facts.specialPlacementMandate.placementId
+          }
+          : null,
+        // Attributed completions: every entry ties a completed mandate to the
+        // placement/card/building, so the Owl Daily never misreads a later
+        // turn completing an older mandate as the current selection completing.
+        completed: (facts.specialPlacementsCompleted ?? []).map((entry) => ({
+          ...entry,
+          cardTitle: entry.cardId ? getCard(entry.cardId)?.title ?? entry.cardId : null
+        }))
+      }
     },
     factRefs: [...refs].sort()
   };

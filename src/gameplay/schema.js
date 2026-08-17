@@ -134,6 +134,15 @@ export function normalizeCardOffer(value = {}) {
   };
 }
 
+export function normalizePlacementCompletion(value = {}) {
+  return {
+    placementId: String(value.placementId ?? ""),
+    cardId: String(value.cardId ?? ""),
+    buildingId: String(value.buildingId ?? ""),
+    mode: String(value.mode ?? "player_place")
+  };
+}
+
 export function normalizeCardChoice(value = {}) {
   const status = String(value.status ?? "pending");
   if (!CARD_CHOICE_STATUSES.includes(status)) throw new Error(`Unsupported card choice status: ${status}`);
@@ -153,7 +162,10 @@ export function normalizeCardChoice(value = {}) {
     policyExpired: value.policyExpired ? [...value.policyExpired].map(String) : [],
     officerRecruitedId: value.officerRecruitedId == null ? null : String(value.officerRecruitedId),
     specialPlacementMandate: value.specialPlacementMandate ? { ...value.specialPlacementMandate } : null,
-    specialPlacementCompleted: value.specialPlacementCompleted == null ? null : String(value.specialPlacementCompleted)
+    // Attributed completions: each entry records which placement/card/building
+    // was completed, so a later turn completing an older delegated mandate is
+    // never misattributed to the current turn's selected card.
+    specialPlacementsCompleted: [...(value.specialPlacementsCompleted ?? [])].map(normalizePlacementCompletion)
   };
 }
 
@@ -224,7 +236,7 @@ export function normalizeTurnFacts(value = {}) {
     policyRefreshed: [...(value.policyRefreshed ?? [])].map(String),
     policyExpired: [...(value.policyExpired ?? [])].map(String),
     specialPlacementMandate: value.specialPlacementMandate ? { ...value.specialPlacementMandate } : null,
-    specialPlacementCompleted: value.specialPlacementCompleted == null ? null : String(value.specialPlacementCompleted)
+    specialPlacementsCompleted: [...(value.specialPlacementsCompleted ?? [])].map(normalizePlacementCompletion)
   };
 }
 

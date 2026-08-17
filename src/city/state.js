@@ -49,7 +49,7 @@ export function createCityState(worldContract, options = {}) {
       lastTurnFacts: null,
       cardState: {
         offer: null,
-        choice: { offerId: null, status: "pending", selectedCardId: null, decisionMode: null, choiceResolvedAt: null, cardEffects: {}, policyStarted: [], policyRefreshed: [], policyExpired: [], officerRecruitedId: null, specialPlacementMandate: null, specialPlacementCompleted: null },
+        choice: { offerId: null, status: "pending", selectedCardId: null, decisionMode: null, choiceResolvedAt: null, cardEffects: {}, policyStarted: [], policyRefreshed: [], policyExpired: [], officerRecruitedId: null, specialPlacementMandate: null, specialPlacementsCompleted: [] },
         activePolicies: [],
         pendingPlacement: null,
         placements: {}

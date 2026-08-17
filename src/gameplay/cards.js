@@ -5,6 +5,7 @@ import { normalizeActivePolicy, normalizeArcaneOfficer, normalizeCardChoice, nor
 import { canOccupyFootprint } from "../city/state.js";
 import { getEntranceFrontageCells } from "../city/solver.js";
 import { getFootprintCells } from "../city/contracts.js";
+import { cityBlockOfBuilding } from "../city/blocks.js";
 import { arcaneOfficerArchetype } from "./arcane-officers.js";
 
 // PR F — Player Daily Cards domain.
@@ -173,30 +174,15 @@ export function specialStructureBuildings(state) {
   return Object.values(state?.buildings ?? {}).filter((building) => building?.specialStructure?.cardId);
 }
 
-// Deterministic city-wide block partition used to scope block effects such as
-// the Diagon Alley Entrance. A block is a fixed cell rectangle; two buildings
-// are in the same block iff their block ids match.
-export const CITY_BLOCK_COLUMNS = 8;
-export const CITY_BLOCK_ROWS = 8;
-
-export function cityBlockId(building) {
-  const cellId = building?.site?.lotId ?? building?.footprintCells?.[0] ?? building?.id;
-  const match = /^cell-(\d+)-(\d+)$/.exec(String(cellId ?? ""));
-  if (!match) return null;
-  const column = Math.floor(Number(match[1]) / CITY_BLOCK_COLUMNS);
-  const row = Math.floor(Number(match[2]) / CITY_BLOCK_ROWS);
-  return `block-c${column}-r${row}`;
-}
-
 // Concealment bonus granted to a magical building by nearby special structures.
 // Diagon Alley Entrance is block-scoped: every magical building in the same
-// block receives the bonus regardless of distance, and an adjacent block never
-// does even when physically close. The Concealment Statue keeps local-area
-// (radius) semantics.
+// road-bounded city block receives the bonus regardless of distance, and a
+// block separated by a road never does even when physically close. The
+// Concealment Statue keeps local-area (radius) semantics.
 export function specialStructureConcealment(state, building) {
   const magicLevel = Number(building?.program?.attributes?.magicLevel ?? building?.metadata?.magicLevel ?? 0);
   if (magicLevel <= 0) return 0;
-  const ownBlockId = cityBlockId(building);
+  const ownBlockId = cityBlockOfBuilding(state, building);
   const ownFootprint = cellFootprint(building);
   let total = 0;
   for (const structure of specialStructureBuildings(state)) {
@@ -205,7 +191,7 @@ export function specialStructureConcealment(state, building) {
     const bonus = Number(effect.concealmentBonus ?? 0);
     if (!bonus) continue;
     if (effect.scope === "same_block") {
-      if (ownBlockId != null && cityBlockId(structure) === ownBlockId) total += bonus;
+      if (ownBlockId != null && cityBlockOfBuilding(state, structure) === ownBlockId) total += bonus;
       continue;
     }
     const radius = Number(effect.concealmentRadius ?? 3);
@@ -413,11 +399,15 @@ export function placeSpecialStructure(state, cityId, input = {}, context = {}) {
   const pendingPlacement = cardState.pendingPlacement?.placementId === placement.placementId
     ? completed
     : cardState.pendingPlacement;
+  const completions = [
+    ...(cardState.choice.specialPlacementsCompleted ?? []),
+    { placementId: placement.placementId, cardId: placement.cardId, buildingId, mode: placement.mode }
+  ];
   next.gameplay = {
     ...next.gameplay,
     cardState: normalizeCardState({
       offer: cardState.offer,
-      choice: normalizeCardChoice({ ...cardState.choice, specialPlacementCompleted: buildingId }),
+      choice: normalizeCardChoice({ ...cardState.choice, specialPlacementsCompleted: completions }),
       activePolicies: cardState.activePolicies,
       pendingPlacement,
       placements
@@ -619,7 +609,7 @@ export function cardFacts(state, turn) {
     specialPlacementMandate: cardState.pendingPlacement
       ? { ...cardState.pendingPlacement, status: cardState.pendingPlacement.status }
       : null,
-    specialPlacementCompleted: choice.specialPlacementCompleted ?? null
+    specialPlacementsCompleted: [...(choice.specialPlacementsCompleted ?? [])]
   };
 }
 

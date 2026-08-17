@@ -335,6 +335,8 @@ When you see a `deferred` placement in `strategy.cards.pending_placements`:
 
 The `placement_id` is stable: if the player delegates several special structures across consecutive turns, each mandate stays independently actionable and an older mandate is never shadowed by a newer one. A delegated mandate that is not placed by turn end is deliberately kept `deferred` in the frozen facts and in the strategy context; it never silently disappears and can be resolved in a later turn. If the player manually placed the structure, you see it as a completed building like any other.
 
+Concealment from the Diagon Alley Entrance follows real urban structure: it applies to every magical building on the same road-bounded city block (blocks are resolved from the live road/water/cell grid), so a parcel separated by a road never receives it even when physically adjacent. The Concealment Statue is instead a stronger local-radius bonus.
+
 ### Card facts in the newspaper
 
 Settlement freezes the player's card choice and its system effects into `TurnFacts` and the Owl ReportContext:
@@ -342,7 +344,7 @@ Settlement freezes the player's card choice and its system effects into `TurnFac
 - `context.card.offerId` and `context.card.offeredCards` — the cards that were offered;
 - `context.card.choice` — `selected_card_id`, `selectedCardTitle`, status, and the frozen `cardEffects`;
 - `context.card.policy` — `started`, `refreshed`, `expired`, and `active` fact refs;
-- `context.card.placement` — the special placement mandate and its completion status.
+- `context.card.placement` — the pending `mandate` and the `completed` array. Every completion is attributed with its `placementId`, `cardId`, and `buildingId`, so a later turn finishing an older delegated structure is never misread as the current selection being completed.
 
 Use stable refs like `fact-card-choice`, `fact-card-policy-<id>`, and `fact-card-placement` when you reference a card or policy fact. You may write stories like 《魔法部批准一笔城市拨款》 or 《三日保密令正式生效》, but never invent amounts, durations, or officer details that are not in the frozen facts.
 
