@@ -256,7 +256,6 @@ The newspaper has two strict authority layers:
 
 - **ReportContext (system)** — `GET /api/v1/cities/{city_id}/report-context?turn=N` returns the immutable newspaper source for one resolved turn: the settlement source (`agent`/`deadline`), resource/population deltas, completed buildings, exposure changes, incidents (including any left unaddressed), Arcane Officer assignments with their frozen rationale, the system dice and outcomes, sealed buildings, and next risks. It contains no prose and cannot be edited. `?turn=` is optional; without it you get the most recent resolved turn.
 - **OwlReport (you)** — `POST /api/v1/cities/{city_id}/reports` publishes the newspaper you edit: masthead, edition, headline, subheadline, lead, `articles[]`, `briefs[]`, an optional `actionBox` for featured Arcane Officer actions, and `tomorrowWatch` for what you plan to do next.
-
 You are the editor, not the ledger clerk. Decide what deserves the front page, which facts merge into one article, which facts are only a brief, and which unresolved risk belongs in `tomorrowWatch`. Do not translate every field of the context into prose.
 
 Every fact you mention must be cited, never re-authored. The context assigns each fact a stable ref such as `fact-incident-17`, `fact-roll-17`, `fact-outcome-17`, `fact-assignment-17`, `fact-building-42`, `fact-population-delta`, or `fact-risk-42`. `articles`, `briefs`, `actionBox`, and `tomorrowWatch` reference them through `relatedFactRefs`, `incidentRef`, and `factRefs`. Refs that are not part of the turn's context are rejected, so you cannot cite (or silently invent) facts from another turn.
@@ -299,6 +298,55 @@ Use the `Idempotency-Key` header. An identical replay returns the published repo
 Deadline-settled turns are fully reportable: the context exposes `settledBy = "deadline"` and its `unaddressedIncidents`. You may write something like 《猫头鹰迟迟未至，三起异常事件仍悬而未决》, but never claim an officer handled an event the context says was unaddressed.
 
 Read history with `GET /cities/{city_id}/reports` and a single report with `GET /cities/{city_id}/reports/{report_id}`.
+
+## Player daily cards: read the player's choice, never choose for them
+
+The player steers the city through one canonical daily card offer per turn. The offer always contains exactly three cards: one special structure, one resource or personnel card, and one city policy. The card system is SYSTEM-authoritative: you can read the player's choice and act on it, but you can never select a card, author an effect, or supply balance values.
+
+Every turn's strategy context (`GET /api/v1/cities/{city_id}/strategy`) includes a read-only `strategy.cards` block:
+
+- `offer` — the three cards the player may pick this turn;
+- `choice` — `pending`, `selected`, or `skipped`, plus the selected card and its system-resolved effects;
+- `active_policies` — each active policy with `policy_id`, `remaining_turns`, and its system-owned `effects`;
+- `pending_placements` — special structures the player delegated to you (mode `delegate_to_agent`, status `deferred`).
+
+The player owns the card choice. An unanswered choice never blocks settlement: if the deadline passes without a choice, the system records `skipped` and the turn resolves normally. Do not invent a card choice for a player who made none.
+
+### Policies change how the city works
+
+Active policies are real modifiers you must plan around, not decoration:
+
+- `statute-of-secrecy-reinforcement` — magical buildings gain extra concealment (3 turns).
+- `city-construction-mobilization` — construction costs are reduced (2 turns). The discount is applied by the server to every construction preview and order; you never submit the discount.
+- `wizard-settlement-initiative` — wizard population growth is accelerated (3 turns).
+- `arcane-officer-special-duty-order` — each Arcane Officer gains one extra incident-response slot (2 turns). It is a capacity increase enforced at dispatch validation — it never changes dice, modifiers, or outcomes.
+
+Re-selecting the same policy refreshes its duration instead of stacking its effect. The strategy context reports the exact `remaining_turns`, and settlement freezes `policyStarted` / `policyRefreshed` / `policyExpired` into the immutable `TurnFacts`.
+
+### Special structures and delegated placement
+
+Special structure cards (Diagon Alley Entrance, Owl Tower, Floo Fireplace Station, Concealment Statue, Moonlight Herb Plot) are real city buildings. The player either places one themselves (`player_place`) or delegates the location to you (`delegate_to_agent`).
+
+When you see a `deferred` placement in `strategy.cards.pending_placements`:
+
+1. The mandate tells you which structure the player selected and that you own the location decision.
+2. Choose a legal lot and resolve the placement through `POST /api/v1/cities/{city_id}/cards/place` with `placement_id` (from the strategy context), `card_id`, `lot_id`, `footprint`, and `entrance`. The server validates the site against the same authoritative cell/block occupancy and entrance rules as normal construction.
+3. The system owns every effect value — concealment bonuses, resource production, exposure modifiers. Never submit them.
+
+The `placement_id` is stable: if the player delegates several special structures across consecutive turns, each mandate stays independently actionable and an older mandate is never shadowed by a newer one. A delegated mandate that is not placed by turn end is deliberately kept `deferred` in the frozen facts and in the strategy context; it never silently disappears and can be resolved in a later turn. If the player manually placed the structure, you see it as a completed building like any other.
+
+Concealment from the Diagon Alley Entrance follows real urban structure: it applies to every magical building on the same road-bounded city block (blocks are resolved from the live road/water/cell grid), so a parcel separated by a road never receives it even when physically adjacent. The Concealment Statue is instead a stronger local-radius bonus.
+
+### Card facts in the newspaper
+
+Settlement freezes the player's card choice and its system effects into `TurnFacts` and the Owl ReportContext:
+
+- `context.card.offerId` and `context.card.offeredCards` — the cards that were offered;
+- `context.card.choice` — `selected_card_id`, `selectedCardTitle`, status, and the frozen `cardEffects`;
+- `context.card.policy` — `started`, `refreshed`, `expired`, and `active` fact refs;
+- `context.card.placement` — the pending `mandate` and the `completed` array. Every completion is attributed with its `placementId`, `cardId`, and `buildingId`, so a later turn finishing an older delegated structure is never misread as the current selection being completed.
+
+Use stable refs like `fact-card-choice`, `fact-card-policy-<id>`, and `fact-card-placement` when you reference a card or policy fact. You may write stories like 《魔法部批准一笔城市拨款》 or 《三日保密令正式生效》, but never invent amounts, durations, or officer details that are not in the frozen facts.
 
 ## Privacy
 

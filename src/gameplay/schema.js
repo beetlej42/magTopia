@@ -1,6 +1,14 @@
-export const GAMEPLAY_SCHEMA_VERSION = 1;
+export const GAMEPLAY_SCHEMA_VERSION = 2;
 
 export const TURN_STATUSES = Object.freeze(["open", "building", "strategy", "resolved", "reported", "closed"]);
+
+export const CARD_CHOICE_STATUSES = Object.freeze(["pending", "selected", "skipped", "resolved"]);
+
+export const CARD_DECISION_MODES = Object.freeze(["immediate", "player_place", "delegate_to_agent"]);
+
+export const PLACEMENT_STATUSES = Object.freeze(["pending", "deferred", "completed", "cancelled"]);
+
+export const POLICY_DURATION_TYPES = Object.freeze(["instant", "turns", "until_replaced"]);
 
 export const ARCANE_OFFICER_STATUSES = Object.freeze(["available", "assigned", "unavailable"]);
 
@@ -118,6 +126,89 @@ export function normalizeRollRecord(value = {}) {
   };
 }
 
+export function normalizeCardOffer(value = {}) {
+  return {
+    offerId: String(value.offerId ?? ""),
+    turn: clampNumber(value.turn, 0, 0, Number.MAX_SAFE_INTEGER),
+    offeredCardIds: [...(value.offeredCardIds ?? [])].map(String)
+  };
+}
+
+export function normalizePlacementCompletion(value = {}) {
+  return {
+    placementId: String(value.placementId ?? ""),
+    cardId: String(value.cardId ?? ""),
+    buildingId: String(value.buildingId ?? ""),
+    mode: String(value.mode ?? "player_place")
+  };
+}
+
+export function normalizeCardChoice(value = {}) {
+  const status = String(value.status ?? "pending");
+  if (!CARD_CHOICE_STATUSES.includes(status)) throw new Error(`Unsupported card choice status: ${status}`);
+  const decisionMode = value.decisionMode == null ? null : String(value.decisionMode);
+  if (decisionMode != null && !CARD_DECISION_MODES.includes(decisionMode)) {
+    throw new Error(`Unsupported card decision mode: ${decisionMode}`);
+  }
+  return {
+    offerId: String(value.offerId ?? ""),
+    status,
+    selectedCardId: value.selectedCardId == null ? null : String(value.selectedCardId),
+    decisionMode,
+    choiceResolvedAt: value.choiceResolvedAt == null ? null : String(value.choiceResolvedAt),
+    cardEffects: value.cardEffects ? { ...value.cardEffects } : {},
+    policyStarted: value.policyStarted ? [...value.policyStarted].map(String) : [],
+    policyRefreshed: value.policyRefreshed ? [...value.policyRefreshed].map(String) : [],
+    policyExpired: value.policyExpired ? [...value.policyExpired].map(String) : [],
+    officerRecruitedId: value.officerRecruitedId == null ? null : String(value.officerRecruitedId),
+    specialPlacementMandate: value.specialPlacementMandate ? { ...value.specialPlacementMandate } : null,
+    // Attributed completions: each entry records which placement/card/building
+    // was completed, so a later turn completing an older delegated mandate is
+    // never misattributed to the current turn's selected card.
+    specialPlacementsCompleted: [...(value.specialPlacementsCompleted ?? [])].map(normalizePlacementCompletion)
+  };
+}
+
+export function normalizeActivePolicy(value = {}) {
+  const durationType = String(value.durationType ?? "turns");
+  if (!POLICY_DURATION_TYPES.includes(durationType)) throw new Error(`Unsupported policy duration type: ${durationType}`);
+  return {
+    policyId: String(value.policyId ?? ""),
+    sourceCardId: String(value.sourceCardId ?? ""),
+    startedAtTurn: clampNumber(value.startedAtTurn, 0, 0, Number.MAX_SAFE_INTEGER),
+    durationType,
+    durationTurns: clampNumber(value.durationTurns, 1, 0, Number.MAX_SAFE_INTEGER),
+    remainingTurns: clampNumber(value.remainingTurns, 0, 0, Number.MAX_SAFE_INTEGER),
+    effects: Array.isArray(value.effects) ? [...value.effects].map((entry) => ({ ...entry })) : []
+  };
+}
+
+export function normalizePendingPlacement(value = {}) {
+  const status = String(value.status ?? "pending");
+  if (!PLACEMENT_STATUSES.includes(status)) throw new Error(`Unsupported placement status: ${status}`);
+  return {
+    cardId: String(value.cardId ?? ""),
+    placementId: String(value.placementId ?? ""),
+    mode: String(value.mode ?? "player_place"),
+    status,
+    delegatedAtTurn: clampNumber(value.delegatedAtTurn, 0, 0, Number.MAX_SAFE_INTEGER),
+    buildingId: value.buildingId == null ? null : String(value.buildingId),
+    lotId: value.lotId == null ? null : String(value.lotId),
+    footprint: value.footprint == null ? null : String(value.footprint),
+    entrance: value.entrance == null ? null : String(value.entrance)
+  };
+}
+
+export function normalizeCardState(value = {}) {
+  return {
+    offer: value.offer ? normalizeCardOffer(value.offer) : null,
+    choice: normalizeCardChoice(value.choice ?? {}),
+    activePolicies: [...(value.activePolicies ?? [])].map(normalizeActivePolicy),
+    pendingPlacement: value.pendingPlacement ? normalizePendingPlacement(value.pendingPlacement) : null,
+    placements: Object.fromEntries(Object.entries(value.placements ?? {}).map(([id, entry]) => [id, normalizePendingPlacement(entry)]))
+  };
+}
+
 export function normalizeTurnFacts(value = {}) {
   return {
     schemaVersion: GAMEPLAY_SCHEMA_VERSION,
@@ -134,7 +225,18 @@ export function normalizeTurnFacts(value = {}) {
     rolls: [...(value.rolls ?? [])].map(normalizeRollRecord),
     outcomes: [...(value.outcomes ?? [])].map((entry) => ({ ...entry })),
     sealedBuildings: [...(value.sealedBuildings ?? [])],
-    nextRisks: [...(value.nextRisks ?? [])].map((entry) => ({ ...entry }))
+    nextRisks: [...(value.nextRisks ?? [])].map((entry) => ({ ...entry })),
+    cardOfferId: value.cardOfferId == null ? null : String(value.cardOfferId),
+    offeredCardIds: [...(value.offeredCardIds ?? [])].map(String),
+    selectedCardId: value.selectedCardId == null ? null : String(value.selectedCardId),
+    choiceStatus: String(value.choiceStatus ?? "pending"),
+    choiceResolvedAt: value.choiceResolvedAt == null ? null : String(value.choiceResolvedAt),
+    cardEffects: value.cardEffects ? { ...value.cardEffects } : {},
+    policyStarted: [...(value.policyStarted ?? [])].map(String),
+    policyRefreshed: [...(value.policyRefreshed ?? [])].map(String),
+    policyExpired: [...(value.policyExpired ?? [])].map(String),
+    specialPlacementMandate: value.specialPlacementMandate ? { ...value.specialPlacementMandate } : null,
+    specialPlacementsCompleted: [...(value.specialPlacementsCompleted ?? [])].map(normalizePlacementCompletion)
   };
 }
 

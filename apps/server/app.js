@@ -22,6 +22,19 @@ import {
 } from "../../src/city/building-design.js";
 import { resolveTurn, validateAssignments } from "../../src/gameplay/simulation.js";
 import { buildReportContext, factsDigest, normalizeOwlReport, validateOwlReport } from "../../src/gameplay/owl-report.js";
+import {
+  activeConstructionDiscountRate,
+  activePolicies,
+  collectPolicyEffects,
+  currentChoice,
+  currentOffer,
+  ensureCardOffer,
+  listCards,
+  pendingPlacements,
+  placeSpecialStructure,
+  selectCard
+} from "../../src/gameplay/cards.js";
+import { getCard } from "../../src/gameplay/card-catalog.js";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PLAYBOOK_PATH = path.resolve(SERVER_DIR, "../../docs/agent-playbook.md");
@@ -346,7 +359,7 @@ export async function createApp({ repository, config, logger = false, now = () =
       };
     }
     const proposal = proposalFromBody(body, principal, asset);
-    const preview = previewConstruction(state, proposal);
+    const preview = previewConstruction(state, proposal, { constructionDiscountRate: activeConstructionDiscountRate(state) });
     return {
       city_version: state.version,
       preview_token: hashRequest({ cityId: request.params.cityId, cityVersion: state.version, body }),
@@ -388,7 +401,7 @@ export async function createApp({ repository, config, logger = false, now = () =
         ? { mode: "voxel" }
         : asset ? { mode: "reuse", asset_id: asset.id } : { mode: "produce", spec: normalizeAssetSpec(body) };
       const proposal = proposalFromBody(body, principal, resolvedAsset);
-      const context = engineContext();
+      const context = engineContext({ constructionDiscountRate: activeConstructionDiscountRate(state) });
       const orderId = createId("order");
       if (assetChoice.mode === "voxel") {
         if (!linkedDesign) throw new ServiceError(400, "BUILDING_DESIGN_REQUIRED", "Voxel construction must reference a confirmed building design");
@@ -586,7 +599,7 @@ export async function createApp({ repository, config, logger = false, now = () =
       if (CLOSED_TURN_STATUSES.has(gameplay.turnStatus)) {
         return { nextState: null, response: rejectedStrategyResponse("TURN_ALREADY_RESOLVED", `Turn ${state.turn} is already resolved; the strategy phase is closed`) };
       }
-      const validation = validateAssignments(state, [], assignments);
+      const validation = validateAssignments(state, [], assignments, { responseCapacityBonus: collectPolicyEffects(state).incidentResponseBonus });
       if (!validation.ok) {
         return { nextState: null, response: rejectedStrategyResponse("INVALID_ASSIGNMENT", validation.errors.map((entry) => entry.message).join("; "), validation.errors) };
       }
@@ -640,6 +653,119 @@ export async function createApp({ repository, config, logger = false, now = () =
     });
     return reply.code(response.status === "rejected" ? 422 : 200).send(response);
   });
+
+  app.get("/api/v1/cities/:cityId/cards/current", async (request) => {
+    const principal = await authenticate(repository, request, "city:read");
+    const { row, state } = await repository.getCity(principal, request.params.cityId);
+    const withCards = ensureCardOffer(state, row.id);
+    if (withCards !== state) {
+      await persistCardState(repository, principal, request.params.cityId, withCards);
+    }
+    return {
+      city_id: row.id,
+      city_version: Number(withCards.version),
+      turn: withCards.turn,
+      turn_status: withCards.gameplay?.turnStatus ?? "open",
+      offer: currentOffer(withCards),
+      choice: currentChoice(withCards)
+    };
+  });
+
+  app.post("/api/v1/cities/:cityId/cards/select", async (request, reply) => {
+    const principal = await authenticate(repository, request, "city:read");
+    requirePlayer(principal);
+    const body = request.body ?? {};
+    assertCardSelectTopLevelFields(body);
+    const response = await repository.transactCity({
+      principal,
+      cityId: request.params.cityId,
+      endpoint: "cards/select",
+      idempotencyKey: request.headers["idempotency-key"],
+      requestBody: body,
+      expectedVersion: expectedCityVersion(request, body),
+      action: "card_select",
+      reason: "player_daily_card_selection"
+    }, async ({ state }) => {
+      const withCards = ensureCardOffer(state, request.params.cityId);
+      const result = selectCard(withCards, request.params.cityId, {
+        offerId: body.offer_id,
+        selectedCardId: body.selected_card_id,
+        decisionMode: body.decision_mode
+      }, { now: () => new Date().toISOString(), createId });
+      if (!result.accepted) {
+        return { nextState: null, response: { command_id: createId("command"), status: "rejected", code: result.code, message: result.message, errors: [{ code: result.code, message: result.message }] } };
+      }
+      return {
+        nextState: result.nextState,
+        response: {
+          command_id: createId("command"),
+          status: "selected",
+          city_version_before: state.version,
+          city_version_after: result.nextState.version,
+          turn: result.nextState.turn,
+          selected_card_id: result.cardId,
+          card_effects: result.cardEffects,
+          choice: currentChoice(result.nextState)
+        }
+      };
+    });
+    return reply.code(response.status === "rejected" ? 422 : 200).send(response);
+  });
+
+  app.post("/api/v1/cities/:cityId/cards/place", async (request, reply) => {
+    const principal = await authenticate(repository, request, "city:build");
+    const body = request.body ?? {};
+    assertCardPlaceTopLevelFields(body);
+    const response = await repository.transactCity({
+      principal,
+      cityId: request.params.cityId,
+      endpoint: "cards/place",
+      idempotencyKey: request.headers["idempotency-key"],
+      requestBody: body,
+      expectedVersion: expectedCityVersion(request, body),
+      action: "card_place",
+      reason: "special_structure_placement"
+    }, async ({ state }) => {
+      const cardState = state.gameplay?.cardState ?? {};
+      const placementId = body.placement_id ?? cardState.pendingPlacement?.placementId ?? null;
+      const placement = placementId ? cardState.placements?.[placementId] ?? null : null;
+      if (!placement) {
+        return { nextState: null, response: rejectedCardPlacement("PLACEMENT_NOT_FOUND", "No pending placement matches the request; pass placement_id from the strategy context") };
+      }
+      if (placement.mode === "player_place" && principal.kind !== "player") {
+        return { nextState: null, response: rejectedCardPlacement("PLACEMENT_ACTOR_NOT_ALLOWED", "A player-owned placement must be resolved by the city owner") };
+      }
+      if (placement.mode === "delegate_to_agent" && principal.kind === "player") {
+        return { nextState: null, response: rejectedCardPlacement("PLACEMENT_ACTOR_NOT_ALLOWED", "A delegated placement must be resolved by the city Agent") };
+      }
+      const result = placeSpecialStructure(state, request.params.cityId, {
+        cardId: body.card_id,
+        placementId,
+        lotId: body.lot_id,
+        footprint: body.footprint,
+        entrance: body.entrance
+      }, { now: () => new Date().toISOString(), createId });
+      if (!result.accepted) {
+        return { nextState: null, response: rejectedCardPlacement(result.code, result.message) };
+      }
+      return {
+        nextState: result.nextState,
+        response: {
+          command_id: createId("command"),
+          status: "placed",
+          city_version_before: state.version,
+          city_version_after: result.nextState.version,
+          turn: result.nextState.turn,
+          building_id: result.buildingId,
+          placement: { ...result.placement, card_title: getCard(result.placement.cardId)?.title ?? null },
+          choice: currentChoice(result.nextState)
+        }
+      };
+    });
+    return reply.code(response.status === "rejected" ? 422 : 200).send(response);
+  });
+
+  app.get("/api/v1/cards", async () => ({ data: listCards() }));
 
   app.get("/api/v1/cities/:cityId/report-context", async (request) => {
     const principal = await authenticate(repository, request, "city:read");
@@ -740,6 +866,12 @@ async function authenticate(repository, request, scope = null) {
 function requireScope(principal, scope) {
   if (principal.kind === "player" || principal.scopes.includes("*") || principal.scopes.includes(scope)) return;
   throw new ServiceError(403, "SCOPE_REQUIRED", `Credential requires ${scope} scope`, { required_scope: scope });
+}
+
+function requirePlayer(principal) {
+  if (principal?.kind !== "player") {
+    throw new ServiceError(403, "PLAYER_CREDENTIAL_REQUIRED", "This action requires a player credential");
+  }
 }
 
 function expectedCityVersion(request, body) {
@@ -1014,6 +1146,50 @@ function rejectedStrategyResponse(code, message, assignmentErrors = null) {
   };
 }
 
+const CARD_SELECT_TOP_FIELDS = new Set(["offer_id", "selected_card_id", "decision_mode", "expected_city_version", "expectedCityVersion", "actor_note"]);
+
+function assertCardSelectTopLevelFields(body) {
+  if (body.effect != null || body.coins != null || body.duration != null || body.policy != null || body.stats != null
+    || body.concealment != null || body.population != null || body.specialties != null || body.offer_contents != null) {
+    throw new ServiceError(400, "CARD_FORGERY_REJECTED", "Card selection must not carry effect values, durations, coins, population amounts, policy modifiers, or officer stats; the system owns every effect parameter");
+  }
+  const unknown = Object.keys(body ?? {}).filter((key) => !CARD_SELECT_TOP_FIELDS.has(key));
+  if (unknown.length > 0) {
+    throw new ServiceError(400, "UNKNOWN_CARD_SELECT_FIELD", `Card selection contains unsupported field${unknown.length > 1 ? "s" : ""}: ${unknown.join(", ")}; only offer_id, selected_card_id, decision_mode, and expected_city_version are accepted`);
+  }
+}
+
+const CARD_PLACE_TOP_FIELDS = new Set(["card_id", "placement_id", "placementId", "lot_id", "lotId", "footprint", "entrance", "expected_city_version", "expectedCityVersion", "actor_note"]);
+
+function assertCardPlaceTopLevelFields(body) {
+  const unknown = Object.keys(body ?? {}).filter((key) => !CARD_PLACE_TOP_FIELDS.has(key));
+  if (unknown.length > 0) {
+    throw new ServiceError(400, "UNKNOWN_CARD_PLACE_FIELD", `Card placement contains unsupported field${unknown.length > 1 ? "s" : ""}: ${unknown.join(", ")}; only card_id, placement_id, lot_id, footprint, entrance, and expected_city_version are accepted`);
+  }
+  for (const key of ["concealment", "concealment_bonus", "bonus", "coin_output", "magic_output", "exposure", "policy", "duration"]) {
+    if (body[key] != null) {
+      throw new ServiceError(400, "CARD_FORGERY_REJECTED", `Card placement must not carry ${key}; the system owns every special structure effect`);
+    }
+  }
+}
+
+function rejectedCardPlacement(code, message) {
+  return { command_id: createId("command"), status: "rejected", code, message, errors: [{ code, message }] };
+}
+
+async function persistCardState(repository, principal, cityId, nextState) {
+  return repository.transactCity({
+    principal,
+    cityId,
+    endpoint: "cards/ensure-offer",
+    idempotencyKey: `cards-offer-v${nextState.turn}`,
+    requestBody: {},
+    expectedVersion: nextState.version,
+    action: "card_offer_ensured",
+    reason: "lazy card offer creation for the current turn"
+  }, async ({ state }) => ({ nextState, response: { command_id: createId("command"), status: "ok", city_version_after: nextState.version } }));
+}
+
 function strategyPayload(state) {
   const gameplay = state.gameplay ?? {};
   const incidents = Object.values(gameplay.incidents ?? {})
@@ -1030,7 +1206,17 @@ function strategyPayload(state) {
       incident_id: entry.incidentId,
       arcane_officer_id: entry.arcaneOfficerId,
       rationale: entry.rationale ?? null
-    }))
+    })),
+    // PR F — read-only player card state. The Agent can observe the offer, the
+    // player's choice, resolved effects, active policies, and delegated
+    // placement mandates, but can never author them or choose on the player's
+    // behalf.
+    cards: {
+      offer: currentOffer(state),
+      choice: currentChoice(state),
+      active_policies: activePolicies(state),
+      pending_placements: pendingPlacements(state)
+    }
   };
 }
 
@@ -1065,8 +1251,8 @@ function strategyOfficerResponse(officer) {
   };
 }
 
-function engineContext() {
-  return createEngineContext({ createId, now: () => new Date().toISOString() });
+function engineContext(options = {}) {
+  return createEngineContext({ createId, now: () => new Date().toISOString(), ...options });
 }
 
 function actorId(principal) { return `${principal.kind}:${principal.id}`; }

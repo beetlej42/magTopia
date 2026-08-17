@@ -2,6 +2,7 @@ import { hashSeed } from "../../src/gameplay/random.js";
 import { normalizeScheduler } from "../../src/gameplay/schema.js";
 import { resolveTurn } from "../../src/gameplay/simulation.js";
 import { dueActionFor, initializeTurnSchedule, isTurnOverdue, normalizeTurnSchedule, openNextTurn } from "../../src/gameplay/turn.js";
+import { ensureCardOffer, openTurnCardState } from "../../src/gameplay/cards.js";
 
 // The turn scheduler is the only server-owned wall-clock actor. It never
 // invents gameplay rules: it only (a) opens a settled turn once its persisted
@@ -60,32 +61,38 @@ export function createTurnScheduler({ repository, config, now = () => new Date()
     if (action === "init") {
       const initialized = initializeTurnSchedule(state, nowValue, schedule);
       if (!initialized) return { nextState: null, response: { status: "noop", reason: "not_initializable" } };
+      // Every opened turn carries one canonical card offer. Existing cities
+      // that predate the card system receive one lazily here.
+      const withCards = ensureCardOffer(initialized, cityId);
       return {
-        nextState: initialized,
+        nextState: withCards,
         response: {
           status: "opened",
-          turn: initialized.turn,
-          turn_status: initialized.gameplay.turnStatus,
-          turn_opened_at: initialized.gameplay.turnOpenedAt,
-          turn_deadline_at: initialized.gameplay.turnDeadlineAt,
-          next_turn_unlock_at: initialized.gameplay.nextTurnUnlockAt,
-          city_version_after: initialized.version
+          turn: withCards.turn,
+          turn_status: withCards.gameplay.turnStatus,
+          turn_opened_at: withCards.gameplay.turnOpenedAt,
+          turn_deadline_at: withCards.gameplay.turnDeadlineAt,
+          next_turn_unlock_at: withCards.gameplay.nextTurnUnlockAt,
+          city_version_after: withCards.version
         }
       };
     }
     if (action === "open-next") {
       const opened = openNextTurn(state, nowValue, schedule);
       if (!opened) return { nextState: null, response: { status: "noop", reason: "not_unlocked" } };
+      // Reset the choice and create the canonical offer for the newly opened
+      // turn; pending delegated placements deliberately survive settlement.
+      const withCards = openTurnCardState(opened, cityId, { turn: opened.turn, now: () => nowValue.toISOString() });
       return {
-        nextState: opened,
+        nextState: withCards,
         response: {
           status: "opened",
-          turn: opened.turn,
-          turn_status: opened.gameplay.turnStatus,
-          turn_opened_at: opened.gameplay.turnOpenedAt,
-          turn_deadline_at: opened.gameplay.turnDeadlineAt,
-          next_turn_unlock_at: opened.gameplay.nextTurnUnlockAt,
-          city_version_after: opened.version
+          turn: withCards.turn,
+          turn_status: withCards.gameplay.turnStatus,
+          turn_opened_at: withCards.gameplay.turnOpenedAt,
+          turn_deadline_at: withCards.gameplay.turnDeadlineAt,
+          next_turn_unlock_at: withCards.gameplay.nextTurnUnlockAt,
+          city_version_after: withCards.version
         }
       };
     }

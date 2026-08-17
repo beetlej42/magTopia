@@ -150,7 +150,7 @@ function constructBuilding(currentState, input, context) {
   let proposal;
   try { proposal = normalizeConstructionProposal(input.proposal ?? input, context); }
   catch (error) { return rejected(currentState, "INVALID_PROPOSAL", error.message); }
-  const preview = previewConstruction(currentState, proposal);
+  const preview = previewConstruction(currentState, proposal, { constructionDiscountRate: context.constructionDiscountRate });
   if (!preview.feasible) return rejected(currentState, classifyPreviewError(preview), preview.errors?.[0] ?? "Construction is not feasible", { preview });
   const next = cloneCityState(currentState);
   const buildingId = input.buildingId ?? context.createId("building");
@@ -187,7 +187,7 @@ function reserveConstruction(currentState, input, context) {
   let proposal;
   try { proposal = normalizeConstructionProposal(input.proposal ?? input, context); }
   catch (error) { return rejected(currentState, "INVALID_PROPOSAL", error.message); }
-  const preview = previewConstruction(currentState, proposal);
+  const preview = previewConstruction(currentState, proposal, { constructionDiscountRate: context.constructionDiscountRate });
   if (!preview.feasible) return rejected(currentState, classifyPreviewError(preview), preview.errors?.[0] ?? "Construction is not feasible", { preview });
   const reservationId = input.reservationId ?? context.createId("reservation");
   const next = cloneCityState(currentState);

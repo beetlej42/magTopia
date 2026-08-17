@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { deepFreeze } from "./schema.js";
+import { getCard } from "./card-catalog.js";
 
 // PR E — Owl Daily / Narrative Interface.
 //
@@ -143,6 +144,34 @@ export function buildReportContext({ cityId = null, state = {}, facts, options =
     return { ...entry, factRef: factRef("risk", entry.buildingId), name: buildingName(entry.buildingId) };
   });
 
+  // PR F — Card and policy facts are projected strictly from the frozen
+  // TurnFacts, exactly like incidents. A later turn mutating current policy or
+  // placement state can never rewrite an earlier turn's ReportContext.
+  const offeredCards = (facts.offeredCardIds ?? []).map((cardId) => {
+    const definition = getCard(cardId);
+    return {
+      cardId,
+      type: definition?.type ?? null,
+      title: definition?.title ?? cardId,
+      description: definition?.description ?? null,
+      decisionMode: definition?.decisionMode ?? null
+    };
+  });
+  const selectedCardTitle = facts.selectedCardId != null ? getCard(facts.selectedCardId)?.title ?? facts.selectedCardId : null;
+  const policyActive = (facts.policyStarted ?? []).map((policyId) => {
+    refs.add(factRef("card-policy", policyId));
+    return { factRef: factRef("card-policy", policyId), policyId, event: "started" };
+  }).concat((facts.policyRefreshed ?? []).map((policyId) => {
+    refs.add(factRef("card-policy", policyId));
+    return { factRef: factRef("card-policy", policyId), policyId, event: "refreshed" };
+  })).concat((facts.policyExpired ?? []).map((policyId) => {
+    refs.add(factRef("card-policy", policyId));
+    return { factRef: factRef("card-policy", policyId), policyId, event: "expired" };
+  }));
+  if (offeredCards.length) refs.add(factRef("card-offer"));
+  refs.add(factRef("card-choice"));
+  if (facts.specialPlacementMandate) refs.add(factRef("card-placement"));
+
   refs.add(factRef("turn"));
   refs.add(factRef("resource-delta"));
   refs.add(factRef("population-delta"));
@@ -173,6 +202,45 @@ export function buildReportContext({ cityId = null, state = {}, facts, options =
     outcomes,
     sealedBuildings,
     nextRisks,
+    card: {
+      factRef: factRef("card-offer"),
+      offerId: facts.cardOfferId,
+      turn,
+      offeredCards,
+      choice: {
+        factRef: factRef("card-choice"),
+        status: facts.choiceStatus,
+        selectedCardId: facts.selectedCardId ?? null,
+        selectedCardTitle,
+        choiceResolvedAt: facts.choiceResolvedAt ?? null,
+        cardEffects: { ...(facts.cardEffects ?? {}) }
+      },
+      policy: {
+        factRef: factRef("card-policy"),
+        started: facts.policyStarted ?? [],
+        refreshed: facts.policyRefreshed ?? [],
+        expired: facts.policyExpired ?? [],
+        active: policyActive
+      },
+      placement: {
+        factRef: factRef("card-placement"),
+        mandate: facts.specialPlacementMandate
+          ? {
+            cardId: facts.specialPlacementMandate.cardId,
+            mode: facts.specialPlacementMandate.mode,
+            status: facts.specialPlacementMandate.status,
+            placementId: facts.specialPlacementMandate.placementId
+          }
+          : null,
+        // Attributed completions: every entry ties a completed mandate to the
+        // placement/card/building, so the Owl Daily never misreads a later
+        // turn completing an older mandate as the current selection completing.
+        completed: (facts.specialPlacementsCompleted ?? []).map((entry) => ({
+          ...entry,
+          cardTitle: entry.cardId ? getCard(entry.cardId)?.title ?? entry.cardId : null
+        }))
+      }
+    },
     factRefs: [...refs].sort()
   };
   return deepFreeze(context);

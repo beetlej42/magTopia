@@ -46,7 +46,14 @@ export function createCityState(worldContract, options = {}) {
       // turn keeps its facts here so an Agent can write a backfilled Owl Daily
       // report for a previously settled turn, not only the most recent one.
       turnFacts: {},
-      lastTurnFacts: null
+      lastTurnFacts: null,
+      cardState: {
+        offer: null,
+        choice: { offerId: null, status: "pending", selectedCardId: null, decisionMode: null, choiceResolvedAt: null, cardEffects: {}, policyStarted: [], policyRefreshed: [], policyExpired: [], officerRecruitedId: null, specialPlacementMandate: null, specialPlacementsCompleted: [] },
+        activePolicies: [],
+        pendingPlacement: null,
+        placements: {}
+      }
     },
     economy: { lastIncome: { coins: 0, timber: 0, stone: 0 }, lifetimeIncome: { coins: 0, timber: 0, stone: 0 } },
     cells,

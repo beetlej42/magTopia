@@ -445,7 +445,19 @@ nextRisks
 
 ## PR F — Player cards
 
-最后接 modifier。
+已实现（`src/gameplay/card-catalog.js` + `src/gameplay/cards.js` + `src/gameplay/schema.js` + `src/gameplay/owl-report.js` + 三个 API 端点）：
+
+- 12 张系统所有卡牌目录：5 张特殊建筑（Diagon Alley Entrance / Owl Tower / Floo Fireplace Station / Concealment Statue / Moonlight Herb Plot），3 张资源/人事（Ministry Grant / New Wizard Residents / Arcane Officer Reinforcement），4 张城市政策（Secrecy / Construction Mobilization / Wizard Settlement / Special Duty Order）。所有数值集中在目录，路由与客户端输入不得提供效果参数。
+- 每回合一个 canonical 三卡 offer（1 特殊 + 1 资源/人事 + 1 政策），以 `cityId + turn` 确定性种子生成并持久化到 `state.gameplay.cardState`；重启与重复读取不重roll，Agent/客户端无法控制 seed。
+- 玩家每回合只能选择一张卡；Agent 无权替玩家选卡；到期未选记录显式 `skipped`，不阻塞结算与下一回合。
+- 特殊卡支持 `player_place` 与 `delegate_to_agent` 两种同卡选择模式；放置通过既有 cell/block occupancy 与 entrance 权威校验，效果由系统拥有；委派 mandate 结算后保留在冻结 facts，不会静默消失。
+- 资源/人事卡即时且 exactly-once：金币、人口（遵守容量）、命名 Arcane Officer（真实名字，archetype 档案系统拥有）在选卡时一次生效，幂等重放不重复。
+- 政策支持 `turns: N`（`until_replaced` 语义保留），同一政策重选刷新时长而非无限叠加；生命周期在确定性结算中推进（started/refreshed/expired），策略上下文暴露 `remaining_turns`。
+- 卡牌/政策事实冻结进 `TurnFacts`，并投影进 Owl Daily `ReportContext`（`fact-card-choice` / `fact-card-policy-<id>` / `fact-card-placement`），历史上下文不会随后续回合的当前政策/放置状态漂移。
+- 端点：`GET /api/v1/cards`、`GET /api/v1/cities/{id}/cards/current`、`POST /api/v1/cities/{id}/cards/select`、`POST /api/v1/cities/{id}/cards/place`；策略上下文新增只读 `strategy.cards`。
+- 测试：`test/serverCardsApi.test.js` 覆盖 canonical/重启稳定 offer、单人单卡、防伪造、exactly-once、人口容量、命名官员、手动/委派放置、多回合政策生命周期与刷新、无卡到期、TurnFacts/Owl 历史不可变、幂等、OpenAPI 与 playbook。
+
+明确不在本 PR：风险/收益事件卡、稀有度/卡组、付费抽卡、卡牌升级、官员成长/肖像/传记、复杂政策叠加、真实交通模拟、报纸 UI/美术。
 
 ---
 
