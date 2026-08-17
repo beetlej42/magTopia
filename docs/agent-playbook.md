@@ -351,3 +351,23 @@ Use stable refs like `fact-card-choice`, `fact-card-policy-<id>`, and `fact-card
 ## Privacy
 
 Cities are private by default. Your credential is scoped to a single city and a limited set of actions. Never attempt to enumerate or access another city.
+
+## Player-facing city-day presentation (read-only)
+
+The server exposes a derived, read-only presentation projection of the current city-day. It is **not** a second simulation clock: it never produces resources, population, exposure, incidents, or extra turns, and it can never settle a turn. Visual time-of-day is an output of the existing turn/workflow state.
+
+```http
+GET /api/v1/cities/{city_id}/city-day
+```
+
+The response is a pure projection you may read to understand what the player is currently experiencing:
+
+- `phase` — `dawn` | `early_morning` | `morning` | `day` | `night`.
+- `settled` — whether the current turn has already been settled.
+- `report` — the completed day's Owl Daily presentation state: `turn`, `ready`, `dismissed`, plus `report_id`/`edition`/`headline` when published.
+- `card` — the player's current choice state: `choiceStatus`, `choicePending`, `selectedCardId`, `decisionMode`, `playerPlacementPending`.
+- `agent` — `workStarted`: true only after the system observed an accepted Agent city-work command for the current turn. Mere credential presence or elapsed wall-clock time never sets this flag.
+- `incident` — `phaseActive`: true while the strategy/incident phase is active.
+- `turnDeadlineAt` / `nextTurnUnlockAt` — read-only schedule anchors.
+
+The day never advances `morning → day` or `day → night` because time passed; it advances only when real accepted gameplay activity happens. The player's report dismissal is acknowledged server-side so it never replays across devices; it does not mutate city state. Agents should treat this endpoint as context, never as an authority to act on: all Agent city work still flows through the construction/strategy APIs above.

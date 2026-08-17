@@ -742,6 +742,62 @@ export function createOpenApiDocument(baseUrl) {
             created_at: { type: "string" },
             updated_at: { type: "string" }
           }
+        },
+        CityDayPresentation: {
+          type: "object",
+          description: "Pure presentation projection of the authoritative turn/workflow state. Visual time-of-day is an output of workflow, never a second simulation clock or realtime economy.",
+          required: ["city_id", "city_version", "phase", "turn", "turnStatus", "settled", "report", "card", "agent", "incident"],
+          properties: {
+            city_id: { type: "string" },
+            city_version: { type: "integer" },
+            phase: { enum: ["dawn", "early_morning", "morning", "day", "night"] },
+            turn: { type: "integer" },
+            turnStatus: { type: "string" },
+            settled: { type: "boolean" },
+            report: {
+              type: "object",
+              properties: {
+                turn: { type: ["integer", "null"] },
+                ready: { type: "boolean" },
+                dismissed: { type: "boolean" },
+                report_id: { type: ["string", "null"] },
+                edition: { type: ["string", "null"] },
+                masthead_title: { type: ["string", "null"] },
+                headline: { type: ["string", "null"] }
+              }
+            },
+            card: {
+              type: "object",
+              properties: {
+                choiceStatus: { type: "string" },
+                choicePending: { type: "boolean" },
+                selectedCardId: { type: ["string", "null"] },
+                decisionMode: { type: ["string", "null"] },
+                playerPlacementPending: { type: "boolean" }
+              }
+            },
+            agent: { type: "object", properties: { workStarted: { type: "boolean" } } },
+            incident: { type: "object", properties: { phaseActive: { type: "boolean" } } },
+            nextTurnUnlockAt: { type: ["string", "null"] },
+            turnDeadlineAt: { type: ["string", "null"] }
+          }
+        },
+        ReportDismissRequest: {
+          type: "object",
+          required: ["report_turn"],
+          properties: {
+            report_turn: { type: "integer", minimum: 1, description: "The completed day's report turn, matching the latest city-day presentation report.turn." }
+          }
+        },
+        ReportDismissResponse: {
+          type: "object",
+          required: ["city_id", "city_version", "report_turn", "dismissed"],
+          properties: {
+            city_id: { type: "string" },
+            city_version: { type: "integer" },
+            report_turn: { type: "integer" },
+            dismissed: { const: true }
+          }
         }
       }
     },
@@ -794,6 +850,8 @@ export function createOpenApiDocument(baseUrl) {
         post: commandOperation("Publish the canonical Owl Daily newspaper for a resolved turn", "reports", { $ref: "#/components/schemas/OwlReportSubmitRequest" })
       },
       "/cities/{city_id}/reports/{report_id}": { get: operation("Read one published Owl Daily report", "reports", null, { $ref: "#/components/schemas/OwlReportResponse" }) },
+      "/cities/{city_id}/city-day": { get: operation("Read the player-facing city-day presentation projection for the current turn", "city-day", null, { $ref: "#/components/schemas/CityDayPresentation" }) },
+      "/cities/{city_id}/city-day/report-dismissed": { post: operation("Record that the player dismissed the completed day's Owl Daily so it is never replayed", "city-day", { $ref: "#/components/schemas/ReportDismissRequest" }, { $ref: "#/components/schemas/ReportDismissResponse" }) },
       "/cities/{city_id}/agent-links": { post: operation("Create a one-time Agent connection link", "credentials", json) },
       "/cities/{city_id}/agent-credentials": { get: operation("List Agent credentials", "credentials") },
       "/cities/{city_id}/agent-credentials/{credential_id}": { delete: operation("Revoke an Agent credential", "credentials") },

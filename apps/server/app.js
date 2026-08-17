@@ -35,6 +35,7 @@ import {
   selectCard
 } from "../../src/gameplay/cards.js";
 import { getCard } from "../../src/gameplay/card-catalog.js";
+import { completedReportTurn, deriveCityDayPresentation } from "../../src/gameplay/city-day.js";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PLAYBOOK_PATH = path.resolve(SERVER_DIR, "../../docs/agent-playbook.md");
@@ -821,6 +822,57 @@ export async function createApp({ repository, config, logger = false, now = () =
   app.get("/api/v1/cities/:cityId/reports/:reportId", async (request) => {
     const principal = await authenticate(repository, request, "city:read");
     return repository.getOwlReport(principal, request.params.cityId, request.params.reportId);
+  });
+
+  // PR G — player-facing city-day presentation read model. Pure projection of
+  // authoritative turn/workflow state; never a second simulation clock.
+  app.get("/api/v1/cities/:cityId/city-day", async (request) => {
+    const principal = await authenticate(repository, request, "city:read");
+    const { row, state } = await repository.getCity(principal, request.params.cityId);
+    const reportTurn = completedReportTurn(state);
+    const reports = reportTurn == null ? [] : await repository.listOwlReports(principal, request.params.cityId);
+    const report = reports.find((entry) => Number(entry.turn) === Number(reportTurn)) ?? null;
+    const reportReady = report != null;
+    const dismissed = reportTurn == null
+      ? false
+      : Object.hasOwn(await repository.listReportDismissals(principal, request.params.cityId), String(reportTurn));
+    const presentation = deriveCityDayPresentation(state, {
+      reportReady,
+      reportDismissed: dismissed,
+      turnOpenedAt: state.gameplay?.turnOpenedAt ?? null
+    });
+    return {
+      city_id: row.id,
+      city_version: Number(row.city_version),
+      ...presentation,
+      report: {
+        ...presentation.report,
+        report_id: report?.report_id ?? null,
+        edition: report?.edition ?? null,
+        masthead_title: report?.masthead_title ?? null,
+        headline: report?.headline ?? null
+      }
+    };
+  });
+
+  // Records that the player has seen and dismissed a completed day's Owl Daily,
+  // so the dawn presentation never replays the same report across reloads/devices.
+  app.post("/api/v1/cities/:cityId/city-day/report-dismissed", async (request, reply) => {
+    const principal = await authenticate(repository, request, "city:read");
+    requirePlayer(principal);
+    const body = request.body ?? {};
+    const reportTurn = body.report_turn ?? body.reportTurn ?? null;
+    if (reportTurn == null || !Number.isInteger(Number(reportTurn)) || Number(reportTurn) < 1) {
+      throw new ServiceError(400, "INVALID_REPORT_TURN", "report_turn must be a positive integer");
+    }
+    const { row, state } = await repository.getCity(principal, request.params.cityId);
+    const completedTurn = completedReportTurn(state);
+    if (Number(reportTurn) !== Number(completedTurn)) {
+      throw new ServiceError(422, "REPORT_TURN_MISMATCH", `The completed day's report is turn ${completedTurn ?? "none"}; cannot dismiss turn ${reportTurn}`);
+    }
+    await repository.acknowledgeReportDismissal(principal, request.params.cityId, reportTurn);
+    reply.header("Cache-Control", "no-store");
+    return { city_id: row.id, city_version: Number(row.city_version), report_turn: Number(reportTurn), dismissed: true };
   });
 
   app.post("/api/v1/cities/:cityId/agent-links", async (request, reply) => {

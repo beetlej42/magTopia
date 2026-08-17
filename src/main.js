@@ -105,6 +105,9 @@ import {
   createPublicBuildingStyleComparison,
   normalizePublicBuildingStyleComparisonConfig
 } from "./generators/publicBuildingStyleComparison.js";
+import { createCityDayExperience, phaseLightTarget } from "./ui/cityDayExperience.js";
+import { createCityDayController } from "./ui/cityDayController.js";
+import { createCityPlacementLayer } from "./ui/cityPlacementLayer.js";
 
 const app = document.querySelector("#app");
 const pureViewToggle = document.querySelector("#pure-view-toggle");
@@ -696,6 +699,11 @@ let cityViewerLoadedVersion = null;
 let cityViewerLoading = false;
 let cityViewerRefreshTimer = null;
 let cityViewerRuntimeState = null;
+let cityDayExperience = null;
+let cityDayController = null;
+let cityDayLightTarget = null;
+let cityDayExperienceActive = false;
+let cityPlacementLayer = null;
 const clock = new THREE.Clock();
 let lastRuntimeDiagnosticsAt = 0;
 
@@ -1152,6 +1160,20 @@ function bindUi() {
     updateDistrictSurfacePointer(event, rect);
   });
   renderer.domElement.addEventListener("pointerdown", (event) => {
+    if (cityPlacementLayer?.object?.visible && event.button === 0) {
+      // Placement mode: a tap on a highlighted lot selects it (footprint
+      // preview) without disturbing the camera; dragging still orbits.
+      districtSurfacePointer.id = event.pointerId;
+      districtSurfacePointer.x = event.clientX;
+      districtSurfacePointer.y = event.clientY;
+      districtSurfacePointer.startX = event.clientX;
+      districtSurfacePointer.startY = event.clientY;
+      districtSurfacePointer.moved = false;
+      districtSurfacePointer.pointerType = event.pointerType;
+      districtSurfacePointer.pendingPlacementPick = true;
+      renderer.domElement.setPointerCapture?.(event.pointerId);
+      return;
+    }
     if (!isSurfaceVoxelWorld() || districtSurfacePointer.id != null) return;
     districtSurfaceLastMotionAt = performance.now();
     districtSurfacePointer.id = event.pointerId;
@@ -1166,6 +1188,15 @@ function bindUi() {
   const releaseDistrictPointer = (event) => {
     if (districtSurfacePointer.id !== event.pointerId) return;
     renderer.domElement.releasePointerCapture?.(event.pointerId);
+    const placementPick = districtSurfacePointer.pendingPlacementPick;
+    delete districtSurfacePointer.pendingPlacementPick;
+    if (placementPick && event.type === "pointerup" && !districtSurfacePointer.moved && cityPlacementLayer) {
+      const picked = cityPlacementLayer.pick(event.clientX, event.clientY, camera, {
+        width: renderer.domElement.clientWidth,
+        height: renderer.domElement.clientHeight
+      });
+      if (picked) cityDayExperience?.selectCandidateFromLayer?.(picked);
+    }
     if (event.type === "pointerup" && districtSurfacePointer.pointerType === "touch" && !districtSurfacePointer.moved) {
       const now = performance.now();
       const closeInTime = now - districtViewGesture.lastTapTime <= 360;
@@ -1223,22 +1254,103 @@ function resolveCityViewerContext() {
 function initializeCityViewer() {
   cityViewerPanel.hidden = false;
   cityViewerToken.value = cityViewerContext.token;
+  cityDayExperienceActive = frontendSurface === "player";
   cityViewerConnect.addEventListener("click", () => {
     const token = cityViewerToken.value.trim();
     if (!token) return;
     cityViewerContext.token = token;
     sessionStorage.setItem("mtToken", token);
     loadCityViewerState({ force: true });
+    loadCityDayState();
   });
-  window.addEventListener("focus", () => loadCityViewerState());
+  window.addEventListener("focus", () => {
+    loadCityViewerState();
+    loadCityDayState();
+  });
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) loadCityViewerState();
+    if (document.hidden) return;
+    loadCityViewerState();
+    loadCityDayState();
   });
-  if (cityViewerContext.token) loadCityViewerState({ force: true });
-  else showCityViewerAuth("请输入玩家或只读访问凭证。");
+  if (cityViewerContext.token) {
+    loadCityViewerState({ force: true });
+    loadCityDayState();
+  } else {
+    showCityViewerAuth("请输入玩家或只读访问凭证。");
+  }
   cityViewerRefreshTimer = window.setInterval(() => {
-    if (!document.hidden) loadCityViewerState();
+    if (document.hidden) return;
+    loadCityViewerState();
+    loadCityDayState();
   }, 5000);
+}
+
+function initializeCityDayExperience() {
+  if (cityDayExperience) return cityDayExperience;
+  cityDayExperience = createCityDayExperience({
+    onPhaseChange: (phase) => {
+      cityDayLightTarget = phaseLightTarget(phase);
+    },
+    onReportDismissed: async () => {
+      try {
+        await cityDayController?.dismissReport();
+      } catch {
+        // Acknowledgement failures are non-fatal for the viewer.
+      }
+    },
+    onPlayerTurnComplete: () => {
+      cityViewerRefreshTimer && loadCityViewerState({ force: true });
+    }
+  });
+  return cityDayExperience;
+}
+
+function initializeCityDayController() {
+  const experience = initializeCityDayExperience();
+  if (!cityPlacementLayer) cityPlacementLayer = createCityPlacementLayer();
+  cityDayController = createCityDayController({
+    experience,
+    api: {
+      baseUrl: "/api/v1",
+      cityId: cityViewerContext.cityId,
+      token: () => cityViewerContext.token
+    },
+    setLight: (phase) => {
+      cityDayLightTarget = phaseLightTarget(phase);
+    },
+    placementLayer: cityPlacementLayer,
+    onPlayerTurnComplete: () => {
+      loadCityViewerState({ force: true });
+    }
+  });
+  return cityDayController;
+}
+
+async function loadCityDayState() {
+  if (!cityViewerContext?.token || frontendSurface !== "player") return;
+  if (!cityDayController) initializeCityDayController();
+  try {
+    await cityDayController.sync();
+  } catch {
+    // The viewer stays usable even if the presentation read fails; the compact
+    // HUD already covers the essential city state.
+    cityDayExperience?.setHidden(true);
+  }
+}
+
+function syncCityPlacementLayer() {
+  if (frontendSurface !== "player" || !activeObject) {
+    cityPlacementLayer?.setSceneRoot(null);
+    return;
+  }
+  if (!cityPlacementLayer) cityPlacementLayer = createCityPlacementLayer();
+  cityPlacementLayer.setSceneRoot(activeObject);
+  const navigation = activeObject.userData?.surfaceNavigation;
+  cityPlacementLayer.configure({
+    radius: navigation?.radius ?? 220,
+    cellWorldSize: cityViewerRuntimeState?.world?.grid?.cellWorldSize ?? 4
+  });
+  cityPlacementLayer.clear();
 }
 
 async function loadCityViewerState({ force = false } = {}) {
@@ -1276,6 +1388,7 @@ async function loadCityViewerState({ force = false } = {}) {
       buildSliderUi();
       await rebuildActive(viewerConfig);
       cityViewerLoadedVersion = payload.city_version;
+      syncCityPlacementLayer();
     }
     renderCityViewerSummary(payload);
     document.documentElement.dataset.magicTownViewer = "ready";
@@ -2077,7 +2190,14 @@ function updateSkyClock(delta, elapsed) {
     delete document.documentElement.dataset.magicTownSkyReady;
     return;
   }
-  if (!skyClock.paused) {
+  if (cityDayExperienceActive && cityDayLightTarget != null) {
+    // PR G: the city-day presentation projects the sun. This is purely visual
+    // interpolation of the existing workflow phase — never a second clock and
+    // never a resource/population/exposure driver.
+    skyClock.paused = true;
+    skyClock.time = approachTime(skyClock.time, cityDayLightTarget, delta * 0.12);
+    skyClock.motionElapsed += delta;
+  } else if (!skyClock.paused) {
     skyClock.time = (skyClock.time + delta * skyClock.timeScale / skyClock.dayLengthSeconds) % 1;
     skyClock.motionElapsed += delta;
   }
@@ -2089,6 +2209,17 @@ function updateSkyClock(delta, elapsed) {
   document.documentElement.dataset.magicTownSkyReady = "true";
   document.documentElement.dataset.magicTownWorldTime = skyClock.time.toFixed(6);
   document.documentElement.dataset.magicTownClockPaused = String(skyClock.paused);
+}
+
+// Approaches a target on the 0..1 circular sun axis by the shortest arc.
+function approachTime(current, target, step) {
+  let diff = target - current;
+  diff = ((diff + 0.5) % 1 + 1) % 1 - 0.5;
+  const moved = Math.abs(diff) <= step ? diff : Math.sign(diff) * step;
+  let next = current + moved;
+  if (next < 0) next += 1;
+  if (next >= 1) next -= 1;
+  return next;
 }
 
 function applySkyTimeToWorld(syncControls, style = null) {

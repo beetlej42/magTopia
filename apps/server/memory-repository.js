@@ -20,10 +20,11 @@ export function createMemoryRepository(config, options = {}) {
   const orders = new Map();
   const receipts = new Map();
   const owlReports = new Map();
+  const reportDismissals = new Map();
   const assets = new Map(getAssetRegistry().map((asset) => [asset.assetId, asset]));
-  hydratePersistentState(storagePath, { players, credentials, capabilities, cities, designs, orders, receipts, owlReports });
+  hydratePersistentState(storagePath, { players, credentials, capabilities, cities, designs, orders, receipts, owlReports, reportDismissals });
 
-  const persist = () => persistState(storagePath, { players, credentials, capabilities, cities, designs, orders, receipts, owlReports });
+  const persist = () => persistState(storagePath, { players, credentials, capabilities, cities, designs, orders, receipts, owlReports, reportDismissals });
 
   const repository = {
     async createPlayer(displayName) {
@@ -213,7 +214,7 @@ export function createMemoryRepository(config, options = {}) {
       if (expectedVersion !== undefined && Number(expectedVersion) !== Number(row.state_jsonb.version)) {
         throw new ServiceError(409, "CITY_VERSION_CONFLICT", "City changed since the scheduler read it", { expected: Number(expectedVersion), actual: Number(row.state_jsonb.version) });
       }
-      const client = memoryClient({ cityId, row, designs, orders });
+      const client = memoryClient({ cityId, row, designs, orders, assets });
       const handled = await handler({ client, state: row.state_jsonb, city: row });
       if (handled.nextState) {
         row.state_jsonb = handled.nextState;
@@ -235,7 +236,7 @@ export function createMemoryRepository(config, options = {}) {
       }
       const { row, state } = await this.getCity(principal, cityId);
       if (expectedVersion !== undefined && Number(expectedVersion) !== Number(state.version)) throw new ServiceError(409, "CITY_VERSION_CONFLICT", "City changed since the preview", { expected: Number(expectedVersion), actual: Number(state.version) });
-      const client = memoryClient({ cityId, row, designs, orders });
+      const client = memoryClient({ cityId, row, designs, orders, assets });
       const handled = await handler({ client, state, city: row });
       if (handled.nextState) {
         row.state_jsonb = handled.nextState;
@@ -332,6 +333,27 @@ export function createMemoryRepository(config, options = {}) {
       return reportResponse(entry);
     },
 
+    async listReportDismissals(principal, cityId) {
+      await this.getCity(principal, cityId);
+      return Object.fromEntries([...reportDismissals.values()]
+        .filter((entry) => entry.city_id === cityId && entry.player_id === principal.id)
+        .map((entry) => [Number(entry.report_turn), entry.dismissed_at]));
+    },
+
+    async acknowledgeReportDismissal(principal, cityId, reportTurn) {
+      requirePlayer(principal);
+      await this.getCity(principal, cityId);
+      const key = `${cityId}:${principal.id}:${Number(reportTurn)}`;
+      reportDismissals.set(key, {
+        city_id: cityId,
+        player_id: principal.id,
+        report_turn: Number(reportTurn),
+        dismissed_at: new Date().toISOString()
+      });
+      persist();
+      return { city_id: cityId, player_id: principal.id, report_turn: Number(reportTurn), dismissed: true };
+    },
+
     persistence: { enabled: Boolean(storagePath), storagePath },
 
     async getAssetJob() { throw new ServiceError(404, "ASSET_JOB_NOT_FOUND", "Asset job not found"); }
@@ -339,7 +361,7 @@ export function createMemoryRepository(config, options = {}) {
   return repository;
 }
 
-function memoryClient({ cityId, row, designs, orders }) {
+function memoryClient({ cityId, row, designs, orders, assets }) {
   return {
     async query(sql, params = []) {
       const normalized = sql.replace(/\s+/g, " ").trim();
@@ -349,8 +371,25 @@ function memoryClient({ cityId, row, designs, orders }) {
           ? { rowCount: 1, rows: [{ status: design.status, current_revision: design.revision, confirmed_revision: design.confirmedRevision }] }
           : { rowCount: 0, rows: [] };
       }
+      if (normalized.startsWith("SELECT * FROM asset_definitions WHERE id = $1 AND status = 'validated'")) {
+        const asset = assets.get(params[0]);
+        const ownerPlayerId = params[1] ?? null;
+        return asset && (asset.ownerPlayerId == null || asset.ownerPlayerId === ownerPlayerId)
+          ? { rowCount: 1, rows: [assetRow(asset)] }
+          : { rowCount: 0, rows: [] };
+      }
       if (normalized.startsWith("INSERT INTO construction_orders")) {
-        orders.set(params[0], { id: params[0], city_id: cityId, status: "completed", asset: { mode: "voxel" }, request: JSON.parse(params[2]), created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+        const isReuse = normalized.includes("'reuse'");
+        const requestJson = isReuse ? params[3] : params[2];
+        orders.set(params[0], {
+          id: params[0],
+          city_id: cityId,
+          status: "completed",
+          asset: { mode: isReuse ? "reuse" : "voxel", asset_id: isReuse ? params[2] : undefined },
+          request: JSON.parse(requestJson),
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        });
         return { rowCount: 1, rows: [] };
       }
       if (normalized.startsWith("UPDATE building_designs SET status = 'built'")) {
@@ -368,6 +407,7 @@ function canAccess(principal, row) { return principal?.kind === "agent" ? princi
 function requirePlayer(principal) { if (principal?.kind !== "player") throw new ServiceError(403, "PLAYER_CREDENTIAL_REQUIRED", "This action requires a player credential"); }
 function citySummary(row) { return { id: row.id, name: row.name, visibility: row.visibility, ruleset_version: row.ruleset_version, city_version: Number(row.city_version), turn: row.state_jsonb.turn, resources: row.state_jsonb.resources, counts: { districts: Object.keys(row.state_jsonb.districts ?? {}).length, buildings: Object.keys(row.state_jsonb.buildings ?? {}).length, roads: Object.values(row.state_jsonb.cells).filter((cell) => cell.infrastructure === "road").length, pending_orders: 0 } }; }
 function assetResponse(asset) { return { id: asset.assetId, owner_player_id: null, archetype: asset.archetype, footprint: asset.footprint, district_style: "london_common", tags: asset.tags, status: "validated", source: "builtin", manifest: asset, match: { score: 1, exact: true, differences: [], recommendation: "reuse" } }; }
+function assetRow(asset) { return { id: asset.assetId, owner_player_id: null, archetype: asset.archetype, footprint: asset.footprint, district_style: "london_common", tags: asset.tags, status: "validated", source: "builtin", manifest_jsonb: asset }; }
 function reportResponse(row) {
   const report = row.report_jsonb;
   return {
@@ -407,7 +447,7 @@ function hydratePersistentState(storagePath, stores) {
     throw new Error(`Failed to read persistent Agent LAN state at ${storagePath}: ${error.message}`);
   }
   if (snapshot.schemaVersion !== 1) throw new Error(`Unsupported Agent LAN state schema: ${snapshot.schemaVersion}`);
-  for (const name of ["players", "credentials", "cities", "designs", "orders", "receipts", "owlReports"]) {
+  for (const name of ["players", "credentials", "cities", "designs", "orders", "receipts", "owlReports", "reportDismissals"]) {
     for (const [key, value] of snapshot[name] ?? []) stores[name].set(key, value);
   }
   for (const [key, value] of snapshot.capabilities ?? []) {
@@ -431,7 +471,8 @@ function persistState(storagePath, stores) {
     designs: [...stores.designs],
     orders: [...stores.orders],
     receipts: [...stores.receipts],
-    owlReports: [...stores.owlReports]
+    owlReports: [...stores.owlReports],
+    reportDismissals: [...stores.reportDismissals]
   };
   const temporaryPath = `${storagePath}.${process.pid}.tmp`;
   writeFileSync(temporaryPath, `${JSON.stringify(snapshot)}\n`, { mode: 0o600 });

@@ -15,7 +15,7 @@ MAGTOPIA 将渲染能力与对外页面分开管理。当前 dashboard 继续作
 ## 约束
 
 - Studio 与 Acceptance 可以复用同一批 Three.js/generator 模块，但不应出现在生产导航或生产路由中。
-- `/cities/:cityId` 自动进入 `player` surface，只显示城市信息和只读刷新能力，不显示模式、预设、seed、滑块或 API 调试信息。
+- `/cities/:cityId` 自动进入 `player` surface，只显示城市信息和只读刷新能力，不显示模式、预设、seed、滑块或 API 调试信息。Player surface 还会叠加城市日体验（破晓报纸 → 三卡选择 → 手动放置 → 清晨/白昼/夜晚的视觉呈现投影），其数据来自只读 `GET /api/v1/cities/:cityId/city-day`，且必须在纯享模式下完全隐藏。
 - `?view=1` 和 `/acceptance/*` 自动进入 `acceptance` surface，隐藏产品 UI，保持固定验收画面。
 - 当前服务端只将 `dist/index.html` 用作城市查看页，并没有 `/studio` 服务端路由；Studio 由 Vite 本地开发服务器使用。
 - 将来建设正式公共首页时，可以新增 `showcase` surface，不需要把 Studio 重新暴露出去。
