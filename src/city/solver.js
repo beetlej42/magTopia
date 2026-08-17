@@ -67,7 +67,7 @@ export function findCandidateParcels(state, criteria = {}) {
     .slice(0, criteria.limit ?? 24);
 }
 
-export function previewConstruction(state, proposal) {
+export function previewConstruction(state, proposal, options = {}) {
   const district = proposal.districtId ? state.districts?.[proposal.districtId] : null;
   if (district?.status === "cancelled") {
     return { feasible: false, errors: [`District ${proposal.districtId} is cancelled; choose a new district or omit district_id`] };
@@ -86,7 +86,12 @@ export function previewConstruction(state, proposal) {
     : emptyRoute();
   if (!route.feasible) return { feasible: false, errors: [route.reason] };
   const buildingCost = buildingCostFor(proposal.site.footprint, proposal.program.archetype);
-  const cost = addCosts(buildingCost, route.cost);
+  // System-owned construction policy discount (City Construction Mobilization).
+  // Consumed through the unified preview path so every construction cost stays
+  // in one solver. Client input never carries the discount.
+  const discountRate = Math.min(1, Math.max(0, Number(options.constructionDiscountRate ?? 0)));
+  const discountedBuildingCost = scaleCosts(buildingCost, 1 - discountRate);
+  const cost = addCosts(discountedBuildingCost, route.cost);
   const resourcesAfter = subtractCosts(state.resources, cost);
   const shortages = Object.entries(resourcesAfter).filter(([, value]) => value < 0).map(([key]) => key);
   return {
@@ -437,5 +442,6 @@ function parseCellId(cellId) {
 }
 function buildingCostFor(footprint, archetype) { const area = getFootprintCells({ column: 0, row: 0 }, footprint).length; const landmark = /station|hall|library|academy/.test(archetype); return { coins: area * (landmark ? 90 : 45), timber: area * 8, stone: area * (landmark ? 16 : 8) }; }
 function scaleCost(cost, amount) { return Object.fromEntries(Object.entries(cost).map(([key, value]) => [key, value * amount])); }
+function scaleCosts(cost, amount) { return scaleCost(cost, amount); }
 function addCosts(...costs) { return costs.reduce((sum, cost) => ({ coins: sum.coins + cost.coins, timber: sum.timber + cost.timber, stone: sum.stone + cost.stone }), { coins: 0, timber: 0, stone: 0 }); }
 function subtractCosts(resources, cost) { return { coins: resources.coins - cost.coins, timber: resources.timber - cost.timber, stone: resources.stone - cost.stone }; }

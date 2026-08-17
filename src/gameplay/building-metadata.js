@@ -134,14 +134,18 @@ export function deriveGameplayBuilding(building, options = {}) {
     const number = Number(value);
     return Number.isFinite(number) ? number : fallback;
   };
+  // System-owned special structure effects (daily cards) override the generic
+  // category defaults. The values live in the card catalog; neither players nor
+  // Agents can author them.
+  const special = building?.specialStructure?.effect ?? null;
   const raw = {
     category,
     magicLevel,
     muggleCapacity: numeric(options.muggleCapacity, Math.round(MUGGLE_CAPACITY_BY_CATEGORY[category] * area)),
-    wizardCapacity: numeric(options.wizardCapacity, Math.ceil(area * magicLevel * 8)),
-    coinOutput: numeric(options.coinOutput, Math.round(COIN_OUTPUT_BY_CATEGORY[category] * area * (1 - magicLevel * 0.2))),
-    magicOutput: numeric(options.magicOutput, Math.round(MAGIC_OUTPUT_BY_CATEGORY[category] * area * magicLevel)),
-    concealment: numeric(options.concealment, CONCEALMENT_BY_CATEGORY[category] * (1 - magicLevel * 0.8)),
+    wizardCapacity: numeric(options.wizardCapacity, special?.wizardCapacity != null ? Number(special.wizardCapacity) : Math.ceil(area * magicLevel * 8)),
+    coinOutput: numeric(options.coinOutput, special?.coinOutput != null ? Number(special.coinOutput) : Math.round(COIN_OUTPUT_BY_CATEGORY[category] * area * (1 - magicLevel * 0.2))),
+    magicOutput: numeric(options.magicOutput, special?.magicOutput != null ? Number(special.magicOutput) : Math.round(MAGIC_OUTPUT_BY_CATEGORY[category] * area * magicLevel)),
+    concealment: numeric(options.concealment, special?.concealmentBonus != null ? Number(special.concealmentBonus) : CONCEALMENT_BY_CATEGORY[category] * (1 - magicLevel * 0.8)),
     activity: numeric(options.activity, 0.2 + magicLevel * 0.8),
     visibility: numeric(options.visibility, getProminence(building)),
     jobs: numeric(options.jobs, Math.round(JOBS_BY_CATEGORY[category] * area)),

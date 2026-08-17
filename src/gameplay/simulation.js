@@ -1,5 +1,14 @@
 import { deriveGameplayBuilding } from "./building-metadata.js";
 import {
+  advancePolicies,
+  cardFacts,
+  collectPolicyEffects,
+  ensureCardOffer,
+  markChoiceSkipped,
+  specialStructureConcealment,
+  specialStructureExposureModifier
+} from "./cards.js";
+import {
   applyExposureChange,
   exposureDelta,
   exposurePressure,
@@ -95,9 +104,13 @@ export function settlePopulation(state, metadataMap, options = {}) {
 export function updateExposures(state, metadataMap, options = {}) {
   const changes = {};
   const nextMetadata = { ...metadataMap };
+  const flatConcealmentBonus = Number(options.concealmentBonus ?? 0);
+  const concealmentBonusFor = options.concealmentBonusFor ?? (() => 0);
   for (const [id, metadata] of Object.entries(metadataMap)) {
     if (metadata.status === "sealed") continue;
-    const concealment = neighborhoodConcealment(state, { ...state.buildings[id], id }, { metadataOf: (neighbor) => nextMetadata[neighbor.id] });
+    const concealment = neighborhoodConcealment(state, { ...state.buildings[id], id }, { metadataOf: (neighbor) => nextMetadata[neighbor.id] })
+      + flatConcealmentBonus
+      + concealmentBonusFor({ ...state.buildings[id], id });
     const pressure = exposurePressure(metadata, concealment, { visibility: metadata.visibility ?? 0.5, modifier: options.modifier });
     const delta = exposureDelta(pressure, options);
     const from = metadata.exposure;
@@ -276,7 +289,7 @@ export function resolveTurn(state, input = {}, context = {}) {
   const createId = context.createId ?? ((prefix) => `${prefix}-${state.turn}`);
   const now = context.now ?? (() => new Date().toISOString());
   const roller = createRoller(context);
-  const next = {
+  let next = {
     ...state,
     gameplay: {
       ...gameplay,
@@ -287,14 +300,31 @@ export function resolveTurn(state, input = {}, context = {}) {
     }
   };
 
+  // PR F — Player daily cards. Settlement owns the card facts: the offer for
+  // this turn is ensured, an un-answered choice is recorded explicitly as
+  // skipped (never blocking settlement), active policy modifiers feed the
+  // deterministic simulation, and the policy lifecycle advances exactly once.
+  const cityId = state.cityId ?? "";
+  next = ensureCardOffer(next, cityId);
+  next = markChoiceSkipped(next, { now });
+  const policyEffects = collectPolicyEffects(next);
+
   const metadataMap = asMap(next, "metadata");
   const resourceSettlement = settleResources(next, metadataMap, options);
   next.gameplay.resources = resourceSettlement.after;
 
-  const populationSettlement = settlePopulation(next, metadataMap, options);
+  const populationSettlement = settlePopulation(next, metadataMap, {
+    ...options,
+    wizardMigrationRate: Number(options.wizardMigrationRate ?? 0.1) + policyEffects.wizardGrowthBonusRate
+  });
   next.gameplay.population = populationSettlement.after;
 
-  const exposureSettlement = updateExposures(next, metadataMap, options);
+  const exposureSettlement = updateExposures(next, metadataMap, {
+    ...options,
+    modifier: Number(options.modifier ?? 0) + specialStructureExposureModifier(next),
+    concealmentBonus: policyEffects.concealmentBonus,
+    concealmentBonusFor: (building) => specialStructureConcealment(next, building)
+  });
   const exposureChanges = exposureSettlement.changes;
   const incidents = generateIncidents(next, exposureSettlement.nextMetadata, roller, {
     ...options,
@@ -307,7 +337,10 @@ export function resolveTurn(state, input = {}, context = {}) {
   if (!assignmentValidation.ok) {
     return { nextState: state, facts: null, error: { code: "INVALID_ASSIGNMENT", message: assignmentValidation.errors.map((entry) => entry.message).join("; "), assignmentErrors: assignmentValidation.errors } };
   }
-  const assignmentSettlement = settleAssignments(next, incidents, input.assignments, roller, options);
+  const assignmentSettlement = settleAssignments(next, incidents, input.assignments, roller, {
+    ...options,
+    modifier: Number(options.modifier ?? 0) + policyEffects.incidentResponseBonus
+  });
   for (const outcome of assignmentSettlement.outcomes) {
     const change = exposureChanges[outcome.buildingId];
     if (change) {
@@ -386,6 +419,12 @@ export function resolveTurn(state, input = {}, context = {}) {
   const turnOpenedAt = next.gameplay.turnOpenedAt ?? resolvedAt;
   const nextTurnUnlockAt = new Date(new Date(turnOpenedAt).getTime() + schedule.turnIntervalMs).toISOString();
   const settledBy = options.settlementSource === "deadline" ? "deadline" : "agent";
+  // Advance the deterministic policy lifecycle after this turn's effects have
+  // been consumed. The choice's started/refreshed/expired records are captured
+  // for the frozen facts, and the offer stays open for the player to read.
+  const policyAdvance = advancePolicies(next, { now, turn: state.turn });
+  next.gameplay.cardState = policyAdvance.nextState.gameplay.cardState;
+  const cardStateFacts = cardFacts(next, state.turn);
   const facts = normalizeTurnFacts({
     turn: state.turn + 1,
     wallClock: {
@@ -418,7 +457,18 @@ export function resolveTurn(state, input = {}, context = {}) {
     rolls: assignmentSettlement.rolls,
     outcomes: assignmentSettlement.outcomes,
     sealedBuildings,
-    nextRisks
+    nextRisks,
+    cardOfferId: cardStateFacts.cardOfferId,
+    offeredCardIds: cardStateFacts.offeredCardIds,
+    selectedCardId: cardStateFacts.selectedCardId,
+    choiceStatus: cardStateFacts.choiceStatus,
+    choiceResolvedAt: cardStateFacts.choiceResolvedAt,
+    cardEffects: cardStateFacts.cardEffects,
+    policyStarted: cardStateFacts.policyStarted,
+    policyRefreshed: cardStateFacts.policyRefreshed,
+    policyExpired: cardStateFacts.policyExpired,
+    specialPlacementMandate: cardStateFacts.specialPlacementMandate,
+    specialPlacementCompleted: cardStateFacts.specialPlacementCompleted
   });
 
   next.gameplay.lastTurnFacts = deepFreeze(facts);
@@ -468,7 +518,14 @@ function migrateGameplay(state) {
       arcaneOfficers: {},
       incidents: {},
       turnFacts: {},
-      lastTurnFacts: null
+      lastTurnFacts: null,
+      cardState: {
+        offer: null,
+        choice: { offerId: null, status: "pending", selectedCardId: null, decisionMode: null, choiceResolvedAt: null, cardEffects: {}, policyStarted: [], policyRefreshed: [], policyExpired: [], officerRecruitedId: null, specialPlacementMandate: null, specialPlacementCompleted: null },
+        activePolicies: [],
+        pendingPlacement: null,
+        placements: {}
+      }
     };
   }
   const migrated = { ...existing };
@@ -479,5 +536,14 @@ function migrateGameplay(state) {
   }
   delete migrated.wardens;
   if (migrated.turnFacts == null) migrated.turnFacts = {};
+  if (migrated.cardState == null) {
+    migrated.cardState = {
+      offer: null,
+      choice: { offerId: null, status: "pending", selectedCardId: null, decisionMode: null, choiceResolvedAt: null, cardEffects: {}, policyStarted: [], policyRefreshed: [], policyExpired: [], officerRecruitedId: null, specialPlacementMandate: null, specialPlacementCompleted: null },
+      activePolicies: [],
+      pendingPlacement: null,
+      placements: {}
+    };
+  }
   return migrated;
 }

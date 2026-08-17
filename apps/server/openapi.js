@@ -325,6 +325,127 @@ export function createOpenApiDocument(baseUrl) {
             created_at_turn: { type: "integer" }
           }
         },
+        CardDefinition: {
+          type: "object",
+          required: ["card_id", "type", "title", "description", "decision_mode", "duration"],
+          properties: {
+            card_id: { type: "string" },
+            type: { enum: ["special_structure", "resource", "personnel", "policy"] },
+            title: { type: "string" },
+            description: { type: "string" },
+            decision_mode: { enum: ["immediate", "player_place", "delegate_to_agent"], description: "player_place and delegate_to_agent are two resolution choices of the same special structure card, never two separate cards." },
+            duration: { oneOf: [{ type: "string", const: "instant" }, { type: "object", properties: { type: { type: "string" }, turns: { type: "integer" } } }] },
+            structure: { type: "object", nullable: true, description: "System-owned placement spec for special structure cards." },
+            effect: json
+          }
+        },
+        CardOffer: {
+          type: "object",
+          required: ["offer_id", "turn", "cards"],
+          properties: {
+            offer_id: { type: "string" },
+            turn: { type: "integer" },
+            cards: { type: "array", minItems: 3, maxItems: 3, items: { $ref: "#/components/schemas/CardDefinition" } }
+          }
+        },
+        CardChoice: {
+          type: "object",
+          required: ["status"],
+          properties: {
+            offer_id: { type: ["string", "null"] },
+            status: { enum: ["pending", "selected", "skipped", "resolved"] },
+            selected_card_id: { type: ["string", "null"] },
+            decision_mode: { type: ["string", "null"] },
+            choice_resolved_at: { type: ["string", "null"] },
+            card_effects: json
+          }
+        },
+        CardSelectRequest: {
+          type: "object",
+          required: ["expected_city_version", "offer_id", "selected_card_id"],
+          properties: {
+            expected_city_version: { type: "integer", minimum: 0 },
+            offer_id: { type: "string", description: "offer_id returned by GET /cards/current" },
+            selected_card_id: { type: "string", description: "one of the offered card ids; the player may select exactly one card per turn" },
+            decision_mode: { enum: ["player_place", "delegate_to_agent"], description: "required for special structure cards; must never carry effect values or balance parameters" },
+            actor_note: { type: "string" }
+          }
+        },
+        CardSelectResponse: {
+          type: "object",
+          required: ["command_id", "status", "city_version_before", "city_version_after", "turn", "selected_card_id"],
+          properties: {
+            command_id: { type: "string" },
+            status: { const: "selected" },
+            city_version_before: { type: "integer" },
+            city_version_after: { type: "integer" },
+            turn: { type: "integer" },
+            selected_card_id: { type: "string" },
+            card_effects: json,
+            choice: { $ref: "#/components/schemas/CardChoice" }
+          }
+        },
+        CardPlaceRequest: {
+          type: "object",
+          required: ["expected_city_version", "card_id", "lot_id"],
+          properties: {
+            expected_city_version: { type: "integer", minimum: 0 },
+            card_id: { type: "string", description: "the selected special structure card with a pending placement" },
+            lot_id: { type: "string", description: "legal lot id for the structure footprint; validated through the authoritative cell system" },
+            footprint: { type: "string", description: "defaults to the system-owned structure footprint" },
+            entrance: { enum: ["north", "east", "south", "west"], description: "defaults to south" },
+            actor_note: { type: "string" }
+          }
+        },
+        CardPlaceResponse: {
+          type: "object",
+          required: ["command_id", "status", "city_version_before", "city_version_after", "turn", "building_id"],
+          properties: {
+            command_id: { type: "string" },
+            status: { const: "placed" },
+            city_version_before: { type: "integer" },
+            city_version_after: { type: "integer" },
+            turn: { type: "integer" },
+            building_id: { type: "string" },
+            placement: json,
+            choice: { $ref: "#/components/schemas/CardChoice" }
+          }
+        },
+        ActivePolicy: {
+          type: "object",
+          required: ["policy_id", "source_card_id", "duration_type", "duration_turns", "remaining_turns"],
+          properties: {
+            policy_id: { type: "string" },
+            source_card_id: { type: "string" },
+            started_at_turn: { type: "integer" },
+            duration_type: { enum: ["instant", "turns", "until_replaced"] },
+            duration_turns: { type: "integer" },
+            remaining_turns: { type: "integer" },
+            effects: { type: "array", items: json }
+          }
+        },
+        PendingPlacement: {
+          type: "object",
+          required: ["placement_id", "card_id", "mode", "status"],
+          properties: {
+            placement_id: { type: "string" },
+            card_id: { type: "string" },
+            mode: { enum: ["player_place", "delegate_to_agent"] },
+            status: { enum: ["pending", "deferred", "completed", "cancelled"] },
+            delegated_at_turn: { type: "integer" },
+            card: json
+          }
+        },
+        StrategyCards: {
+          type: "object",
+          required: ["offer", "choice", "active_policies", "pending_placements"],
+          properties: {
+            offer: { $ref: "#/components/schemas/CardOffer" },
+            choice: { $ref: "#/components/schemas/CardChoice" },
+            active_policies: { type: "array", items: { $ref: "#/components/schemas/ActivePolicy" } },
+            pending_placements: { type: "array", items: { $ref: "#/components/schemas/PendingPlacement" } }
+          }
+        },
         ArcaneOfficer: {
           type: "object",
           required: ["id", "name", "archetype", "investigation", "containment", "concealment", "specialties", "status"],
@@ -432,11 +553,12 @@ export function createOpenApiDocument(baseUrl) {
             settled_by: { type: ["string", "null"], description: "Which authority settled the last turn: agent or the deadline scheduler." },
             strategy: {
               type: "object",
-              required: ["incidents", "arcane_officers", "pending_assignments"],
+              required: ["incidents", "arcane_officers", "pending_assignments", "cards"],
               properties: {
                 incidents: { type: "array", items: { $ref: "#/components/schemas/StrategyIncident" } },
                 arcane_officers: { type: "array", items: { $ref: "#/components/schemas/ArcaneOfficer" } },
-                pending_assignments: { type: "array", items: { type: "object", properties: { incident_id: { type: "string" }, arcane_officer_id: { type: "string" }, rationale: { type: ["string", "null"] } } } }
+                pending_assignments: { type: "array", items: { type: "object", properties: { incident_id: { type: "string" }, arcane_officer_id: { type: "string" }, rationale: { type: ["string", "null"] } } } },
+                cards: { $ref: "#/components/schemas/StrategyCards" }
               }
             },
             last_turn_facts: { oneOf: [{ $ref: "#/components/schemas/TurnFacts" }, { type: "null" }] }
@@ -495,6 +617,19 @@ export function createOpenApiDocument(baseUrl) {
             outcomes: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, incidentId: { type: "string" }, buildingId: { type: "string" }, arcaneOfficerId: { type: "string" }, arcaneOfficerName: { type: "string" }, outcome: { type: "string" }, exposureDelta: { type: "number" }, incidentStatus: { type: "string" }, arcaneOfficerStatus: { type: "string" } } } },
             sealedBuildings: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, buildingId: { type: "string" }, name: { type: "string" } } } },
             nextRisks: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, buildingId: { type: "string" }, name: { type: "string" }, exposure: { type: "number" }, pressure: { type: "number" }, concealment: { type: "number" } } } },
+            card: {
+              type: "object",
+              description: "Card and policy facts projected strictly from the frozen TurnFacts of this turn.",
+              properties: {
+                factRef: { type: "string" },
+                offerId: { type: ["string", "null"] },
+                turn: { type: "integer" },
+                offeredCards: { type: "array", items: { type: "object", properties: { cardId: { type: "string" }, type: { type: ["string", "null"] }, title: { type: "string" }, description: { type: ["string", "null"] }, decisionMode: { type: ["string", "null"] } } } },
+                choice: { type: "object", properties: { factRef: { type: "string" }, status: { type: "string" }, selectedCardId: { type: ["string", "null"] }, selectedCardTitle: { type: ["string", "null"] }, choiceResolvedAt: { type: ["string", "null"] }, cardEffects: { type: "object" }, specialPlacementCompleted: { type: ["string", "null"] } } },
+                policy: { type: "object", properties: { factRef: { type: "string" }, started: { type: "array", items: { type: "string" } }, refreshed: { type: "array", items: { type: "string" } }, expired: { type: "array", items: { type: "string" } }, active: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, policyId: { type: "string" }, event: { type: "string" } } } } } },
+                placement: { type: "object", properties: { factRef: { type: "string" }, cardId: { type: ["string", "null"] }, mode: { type: ["string", "null"] }, status: { type: ["string", "null"] }, placementId: { type: ["string", "null"] } } }
+              }
+            },
             factRefs: { type: "array", items: { type: "string" }, description: "Every stable fact ref valid for this turn's ReportContext." }
           }
         },
@@ -645,9 +780,13 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}/connection-previews": { post: operation("Preview a building/cell/node road connection", "roads", { $ref: "#/components/schemas/ConnectionRequest" }) },
       "/cities/{city_id}/connections": { post: commandOperation("Submit an idempotent road connection", "roads", { $ref: "#/components/schemas/ConnectionRequest" }) },
       "/cities/{city_id}/time-advances": { post: commandOperation("Advance city time and recover output-based resources", "simulation") },
-      "/cities/{city_id}/strategy": { get: operation("Read the strategy context: open incidents, Arcane Officers, and the last frozen settlement facts", "strategy", null, { $ref: "#/components/schemas/StrategyContext" }) },
+      "/cities/{city_id}/strategy": { get: operation("Read the strategy context: open incidents, Arcane Officers, player card state, and the last frozen settlement facts", "strategy", null, { $ref: "#/components/schemas/StrategyContext" }) },
       "/cities/{city_id}/strategy/assignments": { post: commandOperation("Submit the Arcane Officer dispatch plan for the strategy phase", "strategy", { $ref: "#/components/schemas/StrategyAssignmentsRequest" }) },
       "/cities/{city_id}/strategy/resolve": { post: commandOperation("Request the single authoritative system settlement of the strategy phase", "strategy", { $ref: "#/components/schemas/StrategyResolveRequest" }) },
+      "/cards": { get: operation("Read the system-owned 12-card daily catalog", "cards", null, { type: "object", properties: { data: { type: "array", items: { $ref: "#/components/schemas/CardDefinition" } } } }) },
+      "/cities/{city_id}/cards/current": { get: operation("Read the canonical three-card offer for the current turn", "cards", null, { type: "object", properties: { city_id: { type: "string" }, city_version: { type: "integer" }, turn: { type: "integer" }, turn_status: { type: "string" }, offer: { $ref: "#/components/schemas/CardOffer" }, choice: { $ref: "#/components/schemas/CardChoice" } } }) },
+      "/cities/{city_id}/cards/select": { post: commandOperation("The player selects exactly one offered card for this turn", "cards", { $ref: "#/components/schemas/CardSelectRequest" }, { $ref: "#/components/schemas/CardSelectResponse" }) },
+      "/cities/{city_id}/cards/place": { post: commandOperation("Place a pending special structure at a legal location (player placement or delegated Agent placement)", "cards", { $ref: "#/components/schemas/CardPlaceRequest" }, { $ref: "#/components/schemas/CardPlaceResponse" }) },
       "/cities/{city_id}/report-context": { get: operation("Read the immutable SYSTEM newspaper source facts for a resolved turn", "reports", null, { $ref: "#/components/schemas/ReportContext" }) },
       "/cities/{city_id}/reports": {
         get: operation("Read the Owl Daily report history for this city", "reports", null, { type: "object", properties: { data: { type: "array", items: { $ref: "#/components/schemas/OwlReportSummary" } } } }),
@@ -689,8 +828,8 @@ function operation(summary, tag, requestBody = null, responseSchema = json, secu
   return value;
 }
 
-function commandOperation(summary, tag, requestBody = json) {
-  const value = operation(summary, tag, requestBody);
+function commandOperation(summary, tag, requestBody = json, responseSchema = json) {
+  const value = operation(summary, tag, requestBody, responseSchema);
   value.parameters = [
     { in: "header", name: "Idempotency-Key", required: true, schema: { type: "string" } },
     { in: "header", name: "If-Match", required: false, schema: { type: "string" } }
