@@ -27,6 +27,12 @@ export function createCityDayController({ experience, api, setLight, placementLa
     const headers = new Headers(init.headers ?? {});
     const token = typeof api.token === "function" ? api.token() : api.token;
     if (token) headers.set("Authorization", `Bearer ${token}`);
+    // A JSON request body must be declared; without Content-Type a real
+    // Fastify route rejects the payload. Never overwrite an explicitly
+    // supplied caller content type.
+    if (init.body != null && !headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
     const response = await fetch(pathFor(relative), { ...init, headers, cache: "no-store" });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -239,11 +245,7 @@ export function createCityDayController({ experience, api, setLight, placementLa
 
   function closeChoiceLayers() {
     closePlacement();
-    if (experience.state.cardOpen) {
-      experience.layers.cards.hidden = true;
-      experience.state.cardOpen = false;
-      experience.root.hidden = !experience.state.placementOpen;
-    }
+    experience.closeCards?.();
   }
 
   return { sync, dismissReport, closeChoiceLayers, closePlacement, phaseLightTarget };

@@ -79,6 +79,21 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
   layers.toast.className = "city-day-toast";
   for (const layer of Object.values(layers)) root.append(layer);
 
+  // ---- Interactive vs pass-through ------------------------------------------
+  //
+  // The experience layer must be explicitly hit-testable while any modal player
+  // interaction is open (report, card choice, mode choice, placement) and fully
+  // pass-through otherwise so the 3D city viewer beneath keeps receiving
+  // gestures. Driving this from state instead of a parent `pointer-events:
+  // none` / child `auto` inheritance trick is what keeps the full-screen
+  // overlay tappable on iOS Safari.
+
+  function syncInteractiveState() {
+    const interactive = state.reportOpen || state.cardOpen || state.placementOpen;
+    root.classList.toggle("is-interactive", interactive);
+    root.dataset.interactive = String(interactive);
+  }
+
   // ---- Newspaper (Owl Daily) ----------------------------------------------
 
   function buildNewspaper(report, reportMeta) {
@@ -179,11 +194,13 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     state.reportOpen = true;
     attachSwipe(layers.newspaper);
     root.hidden = false;
+    syncInteractiveState();
   }
 
   async function dismissReport(_dx, _dy) {
     if (!state.reportOpen) return;
     state.reportOpen = false;
+    syncInteractiveState();
     layers.newspaper.classList.add("is-dismissing");
     layers.owl.classList.remove("is-flying");
     onReportDismissed();
@@ -253,6 +270,7 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     layers.cards.hidden = false;
     root.hidden = false;
     state.cardOpen = true;
+    syncInteractiveState();
   }
 
   // ---- Special structure choice: 自己放置 / 交给 Agent -----------------------
@@ -285,6 +303,7 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     layers.cards.append(actions);
     layers.cards.hidden = false;
     root.hidden = false;
+    syncInteractiveState();
   }
 
   // ---- Manual placement mode (keeps existing camera) ------------------------
@@ -293,6 +312,7 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     layers.placement.replaceChildren();
     state.placementOpen = true;
     state.activePlacement = { card, candidates, onPlace, onPickCandidate, onCancel, selectedCandidate: null };
+    syncInteractiveState();
 
     const heading = document.createElement("div");
     heading.className = "city-day-cards-heading";
@@ -375,7 +395,16 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     state.activePlacement = null;
     layers.placement.hidden = true;
     layers.placement.replaceChildren();
-    root.hidden = !state.cardOpen;
+    root.hidden = !state.cardOpen && !state.reportOpen;
+    syncInteractiveState();
+  }
+
+  function closeCards() {
+    state.cardOpen = false;
+    layers.cards.hidden = true;
+    layers.cards.replaceChildren();
+    root.hidden = !state.placementOpen && !state.reportOpen;
+    syncInteractiveState();
   }
 
   // ---- Phase projection ----------------------------------------------------
@@ -420,6 +449,7 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     presentPlacementMode,
     selectCandidateFromLayer: selectCandidate,
     closePlacement,
+    closeCards,
     showIdleNote,
     setHidden,
     setSwipeDirectionalHint,

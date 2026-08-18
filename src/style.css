@@ -1330,8 +1330,41 @@ html[data-magtopia-surface="acceptance"] .city-day-experience {
   display: none !important;
 }
 
-.city-day-experience > * {
+/* Explicit interactive vs pass-through modes. The experience layer is fully
+   hit-testable only while a modal player interaction is open (report, card
+   choice, mode choice, placement); otherwise it must not block the 3D city
+   viewer beneath. Driving this from state instead of a parent
+   `pointer-events: none` / child `auto` inheritance trick keeps the full-screen
+   overlay tappable on iOS Safari. */
+.city-day-experience.is-interactive {
   pointer-events: auto;
+}
+
+.city-day-experience > * {
+  pointer-events: none;
+}
+
+.city-day-experience.is-interactive > * {
+  pointer-events: auto;
+}
+
+/* Placement mode keeps the live city reachable: only the panel chrome
+   intercepts pointers, so canvas lot picking and camera gestures still reach
+   the viewer beneath the semi-transparent placement layer. */
+.city-day-experience.is-interactive > .city-day-placement {
+  pointer-events: none;
+}
+
+.city-day-experience.is-interactive > .city-day-placement > * {
+  pointer-events: auto;
+}
+
+/* Decorative, non-interactive chrome never blocks the viewer, even while a
+   modal interaction is open. */
+.city-day-experience.is-interactive > .city-day-phase-chip,
+.city-day-experience.is-interactive > .city-day-toast,
+.city-day-experience.is-interactive > .city-day-owl {
+  pointer-events: none;
 }
 
 .city-day-phase-chip {
