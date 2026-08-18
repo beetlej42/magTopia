@@ -43,6 +43,10 @@ function createMockExperience() {
     },
     selectCandidateFromLayer() {},
     closePlacement() { state.placementOpen = false; },
+    closeCards() {
+      state.cardOpen = false;
+      layers.cards.hidden = true;
+    },
     showIdleNote() {},
     setHidden() {}
   };
@@ -213,4 +217,71 @@ test("report dismissal posts report_turn to the ack endpoint once", async () => 
   assert.equal(dismissBody.report_turn, 3);
   const dismissCalls = calls.filter((call) => call.url.endsWith("/city-day/report-dismissed"));
   assert.equal(dismissCalls.length, 1, "the ack is recorded exactly once");
+});
+
+test("every controller JSON POST carries Content-Type: application/json", async () => {
+  const experience = createMockExperience();
+  let day = {
+    phase: "dawn",
+    settled: false,
+    report: { ready: true, dismissed: false, turn: 2, report_id: "report-x" },
+    card: { choicePending: false, playerPlacementPending: false },
+    agent: { workStarted: false },
+    incident: { phaseActive: false }
+  };
+  let cardsCurrent = {
+    city_id: "city-1",
+    city_version: 9,
+    turn: 1,
+    offer: OFFER,
+    choice: { status: "pending" }
+  };
+  const calls = stubFetch({
+    "/api/v1/cities/city-1/city-day": () => ({ body: day }),
+    "/api/v1/cities/city-1/reports/report-x": { body: { report: { masthead: { title: "T" }, edition: "Day 1", headline: "H", lead: "L", articles: [] } } },
+    "/api/v1/cities/city-1/cards/current": () => ({ body: cardsCurrent }),
+    "/api/v1/cards": { body: { data: [{ card_id: "owl-tower", type: "special_structure", title: "Owl Tower", description: "x", structure: { footprint: "1x1" } }] } },
+    "/api/v1/cities/city-1/cards/select": { body: { status: "selected", choice: { selected_card_id: "ministry-grant", status: "selected" } } },
+    "/api/v1/cities/city-1/site-searches": { body: { city_version: 9, data: [{ lotId: "cell-2-3", center: { x: 2, z: -3 }, entranceDirections: ["south"] }] } },
+    "/api/v1/cities/city-1/cards/place": { body: { status: "placed" } },
+    "/api/v1/cities/city-1/city-day/report-dismissed": { body: { dismissed: true, report_turn: 2 } }
+  });
+  const controller = createCityDayController({
+    experience,
+    api: { baseUrl: "/api/v1", cityId: "city-1", token: "session" },
+    setLight: () => {},
+    onPlayerTurnComplete: () => {}
+  });
+
+  const jsonPosts = () => calls.filter((call) => (call.init.method ?? "") === "POST");
+  const contentTypeOf = (call) => call.init.headers.get("content-type");
+
+  await controller.sync();
+  assert.equal(experience.state.reportOpen, true, "the ready report is presented");
+  await controller.dismissReport();
+  const dismissCall = jsonPosts().find((call) => call.url.endsWith("/city-day/report-dismissed"));
+  assert.ok(dismissCall, "dismissal posts the ack");
+  assert.equal(contentTypeOf(dismissCall), "application/json");
+
+  day = { ...day, report: { ready: false, dismissed: false }, card: { choicePending: true, playerPlacementPending: false } };
+  await controller.sync();
+  await experience.onCardPick?.(OFFER.cards[0], experience.currentOffer);
+  const selectCall = jsonPosts().find((call) => call.url.endsWith("/cards/select"));
+  assert.ok(selectCall, "card selection posts to /cards/select");
+  assert.equal(contentTypeOf(selectCall), "application/json");
+
+  day = { ...day, card: { choicePending: false, playerPlacementPending: true, selectedCardId: "owl-tower" } };
+  cardsCurrent = {
+    ...cardsCurrent,
+    choice: { status: "selected", card_effects: { placement: { placement_id: "placement-9", mode: "player_place" } } }
+  };
+  await controller.sync();
+  const searchCall = jsonPosts().find((call) => call.url.endsWith("/site-searches"));
+  assert.ok(searchCall, "placement fetches legal lots through a POST");
+  assert.equal(contentTypeOf(searchCall), "application/json");
+  assert.equal(experience.state.placementOpen, true, "placement mode opened");
+  experience.onPlace?.({ lotId: "cell-2-3", center: { x: 2, z: -3 }, entranceDirections: ["south"] });
+  const placeCall = jsonPosts().find((call) => call.url.endsWith("/cards/place"));
+  assert.ok(placeCall, "placement posts to /cards/place");
+  assert.equal(contentTypeOf(placeCall), "application/json");
 });
