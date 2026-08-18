@@ -74,31 +74,28 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
   layers.owl.className = "city-day-owl";
   layers.owl.setAttribute("aria-hidden", "true");
   layers.newspaper.className = "city-day-newspaper";
+  layers.newspaper.hidden = true;
   layers.cards.className = "city-day-cards";
+  layers.cards.hidden = true;
   layers.placement.className = "city-day-placement";
+  layers.placement.hidden = true;
   layers.toast.className = "city-day-toast";
   for (const layer of Object.values(layers)) root.append(layer);
 
-  // ---- Interactive vs pass-through ------------------------------------------
+  // ---- Full-screen layer mutual exclusion ----------------------------------
   //
-  // The experience layer must be explicitly hit-testable while a modal player
-  // interaction is open (report, card choice, mode choice) and fully
-  // pass-through otherwise so the 3D city viewer beneath keeps receiving
-  // gestures. Driving this from state instead of a parent `pointer-events:
-  // none` / child `auto` inheritance trick is what keeps the full-screen
-  // overlay tappable on iOS Safari.
-  //
-  // Manual placement is a distinct pass-through-map mode: the full-screen root
-  // stays out of the pointer path so world-space lot picking and camera
-  // orbit/pan reach the canvas, and only the placement controls/panel are
-  // hit-testable.
-
-  function syncInteractiveState() {
-    const modalOpen = state.reportOpen || state.cardOpen;
-    root.classList.toggle("is-interactive", modalOpen);
-    root.dataset.interactive = String(modalOpen);
-    root.classList.toggle("is-placement", state.placementOpen);
-    root.dataset.placement = String(state.placementOpen);
+  // newspaper / cards / placement are the three full-screen layers of the
+  // experience. At most one is visible at a time; every other full-screen layer
+  // must stay hidden (display:none) so an empty or stale layer can never cover
+  // the active modal and swallow taps. `hidden` is the single source of truth
+  // for which layer is hit-testable: a hidden layer cannot be painted or hit.
+  function showLayer(name) {
+    layers.newspaper.hidden = name !== "newspaper";
+    layers.cards.hidden = name !== "cards";
+    layers.placement.hidden = name !== "placement";
+    state.reportOpen = name === "newspaper";
+    state.cardOpen = name === "cards";
+    state.placementOpen = name === "placement";
   }
 
   // ---- Newspaper (Owl Daily) ----------------------------------------------
@@ -192,22 +189,19 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
 
   function presentReport(report, reportMeta) {
     buildNewspaper(report, reportMeta);
-    layers.newspaper.hidden = false;
+    showLayer("newspaper");
     layers.newspaper.classList.add("is-entering");
     layers.owl.classList.remove("is-flying");
     // Restart the fly-through on each fresh presentation.
     void layers.owl.offsetWidth;
     layers.owl.classList.add("is-flying");
-    state.reportOpen = true;
     attachSwipe(layers.newspaper);
     root.hidden = false;
-    syncInteractiveState();
   }
 
   async function dismissReport(_dx, _dy) {
     if (!state.reportOpen) return;
     state.reportOpen = false;
-    syncInteractiveState();
     layers.newspaper.classList.add("is-dismissing");
     layers.owl.classList.remove("is-flying");
     onReportDismissed();
@@ -274,10 +268,8 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
       grid.append(buildCardShell(card, index, (picked) => onSelect(picked, offer)));
     });
     layers.cards.append(grid);
-    layers.cards.hidden = false;
+    showLayer("cards");
     root.hidden = false;
-    state.cardOpen = true;
-    syncInteractiveState();
   }
 
   // ---- Special structure choice: 自己放置 / 交给 Agent -----------------------
@@ -308,9 +300,8 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     delegate.addEventListener("click", () => onDecide("delegate_to_agent"));
     actions.append(self, delegate);
     layers.cards.append(actions);
-    layers.cards.hidden = false;
+    showLayer("cards");
     root.hidden = false;
-    syncInteractiveState();
   }
 
   // ---- Manual placement mode (keeps existing camera) ------------------------
@@ -320,12 +311,9 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     // Entering placement closes the card choice: placement is a pass-through
     // map mode (the city must stay reachable for picking/orbiting), not a
     // full-screen modal interaction.
-    state.cardOpen = false;
-    layers.cards.hidden = true;
     layers.cards.replaceChildren();
-    state.placementOpen = true;
     state.activePlacement = { card, candidates, onPlace, onPickCandidate, onCancel, selectedCandidate: null };
-    syncInteractiveState();
+    showLayer("placement");
 
     const heading = document.createElement("div");
     heading.className = "city-day-cards-heading";
@@ -392,7 +380,6 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     });
     footer.append(cancel, confirm);
     layers.placement.append(footer);
-    layers.placement.hidden = false;
     root.hidden = false;
     state.activePlacement.confirmButton = confirm;
   }
@@ -408,7 +395,6 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     layers.placement.hidden = true;
     layers.placement.replaceChildren();
     root.hidden = !state.cardOpen && !state.reportOpen;
-    syncInteractiveState();
   }
 
   function closeCards() {
@@ -416,7 +402,6 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     layers.cards.hidden = true;
     layers.cards.replaceChildren();
     root.hidden = !state.placementOpen && !state.reportOpen;
-    syncInteractiveState();
   }
 
   // ---- Phase projection ----------------------------------------------------

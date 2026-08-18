@@ -1330,41 +1330,33 @@ html[data-magtopia-surface="acceptance"] .city-day-experience {
   display: none !important;
 }
 
-/* Explicit modal-interactive vs pass-through modes. The experience layer is
-   fully hit-testable while a modal player interaction is open (report, card
-   choice, mode choice); otherwise it must not block the 3D city viewer
-   beneath. Driving this from state instead of a parent `pointer-events: none` /
-   child `auto` inheritance trick keeps the full-screen overlay tappable on iOS
-   Safari. */
-.city-day-experience.is-interactive {
+/* Full-screen modal layers only join the hit-test tree while actually visible.
+   Hidden layers (display:none) can never be painted or hit — an empty or stale
+   full-screen layer is exactly what previously sat above the card modal and
+   swallowed every tap on iOS Safari. Only the layer that is currently shown is
+   hit-testable. */
+.city-day-newspaper:not([hidden]),
+.city-day-cards:not([hidden]) {
   pointer-events: auto;
 }
 
-.city-day-experience > * {
-  pointer-events: none;
-}
-
-.city-day-experience.is-interactive > * {
-  pointer-events: auto;
-}
-
-/* Manual placement is a pass-through map mode: the full-screen root must not
+/* Manual placement is a pass-through map mode: the full-screen layer must not
    become a pointer target, otherwise taps on world-space lot markers and
    camera orbit/pan gestures would be intercepted before `renderer.domElement`
    sees them. Only the actual placement controls/panel are hit-testable. */
-.city-day-experience.is-placement > .city-day-placement {
+.city-day-placement {
   pointer-events: none;
 }
 
-.city-day-experience.is-placement > .city-day-placement > * {
+.city-day-placement > * {
   pointer-events: auto;
 }
 
-/* Decorative, non-interactive chrome never blocks the viewer, even while a
-   modal interaction is open. */
-.city-day-experience.is-interactive > .city-day-phase-chip,
-.city-day-experience.is-interactive > .city-day-toast,
-.city-day-experience.is-interactive > .city-day-owl {
+/* Decorative, non-interactive chrome never blocks the viewer or the active
+   modal layer. */
+.city-day-phase-chip,
+.city-day-toast,
+.city-day-owl {
   pointer-events: none;
 }
 
