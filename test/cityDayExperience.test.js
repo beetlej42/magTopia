@@ -45,21 +45,136 @@ test("every presentation phase has a Chinese player-facing label", () => {
   }
 });
 
-// ---- DOM/event-boundary regressions ----------------------------------------
+// ---- Full-screen layer lifecycle (root-cause regression) --------------------
 //
-// The node --test environment has no browser; a minimal fake DOM drives the
-// real experience/controller modules and exercises the explicit
-// interactive-vs-pass-through contract with dispatched click events instead of
-// relying on browser-specific parent/child pointer inheritance.
+// The real-device "cards visible but completely unclickable" bug was caused by
+// the empty full-screen `.city-day-placement` layer being created without
+// `hidden`. Once the card modal opened it became hit-testable and, sharing
+// z-index with `.city-day-cards` while appearing later in the DOM, sat above
+// the cards and swallowed every tap. These tests lock in the invariant that the
+// three full-screen layers start hidden and are mutually exclusive: at most one
+// is ever visible, and no empty layer can participate in painting or hit-test.
 
-test("opening the three-card choice marks the experience interactive", async () => {
+function visibleLayerCount(experience) {
+  return ["newspaper", "cards", "placement"].filter((name) => !experience.layers[name].hidden).length;
+}
+
+test("createCityDayExperience starts every full-screen layer hidden", async () => {
   await withFakeDom(async () => {
     const experience = createCityDayExperience({});
-    assert.equal(experience.root.classList.has("is-interactive"), false, "freshly created overlay starts pass-through");
+    assert.equal(experience.layers.newspaper.hidden, true);
+    assert.equal(experience.layers.cards.hidden, true);
+    assert.equal(experience.layers.placement.hidden, true);
+    assert.equal(visibleLayerCount(experience), 0);
+    assert.equal(experience.root.hidden, true);
+  });
+});
+
+test("presentCards shows only the cards layer", async () => {
+  await withFakeDom(async () => {
+    const experience = createCityDayExperience({});
     experience.presentCards({ cards: OFFER.cards }, () => {});
-    assert.equal(experience.root.classList.has("is-interactive"), true, "card choice opens interactive mode");
-    assert.equal(experience.root.dataset.interactive, "true");
+    assert.equal(experience.layers.cards.hidden, false);
+    assert.equal(experience.layers.newspaper.hidden, true);
+    assert.equal(experience.layers.placement.hidden, true);
     assert.equal(experience.root.hidden, false);
+    assert.equal(visibleLayerCount(experience), 1);
+  });
+});
+
+test("presentReport shows only the newspaper layer", async () => {
+  await withFakeDom(async () => {
+    const experience = createCityDayExperience({});
+    experience.presentReport({ masthead: { title: "Owl Daily", subtitle: "Owl Daily" }, edition: "Day 1", headline: "H", lead: "L", articles: [], briefs: [] }, { ready: true });
+    assert.equal(experience.layers.newspaper.hidden, false);
+    assert.equal(experience.layers.cards.hidden, true);
+    assert.equal(experience.layers.placement.hidden, true);
+    assert.equal(experience.root.hidden, false);
+    assert.equal(visibleLayerCount(experience), 1);
+  });
+});
+
+test("presentPlacementChoice keeps using the cards layer and keeps the placement layer hidden", async () => {
+  await withFakeDom(async () => {
+    const experience = createCityDayExperience({});
+    experience.presentPlacementChoice({ card_id: "owl-tower", title: "Owl Tower" }, () => {});
+    assert.equal(experience.layers.cards.hidden, false);
+    assert.equal(experience.layers.newspaper.hidden, true);
+    assert.equal(experience.layers.placement.hidden, true);
+    assert.equal(visibleLayerCount(experience), 1);
+  });
+});
+
+test("presentPlacementMode shows only the placement layer", async () => {
+  await withFakeDom(async () => {
+    const experience = createCityDayExperience({});
+    experience.presentPlacementMode({ card: { title: "Owl Tower" }, candidates: [], onPlace() {}, onPickCandidate() {}, onCancel() {} });
+    assert.equal(experience.layers.placement.hidden, false);
+    assert.equal(experience.layers.cards.hidden, true);
+    assert.equal(experience.layers.newspaper.hidden, true);
+    assert.equal(experience.root.hidden, false);
+    assert.equal(visibleLayerCount(experience), 1);
+  });
+});
+
+test("presenting a new layer hides the previously visible one", async () => {
+  await withFakeDom(async () => {
+    const experience = createCityDayExperience({});
+    experience.presentCards({ cards: OFFER.cards }, () => {});
+    experience.presentPlacementChoice({ card_id: "owl-tower", title: "Owl Tower" }, () => {});
+    assert.equal(experience.layers.cards.hidden, false, "the placement choice reuses the cards layer");
+    assert.equal(experience.layers.placement.hidden, true);
+    assert.equal(visibleLayerCount(experience), 1);
+
+    experience.presentPlacementMode({ card: { title: "Owl Tower" }, candidates: [], onPlace() {}, onPickCandidate() {}, onCancel() {} });
+    assert.equal(experience.layers.placement.hidden, false);
+    assert.equal(experience.layers.cards.hidden, true, "entering placement hides the cards layer");
+    assert.equal(experience.layers.newspaper.hidden, true);
+    assert.equal(visibleLayerCount(experience), 1);
+
+    experience.presentReport({ masthead: { title: "Owl Daily", subtitle: "Owl Daily" }, edition: "Day 1", headline: "H", lead: "L", articles: [], briefs: [] }, { ready: true });
+    assert.equal(experience.layers.newspaper.hidden, false);
+    assert.equal(experience.layers.placement.hidden, true, "presenting the report hides the placement layer");
+    assert.equal(experience.layers.cards.hidden, true);
+    assert.equal(visibleLayerCount(experience), 1);
+  });
+});
+
+test("every close path returns its full-screen layer to hidden", async () => {
+  await withFakeDom(async ({ timers }) => {
+    const experience = createCityDayExperience({});
+
+    experience.presentCards({ cards: OFFER.cards }, () => {});
+    experience.closeCards();
+    assert.equal(experience.layers.cards.hidden, true);
+    assert.equal(experience.root.hidden, true);
+
+    experience.presentPlacementMode({ card: { title: "Owl Tower" }, candidates: [], onPlace() {}, onPickCandidate() {}, onCancel() {} });
+    experience.closePlacement();
+    assert.equal(experience.layers.placement.hidden, true);
+    assert.equal(experience.root.hidden, true);
+
+    experience.presentReport({ masthead: { title: "Owl Daily", subtitle: "Owl Daily" }, edition: "Day 1", headline: "H", lead: "L", articles: [], briefs: [] }, { ready: true });
+    experience.dismissReport(0, 0);
+    for (const timer of timers.splice(0)) timer();
+    assert.equal(experience.layers.newspaper.hidden, true, "dismissing the report hides the newspaper layer");
+    assert.equal(experience.root.hidden, true);
+    assert.equal(visibleLayerCount(experience), 0);
+  });
+});
+
+test("no stale placement overlay can intercept the card choice", async () => {
+  await withFakeDom(async () => {
+    const experience = createCityDayExperience({});
+    let selected = null;
+    experience.presentCards({ cards: [OFFER.cards[0]] }, (card) => {
+      selected = card;
+    });
+    assert.equal(experience.layers.placement.hidden, true, "the empty placement layer is not visible while cards are shown");
+    const cardButton = collectButtons(experience.layers.cards).find((button) => button.className.includes("city-day-card"));
+    assert.ok(cardButton, "the offer renders a card button");
+    cardButton.dispatchEvent({ type: "click" });
+    assert.equal(selected?.card_id, "ministry-grant", "the tap reached the card button, not a hidden overlay");
   });
 });
 
@@ -94,68 +209,14 @@ test("tapping a special-structure card opens 自己放置 / 交给 Agent before 
     await controller.sync();
     const specialButton = collectButtons(experience.layers.cards).find((button) => button.className.includes("city-day-card-special_structure"));
     assert.ok(specialButton, "the special-structure card is rendered");
+    assert.equal(experience.layers.placement.hidden, true, "the placement overlay stays hidden while the card choice is open");
     specialButton.dispatchEvent({ type: "click" });
     const labels = collectButtons(experience.layers.cards).map((button) => button.textContent);
     assert.ok(labels.some((label) => label.includes("自己放置")), "the local 自己放置 choice opens");
     assert.ok(labels.some((label) => label.includes("交给 Agent")), "the local 交给 Agent choice opens");
+    assert.equal(experience.layers.placement.hidden, true, "the placement overlay is still hidden during the 自己放置 / 交给 Agent choice");
+    assert.equal(experience.layers.cards.hidden, false, "the choice reuses the visible cards layer");
     assert.equal(calls.some((call) => call.url.endsWith("/cards/select")), false, "no selection POST happens before the local choice");
-  });
-});
-
-test("closing report, card and placement layers returns the experience to pass-through", async () => {
-  await withFakeDom(async () => {
-    const experience = createCityDayExperience({});
-
-    experience.presentCards({ cards: OFFER.cards }, () => {});
-    assert.equal(experience.root.classList.has("is-interactive"), true);
-    assert.equal(experience.root.classList.has("is-placement"), false);
-    experience.closeCards();
-    assert.equal(experience.root.classList.has("is-interactive"), false, "closing the card choice returns to pass-through");
-    assert.equal(experience.root.dataset.interactive, "false");
-    assert.equal(experience.root.hidden, true);
-
-    experience.presentReport({ masthead: { title: "Owl Daily", subtitle: "Owl Daily" }, edition: "Day 1", headline: "H", lead: "L", articles: [], briefs: [] }, { ready: true });
-    assert.equal(experience.root.classList.has("is-interactive"), true);
-    experience.dismissReport(0, 0);
-    assert.equal(experience.root.classList.has("is-interactive"), false, "closing the report returns to pass-through");
-
-    experience.presentPlacementMode({ card: { title: "Owl Tower" }, candidates: [], onPlace() {}, onPickCandidate() {}, onCancel() {} });
-    assert.equal(experience.root.classList.has("is-interactive"), false, "placement is not a full-screen modal interaction");
-    assert.equal(experience.root.classList.has("is-placement"), true, "placement opens its own pass-through map mode");
-    experience.closePlacement();
-    assert.equal(experience.root.classList.has("is-placement"), false, "closing placement returns to pass-through");
-    assert.equal(experience.root.hidden, true);
-  });
-});
-
-test("placement mode keeps the full-screen root out of the pointer path while its controls stay interactive", async () => {
-  await withFakeDom(async () => {
-    const experience = createCityDayExperience({});
-    let cancelled = 0;
-    experience.presentPlacementMode({
-      card: { title: "Owl Tower" },
-      candidates: [],
-      onPlace() {},
-      onPickCandidate() {},
-      onCancel: () => {
-        cancelled += 1;
-      }
-    });
-
-    // The root must never become a pointer target in placement mode, otherwise
-    // taps on world-space lot markers and camera gestures would be intercepted
-    // before the Three.js canvas sees them.
-    assert.equal(experience.root.classList.has("is-interactive"), false, "placement keeps the full-screen root pass-through");
-    assert.equal(experience.root.dataset.interactive, "false");
-    assert.equal(experience.root.dataset.placement, "true", "placement mode is tagged for the pass-through-map state");
-
-    // The placement controls themselves remain hit-testable.
-    const cancelButton = collectButtons(experience.layers.placement).find((button) => button.textContent.includes("取消放置"));
-    assert.ok(cancelButton, "the placement cancel control is rendered");
-    cancelButton.dispatchEvent({ type: "click" });
-    assert.equal(cancelled, 1, "the placement cancel control is still interactive");
-    assert.equal(experience.root.classList.has("is-placement"), false, "cancelling returns to pass-through");
-    assert.equal(experience.root.dataset.placement, "false");
   });
 });
 
@@ -327,13 +388,13 @@ function stubFetch(routes) {
 }
 
 async function withFakeDom(run) {
-  const { document, window } = createFakeDom();
+  const { document, window, timers } = createFakeDom();
   const previousDocument = globalThis.document;
   const previousWindow = globalThis.window;
   globalThis.document = document;
   globalThis.window = window;
   try {
-    await run({ document, window });
+    await run({ document, window, timers });
   } finally {
     globalThis.document = previousDocument;
     globalThis.window = previousWindow;
