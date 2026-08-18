@@ -108,6 +108,7 @@ test("closing report, card and placement layers returns the experience to pass-t
 
     experience.presentCards({ cards: OFFER.cards }, () => {});
     assert.equal(experience.root.classList.has("is-interactive"), true);
+    assert.equal(experience.root.classList.has("is-placement"), false);
     experience.closeCards();
     assert.equal(experience.root.classList.has("is-interactive"), false, "closing the card choice returns to pass-through");
     assert.equal(experience.root.dataset.interactive, "false");
@@ -119,10 +120,42 @@ test("closing report, card and placement layers returns the experience to pass-t
     assert.equal(experience.root.classList.has("is-interactive"), false, "closing the report returns to pass-through");
 
     experience.presentPlacementMode({ card: { title: "Owl Tower" }, candidates: [], onPlace() {}, onPickCandidate() {}, onCancel() {} });
-    assert.equal(experience.root.classList.has("is-interactive"), true);
+    assert.equal(experience.root.classList.has("is-interactive"), false, "placement is not a full-screen modal interaction");
+    assert.equal(experience.root.classList.has("is-placement"), true, "placement opens its own pass-through map mode");
     experience.closePlacement();
-    assert.equal(experience.root.classList.has("is-interactive"), false, "closing placement returns to pass-through");
+    assert.equal(experience.root.classList.has("is-placement"), false, "closing placement returns to pass-through");
     assert.equal(experience.root.hidden, true);
+  });
+});
+
+test("placement mode keeps the full-screen root out of the pointer path while its controls stay interactive", async () => {
+  await withFakeDom(async () => {
+    const experience = createCityDayExperience({});
+    let cancelled = 0;
+    experience.presentPlacementMode({
+      card: { title: "Owl Tower" },
+      candidates: [],
+      onPlace() {},
+      onPickCandidate() {},
+      onCancel: () => {
+        cancelled += 1;
+      }
+    });
+
+    // The root must never become a pointer target in placement mode, otherwise
+    // taps on world-space lot markers and camera gestures would be intercepted
+    // before the Three.js canvas sees them.
+    assert.equal(experience.root.classList.has("is-interactive"), false, "placement keeps the full-screen root pass-through");
+    assert.equal(experience.root.dataset.interactive, "false");
+    assert.equal(experience.root.dataset.placement, "true", "placement mode is tagged for the pass-through-map state");
+
+    // The placement controls themselves remain hit-testable.
+    const cancelButton = collectButtons(experience.layers.placement).find((button) => button.textContent.includes("取消放置"));
+    assert.ok(cancelButton, "the placement cancel control is rendered");
+    cancelButton.dispatchEvent({ type: "click" });
+    assert.equal(cancelled, 1, "the placement cancel control is still interactive");
+    assert.equal(experience.root.classList.has("is-placement"), false, "cancelling returns to pass-through");
+    assert.equal(experience.root.dataset.placement, "false");
   });
 });
 

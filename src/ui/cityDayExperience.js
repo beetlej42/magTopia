@@ -81,17 +81,24 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
 
   // ---- Interactive vs pass-through ------------------------------------------
   //
-  // The experience layer must be explicitly hit-testable while any modal player
-  // interaction is open (report, card choice, mode choice, placement) and fully
+  // The experience layer must be explicitly hit-testable while a modal player
+  // interaction is open (report, card choice, mode choice) and fully
   // pass-through otherwise so the 3D city viewer beneath keeps receiving
   // gestures. Driving this from state instead of a parent `pointer-events:
   // none` / child `auto` inheritance trick is what keeps the full-screen
   // overlay tappable on iOS Safari.
+  //
+  // Manual placement is a distinct pass-through-map mode: the full-screen root
+  // stays out of the pointer path so world-space lot picking and camera
+  // orbit/pan reach the canvas, and only the placement controls/panel are
+  // hit-testable.
 
   function syncInteractiveState() {
-    const interactive = state.reportOpen || state.cardOpen || state.placementOpen;
-    root.classList.toggle("is-interactive", interactive);
-    root.dataset.interactive = String(interactive);
+    const modalOpen = state.reportOpen || state.cardOpen;
+    root.classList.toggle("is-interactive", modalOpen);
+    root.dataset.interactive = String(modalOpen);
+    root.classList.toggle("is-placement", state.placementOpen);
+    root.dataset.placement = String(state.placementOpen);
   }
 
   // ---- Newspaper (Owl Daily) ----------------------------------------------
@@ -310,6 +317,12 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
 
   function presentPlacementMode({ card, candidates = [], onPlace, onPickCandidate, onCancel }) {
     layers.placement.replaceChildren();
+    // Entering placement closes the card choice: placement is a pass-through
+    // map mode (the city must stay reachable for picking/orbiting), not a
+    // full-screen modal interaction.
+    state.cardOpen = false;
+    layers.cards.hidden = true;
+    layers.cards.replaceChildren();
     state.placementOpen = true;
     state.activePlacement = { card, candidates, onPlace, onPickCandidate, onCancel, selectedCandidate: null };
     syncInteractiveState();
@@ -381,7 +394,6 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     layers.placement.append(footer);
     layers.placement.hidden = false;
     root.hidden = false;
-    layers.cards.hidden = true;
     state.activePlacement.confirmButton = confirm;
   }
 
