@@ -69,6 +69,10 @@ function stubFetch(routes) {
   return calls;
 }
 
+function idempotencyKeyOf(call) {
+  return call?.init?.headers?.get?.("idempotency-key") ?? call?.init?.headers?.["Idempotency-Key"] ?? null;
+}
+
 const OFFER = {
   offer_id: "offer-1",
   turn: 0,
@@ -284,4 +288,192 @@ test("every controller JSON POST carries Content-Type: application/json", async 
   const placeCall = jsonPosts().find((call) => call.url.endsWith("/cards/place"));
   assert.ok(placeCall, "placement posts to /cards/place");
   assert.equal(contentTypeOf(placeCall), "application/json");
+});
+
+// ---- Idempotency-Key on command endpoints ----------------------------------
+//
+// The server contract marks POST /cards/select and POST /cards/place as command
+// operations (OpenAPI commandOperation, repository.transactCity) that require
+// an Idempotency-Key so a retried submission can be replayed. The read/search
+// POSTs (site-searches, city-day/report-dismissed) are plain operations and
+// must NOT carry one.
+
+const CITY_DAY_CARDS = {
+  phase: "early_morning",
+  settled: false,
+  report: { ready: false, dismissed: false },
+  card: { choicePending: true, playerPlacementPending: false },
+  agent: { workStarted: false },
+  incident: { phaseActive: false }
+};
+
+test("card selection submits POST with Content-Type and a non-empty Idempotency-Key", async () => {
+  const experience = createMockExperience();
+  let selectInit = null;
+  stubFetch({
+    "/api/v1/cities/city-1/city-day": { body: CITY_DAY_CARDS },
+    "/api/v1/cities/city-1/cards/current": { body: { city_id: "city-1", city_version: 7, turn: 0, offer: OFFER, choice: { status: "pending" } } },
+    "/api/v1/cards": { body: { data: [] } },
+    "/api/v1/cities/city-1/cards/select": (init) => {
+      selectInit = init;
+      return { status: 200, body: { status: "selected", choice: { selected_card_id: "ministry-grant", status: "selected" } } };
+    }
+  });
+  const controller = createCityDayController({
+    experience,
+    api: { baseUrl: "/api/v1", cityId: "city-1", token: "session" },
+    setLight: () => {},
+    onPlayerTurnComplete: () => {}
+  });
+  await controller.sync();
+  await experience.onCardPick?.(OFFER.cards[0], experience.currentOffer);
+
+  assert.ok(selectInit, "a card select was submitted");
+  assert.equal(selectInit.method, "POST");
+  assert.equal(selectInit.headers.get("content-type"), "application/json");
+  const key = idempotencyKeyOf({ init: selectInit });
+  assert.ok(key, "cards/select carries an Idempotency-Key");
+  assert.ok(key.length > 0, "the Idempotency-Key is non-empty");
+});
+
+test("special structure placement submits POST with a non-empty Idempotency-Key", async () => {
+  const experience = createMockExperience();
+  let placeInit = null;
+  stubFetch({
+    "/api/v1/cities/city-1/city-day": { body: { ...CITY_DAY_CARDS, card: { choicePending: false, playerPlacementPending: true, selectedCardId: "owl-tower" } } },
+    "/api/v1/cities/city-1/cards/current": { body: { city_id: "city-1", city_version: 8, turn: 0, offer: OFFER, choice: { status: "selected", card_effects: { placement: { placement_id: "placement-9", mode: "player_place" } } } } },
+    "/api/v1/cards": { body: { data: [{ card_id: "owl-tower", type: "special_structure", title: "Owl Tower", description: "x", structure: { footprint: "1x1" } }] } },
+    "/api/v1/cities/city-1/site-searches": { body: { city_version: 8, data: [{ lotId: "cell-2-3", center: { x: 2, z: -3 }, entranceDirections: ["south"] }] } },
+    "/api/v1/cities/city-1/cards/place": (init) => {
+      placeInit = init;
+      return { status: 200, body: { status: "placed" } };
+    }
+  });
+  const controller = createCityDayController({
+    experience,
+    api: { baseUrl: "/api/v1", cityId: "city-1", token: "session" },
+    setLight: () => {},
+    onPlayerTurnComplete: () => {}
+  });
+  await controller.sync();
+  assert.equal(experience.state.placementOpen, true, "placement mode opened");
+  experience.onPlace?.({ lotId: "cell-2-3", center: { x: 2, z: -3 }, entranceDirections: ["south"] });
+
+  assert.ok(placeInit, "a placement was submitted");
+  assert.equal(placeInit.method, "POST");
+  const key = idempotencyKeyOf({ init: placeInit });
+  assert.ok(key, "cards/place carries an Idempotency-Key");
+  assert.ok(key.length > 0, "the Idempotency-Key is non-empty");
+});
+
+test("report-dismissed, a plain ack operation, carries no Idempotency-Key", async () => {
+  const experience = createMockExperience();
+  const calls = stubFetch({
+    "/api/v1/cities/city-1/city-day": { body: { phase: "dawn", settled: false, report: { ready: true, dismissed: false, turn: 3 }, card: { choicePending: true }, agent: { workStarted: false }, incident: { phaseActive: false } } },
+    "/api/v1/cities/city-1/reports/report-x": { body: { report: { masthead: { title: "T" }, edition: "Day 3", headline: "H", lead: "L", articles: [] } } },
+    "/api/v1/cities/city-1/city-day/report-dismissed": { status: 200, body: { dismissed: true, report_turn: 3 } }
+  });
+  const controller = createCityDayController({
+    experience,
+    api: { baseUrl: "/api/v1", cityId: "city-1", token: "session" },
+    setLight: () => {},
+    onPlayerTurnComplete: () => {}
+  });
+  await controller.sync();
+  await controller.dismissReport();
+  const dismissCall = calls.find((call) => call.url.endsWith("/city-day/report-dismissed"));
+  assert.ok(dismissCall, "dismissal posts the ack");
+  assert.equal(idempotencyKeyOf(dismissCall), null, "the plain ack operation must not carry an Idempotency-Key");
+});
+
+test("site-searches, a pure read POST, carries no Idempotency-Key", async () => {
+  const experience = createMockExperience();
+  const calls = stubFetch({
+    "/api/v1/cities/city-1/city-day": { body: { ...CITY_DAY_CARDS, card: { choicePending: false, playerPlacementPending: true, selectedCardId: "owl-tower" } } },
+    "/api/v1/cities/city-1/cards/current": { body: { city_id: "city-1", city_version: 8, turn: 0, offer: OFFER, choice: { status: "selected", card_effects: { placement: { placement_id: "placement-9", mode: "player_place" } } } } },
+    "/api/v1/cards": { body: { data: [{ card_id: "owl-tower", type: "special_structure", title: "Owl Tower", description: "x", structure: { footprint: "1x1" } }] } },
+    "/api/v1/cities/city-1/site-searches": { body: { city_version: 8, data: [] } }
+  });
+  const controller = createCityDayController({
+    experience,
+    api: { baseUrl: "/api/v1", cityId: "city-1", token: "session" },
+    setLight: () => {},
+    onPlayerTurnComplete: () => {}
+  });
+  await controller.sync();
+  const searchCall = calls.find((call) => call.url.endsWith("/site-searches"));
+  assert.ok(searchCall, "site-searches is called for legal lots");
+  assert.equal(idempotencyKeyOf(searchCall), null, "the pure search POST must not carry an Idempotency-Key");
+});
+
+test("GET reads never carry an Idempotency-Key", async () => {
+  const experience = createMockExperience();
+  const calls = stubFetch({
+    "/api/v1/cities/city-1/city-day": { body: CITY_DAY_CARDS },
+    "/api/v1/cities/city-1/cards/current": { body: { city_id: "city-1", city_version: 7, turn: 0, offer: OFFER, choice: { status: "pending" } } },
+    "/api/v1/cards": { body: { data: [] } }
+  });
+  const controller = createCityDayController({
+    experience,
+    api: { baseUrl: "/api/v1", cityId: "city-1", token: "session" },
+    setLight: () => {},
+    onPlayerTurnComplete: () => {}
+  });
+  await controller.sync();
+  const gets = calls.filter((call) => (call.init.method ?? "GET") === "GET");
+  assert.ok(gets.length >= 2, "the read flow issues GET requests");
+  for (const call of gets) {
+    assert.equal(idempotencyKeyOf(call), null, `GET ${call.url} must not carry an Idempotency-Key`);
+  }
+});
+
+test("postCommand honors a caller-supplied Idempotency-Key", async () => {
+  const experience = createMockExperience();
+  const calls = stubFetch({ "/api/v1/cards/select": { status: 200, body: { status: "selected" } } });
+  const controller = createCityDayController({
+    experience,
+    api: { baseUrl: "/api/v1", cityId: "city-1", token: "session" },
+    setLight: () => {},
+    onPlayerTurnComplete: () => {}
+  });
+  await controller.postCommand("/cards/select", {}, { idempotencyKey: "fixed-key" });
+  assert.equal(calls.length, 1);
+  assert.equal(idempotencyKeyOf(calls[0]), "fixed-key", "a caller-supplied key is not overridden");
+});
+
+test("independent commands generate distinct Idempotency-Keys", async () => {
+  const experience = createMockExperience();
+  const calls = stubFetch({
+    "/api/v1/cards/select": { status: 200, body: { status: "selected" } },
+    "/api/v1/cards/place": { status: 200, body: { status: "placed" } }
+  });
+  const controller = createCityDayController({
+    experience,
+    api: { baseUrl: "/api/v1", cityId: "city-1", token: "session" },
+    setLight: () => {},
+    onPlayerTurnComplete: () => {}
+  });
+  await controller.postCommand("/cards/select", { a: 1 });
+  await controller.postCommand("/cards/place", { b: 2 });
+  const keyA = idempotencyKeyOf(calls[0]);
+  const keyB = idempotencyKeyOf(calls[1]);
+  assert.ok(keyA && keyB, "both commands carry a key");
+  assert.notEqual(keyA, keyB, "two independent commands must use different keys");
+});
+
+test("retrying a command with the same key reuses that Idempotency-Key", async () => {
+  const experience = createMockExperience();
+  const calls = stubFetch({ "/api/v1/cards/select": { status: 200, body: { status: "selected" } } });
+  const controller = createCityDayController({
+    experience,
+    api: { baseUrl: "/api/v1", cityId: "city-1", token: "session" },
+    setLight: () => {},
+    onPlayerTurnComplete: () => {}
+  });
+  const key = "retry-shared-key";
+  await controller.postCommand("/cards/select", {}, { idempotencyKey: key });
+  await controller.postCommand("/cards/select", {}, { idempotencyKey: key });
+  assert.equal(calls.length, 2);
+  assert.equal(idempotencyKeyOf(calls[0]), key, "the first attempt uses the shared key");
+  assert.equal(idempotencyKeyOf(calls[1]), key, "the retry reuses the same key");
 });
