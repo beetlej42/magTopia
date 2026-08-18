@@ -45,7 +45,20 @@ export function createCityDayController({ experience, api, setLight, placementLa
   }
 
   function createIdempotencyKey() {
-    return crypto.randomUUID();
+    // crypto.randomUUID is only exposed in secure contexts (HTTPS or
+    // localhost). The live site is served over plain http://, where it is
+    // undefined — fall back to a UUID v4 built from crypto.getRandomValues,
+    // which is available in insecure contexts too.
+    if (typeof crypto?.randomUUID === "function") return crypto.randomUUID();
+    if (typeof crypto?.getRandomValues === "function") {
+      const bytes = crypto.getRandomValues(new Uint8Array(16));
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+      return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    }
+    // Last-resort fallback; crypto.getRandomValues is universally available.
+    return `idem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   }
 
   // Submits a mutating command to a server command endpoint. The command
@@ -151,10 +164,10 @@ export function createCityDayController({ experience, api, setLight, placementLa
 
   async function submitCardSelection(card, offer, decisionMode) {
     const expectedCityVersion = offer?.city_version ?? offer?.expectedCityVersion;
-    // One key per logical selection command; a network retry of this same
-    // submission must reuse it so the server can replay instead of double-apply.
-    const idempotencyKey = createIdempotencyKey();
     try {
+      // One key per logical selection command; a network retry of this same
+      // submission must reuse it so the server can replay instead of double-apply.
+      const idempotencyKey = createIdempotencyKey();
       const payload = await postCommand(`/cities/${api.cityId}/cards/select`, {
         expected_city_version: expectedCityVersion,
         offer_id: offer.offer_id,
@@ -216,10 +229,10 @@ export function createCityDayController({ experience, api, setLight, placementLa
   }
 
   async function placeCard(activePlacement, candidate) {
-    // One key per logical placement command; a network retry of this same
-    // submission must reuse it so the server can replay instead of double-apply.
-    const idempotencyKey = createIdempotencyKey();
     try {
+      // One key per logical placement command; a network retry of this same
+      // submission must reuse it so the server can replay instead of double-apply.
+      const idempotencyKey = createIdempotencyKey();
       const payload = await postCommand(`/cities/${api.cityId}/cards/place`, {
         expected_city_version: activePlacement.cityVersion,
         card_id: activePlacement.cardId,

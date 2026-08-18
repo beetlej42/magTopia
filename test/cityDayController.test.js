@@ -188,7 +188,7 @@ test("special structure placement submits placement_id and a legal lot through /
   assert.equal(calls.some((call) => call.url.endsWith("/site-searches")), true, "legal lots are fetched from the authoritative site search");
 
   const candidate = { lotId: "cell-2-3", center: { x: 2, z: -3 }, entranceDirections: ["south"] };
-  experience.onPlace?.(candidate);
+  await experience.onPlace?.(candidate);
   assert.ok(placeBody, "a placement was submitted");
   assert.equal(placeBody.expected_city_version, 8);
   assert.equal(placeBody.placement_id, "placement-9");
@@ -284,7 +284,7 @@ test("every controller JSON POST carries Content-Type: application/json", async 
   assert.ok(searchCall, "placement fetches legal lots through a POST");
   assert.equal(contentTypeOf(searchCall), "application/json");
   assert.equal(experience.state.placementOpen, true, "placement mode opened");
-  experience.onPlace?.({ lotId: "cell-2-3", center: { x: 2, z: -3 }, entranceDirections: ["south"] });
+  await experience.onPlace?.({ lotId: "cell-2-3", center: { x: 2, z: -3 }, entranceDirections: ["south"] });
   const placeCall = jsonPosts().find((call) => call.url.endsWith("/cards/place"));
   assert.ok(placeCall, "placement posts to /cards/place");
   assert.equal(contentTypeOf(placeCall), "application/json");
@@ -476,4 +476,112 @@ test("retrying a command with the same key reuses that Idempotency-Key", async (
   assert.equal(calls.length, 2);
   assert.equal(idempotencyKeyOf(calls[0]), key, "the first attempt uses the shared key");
   assert.equal(idempotencyKeyOf(calls[1]), key, "the retry reuses the same key");
+});
+
+// ---- Non-secure-context fallback -------------------------------------------
+//
+// crypto.randomUUID is only exposed in secure contexts (HTTPS or localhost).
+// The live city page is served over plain http://, where it is undefined and a
+// direct call would throw inside the card click handler before any POST — the
+// deployed regression that left every selection silently un-submitted. These
+// tests simulate that environment and lock in the getRandomValues fallback.
+
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+async function withoutRandomUUID(run) {
+  const original = crypto.randomUUID;
+  crypto.randomUUID = undefined;
+  try {
+    await run();
+  } finally {
+    crypto.randomUUID = original;
+  }
+}
+
+test("cards/select still submits a non-empty Idempotency-Key when crypto.randomUUID is unavailable", async () => {
+  await withoutRandomUUID(async () => {
+    const experience = createMockExperience();
+    let selectInit = null;
+    stubFetch({
+      "/api/v1/cities/city-1/city-day": { body: CITY_DAY_CARDS },
+      "/api/v1/cities/city-1/cards/current": { body: { city_id: "city-1", city_version: 7, turn: 0, offer: OFFER, choice: { status: "pending" } } },
+      "/api/v1/cards": { body: { data: [] } },
+      "/api/v1/cities/city-1/cards/select": (init) => {
+        selectInit = init;
+        return { status: 200, body: { status: "selected", choice: { selected_card_id: "ministry-grant", status: "selected" } } };
+      }
+    });
+    const controller = createCityDayController({
+      experience,
+      api: { baseUrl: "/api/v1", cityId: "city-1", token: "session" },
+      setLight: () => {},
+      onPlayerTurnComplete: () => {}
+    });
+    await controller.sync();
+    await experience.onCardPick?.(OFFER.cards[0], experience.currentOffer);
+
+    assert.ok(selectInit, "the card selection is submitted even without crypto.randomUUID");
+    assert.equal(selectInit.method, "POST");
+    const key = idempotencyKeyOf({ init: selectInit });
+    assert.ok(key, "cards/select still carries an Idempotency-Key");
+    assert.ok(key.length > 0, "the fallback Idempotency-Key is non-empty");
+    assert.match(key, UUID_V4, "the fallback key is a well-formed UUID v4");
+  });
+});
+
+test("cards/place still submits a non-empty Idempotency-Key when crypto.randomUUID is unavailable", async () => {
+  await withoutRandomUUID(async () => {
+    const experience = createMockExperience();
+    let placeInit = null;
+    stubFetch({
+      "/api/v1/cities/city-1/city-day": { body: { ...CITY_DAY_CARDS, card: { choicePending: false, playerPlacementPending: true, selectedCardId: "owl-tower" } } },
+      "/api/v1/cities/city-1/cards/current": { body: { city_id: "city-1", city_version: 8, turn: 0, offer: OFFER, choice: { status: "selected", card_effects: { placement: { placement_id: "placement-9", mode: "player_place" } } } } },
+      "/api/v1/cards": { body: { data: [{ card_id: "owl-tower", type: "special_structure", title: "Owl Tower", description: "x", structure: { footprint: "1x1" } }] } },
+      "/api/v1/cities/city-1/site-searches": { body: { city_version: 8, data: [{ lotId: "cell-2-3", center: { x: 2, z: -3 }, entranceDirections: ["south"] }] } },
+      "/api/v1/cities/city-1/cards/place": (init) => {
+        placeInit = init;
+        return { status: 200, body: { status: "placed" } };
+      }
+    });
+    const controller = createCityDayController({
+      experience,
+      api: { baseUrl: "/api/v1", cityId: "city-1", token: "session" },
+      setLight: () => {},
+      onPlayerTurnComplete: () => {}
+    });
+    await controller.sync();
+    assert.equal(experience.state.placementOpen, true, "placement mode opened");
+    await experience.onPlace?.({ lotId: "cell-2-3", center: { x: 2, z: -3 }, entranceDirections: ["south"] });
+
+    assert.ok(placeInit, "the placement is submitted even without crypto.randomUUID");
+    assert.equal(placeInit.method, "POST");
+    const key = idempotencyKeyOf({ init: placeInit });
+    assert.ok(key, "cards/place still carries an Idempotency-Key");
+    assert.ok(key.length > 0, "the fallback Idempotency-Key is non-empty");
+    assert.match(key, UUID_V4, "the fallback key is a well-formed UUID v4");
+  });
+});
+
+test("fallback Idempotency-Keys stay distinct across independent commands", async () => {
+  await withoutRandomUUID(async () => {
+    const experience = createMockExperience();
+    const calls = stubFetch({
+      "/api/v1/cards/select": { status: 200, body: { status: "selected" } },
+      "/api/v1/cards/place": { status: 200, body: { status: "placed" } }
+    });
+    const controller = createCityDayController({
+      experience,
+      api: { baseUrl: "/api/v1", cityId: "city-1", token: "session" },
+      setLight: () => {},
+      onPlayerTurnComplete: () => {}
+    });
+    await controller.postCommand("/cards/select", { a: 1 });
+    await controller.postCommand("/cards/place", { b: 2 });
+    const keyA = idempotencyKeyOf(calls[0]);
+    const keyB = idempotencyKeyOf(calls[1]);
+    assert.ok(keyA && keyB, "both commands carry a fallback key");
+    assert.match(keyA, UUID_V4);
+    assert.match(keyB, UUID_V4);
+    assert.notEqual(keyA, keyB, "independent commands still get distinct fallback keys");
+  });
 });
