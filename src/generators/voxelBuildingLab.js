@@ -1730,12 +1730,10 @@ export class VoxelInstanceBuffer {
 
   addVoxel(materialId, x, y, z, shadeKey = 0, options = {}) {
     if (!MATERIAL_LIBRARY[materialId]) throw new Error(`Unknown voxel material: ${materialId}`);
-    const position = {
-      x: Math.round(x),
-      y: Math.round(y),
-      z: Math.round(z)
-    };
-    const key = voxelKey(position.x, position.y, position.z);
+    const positionX = Math.round(x);
+    const positionY = Math.round(y);
+    const positionZ = Math.round(z);
+    const key = voxelKey(positionX, positionY, positionZ);
     const current = this.voxels.get(key);
     const priority = Number(options.priority ?? 0);
     if (current && current.priority > priority) {
@@ -1744,7 +1742,9 @@ export class VoxelInstanceBuffer {
     }
     if (current) this.overwrittenVoxelCount += 1;
     this.voxels.set(key, {
-      ...position,
+      x: positionX,
+      y: positionY,
+      z: positionZ,
       materialId,
       shadeKey,
       priority,
@@ -1923,16 +1923,13 @@ export class VoxelInstanceBuffer {
     for (const [materialId, instances] of this.getVisibleInstances()) {
       const materialChunks = new Map();
       instances.forEach((voxel) => {
-        const chunk = [
-          Math.floor(voxel.x / chunkSize),
-          0,
-          Math.floor(voxel.z / chunkSize)
-        ];
-        const chunkKey = chunk.join(":");
+        const chunkX = Math.floor(voxel.x / chunkSize);
+        const chunkZ = Math.floor(voxel.z / chunkSize);
+        const chunkKey = (chunkX + 128) * 4096 + (chunkZ + 128);
         chunks.add(chunkKey);
         if (!materialChunks.has(chunkKey)) {
           materialChunks.set(chunkKey, {
-            chunk,
+            chunk: [chunkX, 0, chunkZ],
             sourceVoxelCount: 0,
             faces: new Map()
           });
@@ -1945,13 +1942,17 @@ export class VoxelInstanceBuffer {
             voxel.y + face.normal[1],
             voxel.z + face.normal[2]
           ))) return;
-          const coordinates = [voxel.x, voxel.y, voxel.z];
-          const plane = coordinates[face.axis] + (face.normal[face.axis] > 0 ? 1 : 0);
-          const u = coordinates[face.uAxis];
-          const v = coordinates[face.vAxis];
-          const faceKey = `${face.id}:${plane}`;
-          if (!entry.faces.has(faceKey)) entry.faces.set(faceKey, { face, plane, cells: new Set() });
-          entry.faces.get(faceKey).cells.add(`${u}:${v}`);
+          const plane = (face.axis === 0 ? voxel.x : face.axis === 1 ? voxel.y : voxel.z)
+            + (face.normal[face.axis] > 0 ? 1 : 0);
+          const u = face.uAxis === 0 ? voxel.x : face.uAxis === 1 ? voxel.y : voxel.z;
+          const v = face.vAxis === 0 ? voxel.x : face.vAxis === 1 ? voxel.y : voxel.z;
+          const faceKey = face.index * FACE_PLANE_STRIDE + (plane + FACE_PLANE_OFFSET);
+          let faceEntry = entry.faces.get(faceKey);
+          if (!faceEntry) {
+            faceEntry = { face, plane, cells: new Set() };
+            entry.faces.set(faceKey, faceEntry);
+          }
+          faceEntry.cells.add(faceCellKey(u, v));
           sourceFaceCount += 1;
         });
       });
@@ -2012,12 +2013,12 @@ export class VoxelInstanceBuffer {
 }
 
 const GREEDY_FACE_DIRECTIONS = Object.freeze([
-  Object.freeze({ id: "px", axis: 0, uAxis: 1, vAxis: 2, normal: [1, 0, 0] }),
-  Object.freeze({ id: "nx", axis: 0, uAxis: 2, vAxis: 1, normal: [-1, 0, 0] }),
-  Object.freeze({ id: "py", axis: 1, uAxis: 2, vAxis: 0, normal: [0, 1, 0] }),
-  Object.freeze({ id: "ny", axis: 1, uAxis: 0, vAxis: 2, normal: [0, -1, 0] }),
-  Object.freeze({ id: "pz", axis: 2, uAxis: 0, vAxis: 1, normal: [0, 0, 1] }),
-  Object.freeze({ id: "nz", axis: 2, uAxis: 1, vAxis: 0, normal: [0, 0, -1] })
+  Object.freeze({ id: "px", index: 0, axis: 0, uAxis: 1, vAxis: 2, normal: [1, 0, 0] }),
+  Object.freeze({ id: "nx", index: 1, axis: 0, uAxis: 2, vAxis: 1, normal: [-1, 0, 0] }),
+  Object.freeze({ id: "py", index: 2, axis: 1, uAxis: 2, vAxis: 0, normal: [0, 1, 0] }),
+  Object.freeze({ id: "ny", index: 3, axis: 1, uAxis: 0, vAxis: 2, normal: [0, -1, 0] }),
+  Object.freeze({ id: "pz", index: 4, axis: 2, uAxis: 0, vAxis: 1, normal: [0, 0, 1] }),
+  Object.freeze({ id: "nz", index: 5, axis: 2, uAxis: 1, vAxis: 0, normal: [0, 0, -1] })
 ]);
 
 function emitGreedyFaceRectangles({ face, plane, cells, maxMergeSpan, positions, normals, indices, voxelSize }) {
@@ -2026,9 +2027,8 @@ function emitGreedyFaceRectangles({ face, plane, cells, maxMergeSpan, positions,
   let minV = Number.POSITIVE_INFINITY;
   let maxV = Number.NEGATIVE_INFINITY;
   cells.forEach((key) => {
-    const separator = key.indexOf(":");
-    const u = Number(key.slice(0, separator));
-    const v = Number(key.slice(separator + 1));
+    const u = Math.floor(key / FACE_CELL_STRIDE) - VOXEL_KEY_OFFSET;
+    const v = (key % FACE_CELL_STRIDE) - VOXEL_KEY_OFFSET;
     minU = Math.min(minU, u);
     maxU = Math.max(maxU, u);
     minV = Math.min(minV, v);
@@ -2036,18 +2036,18 @@ function emitGreedyFaceRectangles({ face, plane, cells, maxMergeSpan, positions,
   });
   for (let startV = minV; startV <= maxV; startV += 1) {
     for (let startU = minU; startU <= maxU; startU += 1) {
-      if (!cells.has(`${startU}:${startV}`)) continue;
+      if (!cells.has(faceCellKey(startU, startV))) continue;
       let width = 1;
-      while (width < maxMergeSpan && cells.has(`${startU + width}:${startV}`)) width += 1;
+      while (width < maxMergeSpan && cells.has(faceCellKey(startU + width, startV))) width += 1;
       let height = 1;
       heightLoop: while (height < maxMergeSpan) {
         for (let offset = 0; offset < width; offset += 1) {
-          if (!cells.has(`${startU + offset}:${startV + height}`)) break heightLoop;
+          if (!cells.has(faceCellKey(startU + offset, startV + height))) break heightLoop;
         }
         height += 1;
       }
       for (let v = 0; v < height; v += 1) {
-        for (let u = 0; u < width; u += 1) cells.delete(`${startU + u}:${startV + v}`);
+        for (let u = 0; u < width; u += 1) cells.delete(faceCellKey(startU + u, startV + v));
       }
       appendVoxelFaceQuad({
         face,
@@ -4929,14 +4929,6 @@ function massingPlanBounds(plan) {
   };
 }
 
-function massingPointKey(x, z) {
-  return `${x},${z}`;
-}
-
-function parseMassingPoint(key) {
-  return key.split(",").map(Number);
-}
-
 function positiveModulo(value, modulus) {
   return ((value % modulus) + modulus) % modulus;
 }
@@ -5744,8 +5736,35 @@ function hashNumber(...values) {
   return hash >>> 0;
 }
 
+// Voxel, face-cell, and massing coordinates stay within a bounded world, so
+// they are packed into exact numeric keys instead of allocating "x,y,z"
+// strings. Map/Set preserve insertion order for any key type, so this changes
+// neither the traversal order nor the generated geometry — it only removes the
+// string hashing and allocation churn from the hot voxel write/merge paths.
+const VOXEL_KEY_OFFSET = 4096;
+const VOXEL_KEY_STRIDE = 8193; // 2 * OFFSET + 1, bijective over [-OFFSET, OFFSET-1]
+const FACE_CELL_STRIDE = 8193;
+const FACE_PLANE_OFFSET = 8192;
+const FACE_PLANE_STRIDE = 16384; // 2 * PLANE_OFFSET
+const MASSING_KEY_OFFSET = 4096;
+const MASSING_KEY_STRIDE = 8193;
+
 function voxelKey(x, y, z) {
-  return `${x},${y},${z}`;
+  return ((x + VOXEL_KEY_OFFSET) * VOXEL_KEY_STRIDE + (y + VOXEL_KEY_OFFSET)) * VOXEL_KEY_STRIDE + (z + VOXEL_KEY_OFFSET);
+}
+
+function faceCellKey(u, v) {
+  return (u + VOXEL_KEY_OFFSET) * FACE_CELL_STRIDE + (v + VOXEL_KEY_OFFSET);
+}
+
+function massingPointKey(x, z) {
+  return (x + MASSING_KEY_OFFSET) * MASSING_KEY_STRIDE + (z + MASSING_KEY_OFFSET);
+}
+
+function parseMassingPoint(key) {
+  const x = Math.floor(key / MASSING_KEY_STRIDE) - MASSING_KEY_OFFSET;
+  const z = (key % MASSING_KEY_STRIDE) - MASSING_KEY_OFFSET;
+  return [x, z];
 }
 
 function clamp(value, min, max) {

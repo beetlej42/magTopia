@@ -17,8 +17,10 @@
     "agent:lan": "node scripts/start-agent-api-acceptance.mjs",
     "agent:cities": "node scripts/list-agent-lan-cities.mjs",
     "test": "node --test",
-    "test:render-acceptance": "node scripts/run-render-acceptance.mjs",
-    "test:render-acceptance:60hz": "RENDER_ACCEPTANCE_MAX_P95_MS=16.7 node scripts/run-render-acceptance.mjs",
+    "test:render-smoke": "RENDER_ACCEPTANCE_PROFILE=smoke node scripts/run-render-acceptance.mjs",
+    "test:render-acceptance": "RENDER_ACCEPTANCE_PROFILE=fast node scripts/run-render-acceptance.mjs",
+    "test:render-full": "RENDER_ACCEPTANCE_PROFILE=full node scripts/run-render-acceptance.mjs",
+    "test:render-perf": "RENDER_ACCEPTANCE_PROFILE=full RENDER_ACCEPTANCE_MAX_P95_MS=16.7 node scripts/run-render-acceptance.mjs",
     "test:agent-build": "node --test test/agentDistrictSimulation.test.js",
     "hunyuan3d": "node scripts/hunyuan3d.mjs"
   },

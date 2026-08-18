@@ -32,6 +32,34 @@ pnpm run dev
 If the local shell cannot find Node, add your Node.js installation to `PATH`
 before running the commands above.
 
+### Render acceptance tiers
+
+The render acceptance harness (`scripts/run-render-acceptance.mjs`) drives one
+Chromium + SwiftShader session through the Agent city scene. It is profile-driven:
+a single browser and scene launch serve all three tiers, and each tier only
+changes sampling density, screenshot resolution, and how strictly results are
+asserted.
+
+- `pnpm test:render-smoke` — boot/init smoke check: page and WebGL start, the
+  Agent city scene initializes, terrain is visible, and near/far + Bokeh state
+  switches behave. No performance benchmark. Fastest feedback loop.
+- `pnpm test:render-acceptance` — daily development gate (default). Reduced
+  sampling (DPR 1, ~30 drag + ~15 settled frames per view) and two key
+  screenshots still catch near/far, terrain, Bokeh, and obvious performance
+  regressions. SwiftShader is software rendering, so the default p95 gate is a
+  generous "obvious regression" threshold, never a real-device 60Hz claim.
+- `pnpm test:render-full` — full visual + performance acceptance: DPR 3, complete
+  settled + drag sampling, before/after screenshots per view, the Bokeh
+  far-to-near transition, full terrain coverage, and every diagnostics assertion.
+- `pnpm test:render-perf` — explicit, opt-in SwiftShader-relative benchmark gate
+  (`RENDER_ACCEPTANCE_MAX_P95_MS=16.7`) on the full profile. It is a regression
+  gate against the software renderer, not a mobile-device 60Hz certification.
+
+Artifacts (screenshots and a `report.json` with stage timings, coverage, and
+per-frame performance) land in `artifacts/render-acceptance/<profile>/`. Set
+`CHROMIUM_PATH` to use a locally installed Chromium, or `RENDER_ACCEPTANCE_URL`
+to point the harness at an already-running dev server.
+
 ## Agent city service
 
 The Phase 0–3 network service is implemented as a Fastify modular monolith backed by PostgreSQL. It exposes private per-player city saves, one-time Agent connection links, bounded spatial/building queries, idempotent construction and road commands, output-based budget recovery, asynchronous asset orders, and the Agent strategy API (`GET /cities/{city_id}/strategy`, `POST /strategy/assignments`, `POST /strategy/resolve`) that reads open incidents and Arcane Officers, accepts dispatch plans, and lets the system own the dice, modifiers, and balance while settling each turn.
