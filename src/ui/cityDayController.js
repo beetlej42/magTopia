@@ -44,6 +44,25 @@ export function createCityDayController({ experience, api, setLight, placementLa
     return payload;
   }
 
+  function createIdempotencyKey() {
+    return crypto.randomUUID();
+  }
+
+  // Submits a mutating command to a server command endpoint. The command
+  // contract (POST /cards/select, POST /cards/place) requires an
+  // Idempotency-Key so a retried submission of the same logical command can be
+  // replayed instead of double-applied. The key is generated once per logical
+  // command and is reused if that command retries — pass the same key on the
+  // retry. New user actions get a fresh key. Pure query/search POSTs that the
+  // server does not require a key for must NOT go through this helper.
+  async function postCommand(relative, body, { idempotencyKey = createIdempotencyKey() } = {}) {
+    return fetchJson(relative, {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify(body)
+    });
+  }
+
   async function ensureCardCatalog() {
     if (cardCatalog) return cardCatalog;
     const payload = await fetchJson("/cards");
@@ -132,16 +151,16 @@ export function createCityDayController({ experience, api, setLight, placementLa
 
   async function submitCardSelection(card, offer, decisionMode) {
     const expectedCityVersion = offer?.city_version ?? offer?.expectedCityVersion;
+    // One key per logical selection command; a network retry of this same
+    // submission must reuse it so the server can replay instead of double-apply.
+    const idempotencyKey = createIdempotencyKey();
     try {
-      const payload = await fetchJson(`/cities/${api.cityId}/cards/select`, {
-        method: "POST",
-        body: JSON.stringify({
-          expected_city_version: expectedCityVersion,
-          offer_id: offer.offer_id,
-          selected_card_id: card.card_id,
-          decision_mode: decisionMode
-        })
-      });
+      const payload = await postCommand(`/cities/${api.cityId}/cards/select`, {
+        expected_city_version: expectedCityVersion,
+        offer_id: offer.offer_id,
+        selected_card_id: card.card_id,
+        decision_mode: decisionMode
+      }, { idempotencyKey });
       if (payload.status !== "selected") throw new Error(payload.message ?? "卡牌选择被拒绝");
       if (decisionMode === "player_place") {
         await openPendingPlacement();
@@ -197,18 +216,18 @@ export function createCityDayController({ experience, api, setLight, placementLa
   }
 
   async function placeCard(activePlacement, candidate) {
+    // One key per logical placement command; a network retry of this same
+    // submission must reuse it so the server can replay instead of double-apply.
+    const idempotencyKey = createIdempotencyKey();
     try {
-      const payload = await fetchJson(`/cities/${api.cityId}/cards/place`, {
-        method: "POST",
-        body: JSON.stringify({
-          expected_city_version: activePlacement.cityVersion,
-          card_id: activePlacement.cardId,
-          placement_id: activePlacement.placementId,
-          lot_id: candidate.lotId,
-          footprint: activePlacement.footprint,
-          entrance: candidate.entranceDirections?.[0] ?? "south"
-        })
-      });
+      const payload = await postCommand(`/cities/${api.cityId}/cards/place`, {
+        expected_city_version: activePlacement.cityVersion,
+        card_id: activePlacement.cardId,
+        placement_id: activePlacement.placementId,
+        lot_id: candidate.lotId,
+        footprint: activePlacement.footprint,
+        entrance: candidate.entranceDirections?.[0] ?? "south"
+      }, { idempotencyKey });
       if (payload.status !== "placed") throw new Error(payload.message ?? "放置被拒绝");
       experience.closePlacement();
       placementLayer?.clear();
@@ -248,5 +267,5 @@ export function createCityDayController({ experience, api, setLight, placementLa
     experience.closeCards?.();
   }
 
-  return { sync, dismissReport, closeChoiceLayers, closePlacement, phaseLightTarget };
+  return { sync, dismissReport, closeChoiceLayers, closePlacement, postCommand, phaseLightTarget };
 }
