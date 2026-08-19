@@ -126,7 +126,7 @@ For example, a library should not accidentally become a greenhouse. If the confl
 
 ## Budget behavior
 
-You may spend the city's entire currently available budget without player approval. Resources recover when city time advances, based on the productive buildings already operating in the city. Do not treat future income as currently spendable.
+You may spend the city's entire currently available budget without player approval. Income is settled by resolving the turn through the cooldown-gated strategy flow, based on the productive buildings already operating in the city; there is no separate manual time-advance that grants income. Do not treat future income as currently spendable.
 
 ## Reuse versus production
 
@@ -192,7 +192,7 @@ Preview first. For the order request, reuse the same body with the latest `expec
 ## Error recovery
 
 - `LOT_OCCUPIED`: search for a new site.
-- `INSUFFICIENT_RESOURCES`: advance time only when appropriate, or choose a smaller project.
+- `INSUFFICIENT_RESOURCES`: resolve an unlocked turn to settle income, or choose a smaller project.
 - `NO_ROUTE`: change entrance, endpoint, or site.
 - `DISTRICT_NOT_FOUND`: reread the snapshot and use an existing district id, or designate a new district.
 - `ASSET_NOT_COMPATIBLE`: search again or request production.

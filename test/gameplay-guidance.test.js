@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { playbookGuidance } from "../src/gameplay/guidance.js";
+import { PLAYBOOK_DISCOVERY_GUIDANCE, playbookGuidance } from "../src/gameplay/guidance.js";
 
 const base = () => ({
   gameplay: {
@@ -16,12 +16,11 @@ const base = () => ({
   }
 });
 
-test("base guidance always discloses the playbook and the authority boundaries", () => {
+test("base guidance always discloses the playbook and stays minimal", () => {
   const guidance = playbookGuidance(base());
   assert.ok(Array.isArray(guidance) && guidance.length > 0);
   assert.ok(guidance.some((hint) => /playbook/i.test(hint)));
-  assert.ok(guidance.some((hint) => /player choices are authoritative/i.test(hint)));
-  assert.ok(guidance.length <= 3, "the base disclosure stays minimal (1-3 hints)");
+  assert.equal(guidance.length, 1, "with no active context only the playbook discovery anchor is returned");
 });
 
 test("a pending card choice adds a player-ownership hint", () => {
@@ -70,11 +69,29 @@ test("a turn locked by its cooldown gate discloses the wait-and-stop instruction
   assert.ok(guidance.some((hint) => /Stop low-value new work and wait/i.test(hint)));
 });
 
-test("contextual hints append to the minimal base rather than duplicating the whole playbook", () => {
+test("contextual hints stay within the 1-3 low-token budget, highest-priority first", () => {
   const state = base();
   state.gameplay.cardState.choice.status = "pending";
   state.gameplay.incidents = { "incident-1": { id: "incident-1", buildingId: "b1", type: "concealment", status: "open" } };
+  state.gameplay.cardState.placements = {
+    p1: { cardId: "card-special", placementId: "placement-p1", mode: "delegate_to_agent", status: "deferred" }
+  };
   const guidance = playbookGuidance(state);
-  assert.equal(guidance.length, 5, "exactly 3 base hints + 2 contextual hints, never the full document");
+  assert.ok(guidance.length <= 3, "the total stays within the 1-3 spec");
   assert.ok(guidance.every((hint) => hint.length < 400), "each hint stays short and low-token");
+  assert.equal(guidance[0], PLAYBOOK_DISCOVERY_GUIDANCE, "the playbook discovery anchor always comes first");
+  assert.ok(guidance[1].includes("delegated"), "delegated placement (agent-mandated work) outranks card choice");
+});
+
+test("many competing contexts never exceed three hints", () => {
+  const state = base();
+  state.gameplay.cardState.choice.status = "pending";
+  state.gameplay.incidents = { "incident-1": { id: "incident-1", buildingId: "b1", type: "concealment", status: "open" } };
+  state.gameplay.cardState.placements = {
+    p1: { cardId: "card-special", placementId: "placement-p1", mode: "delegate_to_agent", status: "deferred" },
+    p2: { cardId: "card-other", placementId: "placement-p2", mode: "player_place", status: "pending" }
+  };
+  const guidance = playbookGuidance(state, { turnLocked: "2026-08-01T00:01:00.000Z" });
+  assert.equal(guidance.length, 3, "discovery anchor + exactly two highest-priority context hints");
+  assert.ok(guidance[1].includes("cannot be resolved yet"), "the locked gate is the most critical context");
 });

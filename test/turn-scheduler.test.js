@@ -418,6 +418,56 @@ test("a new city resource contract is coins-only with a single authoritative led
   assert.ok(!("timber" in state.resources) && !("stone" in state.resources), "timber/stone are never initialized as core resources");
 });
 
+test("construction spend survives settlement: balance after resolve is the debited base plus income", async () => {
+  const clock = fakeClock();
+  const repository = createMemoryRepository(config);
+  const { app } = await setup(clock, repository);
+  try {
+    const { city, agent } = await openCity(app, repository);
+    const startingCoins = (await repository.getCityForScheduler(city.id)).state.resources.coins;
+
+    const sites = await json(app, auth(agent, { method: "POST", url: `/api/v1/cities/${city.id}/site-searches`, payload: { footprint: "1x1", limit: 10 } }), 200);
+    const site = sites.data[0];
+    const build = {
+      expected_city_version: sites.city_version,
+      site: { lot_id: site.lotId, footprint: "1x1", entrance: "south" },
+      program: { archetype: "starter_residence", name: "Ledger Cottage", purpose: "residential" },
+      design: { district_style: "london_common", creative_brief: "A warm brick cottage." },
+      asset: { mode: "reuse", asset_id: "starter-cottage-001" }
+    };
+    const preview = await json(app, auth(agent, { method: "POST", url: `/api/v1/cities/${city.id}/construction-previews`, payload: build }), 200);
+    assert.equal(preview.feasible, true);
+    assert.ok(preview.cost.coins > 0, "construction debits coins");
+
+    const order = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/construction-orders`,
+      headers: { "idempotency-key": "ledger-build-1" },
+      payload: build
+    }), 201);
+    assert.equal(order.status, "completed");
+
+    const spentState = (await repository.getCityForScheduler(city.id)).state;
+    const spentBalance = spentState.resources.coins;
+    assert.equal(spentBalance, startingCoins - preview.cost.coins, "the construction cost was debited from state.resources");
+
+    const settled = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/strategy/resolve`,
+      headers: { "idempotency-key": "ledger-resolve-1" },
+      payload: { expected_city_version: order.city_version_after }
+    }), 200);
+    assert.equal(settled.status, "resolved");
+
+    const afterState = (await repository.getCityForScheduler(city.id)).state;
+    const income = settled.facts.resourceDelta.coins;
+    assert.equal(afterState.resources.coins, spentBalance + income, "settlement starts from the debited balance, never wiping the construction cost");
+    assert.equal(afterState.gameplay.resources.coins, afterState.resources.coins, "state and gameplay coins share one ledger after settlement");
+  } finally {
+    await app.close();
+  }
+});
+
 test("legacy timber/stone resource overrides never become a second authoritative ledger on resolve", () => {
   const world = {
     mapId: "resource-legacy-test",

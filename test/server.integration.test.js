@@ -42,7 +42,7 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
 
     const playerA = await json(app, { method: "POST", url: "/api/v1/players", payload: { display_name: "Alice" } }, 201);
     const playerB = await json(app, { method: "POST", url: "/api/v1/players", payload: { display_name: "Bob" } }, 201);
-    const cityA = await json(app, auth(playerA, { method: "POST", url: "/api/v1/cities", payload: { name: "月柳城" } }), 201);
+    const cityA = await json(app, auth(playerA, { method: "POST", url: "/api/v1/cities", payload: { name: "月柳城", resources: { coins: 100000 } } }), 201);
     const cityB = await json(app, auth(playerB, { method: "POST", url: "/api/v1/cities", payload: { name: "星港城" } }), 201);
     assert.equal(cityA.visibility, "private");
 
@@ -150,15 +150,22 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
     assert.equal(replay.city_version_after, order1.city_version_after);
 
     const afterFirst = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${cityA.id}/snapshot` }), 200);
-    const coinsBeforeTime = afterFirst.resources.coins;
-    const time = await json(app, auth(agent, { method: "POST", url: `/api/v1/cities/${cityA.id}/time-advances`, headers: { "idempotency-key": "time-1" }, payload: { expected_city_version: afterFirst.city_version, hours: 24 } }), 201);
-    assert.ok(time.resource.income.coins > 0);
-    const afterTime = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${cityA.id}/snapshot` }), 200);
-    assert.ok(afterTime.resources.coins > coinsBeforeTime);
+    // Manual time advance is disabled under the consolidated gameplay: income
+    // and turn progression only flow through the cooldown-gated strategy resolve.
+    const disabledTime = await app.inject(auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${cityA.id}/time-advances`,
+      headers: { "idempotency-key": "time-1" },
+      payload: { expected_city_version: afterFirst.city_version, hours: 24 }
+    }));
+    assert.equal(disabledTime.statusCode, 422);
+    assert.equal(disabledTime.json().code, "TIME_ADVANCE_DISABLED");
+    const afterDisabledTime = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${cityA.id}/snapshot` }), 200);
+    assert.deepEqual(afterDisabledTime.resources, afterFirst.resources, "a rejected time advance changes nothing");
 
     const candidates2 = await json(app, auth(agent, { method: "POST", url: `/api/v1/cities/${cityA.id}/site-searches`, payload: { footprint: "1x1", limit: 20 } }), 200);
     const site2 = candidates2.data.find((entry) => entry.lotId !== site1.lotId);
-    const build2 = buildRequest(afterTime.city_version, site2.lotId, "Ivy Cottage");
+    const build2 = buildRequest(afterDisabledTime.city_version, site2.lotId, "Ivy Cottage");
     const order2 = await json(app, auth(agent, { method: "POST", url: `/api/v1/cities/${cityA.id}/construction-orders`, headers: { "idempotency-key": "build-2" }, payload: build2 }), 201);
     const roadPreview = await json(app, auth(agent, { method: "POST", url: `/api/v1/cities/${cityA.id}/connection-previews`, payload: { from: { kind: "building", id: order1.resource.building_id }, to: { kind: "building", id: order2.resource.building_id } } }), 200);
     assert.equal(roadPreview.plan.feasible, true);

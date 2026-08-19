@@ -45,7 +45,7 @@ function defineDistrict(currentState, input, context) {
   if (currentState.districts?.[district.id]) return rejected(currentState, "DISTRICT_ID_CONFLICT", `District ${district.id} already exists`);
   const next = cloneCityState(currentState);
   next.districts[district.id] = { ...district, status: "active", createdAtTurn: next.turn };
-  bump(next);
+  bump(next, false);
   appendEvent(next, {
     type: "district_defined",
     actor: district.actor,
@@ -68,7 +68,7 @@ function cancelDistrict(currentState, input, context) {
   }
 
   const next = cloneCityState(currentState);
-  bump(next);
+  bump(next, false);
   const reason = String(input.reason ?? input.actorNote ?? "cancelled_by_actor").trim().slice(0, 160) || "cancelled_by_actor";
   next.districts[districtId] = {
     ...district,
@@ -132,9 +132,9 @@ function upgradeBuilding(currentState, input, context) {
       ...(prior.designHistory ?? []),
       prior.voxelDesign ? { designId: prior.voxelDesign.id, revision: prior.voxelDesign.revision, specHash: prior.voxelDesign.specHash } : null
     ].filter(Boolean),
-    updatedAtTurn: next.turn + 1
+    updatedAtTurn: next.turn
   };
-  bump(next);
+  bump(next, false);
   appendEvent(next, {
     type: "building_upgraded",
     actor: input.actor ?? "agent:unknown",
@@ -171,7 +171,7 @@ function connect(currentState, input, context) {
   const next = cloneCityState(currentState);
   applyRoadPlan(next, plan);
   next.resources = resourcesAfter;
-  bump(next);
+  bump(next, false);
   appendEvent(next, {
     type: "road_connected",
     actor: connection.actor,
@@ -205,7 +205,7 @@ function reserveConstruction(currentState, input, context) {
     actor: proposal.actor,
     createdAt: context.now()
   };
-  bump(next);
+  bump(next, false);
   appendEvent(next, { type: "construction_reserved", actor: proposal.actor, reservationId, cost: preview.cost }, context);
   return accepted(currentState, next, { reservation: structuredClone(next.reservations[reservationId]), preview });
 }
@@ -236,26 +236,18 @@ function cancelConstructionReservation(currentState, input, context) {
   clearReservationMarks(next, reservation);
   next.resources = add(next.resources, reservation.frozenCost);
   delete next.reservations[input.reservationId];
-  bump(next);
+  bump(next, false);
   appendEvent(next, { type: "construction_reservation_cancelled", reservationId: input.reservationId, reason: input.reason ?? "cancelled", refund: reservation.frozenCost }, context);
   return accepted(currentState, next, { refunded: reservation.frozenCost });
 }
 
 function advanceTime(currentState, input, context) {
-  const hours = Number(input.hours ?? 24);
-  if (!Number.isFinite(hours) || hours <= 0 || hours > 24 * 31) return rejected(currentState, "INVALID_TIME_ADVANCE", "hours must be between 0 and 744");
-  const daily = calculateDailyIncome(currentState);
-  const multiplier = hours / 24;
-  const income = Object.fromEntries(Object.entries(daily).map(([key, value]) => [key, Math.floor(value * multiplier)]));
-  const next = cloneCityState(currentState);
-  next.resources = add(next.resources, income);
-  next.elapsedHours = (next.elapsedHours ?? 0) + hours;
-  next.turn += Math.max(1, Math.floor(hours / 24));
-  next.economy.lastIncome = income;
-  next.economy.lifetimeIncome = add(next.economy.lifetimeIncome, income);
-  bump(next, false);
-  appendEvent(next, { type: "city_time_advanced", actor: input.actor ?? "system:clock", hours, income, dailyProduction: daily }, context);
-  return accepted(currentState, next, { hours, income, dailyProduction: daily });
+  // Consolidated gameplay: the wall clock never grants income or advances the
+  // gameplay turn. Settlement flows through the single authoritative
+  // resolveTurn() gated by the cooldown `nextTurnUnlockAt`. This legacy
+  // time-advance path is explicitly disabled so it can never become a second
+  // income/turn path.
+  return rejected(currentState, "TIME_ADVANCE_DISABLED", "Manual time advance is disabled; income and turn progression flow through the cooldown-gated strategy resolve instead.");
 }
 
 export function calculateDailyIncome(state) {
@@ -289,7 +281,7 @@ function applyCompletedBuilding(next, { proposal, preview, buildingId, assetId, 
     gradingPlan: structuredClone(preview.gradingPlan ?? null),
     createdAtTurn: next.turn
   };
-  bump(next);
+  bump(next, false);
   appendEvent(next, { type: "building_constructed", actor: proposal.actor, buildingId, proposalId: proposal.id, assetId: assetId ?? null, cost: preview.cost, summary: `${proposal.program.name} was built by ${proposal.actor}.` }, context);
 }
 
@@ -304,7 +296,10 @@ function clearReservationMarks(state, reservation) {
   }
 }
 
-function bump(state, incrementTurn = true) {
+// All engine mutations only advance the city version (optimistic concurrency).
+// The gameplay turn is owned exclusively by the authoritative resolveTurn() in
+// the gameplay layer; construction/road/district commands never move it.
+function bump(state, incrementTurn = false) {
   state.version = (state.version ?? 0) + 1;
   if (incrementTurn) state.turn = (state.turn ?? 0) + 1;
 }

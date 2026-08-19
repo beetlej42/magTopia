@@ -73,7 +73,14 @@ export function settleResources(state, metadataMap, options = {}) {
     acc.magic += Number(metadata.magicOutput ?? 0);
     return acc;
   }, { coins: baseCoins, magic: baseMagic });
-  const before = normalizeGameplayResources(state.gameplay?.resources);
+  // Coins have one authoritative source: `state.resources.coins`, which is
+  // debited by construction/road/reservation mutations and credited by card
+  // grants. `gameplay.resources` mirrors it at settlement. Basing the settle on
+  // `state.resources.coins` means a construction spend is never wiped out by a
+  // stale gameplay ledger value.
+  const gameplayBefore = normalizeGameplayResources(state.gameplay?.resources);
+  const spendableCoins = Number.isFinite(Number(state.resources?.coins)) ? Number(state.resources.coins) : gameplayBefore.coins;
+  const before = { ...gameplayBefore, coins: spendableCoins };
   const after = normalizeGameplayResources({ coins: before.coins + income.coins, magic: before.magic + income.magic });
   return { before, after, income };
 }
