@@ -108,7 +108,7 @@ test("presentPlacementChoice keeps using the cards layer and keeps the placement
 test("presentPlacementMode shows only the placement layer", async () => {
   await withFakeDom(async () => {
     const experience = createCityDayExperience({});
-    experience.presentPlacementMode({ card: { title: "Owl Tower" }, candidates: [], onPlace() {}, onPickCandidate() {}, onCancel() {} });
+    experience.presentPlacementMode({ card: { title: "Owl Tower" }, onRotate() {}, onConfirm() {}, onCancel() {} });
     assert.equal(experience.layers.placement.hidden, false);
     assert.equal(experience.layers.cards.hidden, true);
     assert.equal(experience.layers.newspaper.hidden, true);
@@ -126,7 +126,7 @@ test("presenting a new layer hides the previously visible one", async () => {
     assert.equal(experience.layers.placement.hidden, true);
     assert.equal(visibleLayerCount(experience), 1);
 
-    experience.presentPlacementMode({ card: { title: "Owl Tower" }, candidates: [], onPlace() {}, onPickCandidate() {}, onCancel() {} });
+    experience.presentPlacementMode({ card: { title: "Owl Tower" }, onRotate() {}, onConfirm() {}, onCancel() {} });
     assert.equal(experience.layers.placement.hidden, false);
     assert.equal(experience.layers.cards.hidden, true, "entering placement hides the cards layer");
     assert.equal(experience.layers.newspaper.hidden, true);
@@ -149,7 +149,7 @@ test("every close path returns its full-screen layer to hidden", async () => {
     assert.equal(experience.layers.cards.hidden, true);
     assert.equal(experience.root.hidden, true);
 
-    experience.presentPlacementMode({ card: { title: "Owl Tower" }, candidates: [], onPlace() {}, onPickCandidate() {}, onCancel() {} });
+    experience.presentPlacementMode({ card: { title: "Owl Tower" }, onRotate() {}, onConfirm() {}, onCancel() {} });
     experience.closePlacement();
     assert.equal(experience.layers.placement.hidden, true);
     assert.equal(experience.root.hidden, true);
@@ -192,8 +192,7 @@ test("dispatching a click on a card button invokes selection", async () => {
   });
 });
 
-test("tapping a special-structure card opens 自己放置 / 交给 Agent before any POST", async () => {
-  await withFakeDom(async () => {
+test("tapping a special-structure card opens 自己放置 / 交给 Agent before any POST", async () => {  await withFakeDom(async () => {
     const experience = createCityDayExperience({});
     const calls = stubFetch({
       "/api/v1/cities/city-1/city-day": { body: { phase: "early_morning", settled: false, report: { ready: false, dismissed: false }, card: { choicePending: true, playerPlacementPending: false }, agent: { workStarted: false }, incident: { phaseActive: false } } },
@@ -217,6 +216,72 @@ test("tapping a special-structure card opens 自己放置 / 交给 Agent before 
     assert.equal(experience.layers.placement.hidden, true, "the placement overlay is still hidden during the 自己放置 / 交给 Agent choice");
     assert.equal(experience.layers.cards.hidden, false, "the choice reuses the visible cards layer");
     assert.equal(calls.some((call) => call.url.endsWith("/cards/select")), false, "no selection POST happens before the local choice");
+  });
+});
+
+test("placement HUD shows status, cancel, rotate, confirm and no lot list", async () => {
+  await withFakeDom(async () => {
+    const experience = createCityDayExperience({});
+    experience.presentPlacementMode({ card: { title: "Owl Tower" }, onRotate() {}, onConfirm() {}, onCancel() {} });
+    const status = experience.layers.placement.querySelector(".city-day-placement-status");
+    assert.ok(status, "the placement HUD shows a status pill");
+    assert.ok(status.querySelector("strong")?.textContent.includes("正在放置"), "the status names the placement session");
+    assert.equal(experience.layers.placement.querySelector(".city-day-lot-list"), null, "no legal-lot button list is rendered");
+    const buttons = collectButtons(experience.layers.placement);
+    assert.equal(buttons.length, 3, "exactly cancel, rotate and confirm are offered");
+    assert.ok(buttons.some((button) => button.className.includes("is-cancel")), "cancel control exists");
+    assert.ok(buttons.some((button) => button.className.includes("is-rotate")), "rotate control exists");
+    assert.ok(buttons.some((button) => button.className.includes("is-confirm")), "confirm control exists");
+  });
+});
+
+test("placement confirm starts disabled until a legal target is driven in near view", async () => {
+  await withFakeDom(async () => {
+    const experience = createCityDayExperience({});
+    experience.presentPlacementMode({ card: { title: "Owl Tower" }, onRotate() {}, onConfirm() {}, onCancel() {} });
+    const confirm = collectButtons(experience.layers.placement).find((button) => button.className.includes("is-confirm"));
+    const rotate = collectButtons(experience.layers.placement).find((button) => button.className.includes("is-rotate"));
+    const actions = experience.layers.placement.querySelector(".city-day-placement-actions");
+    assert.equal(confirm.disabled, true, "confirm starts disabled with no target");
+    assert.equal(actions.hidden, false, "near view shows the placement actions");
+
+    experience.updatePlacementControls({ viewMode: "near", hasTarget: true, isLegal: false, reason: "目标被占用" });
+    assert.equal(confirm.disabled, true, "an invalid target keeps confirm disabled");
+    assert.equal(experience.layers.placement.querySelector(".city-day-placement-status").classList.has("is-invalid"), true, "invalid targets mark the status");
+
+    experience.updatePlacementControls({ viewMode: "near", hasTarget: true, isLegal: true, reason: null });
+    assert.equal(confirm.disabled, false, "a legal target enables confirm");
+    assert.equal(experience.layers.placement.querySelector(".city-day-placement-status").classList.has("is-invalid"), false, "legal targets clear the invalid mark");
+  });
+});
+
+test("far view hides rotate and confirm but keeps cancel and status", async () => {
+  await withFakeDom(async () => {
+    const experience = createCityDayExperience({});
+    experience.presentPlacementMode({ card: { title: "Owl Tower" }, onRotate() {}, onConfirm() {}, onCancel() {} });
+    const actions = experience.layers.placement.querySelector(".city-day-placement-actions");
+    const status = experience.layers.placement.querySelector(".city-day-placement-status");
+    const cancel = collectButtons(experience.layers.placement).find((button) => button.className.includes("is-cancel"));
+    assert.equal(actions.hidden, false, "near view shows rotate/confirm");
+
+    experience.updatePlacementControls({ viewMode: "far", hasTarget: false, isLegal: false });
+    assert.equal(actions.hidden, true, "far view hides rotate/confirm");
+    assert.equal(cancel.hidden, false, "far view keeps the cancel control");
+    assert.equal(status.hidden, false, "far view keeps the placement status");
+    assert.ok(status.querySelector("strong")?.textContent.includes("正在放置"), "far view keeps the placement status text");
+  });
+});
+
+test("confirm is disabled again when the target becomes illegal", async () => {
+  await withFakeDom(async () => {
+    const experience = createCityDayExperience({});
+    experience.presentPlacementMode({ card: { title: "Owl Tower" }, onRotate() {}, onConfirm() {}, onCancel() {} });
+    const confirm = collectButtons(experience.layers.placement).find((button) => button.className.includes("is-confirm"));
+    experience.updatePlacementControls({ viewMode: "near", hasTarget: true, isLegal: true });
+    assert.equal(confirm.disabled, false);
+    experience.updatePlacementControls({ viewMode: "near", hasTarget: true, isLegal: false, reason: "入口没有临街面" });
+    assert.equal(confirm.disabled, true);
+    assert.equal(experience.layers.placement.querySelector(".city-day-placement-status").classList.has("is-invalid"), true);
   });
 });
 

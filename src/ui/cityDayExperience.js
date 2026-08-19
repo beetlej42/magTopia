@@ -304,92 +304,137 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     root.hidden = false;
   }
 
-  // ---- Manual placement mode (keeps existing camera) ------------------------
+  // ---- Manual placement mode (in-world FOV-center placement) ----------------
+  //
+  // PR #52: special-structure placement is a pass-through city-builder mode
+  // driven by the camera FOV center. No legal-lot button list is shown and no
+  // hidden fixed overlay intercepts map gestures: the `.city-day-placement`
+  // layer is pointer-events:none and only the three icon buttons are
+  // hit-testable. Far view keeps only cancel + status; near view adds rotate
+  // and confirm.
 
-  function presentPlacementMode({ card, candidates = [], onPlace, onPickCandidate, onCancel }) {
-    layers.placement.replaceChildren();
-    // Entering placement closes the card choice: placement is a pass-through
-    // map mode (the city must stay reachable for picking/orbiting), not a
-    // full-screen modal interaction.
-    layers.cards.replaceChildren();
-    state.activePlacement = { card, candidates, onPlace, onPickCandidate, onCancel, selectedCandidate: null };
-    showLayer("placement");
+  const PLACEMENT_ICONS = {
+    cancel: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6L6 18"></path></svg>',
+    rotate: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 12a8 8 0 1 1-2.34-5.66"></path><path d="M20 2v4h-4"></path></svg>',
+    confirm: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12.5 10 17.5 19 7.5"></path></svg>'
+  };
 
-    const heading = document.createElement("div");
-    heading.className = "city-day-cards-heading";
-    const title = document.createElement("h2");
-    title.textContent = `放置 ${card.title}`;
-    const description = document.createElement("p");
-    description.textContent = "在城市中点选高亮地块预览位置，确认后完成放置。你可以自由旋转/缩放城市。";
-    heading.append(title, description);
-    layers.placement.append(heading);
-
-    const list = document.createElement("div");
-    list.className = "city-day-lot-list";
-    if (!candidates.length) {
-      const empty = document.createElement("p");
-      empty.className = "city-day-lot-empty";
-      empty.textContent = "没有找到合法空地，你可以取消放置或稍后再试。";
-      list.append(empty);
-    }
-    candidates.forEach((candidate) => {
-      const item = document.createElement("button");
-      item.type = "button";
-      item.className = "city-day-lot-item";
-      item.dataset.lotId = candidate.lotId;
-      const name = document.createElement("strong");
-      const center = candidate.center;
-      name.textContent = Number.isFinite(Number(center?.x)) && Number.isFinite(Number(center?.z))
-        ? `街区 ${Math.round(Number(center.x))}, ${Math.round(-Number(center.z))}`
-        : `地块 ${candidate.lotId}`;
-      const note = document.createElement("span");
-      note.textContent = candidate.context?.adjacentRoad
-        ? `临街 ${(candidate.context.roadFrontageDirections ?? []).length} 侧`
-        : "可建造空地";
-      item.append(name, note);
-      item.addEventListener("click", () => {
-        selectCandidate(candidate);
-        item.classList.add("is-selected");
-        list.querySelectorAll(".city-day-lot-item").forEach((other) => {
-          if (other !== item) other.classList.remove("is-selected");
-        });
-      });
-      list.append(item);
-    });
-    layers.placement.append(list);
-
-    const footer = document.createElement("div");
-    footer.className = "city-day-lot-footer";
-    const confirm = document.createElement("button");
-    confirm.type = "button";
-    confirm.className = "city-day-placement-action is-primary";
-    confirm.textContent = "确认放置";
-    confirm.disabled = true;
-    confirm.addEventListener("click", () => {
-      const { onPlace: place, selectedCandidate } = state.activePlacement ?? {};
-      if (place && selectedCandidate) place(selectedCandidate);
-    });
-    const cancel = document.createElement("button");
-    cancel.type = "button";
-    cancel.className = "city-day-placement-action";
-    cancel.textContent = "取消放置";
-    cancel.addEventListener("click", () => {
-      const { onCancel: cancelPlacement } = state.activePlacement ?? {};
-      closePlacement();
-      cancelPlacement?.();
-    });
-    footer.append(cancel, confirm);
-    layers.placement.append(footer);
-    root.hidden = false;
-    state.activePlacement.confirmButton = confirm;
+  function buildPlacementButton({ className, label, icon, onClick }) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `city-day-placement-button ${className}`.trim();
+    button.setAttribute("aria-label", label);
+    button.title = label;
+    button.innerHTML = PLACEMENT_ICONS[icon] ?? "";
+    button.addEventListener("click", onClick);
+    return button;
   }
 
-  function selectCandidate(candidate) {
-    if (!state.activePlacement) return;
-    state.activePlacement.selectedCandidate = candidate;
-    state.activePlacement.onPickCandidate?.(candidate);
-    if (state.activePlacement.confirmButton) state.activePlacement.confirmButton.disabled = false;
-  }  function closePlacement() {
+  function presentPlacementMode({ card, onRotate, onConfirm, onCancel }) {
+    layers.placement.replaceChildren();
+    // Entering placement closes the card choice: placement is a pass-through
+    // map mode (the city must stay reachable for orbiting/picking), not a
+    // full-screen modal interaction.
+    layers.cards.replaceChildren();
+
+    const status = document.createElement("div");
+    status.className = "city-day-placement-status";
+    const statusText = document.createElement("strong");
+    statusText.textContent = `正在放置 · ${card.title}`;
+    status.append(statusText);
+    layers.placement.append(status);
+
+    const controls = document.createElement("div");
+    controls.className = "city-day-placement-controls";
+    const cancel = buildPlacementButton({
+      className: "is-cancel",
+      label: "取消放置",
+      icon: "cancel",
+      onClick: () => {
+        const { onCancel: cancelPlacement } = state.activePlacement ?? {};
+        closePlacement();
+        cancelPlacement?.();
+      }
+    });
+    // Rotate/confirm belong to near-view precision placement; cancel stays
+    // available in both near and far view.
+    const actions = document.createElement("div");
+    actions.className = "city-day-placement-actions";
+    const rotate = buildPlacementButton({
+      className: "is-rotate",
+      label: "顺时针旋转建筑 90 度",
+      icon: "rotate",
+      onClick: () => state.activePlacement?.onRotate?.()
+    });
+    const confirm = buildPlacementButton({
+      className: "is-confirm",
+      label: "确认放置",
+      icon: "confirm",
+      onClick: () => state.activePlacement?.onConfirm?.()
+    });
+    confirm.disabled = true;
+    actions.append(rotate, confirm);
+    controls.append(cancel, actions);
+    layers.placement.append(controls);
+
+    state.activePlacement = {
+      card,
+      onRotate,
+      onConfirm,
+      onCancel,
+      statusText,
+      status,
+      controls,
+      actions,
+      cancel,
+      rotate,
+      confirm,
+      viewMode: "near",
+      hasTarget: false,
+      isLegal: false,
+      reason: null,
+      quarterTurns: 0
+    };
+    showLayer("placement");
+    root.hidden = false;
+  }
+
+  // Called every frame while placement is active. Writes to the DOM only when a
+  // control's effective state changes so per-frame camera movement does not
+  // churn the placement HUD.
+  function updatePlacementControls({ viewMode = "near", hasTarget = false, isLegal = false, reason = null, quarterTurns = 0 } = {}) {
+    const placement = state.activePlacement;
+    if (!placement) return;
+    const nextViewMode = viewMode === "far" ? "far" : "near";
+    const changed = placement.viewMode !== nextViewMode
+      || placement.hasTarget !== Boolean(hasTarget)
+      || placement.isLegal !== Boolean(isLegal)
+      || placement.reason !== reason
+      || placement.quarterTurns !== quarterTurns;
+    if (!changed) return;
+    placement.viewMode = nextViewMode;
+    placement.hasTarget = Boolean(hasTarget);
+    placement.isLegal = Boolean(isLegal);
+    placement.reason = reason;
+    placement.quarterTurns = quarterTurns;
+
+    const invalid = nextViewMode === "near" && (!placement.hasTarget || !placement.isLegal);
+    placement.status.classList.toggle("is-invalid", invalid);
+    placement.statusText.textContent = `正在放置 · ${placement.card.title}`;
+    placement.status.querySelector(".city-day-placement-reason")?.remove?.();
+    if (invalid) {
+      const reasonEl = document.createElement("span");
+      reasonEl.className = "city-day-placement-reason";
+      reasonEl.textContent = reason ?? "当前目标不可放置";
+      placement.status.append(reasonEl);
+    }
+
+    placement.actions.hidden = nextViewMode !== "near";
+    placement.confirm.disabled = nextViewMode !== "near" || !placement.hasTarget || !placement.isLegal;
+    placement.rotate.setAttribute("aria-label", `顺时针旋转建筑 90 度（当前 ${placement.quarterTurns} 个 1/4 圈）`);
+  }
+
+  function closePlacement() {
     state.placementOpen = false;
     state.activePlacement = null;
     layers.placement.hidden = true;
@@ -444,7 +489,7 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     presentCards,
     presentPlacementChoice,
     presentPlacementMode,
-    selectCandidateFromLayer: selectCandidate,
+    updatePlacementControls,
     closePlacement,
     closeCards,
     showIdleNote,

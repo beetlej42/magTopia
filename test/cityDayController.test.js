@@ -37,11 +37,14 @@ function createMockExperience() {
       state.cardOpen = true;
     },
     presentPlacementChoice() {},
-    presentPlacementMode({ onPlace }) {
-      mock.onPlace = onPlace;
+    presentPlacementMode({ onRotate, onConfirm, onCancel }) {
+      mock.presentCount = (mock.presentCount ?? 0) + 1;
+      mock.onRotate = onRotate;
+      mock.onConfirm = onConfirm;
+      mock.onCancel = onCancel;
       state.placementOpen = true;
     },
-    selectCandidateFromLayer() {},
+    updatePlacementControls() {},
     closePlacement() { state.placementOpen = false; },
     closeCards() {
       state.cardOpen = false;
@@ -188,7 +191,17 @@ test("special structure placement submits placement_id and a legal lot through /
   assert.equal(calls.some((call) => call.url.endsWith("/site-searches")), true, "legal lots are fetched from the authoritative site search");
 
   const candidate = { lotId: "cell-2-3", center: { x: 2, z: -3 }, entranceDirections: ["south"] };
-  await experience.onPlace?.(candidate);
+  controller.setPlacementTarget({
+    hasTarget: true,
+    lotId: candidate.lotId,
+    footprintColumns: 1,
+    footprintRows: 1,
+    entrance: "south",
+    isLegal: true,
+    reason: null,
+    center: candidate.center
+  }, { viewMode: "near" });
+  await experience.onConfirm?.();
   assert.ok(placeBody, "a placement was submitted");
   assert.equal(placeBody.expected_city_version, 8);
   assert.equal(placeBody.placement_id, "placement-9");
@@ -284,7 +297,17 @@ test("every controller JSON POST carries Content-Type: application/json", async 
   assert.ok(searchCall, "placement fetches legal lots through a POST");
   assert.equal(contentTypeOf(searchCall), "application/json");
   assert.equal(experience.state.placementOpen, true, "placement mode opened");
-  await experience.onPlace?.({ lotId: "cell-2-3", center: { x: 2, z: -3 }, entranceDirections: ["south"] });
+  controller.setPlacementTarget({
+    hasTarget: true,
+    lotId: "cell-2-3",
+    footprintColumns: 1,
+    footprintRows: 1,
+    entrance: "south",
+    isLegal: true,
+    reason: null,
+    center: { x: 2, z: -3 }
+  }, { viewMode: "near" });
+  await experience.onConfirm?.({ lotId: "cell-2-3", center: { x: 2, z: -3 }, entranceDirections: ["south"] });
   const placeCall = jsonPosts().find((call) => call.url.endsWith("/cards/place"));
   assert.ok(placeCall, "placement posts to /cards/place");
   assert.equal(contentTypeOf(placeCall), "application/json");
@@ -357,7 +380,17 @@ test("special structure placement submits POST with a non-empty Idempotency-Key"
   });
   await controller.sync();
   assert.equal(experience.state.placementOpen, true, "placement mode opened");
-  experience.onPlace?.({ lotId: "cell-2-3", center: { x: 2, z: -3 }, entranceDirections: ["south"] });
+  controller.setPlacementTarget({
+    hasTarget: true,
+    lotId: "cell-2-3",
+    footprintColumns: 1,
+    footprintRows: 1,
+    entrance: "south",
+    isLegal: true,
+    reason: null,
+    center: { x: 2, z: -3 }
+  }, { viewMode: "near" });
+  experience.onConfirm?.();
 
   assert.ok(placeInit, "a placement was submitted");
   assert.equal(placeInit.method, "POST");
@@ -551,7 +584,17 @@ test("cards/place still submits a non-empty Idempotency-Key when crypto.randomUU
     });
     await controller.sync();
     assert.equal(experience.state.placementOpen, true, "placement mode opened");
-    await experience.onPlace?.({ lotId: "cell-2-3", center: { x: 2, z: -3 }, entranceDirections: ["south"] });
+    controller.setPlacementTarget({
+      hasTarget: true,
+      lotId: "cell-2-3",
+      footprintColumns: 1,
+      footprintRows: 1,
+      entrance: "south",
+      isLegal: true,
+      reason: null,
+      center: { x: 2, z: -3 }
+    }, { viewMode: "near" });
+    await experience.onConfirm?.();
 
     assert.ok(placeInit, "the placement is submitted even without crypto.randomUUID");
     assert.equal(placeInit.method, "POST");
@@ -584,4 +627,246 @@ test("fallback Idempotency-Keys stay distinct across independent commands", asyn
     assert.match(keyB, UUID_V4);
     assert.notEqual(keyA, keyB, "independent commands still get distinct fallback keys");
   });
+});
+
+// ---- PR #52 in-world placement session --------------------------------------
+//
+// The placement flow is now an in-world FOV-center session: the authoritative
+// candidate set is fetched once on entry and re-evaluation is local. These
+// tests lock in session survival across the periodic city-day sync, the
+// rotation state, rejection recovery, and cancel semantics.
+
+const PENDING_PLACEMENT_DAY = {
+  phase: "early_morning",
+  settled: false,
+  report: { ready: false, dismissed: false },
+  card: { choicePending: false, playerPlacementPending: true, selectedCardId: "owl-tower" },
+  agent: { workStarted: false },
+  incident: { phaseActive: false }
+};
+
+const OWL_CARD = [{ card_id: "owl-tower", type: "special_structure", title: "Owl Tower", description: "x", structure: { footprint: "1x1" } }];
+
+function pendingPlacementRoutes({ searchData = [{ lotId: "cell-2-3", center: { x: 2, z: -3 }, entranceDirections: ["south"] }], onSearch } = {}) {
+  return {
+    "/api/v1/cities/city-1/city-day": { body: PENDING_PLACEMENT_DAY },
+    "/api/v1/cities/city-1/cards/current": { body: { city_id: "city-1", city_version: 8, turn: 0, offer: OFFER, choice: { status: "selected", card_effects: { placement: { placement_id: "placement-9", mode: "player_place" } } } } },
+    "/api/v1/cards": { body: { data: OWL_CARD } },
+    "/api/v1/cities/city-1/site-searches": (init) => {
+      onSearch?.(init);
+      return { body: { city_version: 8, data: searchData } };
+    }
+  };
+}
+
+function legalTarget() {
+  return {
+    hasTarget: true,
+    lotId: "cell-2-3",
+    footprintCells: ["cell-2-3"],
+    footprintColumns: 1,
+    footprintRows: 1,
+    entrance: "south",
+    isLegal: true,
+    reason: null,
+    center: { x: 2, z: -3 }
+  };
+}
+
+test("placement session survives the periodic sync without re-presenting or re-fetching", async () => {
+  const experience = createMockExperience();
+  let searchCount = 0;
+  stubFetch(pendingPlacementRoutes({
+    onSearch: () => { searchCount += 1; }
+  }));
+  const controller = createCityDayController({
+    experience,
+    api: { baseUrl: "/api/v1", cityId: "city-1", token: "session" },
+    setLight: () => {},
+    onPlayerTurnComplete: () => {}
+  });
+  await controller.sync();
+  assert.equal(experience.state.placementOpen, true, "placement mode opened");
+  assert.equal(experience.presentCount, 1, "the HUD is presented once on entry");
+
+  controller.setPlacementTarget(legalTarget(), { viewMode: "near" });
+  controller.rotatePlacement();
+  assert.equal(controller.getPlacementState().quarterTurns, 1, "rotation is tracked locally");
+
+  await controller.sync();
+  assert.equal(experience.state.placementOpen, true, "the periodic sync keeps the session open");
+  assert.equal(experience.presentCount, 1, "the HUD is not re-presented by the periodic sync");
+  assert.equal(controller.getPlacementState().quarterTurns, 1, "rotation survives the periodic sync");
+  assert.equal(searchCount, 1, "the candidate set is fetched once, not once per sync");
+});
+
+test("rotatePlacement re-resolves the target locally without a network request", async () => {
+  const experience = createMockExperience();
+  let searchCount = 0;
+  stubFetch(pendingPlacementRoutes({ onSearch: () => { searchCount += 1; } }));
+  const controller = createCityDayController({
+    experience,
+    api: {
+      baseUrl: "/api/v1",
+      cityId: "city-1",
+      token: "session",
+      getState: () => ({
+        world: { grid: { columns: 5, rows: 5, cellWorldSize: 4 } },
+        cells: {
+          "cell-2-3": { id: "cell-2-3", column: 2, row: 3, center: { x: 2, z: -3 }, buildable: true, strictBuildable: true, occupancy: null, infrastructure: null, reservation: null, node: null },
+          "cell-3-3": { id: "cell-3-3", column: 3, row: 3, center: { x: 6, z: -3 }, buildable: true, strictBuildable: true, occupancy: null, infrastructure: null, reservation: null, node: null }
+        },
+        infrastructure: {}
+      })
+    },
+    setLight: () => {},
+    onPlayerTurnComplete: () => {}
+  });
+  await controller.sync();
+  controller.setPlacementTarget(legalTarget(), { viewMode: "near" });
+  const before = controller.getPlacementState().target;
+  assert.deepEqual(before.footprintCells, ["cell-2-3"]);
+
+  experience.onRotate?.();
+  const after = controller.getPlacementState();
+  assert.equal(after.quarterTurns, 1);
+  assert.equal(searchCount, 1, "rotating triggers no site-search fetch");
+});
+
+test("confirming an invalid target does not submit /cards/place", async () => {
+  const experience = createMockExperience();
+  let placeCount = 0;
+  stubFetch({
+    ...pendingPlacementRoutes(),
+    "/api/v1/cities/city-1/cards/place": () => {
+      placeCount += 1;
+      return { status: 200, body: { status: "placed" } };
+    }
+  });
+  const controller = createCityDayController({
+    experience,
+    api: { baseUrl: "/api/v1", cityId: "city-1", token: "session" },
+    setLight: () => {},
+    onPlayerTurnComplete: () => {}
+  });
+  await controller.sync();
+  controller.setPlacementTarget({
+    hasTarget: true,
+    lotId: "cell-2-3",
+    footprintColumns: 1,
+    footprintRows: 1,
+    entrance: "south",
+    isLegal: false,
+    reason: "入口朝 south 没有可建造的临街面",
+    center: { x: 2, z: -3 }
+  }, { viewMode: "near" });
+  await experience.onConfirm?.();
+  assert.equal(placeCount, 0, "an illegal target never submits a placement");
+  assert.equal(experience.state.placementOpen, true, "the session stays open");
+});
+
+test("a server placement rejection returns the player to a recoverable session", async () => {
+  const experience = createMockExperience();
+  let searchCount = 0;
+  stubFetch({
+    ...pendingPlacementRoutes({ onSearch: () => { searchCount += 1; } }),
+    "/api/v1/cities/city-1/cards/place": { status: 422, body: { code: "PLACEMENT_ILLEGAL", message: "Entrance south has no buildable frontage" } }
+  });
+  const controller = createCityDayController({
+    experience,
+    api: { baseUrl: "/api/v1", cityId: "city-1", token: "session" },
+    setLight: () => {},
+    onPlayerTurnComplete: () => {}
+  });
+  await controller.sync();
+  controller.setPlacementTarget(legalTarget(), { viewMode: "near" });
+  await experience.onConfirm?.();
+
+  assert.equal(experience.state.placementOpen, true, "a rejection leaves the player in placement mode");
+  assert.ok(controller.placementActive, "the placement session survives a rejection");
+  assert.equal(searchCount, 2, "the rejection refreshes the authoritative candidate set once");
+});
+
+test("cancel exits the session without placing or delegating", async () => {
+  const experience = createMockExperience();
+  let placeCount = 0;
+  stubFetch({
+    ...pendingPlacementRoutes(),
+    "/api/v1/cities/city-1/cards/place": () => {
+      placeCount += 1;
+      return { status: 200, body: { status: "placed" } };
+    }
+  });
+  const controller = createCityDayController({
+    experience,
+    api: { baseUrl: "/api/v1", cityId: "city-1", token: "session" },
+    setLight: () => {},
+    onPlayerTurnComplete: () => {}
+  });
+  await controller.sync();
+  assert.equal(experience.state.placementOpen, true);
+  experience.onCancel?.();
+  assert.equal(experience.state.placementOpen, false, "cancel closes the placement layer");
+  assert.equal(controller.placementActive, false, "cancel clears the placement session");
+  assert.equal(placeCount, 0, "cancel never submits a placement");
+});
+
+test("a cancelled placement is not silently reopened by the periodic sync", async () => {
+  const experience = createMockExperience();
+  let searchCount = 0;
+  stubFetch(pendingPlacementRoutes({ onSearch: () => { searchCount += 1; } }));
+  const controller = createCityDayController({
+    experience,
+    api: { baseUrl: "/api/v1", cityId: "city-1", token: "session" },
+    setLight: () => {},
+    onPlayerTurnComplete: () => {}
+  });
+  await controller.sync();
+  assert.equal(experience.state.placementOpen, true, "placement opened");
+  assert.equal(experience.presentCount, 1);
+
+  experience.onCancel?.();
+  assert.equal(experience.state.placementOpen, false, "cancel closes the placement layer");
+  assert.equal(controller.placementActive, false);
+
+  await controller.sync();
+  assert.equal(experience.state.placementOpen, false, "the periodic sync does not reopen a locally cancelled placement");
+  assert.equal(experience.presentCount, 1, "no placement HUD is re-presented for the cancelled placement");
+  assert.equal(searchCount, 1, "the cancelled placement is not re-fetched");
+
+  await controller.sync();
+  assert.equal(experience.state.placementOpen, false, "repeated syncs keep the cancelled placement closed");
+  assert.equal(experience.presentCount, 1);
+});
+
+test("a fresh placement_id opens normally after a previous cancel", async () => {
+  const experience = createMockExperience();
+  let placementId = "placement-9";
+  let searchCount = 0;
+  const routes = pendingPlacementRoutes({
+    onSearch: () => { searchCount += 1; }
+  });
+  stubFetch({
+    ...routes,
+    "/api/v1/cities/city-1/cards/current": () => ({
+      body: { city_id: "city-1", city_version: 8, turn: 0, offer: OFFER, choice: { status: "selected", card_effects: { placement: { placement_id: placementId, mode: "player_place" } } } }
+    })
+  });
+  const controller = createCityDayController({
+    experience,
+    api: { baseUrl: "/api/v1", cityId: "city-1", token: "session" },
+    setLight: () => {},
+    onPlayerTurnComplete: () => {}
+  });
+  await controller.sync();
+  assert.equal(experience.state.placementOpen, true, "placement opened");
+  experience.onCancel?.();
+  await controller.sync();
+  assert.equal(experience.state.placementOpen, false, "the cancelled placement stays closed");
+
+  placementId = "placement-10";
+  await controller.sync();
+  assert.equal(experience.state.placementOpen, true, "a new placement id opens normally");
+  assert.equal(experience.presentCount, 2, "the new placement presents a fresh HUD");
+  assert.equal(searchCount, 2, "the new placement fetches its own candidate set");
 });

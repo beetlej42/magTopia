@@ -11,12 +11,23 @@
 // `api.token` may be a string or a function returning the current token.
 
 import { phaseLightTarget } from "./cityDayExperience.js";
+import {
+  createPlacementCandidateIndex,
+  resolvePlacementTarget
+} from "./placementTargetResolver.js";
+import { resolveSpecialStructurePreview } from "./specialStructurePreview.js";
 
 export function createCityDayController({ experience, api, setLight, placementLayer = null, onPlayerTurnComplete = () => {} }) {
   let syncing = false;
   let cardCatalog = null;
   let activeOffer = null;
   let placement = null;
+  // Client-only set of placement ids the player has explicitly cancelled this
+  // page session. Cancel is a local exit from the placement session; the
+  // server's pending placement is untouched (no invented mutation), so a page
+  // reload restores the pending placement. While an id stays in this set the
+  // periodic city-day sync must not automatically reopen its placement HUD.
+  const dismissedPlacementIds = new Set();
 
   function pathFor(relative) {
     const base = String(api.baseUrl ?? "").replace(/\/+$/, "");
@@ -191,6 +202,14 @@ export function createCityDayController({ experience, api, setLight, placementLa
   }
 
   // ---- Placement mode -------------------------------------------------------
+  //
+  // PR #52: special-structure placement is an in-world, FOV-center driven
+  // placement session. The authoritative candidate set is fetched once on entry
+  // and kept in a local lookup; every camera-driven re-evaluation is local, so
+  // `/site-searches` is never requested per frame or per drag. Rotation is a
+  // local state variable independent of camera rotation. `/cards/place` remains
+  // the authoritative server validation and a rejection returns the player to
+  // the recoverable placement session.
 
   async function openPendingPlacement() {
     const day = await fetchJson(`/cities/${api.cityId}/city-day`);
@@ -200,35 +219,114 @@ export function createCityDayController({ experience, api, setLight, placementLa
     await ensureCardCatalog();
     const card = cardForId(choice.selectedCardId);
     const footprint = card?.structure?.footprint ?? "1x1";
+    const cityVersion = cardsCurrent.city_version;
+
+    // A placement the player explicitly cancelled this page session must not
+    // silently reopen on the next periodic sync. The server-side pending
+    // placement stays untouched, so a page reload restores it naturally.
+    if (placementId && dismissedPlacementIds.has(placementId)) {
+      closeChoiceLayers();
+      experience.showIdleNote("已取消放置，可刷新页面后重新选择位置。");
+      return;
+    }
+
+    // The periodic city-day sync re-enters this path while a placement is
+    // pending. Reuse the live session (preserving building rotation and the
+    // FOV target) and only refresh the concurrency guard; presenting a second
+    // HUD would silently reset the player's rotation every few seconds.
+    const sameSession = placement
+      && placement.placementId === placementId
+      && placement.cardId === choice.selectedCardId;
+    if (sameSession) {
+      placement.cityVersion = cityVersion;
+      experience.updatePlacementControls(placementTargetControls());
+      return;
+    }
+
     let candidates = [];
-    let cityVersion = cardsCurrent.city_version;
+    let sessionVersion = cityVersion;
     try {
       const payload = await fetchJson(`/cities/${api.cityId}/site-searches`, {
         method: "POST",
         body: JSON.stringify({ footprint, limit: 40 })
       });
       candidates = payload.data ?? [];
-      cityVersion = payload.city_version ?? cityVersion;
+      sessionVersion = payload.city_version ?? cityVersion;
     } catch {
       candidates = [];
     }
-    placement = { card: card ?? { title: "特殊建筑", card_id: choice.selectedCardId }, cardId: choice.selectedCardId, placementId, cityVersion, footprint };
-    if (placementLayer) {
-      placementLayer.setCandidates(candidates, {
-        radius: placementLayer.radius ?? undefined,
-        cellWorldSize: placementLayer.cellWorldSize ?? undefined
-      });
-    }
+    const grid = api.getState?.()?.world?.grid ?? {};
+    const cellWorldSize = Number(grid.cellWorldSize ?? 4);
+    placement = {
+      card: card ?? { title: "特殊建筑", card_id: choice.selectedCardId },
+      cardId: choice.selectedCardId,
+      placementId,
+      cityVersion: sessionVersion,
+      footprint,
+      // Deterministic building-shaped preview for this card, resolved through
+      // the replaceable preview factory (currently a voxel grammar spec; a
+      // future cardId -> prefab factory supplies the same ghost geometry).
+      previewSource: resolveSpecialStructurePreview({ card: card ?? {}, cellWorldSize }),
+      candidateIndex: createPlacementCandidateIndex(candidates),
+      quarterTurns: 0,
+      viewMode: "near",
+      target: null,
+      lastFlatX: null,
+      lastFlatZ: null
+    };
     experience.presentPlacementMode({
       card: placement.card,
-      candidates,
-      onPlace: (candidate) => placeCard(placement, candidate),
-      onPickCandidate: (candidate) => placementLayer?.select(candidate),
-      onCancel: () => closePlacement()
+      onRotate: () => rotatePlacement(),
+      onConfirm: () => confirmPlacement(),
+      onCancel: () => cancelPlacement()
     });
   }
 
-  async function placeCard(activePlacement, candidate) {
+  function placementTargetControls() {
+    const target = placement?.target ?? null;
+    return {
+      viewMode: placement?.viewMode ?? "near",
+      hasTarget: Boolean(target?.hasTarget),
+      isLegal: Boolean(target?.isLegal),
+      reason: target?.reason ?? null,
+      quarterTurns: placement?.quarterTurns ?? 0
+    };
+  }
+
+  // main.js resolves the FOV-center target each frame (pure local lookup) and
+  // drives it here. The controller stores the target and projects the minimal
+  // placement HUD state; it never fetches during camera movement.
+  function setPlacementTarget(target, { viewMode = "near" } = {}) {
+    if (!placement) return placement;
+    placement.target = target;
+    placement.viewMode = viewMode === "far" ? "far" : "near";
+    if (target?.center) {
+      placement.lastFlatX = target.center.x;
+      placement.lastFlatZ = target.center.z;
+    }
+    experience.updatePlacementControls(placementTargetControls());
+    return placement;
+  }
+
+  function rotatePlacement() {
+    if (!placement) return;
+    placement.quarterTurns = ((placement.quarterTurns ?? 0) + 1) % 4;
+    const state = api.getState?.() ?? null;
+    const target = resolvePlacementTarget(state, {
+      flatX: placement.lastFlatX,
+      flatZ: placement.lastFlatZ,
+      footprint: placement.footprint,
+      quarterTurns: placement.quarterTurns,
+      candidateIndex: placement.candidateIndex
+    });
+    placement.target = target;
+    experience.updatePlacementControls(placementTargetControls());
+  }
+
+  async function confirmPlacement() {
+    const activePlacement = placement;
+    const target = activePlacement?.target;
+    if (!activePlacement || !target?.hasTarget || !target.isLegal) return;
     try {
       // One key per logical placement command; a network retry of this same
       // submission must reuse it so the server can replay instead of double-apply.
@@ -237,20 +335,60 @@ export function createCityDayController({ experience, api, setLight, placementLa
         expected_city_version: activePlacement.cityVersion,
         card_id: activePlacement.cardId,
         placement_id: activePlacement.placementId,
-        lot_id: candidate.lotId,
-        footprint: activePlacement.footprint,
-        entrance: candidate.entranceDirections?.[0] ?? "south"
+        lot_id: target.lotId,
+        footprint: `${target.footprintColumns}x${target.footprintRows}`,
+        entrance: target.entrance
       }, { idempotencyKey });
       if (payload.status !== "placed") throw new Error(payload.message ?? "放置被拒绝");
       experience.closePlacement();
       placementLayer?.clear();
+      placement = null;
       closeChoiceLayers();
       onPlayerTurnComplete();
       await sync();
     } catch (error) {
       experience.showIdleNote(error.message);
-      await sync();
+      // A stale/invalid placement must leave the player in a recoverable
+      // placement session: refresh authoritative candidates/version and
+      // re-evaluate the current target instead of exiting placement mode.
+      await refreshPlacementState();
     }
+  }
+
+  async function refreshPlacementState() {
+    const current = placement;
+    if (!current) return;
+    try {
+      const cardsCurrent = await fetchJson(`/cities/${api.cityId}/cards/current`);
+      current.cityVersion = cardsCurrent.city_version ?? current.cityVersion;
+    } catch {
+      // Keep the previous concurrency guard; confirm will be rejected again.
+    }
+    try {
+      const payload = await fetchJson(`/cities/${api.cityId}/site-searches`, {
+        method: "POST",
+        body: JSON.stringify({ footprint: current.footprint, limit: 40 })
+      });
+      current.candidateIndex = createPlacementCandidateIndex(payload.data ?? []);
+      current.cityVersion = payload.city_version ?? current.cityVersion;
+    } catch {
+      // Keep the previous candidate index; the server still validates on confirm.
+    }
+    const state = api.getState?.() ?? null;
+    const target = resolvePlacementTarget(state, {
+      flatX: current.lastFlatX,
+      flatZ: current.lastFlatZ,
+      footprint: current.footprint,
+      quarterTurns: current.quarterTurns,
+      candidateIndex: current.candidateIndex
+    });
+    current.target = target;
+    experience.updatePlacementControls(placementTargetControls());
+  }
+
+  function cancelPlacement() {
+    if (placement?.placementId) dismissedPlacementIds.add(placement.placementId);
+    closePlacement();
   }
 
   function closePlacement() {
@@ -280,5 +418,17 @@ export function createCityDayController({ experience, api, setLight, placementLa
     experience.closeCards?.();
   }
 
-  return { sync, dismissReport, closeChoiceLayers, closePlacement, postCommand, phaseLightTarget };
+  return {
+    sync,
+    dismissReport,
+    closeChoiceLayers,
+    closePlacement,
+    postCommand,
+    phaseLightTarget,
+    setPlacementTarget,
+    rotatePlacement,
+    confirmPlacement,
+    getPlacementState: () => placement,
+    get placementActive() { return Boolean(placement); }
+  };
 }

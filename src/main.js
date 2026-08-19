@@ -108,6 +108,7 @@ import {
 import { createCityDayExperience, phaseLightTarget } from "./ui/cityDayExperience.js";
 import { createCityDayController } from "./ui/cityDayController.js";
 import { createCityPlacementLayer } from "./ui/cityPlacementLayer.js";
+import { resolvePlacementTarget } from "./ui/placementTargetResolver.js";
 
 const app = document.querySelector("#app");
 const pureViewToggle = document.querySelector("#pure-view-toggle");
@@ -1160,20 +1161,6 @@ function bindUi() {
     updateDistrictSurfacePointer(event, rect);
   });
   renderer.domElement.addEventListener("pointerdown", (event) => {
-    if (cityPlacementLayer?.object?.visible && event.button === 0) {
-      // Placement mode: a tap on a highlighted lot selects it (footprint
-      // preview) without disturbing the camera; dragging still orbits.
-      districtSurfacePointer.id = event.pointerId;
-      districtSurfacePointer.x = event.clientX;
-      districtSurfacePointer.y = event.clientY;
-      districtSurfacePointer.startX = event.clientX;
-      districtSurfacePointer.startY = event.clientY;
-      districtSurfacePointer.moved = false;
-      districtSurfacePointer.pointerType = event.pointerType;
-      districtSurfacePointer.pendingPlacementPick = true;
-      renderer.domElement.setPointerCapture?.(event.pointerId);
-      return;
-    }
     if (!isSurfaceVoxelWorld() || districtSurfacePointer.id != null) return;
     districtSurfaceLastMotionAt = performance.now();
     districtSurfacePointer.id = event.pointerId;
@@ -1188,15 +1175,7 @@ function bindUi() {
   const releaseDistrictPointer = (event) => {
     if (districtSurfacePointer.id !== event.pointerId) return;
     renderer.domElement.releasePointerCapture?.(event.pointerId);
-    const placementPick = districtSurfacePointer.pendingPlacementPick;
     delete districtSurfacePointer.pendingPlacementPick;
-    if (placementPick && event.type === "pointerup" && !districtSurfacePointer.moved && cityPlacementLayer) {
-      const picked = cityPlacementLayer.pick(event.clientX, event.clientY, camera, {
-        width: renderer.domElement.clientWidth,
-        height: renderer.domElement.clientHeight
-      });
-      if (picked) cityDayExperience?.selectCandidateFromLayer?.(picked);
-    }
     if (event.type === "pointerup" && districtSurfacePointer.pointerType === "touch" && !districtSurfacePointer.moved) {
       const now = performance.now();
       const closeInTime = now - districtViewGesture.lastTapTime <= 360;
@@ -1313,7 +1292,10 @@ function initializeCityDayController() {
     api: {
       baseUrl: "/api/v1",
       cityId: cityViewerContext.cityId,
-      token: () => cityViewerContext.token
+      token: () => cityViewerContext.token,
+      // Latest render-state snapshot for the pure-local placement legality
+      // lookup (no per-frame /site-searches).
+      getState: () => cityViewerRuntimeState
     },
     setLight: (phase) => {
       cityDayLightTarget = phaseLightTarget(phase);
@@ -1889,6 +1871,7 @@ function animate() {
   if (isSurfaceVoxelWorld()) {
     updateDistrictViewTransition(delta);
     configureDistrictSurfaceCamera();
+    updateInteractivePlacement();
   }
   camera.updateMatrixWorld();
   if (voxelSky.visible) {
@@ -2605,6 +2588,44 @@ function isSurfaceVoxelWorld() {
 function isDistrictSurfaceCameraInMotion() {
   return districtSurfacePointer.id != null
     || performance.now() - districtSurfaceLastMotionAt < DISTRICT_BOKEH_MOTION_SETTLE_MS;
+}
+
+// PR #52 — in-world special-building placement driver.
+//
+// While a placement session is active the FOV center (the flat coordinate under
+// the district camera) is resolved each frame through the same pure-local
+// pipeline used by the city viewer, and the ghost is shown/hidden by the
+// existing near/far view state. Far view renders no ghost and no rotate/confirm
+// controls; returning to near view re-derives the target from the resulting
+// camera state so the preview never flies across the map. No network request
+// happens here: `/site-searches` is fetched once when the session opens.
+function updateInteractivePlacement() {
+  const controller = cityDayController;
+  const active = controller?.placementActive;
+  const navigation = activeObject?.userData?.surfaceNavigation;
+  if (!active || !navigation || !cityViewerRuntimeState?.world?.grid) {
+    cityPlacementLayer?.hideGhost();
+    return;
+  }
+  const viewMode = districtSurfaceNavigation.viewMode === "far" ? "far" : "near";
+  const placement = controller.getPlacementState();
+  if (!placement) {
+    cityPlacementLayer?.hideGhost();
+    return;
+  }
+  const target = resolvePlacementTarget(cityViewerRuntimeState, {
+    flatX: districtSurfaceNavigation.flatX,
+    flatZ: districtSurfaceNavigation.flatZ,
+    footprint: placement.footprint,
+    quarterTurns: placement.quarterTurns,
+    candidateIndex: placement.candidateIndex
+  });
+  controller.setPlacementTarget(target, { viewMode });
+  if (viewMode === "near") {
+    cityPlacementLayer.showGhost({ ...target, previewSource: placement.previewSource });
+  } else {
+    cityPlacementLayer.hideGhost();
+  }
 }
 
 function getMapGroundHeight(x, z) {
