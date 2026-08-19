@@ -1,31 +1,36 @@
 // PR #52 — In-world placement ghost inside the existing city viewer.
 //
 // Replaces the old marker-list placement layer with a single translucent
-// massing preview driven by the camera FOV center. The layer never selects
-// candidates or moves the camera; main.js resolves the current target each
-// frame through the same flat-coordinate pipeline the viewer already uses and
-// asks this layer to draw (or hide) the ghost. The ghost uses the real
-// footprint geometry so confirmation does not visibly jump.
+// preview driven by the camera FOV center. The layer never selects candidates
+// or moves the camera; main.js resolves the current target each frame through
+// the same flat-coordinate pipeline the viewer already uses and asks this
+// layer to draw (or hide) the ghost.
 //
-// Ghost rendering note (PR #52 round 1): this is a phased MASSING FALLBACK. A
-// pending special-structure placement has no server-authored building design
-// yet (special structures get no `voxelDesign` until /cards/place completes),
-// so there is no real per-card runtime geometry to clone. Instead the layer
-// draws a per-cell voxel massing (main body + roof cap) over the footprint
-// cells — enough to judge footprint, height, frontage and neighbourhood
-// relationship. Cloning the final per-card building geometry for the ghost is a
-// documented follow-up. The diagnostic flag on the ghost group
-// (`ghost.userData.ghostMode === "massing-voxel-fallback"`) identifies the
-// preview mode so acceptance tooling can distinguish it.
+// Ghost rendering (PR #52 round 2): the primary preview is a real, building-
+// shaped voxel model generated deterministically per special-structure card
+// (`target.previewSpec`, rendered by src/ui/specialStructurePreview.js through
+// the same grammar the city uses for voxel buildings), with all materials
+// replaced by a uniform translucent placement material. Because a pending
+// placement has no server-authored `voxelDesign` yet, this is a card-shaped
+// preview rather than a clone of the final building; the per-cell box massing
+// (`ghost.userData.ghostMode === "massing-voxel-fallback"`) remains only as a
+// fallback when no preview spec is available. `ghost.userData.ghostMode` names
+// the active mode so acceptance tooling can distinguish them.
 //
 // Valid targets render in a muted cyan-green; invalid targets render red and
 // the caller disables confirm. Depth testing stays on so the preview remains
-// spatially readable among surrounding buildings.
+// spatially readable among surrounding buildings. All ghost parts are oriented
+// with `getVoxelSphereOrientation` — the same basis the city's own sphere
+// placement uses (local +Y follows the surface normal).
 
 import * as THREE from "three";
-import { getVoxelSphereFrame } from "../generators/voxelIntentDistrict.js";
+import { getVoxelSphereFrame, getVoxelSphereOrientation } from "../generators/voxelIntentDistrict.js";
+import {
+  createSpecialStructurePreview,
+  ENTRANCE_YAW_DEGREES,
+  previewFootprintScale
+} from "./specialStructurePreview.js";
 
-const Z_AXIS = new THREE.Vector3(0, 0, 1);
 const VALID_COLOR = "#52d3b8";
 const INVALID_COLOR = "#ff6b6b";
 const OUTLINE_COLOR = "#d8fff4";
@@ -36,6 +41,8 @@ const OUTLINE_OPACITY = 0.9;
 const GHOST_HEIGHT_MIN = 3.2;
 const GHOST_HEIGHT_PER_CELL = 1.6;
 const GHOST_HEIGHT_MAX = 10;
+
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
 
 const frameScratch = createFrameScratch();
 
@@ -86,6 +93,10 @@ export function createCityPlacementLayer() {
   let radius = 220;
   let cellWorldSize = DEFAULT_CELL_WORLD_SIZE;
   let ghostKey = null;
+  // Cached per-card voxel preview so panning across cells never rebuilds the
+  // building geometry; only position/orientation/colour update per target.
+  let cachedPreviewSpec = null;
+  let cachedPreviewObject = null;
 
   function setSceneRoot(root = null) {
     if (mountedRoot) mountedRoot.remove(layer);
@@ -105,6 +116,7 @@ export function createCityPlacementLayer() {
     if (ghost) {
       layer.remove(ghost);
       ghost.traverse((object) => {
+        if (object.userData?.previewCached) return;
         object.geometry?.dispose?.();
       });
     }
@@ -120,8 +132,35 @@ export function createCityPlacementLayer() {
     return getVoxelSphereFrame(Number(centerX), Number(centerZ), radius, frameScratch);
   }
 
+  // Builds (once per card) and caches the voxel building preview with its
+  // materials replaced by the shared translucent ghost material.
+  function getCachedPreview(spec) {
+    if (cachedPreviewObject && cachedPreviewSpec?.id === spec?.id) return cachedPreviewObject;
+    if (cachedPreviewObject) {
+      cachedPreviewObject.traverse((object) => object.geometry?.dispose?.());
+    }
+    cachedPreviewSpec = spec;
+    try {
+      cachedPreviewObject = createSpecialStructurePreview(spec);
+      const bounds = new THREE.Box3().setFromObject(cachedPreviewObject);
+      const center = bounds.getCenter(new THREE.Vector3());
+      cachedPreviewObject.position.sub(center);
+      cachedPreviewObject.traverse((object) => {
+        object.userData.previewCached = true;
+        if (!object.isMesh) return;
+        object.material = ghostMaterial;
+        object.castShadow = false;
+      });
+    } catch {
+      cachedPreviewObject = null;
+      cachedPreviewSpec = null;
+    }
+    return cachedPreviewObject;
+  }
+
   // Target shape: { hasTarget, isLegal, footprintCells, cells, entrance,
-  // footprintColumns, footprintRows }. Only renders while hasTarget is true.
+  // footprintColumns, footprintRows, previewSpec? }. Only renders while
+  // hasTarget is true.
   function showGhost(target = {}) {
     if (!target?.hasTarget || !target?.cells?.length) {
       clearGhost();
@@ -129,12 +168,14 @@ export function createCityPlacementLayer() {
     }
     const isLegal = Boolean(target.isLegal);
     const color = isLegal ? VALID_COLOR : INVALID_COLOR;
+    const specId = target.previewSpec?.id ?? "";
     const key = [
       target.lotId ?? "",
       target.footprintColumns ?? 0,
       target.footprintRows ?? 0,
       target.entrance ?? "",
       isLegal ? "legal" : "invalid",
+      specId,
       radius.toFixed(3),
       cellWorldSize.toFixed(3)
     ].join("|");
@@ -147,14 +188,64 @@ export function createCityPlacementLayer() {
 
     const ghost = new THREE.Group();
     ghost.name = "CityPlacementGhost";
-    ghost.userData.ghostMode = "massing-voxel-fallback";
-    const size = cellWorldSize;
-    const height = ghostHeightForFootprint(target.footprintColumns, target.footprintRows);
     ghostMaterial.color.set(color);
 
+    const preview = specId ? getCachedPreview(target.previewSpec) : null;
+    if (preview) {
+      ghost.userData.ghostMode = "voxel-building-preview";
+      placeVoxelPreview(ghost, preview, target);
+    } else {
+      ghost.userData.ghostMode = "massing-voxel-fallback";
+      buildMassing(ghost, target);
+    }
+
+    addEntranceMarker(ghost, target);
+    if (target.cells.length > 1) {
+      const corners = buildOutlineCorners(target.cells, cellWorldSize);
+      if (corners.length >= 4) {
+        const geometry = new THREE.BufferGeometry().setFromPoints(corners);
+        const outline = new THREE.Line(geometry, outlineMaterial);
+        outline.renderOrder = 4;
+        ghost.add(outline);
+      }
+    }
+
+    layer.add(ghost);
+    layer.visible = true;
+    return true;
+  }
+
+  function placeVoxelPreview(ghost, preview, target) {
+    let cx = 0;
+    let cz = 0;
+    for (const cell of target.cells) {
+      cx += Number(cell.centerX) / target.cells.length;
+      cz += Number(cell.centerZ) / target.cells.length;
+    }
+    const scale = previewFootprintScale(target.previewSpec, target.footprintColumns, target.footprintRows, cellWorldSize);
+    preview.scale.set(scale.x, 1, scale.z);
+    // Entrance yaw (matching the city renderer) is a local +Y rotation composed
+    // after the sphere orientation, so the door faces the requested entrance
+    // while the building stays upright on the surface.
+    const yawDegrees = ENTRANCE_YAW_DEGREES[target.entrance] ?? ENTRANCE_YAW_DEGREES.south;
+    const quaternion = getVoxelSphereOrientation(cx, cz, radius)
+      .multiply(new THREE.Quaternion().setFromAxisAngle(Y_AXIS, THREE.MathUtils.degToRad(yawDegrees)));
+    const frame = frameFor(cx, cz);
+    preview.quaternion.copy(quaternion);
+    preview.position.copy(frame.surface).addScaledVector(frame.normal, 0.04);
+    preview.visible = true;
+    ghost.add(preview);
+  }
+
+  function buildMassing(ghost, target) {
+    const size = cellWorldSize;
+    const height = ghostHeightForFootprint(target.footprintColumns, target.footprintRows);
     for (const cell of target.cells) {
       const frame = frameFor(cell.centerX, cell.centerZ);
-      const quaternion = new THREE.Quaternion().setFromUnitVectors(Z_AXIS, frame.normal);
+      // Align local +Y with the surface normal (the same basis the city uses
+      // via getVoxelSphereOrientation / placeObjectOnVoxelSphere), so the
+      // ghost body's height axis follows the terrain normal at any position.
+      const quaternion = getVoxelSphereOrientation(cell.centerX, cell.centerZ, radius);
       const body = new THREE.Mesh(new THREE.BoxGeometry(size, height, size), ghostMaterial);
       body.position.copy(frame.surface).addScaledVector(frame.normal, height / 2);
       body.quaternion.copy(quaternion);
@@ -171,43 +262,32 @@ export function createCityPlacementLayer() {
       roof.castShadow = false;
       ghost.add(roof);
     }
+  }
 
+  function addEntranceMarker(ghost, target) {
     const entranceSide = target.entrance;
-    if (entranceSide && target.cells.length > 0) {
-      // The door slab sits on the frontage cell just outside the footprint,
-      // centered on the facade edge of the anchor (north-west) cell. Flat world
-      // offsets: east = +X, west = -X, north (row - 1) = +Z, south (row + 1) = -Z.
-      const anchorCell = target.cells[0];
-      const offsets = {
-        north: [0, size],
-        east: [size, 0],
-        south: [0, -size],
-        west: [-size, 0]
-      };
-      const [dx, dz] = offsets[entranceSide] ?? [0, -size];
-      const doorCenterX = Number(anchorCell.centerX) + dx;
-      const doorCenterZ = Number(anchorCell.centerZ) + dz;
-      const frame = frameFor(doorCenterX, doorCenterZ);
-      const door = new THREE.Mesh(new THREE.BoxGeometry(size * 0.32, height * 0.45, size * 0.14), entranceMaterial);
-      door.position.copy(frame.surface).addScaledVector(frame.normal, height * 0.22);
-      door.quaternion.setFromUnitVectors(Z_AXIS, frame.normal);
-      door.renderOrder = 4;
-      ghost.add(door);
-    }
-
-    if (target.cells.length > 1) {
-      const corners = buildOutlineCorners(target.cells, size);
-      if (corners.length >= 4) {
-        const geometry = new THREE.BufferGeometry().setFromPoints(corners);
-        const outline = new THREE.Line(geometry, outlineMaterial);
-        outline.renderOrder = 4;
-        ghost.add(outline);
-      }
-    }
-
-    layer.add(ghost);
-    layer.visible = true;
-    return true;
+    const size = cellWorldSize;
+    if (!entranceSide || !target.cells.length) return;
+    // The door slab sits on the frontage cell just outside the footprint,
+    // centered on the facade edge of the anchor (north-west) cell. Flat world
+    // offsets: east = +X, west = -X, north (row - 1) = +Z, south (row + 1) = -Z.
+    const anchorCell = target.cells[0];
+    const offsets = {
+      north: [0, size],
+      east: [size, 0],
+      south: [0, -size],
+      west: [-size, 0]
+    };
+    const [dx, dz] = offsets[entranceSide] ?? [0, -size];
+    const doorCenterX = Number(anchorCell.centerX) + dx;
+    const doorCenterZ = Number(anchorCell.centerZ) + dz;
+    const frame = frameFor(doorCenterX, doorCenterZ);
+    const height = ghostHeightForFootprint(target.footprintColumns, target.footprintRows);
+    const door = new THREE.Mesh(new THREE.BoxGeometry(size * 0.32, height * 0.45, size * 0.14), entranceMaterial);
+    door.position.copy(frame.surface).addScaledVector(frame.normal, height * 0.22);
+    door.quaternion.copy(getVoxelSphereOrientation(doorCenterX, doorCenterZ, radius));
+    door.renderOrder = 4;
+    ghost.add(door);
   }
 
   // Footprint perimeter outline on the surface, spanning the bounding box of
@@ -245,6 +325,11 @@ export function createCityPlacementLayer() {
   function dispose() {
     if (mountedRoot) mountedRoot.remove(layer);
     clearAll();
+    if (cachedPreviewObject) {
+      cachedPreviewObject.traverse((object) => object.geometry?.dispose?.());
+      cachedPreviewObject = null;
+      cachedPreviewSpec = null;
+    }
     ghostMaterial.dispose();
     outlineMaterial.dispose();
     entranceMaterial.dispose();

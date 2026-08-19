@@ -1769,6 +1769,19 @@ function placeObjectOnVoxelSphere(object, x, z, radius, height = 0) {
   object.updateMatrix();
 }
 
+// Shared sphere orientation helper: returns a quaternion that maps local +Y to
+// the surface normal, local +X to the east tangent and local +Z to the south
+// tangent — the exact basis `placeObjectOnVoxelSphere` uses, so any preview
+// (placement ghost, in-world overlays) stays axis-consistent with the city.
+export function getVoxelSphereOrientation(x, z, radius, target = null) {
+  const frame = getVoxelSphereFrame(x, z, radius);
+  const quaternion = target ?? new THREE.Quaternion();
+  quaternion.setFromRotationMatrix(
+    new THREE.Matrix4().makeBasis(frame.tangentX, frame.normal, frame.tangentZ)
+  );
+  return quaternion;
+}
+
 function getClosedVoxelRoadPorts(ports, topology) {
   if (topology === "cross" || topology === "straight") return [];
   if (topology === "end") {

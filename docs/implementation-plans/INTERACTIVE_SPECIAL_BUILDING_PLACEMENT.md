@@ -230,3 +230,28 @@ Decisions made while implementing this plan, per first-round review:
   server candidate contract is the smallest follow-up if a stricter local gate
   is ever required.
 
+## Implementation notes (PR #52 round 2)
+
+Round-2 review follow-ups:
+
+- **Ghost sphere orientation fixed.** All ghost parts (voxel preview, massing
+  bodies/roofs, entrance marker) now use `getVoxelSphereOrientation()` — the
+  exact basis the city's own sphere placement uses (`local +Y` follows the
+  surface normal, `+X` the east tangent, `+Z` the south tangent) — instead of a
+  `setFromUnitVectors` that would have left previews lying on their side away
+  from the sphere centre. Covered by tests at a non-central cell.
+- **Ghost is now a building-shaped voxel preview.** The primary preview is a
+  deterministic per-card voxel building generated through the city's own
+  grammar (`src/ui/specialStructurePreview.js`): each special-structure card
+  maps to a distinct archetype / height / roof profile (owl tower = tall hip,
+  floo station = service workshop, Diagon Alley = violet shopfront, concealment
+  statue = low townhouse, herb plot = low forest workshop), sized to the card
+  footprint and rendered with the uniform translucent ghost material
+  (`ghost.userData.ghostMode === "voxel-building-preview"`). The voxel geometry
+  is cached per card so panning across cells never rebuilds it. The per-cell
+  box massing remains only as a fallback when no preview spec is available.
+  Matching the *final* placed building exactly still depends on the broader
+  "placed special structures have no `voxelDesign` yet" rendering gap, which is
+  a separate follow-up; the deterministic card preview is the round-2 MVP for
+  a building-shaped preview within #52.
+
