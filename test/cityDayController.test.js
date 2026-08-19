@@ -810,3 +810,63 @@ test("cancel exits the session without placing or delegating", async () => {
   assert.equal(controller.placementActive, false, "cancel clears the placement session");
   assert.equal(placeCount, 0, "cancel never submits a placement");
 });
+
+test("a cancelled placement is not silently reopened by the periodic sync", async () => {
+  const experience = createMockExperience();
+  let searchCount = 0;
+  stubFetch(pendingPlacementRoutes({ onSearch: () => { searchCount += 1; } }));
+  const controller = createCityDayController({
+    experience,
+    api: { baseUrl: "/api/v1", cityId: "city-1", token: "session" },
+    setLight: () => {},
+    onPlayerTurnComplete: () => {}
+  });
+  await controller.sync();
+  assert.equal(experience.state.placementOpen, true, "placement opened");
+  assert.equal(experience.presentCount, 1);
+
+  experience.onCancel?.();
+  assert.equal(experience.state.placementOpen, false, "cancel closes the placement layer");
+  assert.equal(controller.placementActive, false);
+
+  await controller.sync();
+  assert.equal(experience.state.placementOpen, false, "the periodic sync does not reopen a locally cancelled placement");
+  assert.equal(experience.presentCount, 1, "no placement HUD is re-presented for the cancelled placement");
+  assert.equal(searchCount, 1, "the cancelled placement is not re-fetched");
+
+  await controller.sync();
+  assert.equal(experience.state.placementOpen, false, "repeated syncs keep the cancelled placement closed");
+  assert.equal(experience.presentCount, 1);
+});
+
+test("a fresh placement_id opens normally after a previous cancel", async () => {
+  const experience = createMockExperience();
+  let placementId = "placement-9";
+  let searchCount = 0;
+  const routes = pendingPlacementRoutes({
+    onSearch: () => { searchCount += 1; }
+  });
+  stubFetch({
+    ...routes,
+    "/api/v1/cities/city-1/cards/current": () => ({
+      body: { city_id: "city-1", city_version: 8, turn: 0, offer: OFFER, choice: { status: "selected", card_effects: { placement: { placement_id: placementId, mode: "player_place" } } } }
+    })
+  });
+  const controller = createCityDayController({
+    experience,
+    api: { baseUrl: "/api/v1", cityId: "city-1", token: "session" },
+    setLight: () => {},
+    onPlayerTurnComplete: () => {}
+  });
+  await controller.sync();
+  assert.equal(experience.state.placementOpen, true, "placement opened");
+  experience.onCancel?.();
+  await controller.sync();
+  assert.equal(experience.state.placementOpen, false, "the cancelled placement stays closed");
+
+  placementId = "placement-10";
+  await controller.sync();
+  assert.equal(experience.state.placementOpen, true, "a new placement id opens normally");
+  assert.equal(experience.presentCount, 2, "the new placement presents a fresh HUD");
+  assert.equal(searchCount, 2, "the new placement fetches its own candidate set");
+});

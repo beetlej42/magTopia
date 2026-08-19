@@ -21,6 +21,12 @@ export function createCityDayController({ experience, api, setLight, placementLa
   let cardCatalog = null;
   let activeOffer = null;
   let placement = null;
+  // Client-only set of placement ids the player has explicitly cancelled this
+  // page session. Cancel is a local exit from the placement session; the
+  // server's pending placement is untouched (no invented mutation), so a page
+  // reload restores the pending placement. While an id stays in this set the
+  // periodic city-day sync must not automatically reopen its placement HUD.
+  const dismissedPlacementIds = new Set();
 
   function pathFor(relative) {
     const base = String(api.baseUrl ?? "").replace(/\/+$/, "");
@@ -214,6 +220,15 @@ export function createCityDayController({ experience, api, setLight, placementLa
     const footprint = card?.structure?.footprint ?? "1x1";
     const cityVersion = cardsCurrent.city_version;
 
+    // A placement the player explicitly cancelled this page session must not
+    // silently reopen on the next periodic sync. The server-side pending
+    // placement stays untouched, so a page reload restores it naturally.
+    if (placementId && dismissedPlacementIds.has(placementId)) {
+      closeChoiceLayers();
+      experience.showIdleNote("已取消放置，可刷新页面后重新选择位置。");
+      return;
+    }
+
     // The periodic city-day sync re-enters this path while a placement is
     // pending. Reuse the live session (preserving building rotation and the
     // FOV target) and only refresh the concurrency guard; presenting a second
@@ -365,6 +380,7 @@ export function createCityDayController({ experience, api, setLight, placementLa
   }
 
   function cancelPlacement() {
+    if (placement?.placementId) dismissedPlacementIds.add(placement.placementId);
     closePlacement();
   }
 

@@ -5,9 +5,18 @@
 // candidates or moves the camera; main.js resolves the current target each
 // frame through the same flat-coordinate pipeline the viewer already uses and
 // asks this layer to draw (or hide) the ghost. The ghost uses the real
-// footprint geometry so confirmation does not visibly jump: per-cell translucent
-// voxel cubes over the footprint cells, a footprint outline, and a small
-// entrance-facing marker.
+// footprint geometry so confirmation does not visibly jump.
+//
+// Ghost rendering note (PR #52 round 1): this is a phased MASSING FALLBACK. A
+// pending special-structure placement has no server-authored building design
+// yet (special structures get no `voxelDesign` until /cards/place completes),
+// so there is no real per-card runtime geometry to clone. Instead the layer
+// draws a per-cell voxel massing (main body + roof cap) over the footprint
+// cells — enough to judge footprint, height, frontage and neighbourhood
+// relationship. Cloning the final per-card building geometry for the ghost is a
+// documented follow-up. The diagnostic flag on the ghost group
+// (`ghost.userData.ghostMode === "massing-voxel-fallback"`) identifies the
+// preview mode so acceptance tooling can distinguish it.
 //
 // Valid targets render in a muted cyan-green; invalid targets render red and
 // the caller disables confirm. Depth testing stays on so the preview remains
@@ -138,19 +147,29 @@ export function createCityPlacementLayer() {
 
     const ghost = new THREE.Group();
     ghost.name = "CityPlacementGhost";
+    ghost.userData.ghostMode = "massing-voxel-fallback";
     const size = cellWorldSize;
     const height = ghostHeightForFootprint(target.footprintColumns, target.footprintRows);
     ghostMaterial.color.set(color);
 
     for (const cell of target.cells) {
       const frame = frameFor(cell.centerX, cell.centerZ);
-      const cube = new THREE.BoxGeometry(size, height, size);
-      const mesh = new THREE.Mesh(cube, ghostMaterial);
-      mesh.position.copy(frame.surface).addScaledVector(frame.normal, height / 2);
-      mesh.quaternion.setFromUnitVectors(Z_AXIS, frame.normal);
-      mesh.renderOrder = 3;
-      mesh.castShadow = false;
-      ghost.add(mesh);
+      const quaternion = new THREE.Quaternion().setFromUnitVectors(Z_AXIS, frame.normal);
+      const body = new THREE.Mesh(new THREE.BoxGeometry(size, height, size), ghostMaterial);
+      body.position.copy(frame.surface).addScaledVector(frame.normal, height / 2);
+      body.quaternion.copy(quaternion);
+      body.renderOrder = 3;
+      body.castShadow = false;
+      ghost.add(body);
+
+      // Roof cap gives the fallback massing a building silhouette instead of a
+      // plain cube so the player can judge height/roof form at a glance.
+      const roof = new THREE.Mesh(new THREE.BoxGeometry(size * 0.86, height * 0.2, size * 0.86), ghostMaterial);
+      roof.position.copy(frame.surface).addScaledVector(frame.normal, height * 1.02);
+      roof.quaternion.copy(quaternion);
+      roof.renderOrder = 3;
+      roof.castShadow = false;
+      ghost.add(roof);
     }
 
     const entranceSide = target.entrance;

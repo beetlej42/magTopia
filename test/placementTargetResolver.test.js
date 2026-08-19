@@ -119,6 +119,19 @@ test("candidate entrance hints drive the base entrance at default rotation", () 
   assert.equal(target.candidate.lotId, "cell-1-1");
 });
 
+test("candidateHint marks whether the target lot was in the authoritative hint set", () => {
+  const state = createTestState({ roads: ["cell-1-2", "cell-3-4"] });
+  const index = createPlacementCandidateIndex([
+    { lotId: "cell-1-1", entranceDirections: ["south"], roadFrontageDirections: ["south"] }
+  ]);
+  const hinted = resolvePlacementTarget(state, { ...flatCenter(state, 1, 1), footprint: "1x1", candidateIndex: index });
+  assert.equal(hinted.candidateHint, true, "a lot in the hint set is flagged");
+  assert.equal(hinted.isLegal, true);
+  const notHinted = resolvePlacementTarget(state, { ...flatCenter(state, 3, 3), footprint: "1x1", candidateIndex: index });
+  assert.equal(notHinted.candidateHint, false, "a locally legal lot outside the hint set stays placeable");
+  assert.equal(notHinted.isLegal, true, "the local mirror is the eligibility check, not the limited hint list");
+});
+
 test("footprint dims helpers swap correctly for quarter turns", () => {
   assert.deepEqual(footprintDimsForQuarterTurns("1x2", 0), { columns: 1, rows: 2 });
   assert.deepEqual(footprintDimsForQuarterTurns("1x2", 1), { columns: 2, rows: 1 });

@@ -205,3 +205,28 @@ Avoid encoding placement state indirectly through DOM visibility alone.
 - changing server dice/economy/exposure rules;
 - changing the new-turn/card loop;
 - modifying PR #51 gameplay rule consolidation.
+
+## Implementation notes (PR #52 round 1)
+
+Decisions made while implementing this plan, per first-round review:
+
+- **Cancel is a durable local exit.** Cancelling marks the pending `placement_id`
+  as locally dismissed (client memory only, keyed by placement id). The
+  periodic city-day sync will not reopen the same cancelled placement; a page
+  reload restores the pending placement, and a fresh `placement_id` opens
+  normally. No server mutation is invented.
+- **Ghost is a phased massing fallback.** A pending special-structure placement
+  has no server-authored building design to clone (`voxelDesign` exists only
+  after `/cards/place` completes), so the ghost renders a per-cell voxel
+  massing with a roof cap over the real footprint cells
+  (`ghost.userData.ghostMode === "massing-voxel-fallback"`). Cloning the final
+  per-card geometry for the ghost is the explicit visual follow-up.
+- **`/site-searches` is authoritative eligibility hints, not a closed
+  allow-list.** The candidate payload is bounded by `limit` and is default-
+  orientation only, so `isLegal` is judged by a local mirror of the server's
+  occupancy/frontage rules over the render-state; candidate hints steer the
+  preferred entrance and the resolved target exposes `candidateHint`. The
+  server remains the final authority at `/cards/place`. An orientation-aware
+  server candidate contract is the smallest follow-up if a stricter local gate
+  is ever required.
+

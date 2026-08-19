@@ -8,6 +8,19 @@
 // made while the camera moves. The server stays the final authority at
 // `/cards/place`.
 //
+// Candidate-set semantics: the `/site-searches` payload is treated as
+// authoritative ELIGIBILITY HINTS / RANKING, not a closed allow-list. It is
+// bounded by `limit` (not every legal lot) and is computed for the default
+// footprint orientation only, so it cannot be the single source of legality for
+// an arbitrary FOV-center lot or a rotated footprint. Legality is therefore
+// judged locally over the render-state (a faithful mirror of the server's
+// occupancy/frontage rules), the candidate hints steer the preferred entrance,
+// and the server remains the final authority on confirm. The resolved target
+// exposes `candidateHint` so callers can tell when the current lot was present
+// in the authoritative hint set. A server-side orientation-aware candidate
+// contract is the smallest follow-up if a stricter local eligibility gate is
+// ever required.
+//
 // The FOV center maps to a logical grid cell through the exact same flat
 // coordinate pipeline the viewer already uses for center-focused district /
 // building selection (see cellAtFlatPoint in cityInfoOverlay.js). The footprint
@@ -223,6 +236,7 @@ export function resolvePlacementTarget(state, options = {}) {
     isLegal,
     reason,
     candidate: candidateIndex?.get?.(anchor.id) ?? null,
+    candidateHint: Boolean(candidateIndex?.has?.(anchor.id)),
     center,
     centerCell: {
       id: anchor.id,
