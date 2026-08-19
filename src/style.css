@@ -1341,15 +1341,121 @@ html[data-magtopia-surface="acceptance"] .city-day-experience {
 }
 
 /* Manual placement is a pass-through map mode: the full-screen layer must not
-   become a pointer target, otherwise taps on world-space lot markers and
-   camera orbit/pan gestures would be intercepted before `renderer.domElement`
-   sees them. Only the actual placement controls/panel are hit-testable. */
+   become a pointer target, otherwise camera orbit/pan gestures would be
+   intercepted before `renderer.domElement` sees them. Only the icon buttons are
+   hit-testable; the status pill stays decorative. */
 .city-day-placement {
   pointer-events: none;
 }
 
-.city-day-placement > * {
+/* PR #52 — in-world placement HUD. The layer carries no dimming background and
+   no flex layout so the city stays fully reachable; the status pill and the
+   icon buttons float as a lightweight, screenshot-friendly control set. */
+.city-day-placement {
+  position: fixed;
+  inset: 0;
+  z-index: 14;
+}
+
+.city-day-placement-status {
+  position: fixed;
+  top: max(14px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 15;
+  padding: 6px 14px;
+  border: 1px solid rgb(255 255 255 / 72%);
+  border-radius: 999px;
+  background: rgb(41 57 77 / 68%);
+  color: #fff8ee;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  backdrop-filter: blur(6px);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.city-day-placement-status.is-invalid {
+  background: rgb(122 44 44 / 84%);
+  border-color: rgb(255 170 170 / 72%);
+}
+
+.city-day-placement-reason {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.66rem;
+  font-weight: 600;
+  opacity: 0.92;
+  white-space: normal;
+}
+
+.city-day-placement-controls {
+  position: fixed;
+  bottom: max(20px, env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 15;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  pointer-events: none;
+}
+
+.city-day-placement-controls[hidden] {
+  display: none;
+}
+
+.city-day-placement-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  pointer-events: none;
+}
+
+.city-day-placement-actions[hidden] {
+  display: none;
+}
+
+.city-day-placement-button {
   pointer-events: auto;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 1px solid rgb(255 255 255 / 30%);
+  background: rgb(255 249 239 / 92%);
+  color: #2c2117;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgb(20 12 34 / 30%);
+}
+
+.city-day-placement-button svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.city-day-placement-button.is-cancel {
+  color: #7a2c2c;
+}
+
+.city-day-placement-button.is-confirm {
+  background: #6fd3a2;
+  border-color: #6fd3a2;
+  color: #123c2b;
+}
+
+.city-day-placement-button.is-confirm:disabled {
+  background: rgb(120 110 130 / 55%);
+  border-color: transparent;
+  color: rgb(255 255 255 / 45%);
+  cursor: not-allowed;
 }
 
 /* Decorative, non-interactive chrome never blocks the viewer or the active
@@ -1632,62 +1738,6 @@ html[data-magtopia-surface="acceptance"] .city-day-experience {
   background: #e6c07a;
   border-color: #e6c07a;
   color: #2c2117;
-}
-
-.city-day-placement {
-  position: fixed;
-  inset: 0;
-  z-index: 14;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
-  padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
-  background: radial-gradient(circle at 50% 46%, rgb(40 30 70 / 34%), rgb(22 16 40 / 62%));
-}
-
-.city-day-lot-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 10px;
-  width: min(560px, 100%);
-  max-height: 48vh;
-  overflow: auto;
-  padding: 4px;
-}
-
-.city-day-lot-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 12px 14px;
-  border: 1px solid rgb(255 255 255 / 24%);
-  border-radius: 12px;
-  background: rgb(255 249 239 / 90%);
-  color: #33261a;
-  text-align: left;
-  cursor: pointer;
-}
-
-.city-day-lot-item strong {
-  font-size: 0.92rem;
-}
-
-.city-day-lot-item span {
-  font-size: 0.74rem;
-  color: #6a5944;
-}
-
-.city-day-lot-empty {
-  color: #e9dfcf;
-  font-size: 0.9rem;
-  text-align: center;
-}
-
-.city-day-lot-footer {
-  display: flex;
-  justify-content: center;
 }
 
 .city-day-toast {
