@@ -33,9 +33,10 @@ export function loadConfig(env = process.env) {
     workerPollMs: Number(env.MAGICTOWN_WORKER_POLL_MS ?? 1000),
     // The minimum wall-clock interval between a turn opening and the moment it
     // may be resolved. It only gates timing; it never changes gameplay values.
-    // Production default is 24h (86400s); ECS/fast-test environments can lower
-    // it (for example 3600s or 10s) without introducing a second gameplay.
-    turnCooldownSeconds: Number(env.MAGICTOWN_TURN_COOLDOWN_SECONDS ?? 86_400),
+    // There is currently no production environment and main auto-deploys, so
+    // the default is the fast-test value (10s). Raise it via
+    // MAGICTOWN_TURN_COOLDOWN_SECONDS before a real production rollout.
+    turnCooldownSeconds: Number(env.MAGICTOWN_TURN_COOLDOWN_SECONDS ?? 10),
     turnSchedulerPollMs: Number(env.MAGICTOWN_TURN_SCHEDULER_POLL_MS ?? 1000),
     autoMigrate: env.MAGICTOWN_AUTO_MIGRATE !== "0"
   };

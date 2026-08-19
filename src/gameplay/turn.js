@@ -14,7 +14,9 @@ import { normalizeScheduler } from "./schema.js";
 //   - settled turn: the earliest wall-clock time the next turn may open.
 // It is written when the turn opens as `turnOpenedAt + TURN_COOLDOWN`.
 
-export const DEFAULT_TURN_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+// Fallback used only when no cooldown is supplied anywhere. Mirrors the server
+// default (10s fast-test) since there is no production environment yet.
+export const DEFAULT_TURN_COOLDOWN_MS = 10 * 1000;
 
 export const ACTIVE_TURN_STATUSES = Object.freeze(new Set(["open", "building", "strategy"]));
 export const SETTLED_TURN_STATUSES = Object.freeze(new Set(["resolved", "reported", "closed"]));
