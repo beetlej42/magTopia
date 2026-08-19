@@ -58,7 +58,7 @@ export function createMemoryRepository(config, options = {}) {
       const state = initializeFreshCitySchedule(createCityState(world, {
         cityId: id,
         mapSeed,
-        resources: input.resources ?? { coins: 100000 },
+        resources: input.resources,
         rulesetVersion: "magic-london-mvp@1"
       }), now().toISOString(), config);
       const row = {

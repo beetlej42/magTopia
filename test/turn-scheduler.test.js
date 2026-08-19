@@ -485,6 +485,21 @@ test("a new city resource contract is coins-only with a single authoritative led
   assert.ok(!("timber" in state.resources) && !("stone" in state.resources), "timber/stone are never initialized as core resources");
 });
 
+test("memory and production repositories share the same new-city default coins (600)", async () => {
+  const clock = fakeClock();
+  const repository = createMemoryRepository(config, { now: clock.now });
+  const { app } = await setup(clock, repository);
+  try {
+    const { city } = await openCity(app, repository);
+    const { state } = await repository.getCityForScheduler(city.id);
+    assert.equal(state.resources.coins, 600, "a memory-repo city created without resources uses the authoritative 600 default");
+    assert.equal(state.gameplay.resources.coins, 600, "the gameplay ledger matches the production default");
+    assert.equal(state.gameplay.resources.coins, state.resources.coins, "both repositories share one coins ledger");
+  } finally {
+    await app.close();
+  }
+});
+
 test("construction spend survives settlement: balance after resolve is the debited base plus income", async () => {
   const clock = fakeClock();
   const repository = createMemoryRepository(config, { now: clock.now });

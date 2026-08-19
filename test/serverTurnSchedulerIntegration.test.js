@@ -20,12 +20,12 @@ const config = {
 };
 
 test("turn scheduler never auto-settles and opens the next turn at the unlock slot after an Agent resolve", { skip: !databaseUrl, timeout: 120_000 }, async () => {
+  const clock = fakeClock();
   const database = createDatabase(databaseUrl);
   await migrateDatabase(database);
   await database.query("TRUNCATE agent_action_log, outbox_jobs, construction_orders, asset_jobs, command_receipts, city_events, agent_credentials, agent_capabilities, city_memberships, cities, asset_definitions, players CASCADE");
   const repository = createRepository(database, config, { now: clock.now });
 
-  const clock = fakeClock();
   const app = await createApp({ repository, config, now: clock.now, logger: false });
   const scheduler = createTurnScheduler({ repository, config, now: clock.now, logger: { error() {} } });
 
