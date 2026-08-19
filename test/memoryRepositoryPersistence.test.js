@@ -20,7 +20,7 @@ test("Agent LAN repository persists identities, cities, credentials, mutations, 
     const owner = await first.authenticate(player.access_token);
     const city = await first.createCity(owner, {
       name: "Persistent City",
-      resources: { coins: 9000, timber: 8000, stone: 7000 }
+      resources: { coins: 9000 }
     });
     const link = await first.createCapability(owner, city.id, { scopes: ["city:read", "city:build"] });
     const secret = link.connect_url.split("/").at(-1);

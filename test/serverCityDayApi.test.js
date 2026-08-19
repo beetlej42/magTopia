@@ -605,6 +605,10 @@ test("integration walk: report -> dismiss -> card -> morning -> agent work -> da
     const unlocked = openNextTurn(state, new Date(Date.now() + 90 * 86_400_000), { turnIntervalMs: 86_400_000, turnDeadlineMs: 86_400_000 });
     const opened = openTurnCardState(unlocked, city.id, { turn: unlocked.turn });
     opened.gameplay.turnOpenedAt = new Date().toISOString();
+    // The cooldown gate for this manually opened turn already elapsed so the
+    // walk can resolve it through the real API in this same test run.
+    opened.gameplay.nextTurnUnlockAt = new Date(Date.now() - 1000).toISOString();
+    opened.gameplay.turnDeadlineAt = null;
     await repository.transactCity({
       principal: owner,
       cityId: city.id,

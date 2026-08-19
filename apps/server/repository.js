@@ -99,11 +99,13 @@ export function createRepository(database, config) {
     },
 
     async scanCitiesForScheduler(nowIso) {
+      // Only (a) active turns that still lack a schedule (lazy init) and
+      // (b) settled turns whose unlock slot has elapsed (open the next turn)
+      // are due. Overdue active turns are never due: there is no auto-settle.
       const result = await database.query(
         `SELECT id, city_version, state_jsonb FROM cities
          WHERE (state_jsonb->'gameplay'->>'turnStatus' IN ('open', 'building', 'strategy')
-                AND (state_jsonb->'gameplay'->>'turnDeadlineAt' IS NULL
-                     OR state_jsonb->'gameplay'->>'turnDeadlineAt' <= $1))
+                AND state_jsonb->'gameplay'->>'nextTurnUnlockAt' IS NULL)
             OR (state_jsonb->'gameplay'->>'turnStatus' IN ('resolved', 'reported', 'closed')
                 AND state_jsonb->'gameplay'->>'nextTurnUnlockAt' IS NOT NULL
                 AND state_jsonb->'gameplay'->>'nextTurnUnlockAt' <= $1)

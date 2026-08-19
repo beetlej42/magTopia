@@ -57,7 +57,7 @@ export function createMemoryRepository(config, options = {}) {
       const state = createCityState(world, {
         cityId: id,
         mapSeed,
-        resources: input.resources ?? { coins: 100000, timber: 100000, stone: 100000 },
+        resources: input.resources ?? { coins: 100000 },
         rulesetVersion: "magic-london-mvp@1"
       });
       const row = {
@@ -189,12 +189,15 @@ export function createMemoryRepository(config, options = {}) {
     },
 
     async scanCitiesForScheduler(nowIso) {
+      // Only active turns missing a schedule (lazy init) and settled turns whose
+      // unlock slot elapsed (open the next turn) are due. Active overdue turns
+      // are never due: there is no deadline auto-settle.
       const due = [];
       for (const row of cities.values()) {
         const gameplay = row.state_jsonb.gameplay ?? {};
         const active = ACTIVE_TURN_STATUSES.has(gameplay.turnStatus);
         const settled = SETTLED_TURN_STATUSES.has(gameplay.turnStatus);
-        if (active && (gameplay.turnDeadlineAt == null || gameplay.turnDeadlineAt <= nowIso)) due.push(row);
+        if (active && gameplay.nextTurnUnlockAt == null) due.push(row);
         else if (settled && gameplay.nextTurnUnlockAt != null && gameplay.nextTurnUnlockAt <= nowIso) due.push(row);
       }
       return due;

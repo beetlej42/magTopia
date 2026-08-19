@@ -29,7 +29,7 @@ function createTestWorld(columns = 45, rows = 45) {
 }
 
 function createWorkbenchWithBuildings(world, definitions) {
-  const state = createCityState(world, { resources: { coins: 9999, timber: 9999, stone: 9999 } });
+  const state = createCityState(world, { resources: { coins: 9999 } });
   definitions.forEach(({ id, column, row, entrance }) => {
     const cellId = `cell-${column}-${row}`;
     state.cells[cellId].occupancy = id;

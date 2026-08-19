@@ -10,7 +10,7 @@ function world(columns = 12, rows = 12) {
 }
 
 function cityWithBuildings(specs, options = {}) {
-  const state = createCityState(world(), { resources: { coins: 99999, timber: 99999, stone: 99999 }, ...options });
+  const state = createCityState(world(), { resources: { coins: 99999 }, ...options });
   for (const spec of specs) {
     state.cells[spec.cellId].occupancy = spec.id;
     state.buildings[spec.id] = {

@@ -418,11 +418,11 @@ export function resolveTurn(state, input = {}, context = {}) {
   const resolvedAt = now();
   const schedule = normalizeTurnSchedule(options);
   // The next unlock is anchored to the current turn's wall-clock slot, not to
-  // the settlement moment, so an Agent resolving early and a deadline settle
-  // produce the same cadence: a turn always unlocks one turnIntervalMs after it
-  // opened, no matter when it was settled.
+  // the settlement moment, so an early Agent resolve produces the same cadence
+  // as a late one: a turn always unlocks one turnCooldownMs after it opened,
+  // no matter when it was settled. There is no deadline auto-settle.
   const turnOpenedAt = next.gameplay.turnOpenedAt ?? resolvedAt;
-  const nextTurnUnlockAt = new Date(new Date(turnOpenedAt).getTime() + schedule.turnIntervalMs).toISOString();
+  const nextTurnUnlockAt = new Date(new Date(turnOpenedAt).getTime() + schedule.turnCooldownMs).toISOString();
   const settledBy = options.settlementSource === "deadline" ? "deadline" : "agent";
   // Advance the deterministic policy lifecycle after this turn's effects have
   // been consumed. The choice's started/refreshed/expired records are captured
@@ -437,7 +437,9 @@ export function resolveTurn(state, input = {}, context = {}) {
       resolvedAt,
       settledBy,
       nextTurnUnlockAt,
-      turnDeadlineAt: state.gameplay?.turnDeadlineAt ?? null
+      // Deprecated legacy field, always null: turns no longer have a deadline
+      // auto-settle.
+      turnDeadlineAt: null
     },
     resourceDelta: {
       coins: resourceSettlement.income.coins,
@@ -480,7 +482,7 @@ export function resolveTurn(state, input = {}, context = {}) {
   next.gameplay.turnFacts = appendTurnFacts(next.gameplay.turnFacts, facts);
   next.gameplay.turnStatus = "resolved";
   next.gameplay.turnOpenedAt = next.gameplay.turnOpenedAt ?? resolvedAt;
-  next.gameplay.turnDeadlineAt = next.gameplay.turnDeadlineAt ?? null;
+  next.gameplay.turnDeadlineAt = null;
   next.gameplay.nextTurnUnlockAt = nextTurnUnlockAt;
   next.gameplay.scheduler = normalizeScheduler({
     ...(next.gameplay.scheduler ?? {}),

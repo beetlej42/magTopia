@@ -28,7 +28,7 @@ const STARTER_DESIGNS = [
 export function createStarterCityWorkbench(worldContract, options = {}) {
   const workbench = createCityWorkbench(createCityState(worldContract, {
     mapSeed: options.mapSeed ?? null,
-    resources: { coins: 2400, timber: 600, stone: 600, ...(options.resources ?? {}) }
+    resources: { coins: 2400, ...(options.resources ?? {}) }
   }));
   // Two north-facing buildings share one street; the third branches from its
   // midpoint. This deliberately exercises automatic T-junction generation.

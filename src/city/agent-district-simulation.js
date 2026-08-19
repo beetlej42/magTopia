@@ -56,7 +56,7 @@ export function runNonVisualAgentBuildScenario(options = {}) {
   let state = createCityState(world, {
     cityId: "city-agent-acceptance",
     mapSeed: seed,
-    resources: { coins: 100_000, timber: 25_000, stone: 25_000 }
+    resources: { coins: 100_000 },
   });
   const engineContext = createEngineContext({ now: () => FIXED_TIME });
   const actions = [];

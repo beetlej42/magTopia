@@ -259,12 +259,12 @@ function advanceTime(currentState, input, context) {
 }
 
 export function calculateDailyIncome(state) {
-  const income = { coins: 24, timber: 4, stone: 4 };
+  // Coins-only authoritative economy. The legacy timber/stone production
+  // ledger was consolidated away; only coins feed construction and gameplay.
+  const income = { coins: 24 };
   for (const building of Object.values(state.buildings)) {
     const attributes = building.program?.attributes ?? {};
     income.coins += Number(attributes.coinOutput ?? defaultCoinOutput(building.program?.purpose));
-    income.timber += Number(attributes.timberOutput ?? (/workshop|herbal|garden/.test(building.program?.archetype ?? "") ? 2 : 0));
-    income.stone += Number(attributes.stoneOutput ?? (/workshop|quarry/.test(building.program?.archetype ?? "") ? 1 : 0));
   }
   return income;
 }
@@ -327,5 +327,5 @@ function classifyPreviewError(preview) {
 }
 
 function negativeKeys(resources) { return Object.entries(resources).filter(([, value]) => value < 0).map(([key]) => key); }
-function add(a = {}, b = {}) { return { coins: (a.coins ?? 0) + (b.coins ?? 0), timber: (a.timber ?? 0) + (b.timber ?? 0), stone: (a.stone ?? 0) + (b.stone ?? 0) }; }
-function subtract(a, b) { return { coins: a.coins - b.coins, timber: a.timber - b.timber, stone: a.stone - b.stone }; }
+function add(a = {}, b = {}) { return { coins: (a.coins ?? 0) + (b.coins ?? 0) }; }
+function subtract(a, b) { return { coins: a.coins - b.coins }; }

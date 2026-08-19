@@ -16,8 +16,7 @@ const config = {
   gameplaySeed: 7
 };
 
-const TURN_INTERVAL_MS = 60_000;
-const TURN_DEADLINE_MS = 60_000;
+const TURN_COOLDOWN_SECONDS = 60;
 
 const VESPER = { id: "officer-vesper", name: "Vesper", archetype: "investigation", investigation: 3, containment: 1, concealment: 2, specialties: ["investigation"], status: "available", hiredAtTurn: 0 };
 
@@ -200,30 +199,35 @@ test("assignment rationale, roll, outcome, and exposure changes are faithfully p
   }
 });
 
-test("a deadline-settled turn exposes settledBy=deadline and its unaddressed incidents", async () => {
-  const clock = fakeClock();
+test("an Agent-settled turn exposes settledBy=agent and its unaddressed incidents", async () => {
   const repository = createMemoryRepository(config);
-  const app = await createApp({ repository, config, now: clock.now, logger: false });
-  const scheduler = createTurnScheduler({ repository, config: { ...config, turnIntervalMs: TURN_INTERVAL_MS, turnDeadlineMs: TURN_DEADLINE_MS }, now: clock.now, logger: { error() {} } });
+  const app = await createApp({ repository, config });
   try {
     const { city, agent, owner } = await openCity(repository, app);
-    await seedState(repository, owner, city.id, 0, { incidents: { "incident-1": openIncident() } });
-    await scheduler.pollOnce();
+    await seedState(repository, owner, city.id, 0, { incidents: { "incident-1": openIncident() }, turnStatus: "strategy" });
+    const before = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
 
-    clock.advance(TURN_DEADLINE_MS + 1000);
-    const results = await scheduler.pollOnce();
-    assert.equal(results[0].status, "deadline_resolved");
+    // An empty dispatch plan leaves the open incident unaddressed; the system
+    // records it conservatively rather than resolving it for free.
+    const settled = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/strategy/resolve`,
+      headers: { "idempotency-key": "resolve-unaddressed" },
+      payload: { expected_city_version: before.city_version }
+    }), 200);
+    assert.equal(settled.status, "resolved");
+    assert.equal(settled.facts.wallClock.settledBy, "agent");
+    assert.ok(settled.facts.unaddressedIncidents.length >= 1, "the unhandled incident is recorded as unaddressed");
 
     const context = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/report-context` }), 200);
-    assert.equal(context.settlement.settledBy, "deadline");
+    assert.equal(context.settlement.settledBy, "agent");
     const unaddressed = context.unaddressedIncidents.find((entry) => entry.incidentId === "incident-1");
     assert.ok(unaddressed, "the unhandled incident is visible to the editor");
     assert.equal(unaddressed.factRef, "fact-unaddressed-incident-1");
     assert.equal(unaddressed.status, "open", "an unaddressed incident stays open and was not resolved for free");
     assert.ok(context.factRefs.includes("fact-unaddressed-incident-1"));
-    assert.ok(context.unaddressedIncidents.length >= 1, "every incident the deadline left unhandled is exposed");
+    assert.ok(context.unaddressedIncidents.length >= 1, "every incident the settlement left unhandled is exposed");
   } finally {
-    scheduler.stop();
     await app.close();
   }
 });
@@ -469,7 +473,7 @@ test("a failed report submission changes no gameplay state", async () => {
 
 test("publishing a report never blocks the turn scheduler from opening the next turn", async () => {
   const clock = fakeClock();
-  const schedulerConfig = { ...config, turnIntervalMs: TURN_INTERVAL_MS, turnDeadlineMs: TURN_DEADLINE_MS };
+  const schedulerConfig = { ...config, turnCooldownSeconds: TURN_COOLDOWN_SECONDS };
   const repository = createMemoryRepository(config);
   const app = await createApp({ repository, config: schedulerConfig, now: clock.now, logger: false });
   const scheduler = createTurnScheduler({ repository, config: schedulerConfig, now: clock.now, logger: { error() {} } });
@@ -477,6 +481,7 @@ test("publishing a report never blocks the turn scheduler from opening the next 
     const { city, agent, owner } = await openCity(repository, app);
     await seedState(repository, owner, city.id, 0, { incidents: { "incident-1": openIncident() } });
     await scheduler.pollOnce();
+    clock.advance(TURN_COOLDOWN_SECONDS * 1000 + 1000);
     const before = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
     await dispatchAndResolve(app, agent, city.id, before);
     const context = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/report-context` }), 200);
@@ -487,7 +492,7 @@ test("publishing a report never blocks the turn scheduler from opening the next 
       payload: { turn: 1, facts_digest: context.factsDigest, report: sampleReport(context) }
     }), 201);
 
-    clock.advance(TURN_INTERVAL_MS + 1000);
+    clock.advance(TURN_COOLDOWN_SECONDS * 1000 + 1000);
     const results = await scheduler.pollOnce();
     assert.ok(results.some((entry) => entry.status === "opened"), "the next turn opened despite the published report");
 
@@ -505,7 +510,7 @@ test("publishing a report never blocks the turn scheduler from opening the next 
 
 test("an Agent can backfill a report for an earlier resolved turn after the city moved on", async () => {
   const clock = fakeClock();
-  const schedulerConfig = { ...config, turnIntervalMs: TURN_INTERVAL_MS, turnDeadlineMs: TURN_DEADLINE_MS };
+  const schedulerConfig = { ...config, turnCooldownSeconds: TURN_COOLDOWN_SECONDS };
   const repository = createMemoryRepository(config);
   const app = await createApp({ repository, config: schedulerConfig, now: clock.now, logger: false });
   const scheduler = createTurnScheduler({ repository, config: schedulerConfig, now: clock.now, logger: { error() {} } });
@@ -513,16 +518,18 @@ test("an Agent can backfill a report for an earlier resolved turn after the city
     const { city, agent, owner } = await openCity(repository, app);
     await seedState(repository, owner, city.id, 0);
     await scheduler.pollOnce();
+    clock.advance(TURN_COOLDOWN_SECONDS * 1000 + 1000);
     const before = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
     await dispatchAndResolve(app, agent, city.id, before);
 
-    // The next turn opens and settles too.
-    clock.advance(TURN_INTERVAL_MS + 1000);
+    // The next turn opens and settles too, each past its own cooldown gate.
+    clock.advance(TURN_COOLDOWN_SECONDS * 1000 + 1000);
     const opened = await scheduler.pollOnce();
     assert.equal(opened.filter((entry) => entry.status === "opened").length, 1);
     const turnTwo = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
     assert.equal(turnTwo.turn, 1);
     assert.equal(turnTwo.turn_status, "open");
+    clock.advance(TURN_COOLDOWN_SECONDS * 1000 + 1000);
     await json(app, auth(agent, {
       method: "POST",
       url: `/api/v1/cities/${city.id}/strategy/resolve`,

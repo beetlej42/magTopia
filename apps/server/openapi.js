@@ -549,9 +549,11 @@ export function createOpenApiDocument(baseUrl) {
             turn: { type: "integer" },
             turn_status: { type: "string" },
             turn_opened_at: { type: ["string", "null"] },
-            turn_deadline_at: { type: ["string", "null"], description: "Server-owned wall-clock deadline of the current turn. Agents cannot change it." },
-            next_turn_unlock_at: { type: ["string", "null"], description: "Server-owned earliest wall-clock time the next turn may open. Agents cannot change it." },
-            settled_by: { type: ["string", "null"], description: "Which authority settled the last turn: agent or the deadline scheduler." },
+            turn_deadline_at: { type: ["string", "null"], description: "Deprecated legacy field, always null. Turns no longer have a deadline that auto-settles; it is kept only for API compatibility and never drives settlement." },
+            next_turn_unlock_at: { type: ["string", "null"], description: "Server-owned cooldown gate. While the current turn is active it is the earliest wall-clock time the Agent may resolve the turn (POST /strategy/resolve is rejected with TURN_NOT_UNLOCKED before it); once the turn is settled it is the earliest time the next turn may open. Agents cannot change it." },
+            settled_by: { type: ["string", "null"], description: "Which authority settled the last turn: agent, or deadline (historical only; deadline settlement no longer exists)." },
+            gameplay_guidance: { type: "array", items: { type: "string" }, description: "Short progressive-disclosure hints (1-3) for the current context, derived from card/placement/incident/turn-lock state. Advisory only; the authoritative contract is the playbook." },
+            playbook_url: { type: "string", description: "Stable URL of the authoritative MAGTOPIA Agent Playbook." },
             strategy: {
               type: "object",
               required: ["incidents", "arcane_officers", "pending_assignments", "cards"],
@@ -779,7 +781,7 @@ export function createOpenApiDocument(baseUrl) {
             agent: { type: "object", properties: { workStarted: { type: "boolean" } } },
             incident: { type: "object", properties: { phaseActive: { type: "boolean" } } },
             nextTurnUnlockAt: { type: ["string", "null"] },
-            turnDeadlineAt: { type: ["string", "null"] }
+            turnDeadlineAt: { type: ["string", "null"], description: "Deprecated legacy field, always null. Never drives settlement." }
           }
         },
         ReportDismissRequest: {

@@ -241,7 +241,7 @@ GET /api/v1/cities/{city_id}/events?after_version=41&limit=100
   "city_version": 42,
   "ruleset_version": "magic-london-mvp@1",
   "turn": 12,
-  "resources": { "coins": 510, "timber": 102, "stone": 96 },
+  "resources": { "coins": 510 },
   "counts": { "buildings": 7, "roads": 31, "pending_orders": 1 },
   "needs": [
     { "kind": "residential", "pressure": 0.72, "reason": "service capacity exceeds nearby housing" }
