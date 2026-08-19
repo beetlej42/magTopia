@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createCityState } from "../src/city/state.js";
-import { createEngineContext, executeCityCommand } from "../src/city/engine.js";
+import { calculateDailyIncome, createEngineContext, executeCityCommand } from "../src/city/engine.js";
 import { confirmBuildingDesign, createBuildingDesignDraft, createBuildingUpgradeDraft } from "../src/city/building-design.js";
 import { blockPerimeterCellIds, districtBlockProgress } from "../src/city/district-layout.js";
 import { districtBuildings, districtSpatialObservations, districtSuggestions } from "../src/city/district-guidance.js";
@@ -28,7 +28,7 @@ function proposal(lotId = "cell-3-3") {
 }
 
 test("city engine is deterministic with injected ids and time", () => {
-  const state = createCityState(world(), { resources: { coins: 999, timber: 999, stone: 999 } });
+  const state = createCityState(world(), { resources: { coins: 999 } });
   const a = executeCityCommand(state, { type: "construct_building", proposal: proposal() }, context());
   const b = executeCityCommand(state, { type: "construct_building", proposal: proposal() }, context());
   assert.deepEqual(a, b);
@@ -37,7 +37,7 @@ test("city engine is deterministic with injected ids and time", () => {
 });
 
 test("named districts persist simple intent while site search returns facts without scores", () => {
-  const initial = createCityState(world(), { resources: { coins: 9999, timber: 9999, stone: 9999 } });
+  const initial = createCityState(world(), { resources: { coins: 9999 } });
   const defined = executeCityCommand(initial, {
     type: "define_district",
     id: "district-lantern",
@@ -69,7 +69,7 @@ test("named districts persist simple intent while site search returns facts with
 });
 
 test("districts expose soft block-scale guidance without rejecting unusual shapes", () => {
-  const state = createCityState(world(), { resources: { coins: 9999, timber: 9999, stone: 9999 } });
+  const state = createCityState(world(), { resources: { coins: 9999 } });
   const oneBlock = executeCityCommand(state, {
     type: "define_district",
     id: "district-small",
@@ -126,7 +126,7 @@ test("districts expose soft block-scale guidance without rejecting unusual shape
 });
 
 test("district observations surface linear frontage and shared-road opportunities as optional guidance", () => {
-  const state = createCityState(world(), { resources: { coins: 9999, timber: 9999, stone: 9999 } });
+  const state = createCityState(world(), { resources: { coins: 9999 } });
   const defined = executeCityCommand(state, {
     type: "define_district",
     id: "district-linear",
@@ -154,7 +154,7 @@ test("district observations surface linear frontage and shared-road opportunitie
 });
 
 test("district building membership includes existing footprints inside new bounds", () => {
-  const state = createCityState(world(), { resources: { coins: 9999, timber: 9999, stone: 9999 } });
+  const state = createCityState(world(), { resources: { coins: 9999 } });
   state.cells["cell-4-4"].occupancy = "building-in-range";
   state.buildings["building-in-range"] = {
     id: "building-in-range",
@@ -177,7 +177,7 @@ test("district building membership includes existing footprints inside new bound
 });
 
 test("cancelling a district releases planning context without deleting city work", () => {
-  const initial = createCityState(world(), { resources: { coins: 9999, timber: 9999, stone: 9999 } });
+  const initial = createCityState(world(), { resources: { coins: 9999 } });
   const defined = executeCityCommand(initial, {
     type: "define_district",
     id: "district-cancelled",
@@ -222,7 +222,7 @@ test("cancelling a district releases planning context without deleting city work
 });
 
 test("production reservation freezes and failure refunds the exact cost", () => {
-  const state = createCityState(world(), { resources: { coins: 999, timber: 999, stone: 999 } });
+  const state = createCityState(world(), { resources: { coins: 999 } });
   const reserved = executeCityCommand(state, { type: "reserve_construction", proposal: proposal(), reservationId: "reservation-1" }, context());
   assert.equal(reserved.accepted, true);
   assert.equal(reserved.state.cells["cell-3-3"].reservation, "reservation-1");
@@ -234,18 +234,65 @@ test("production reservation freezes and failure refunds the exact cost", () => 
   assert.equal(cancelled.state.cells["cell-3-3"].reservation, null);
 });
 
-test("time advances recover resources according to city output", () => {
-  const state = createCityState(world(), { resources: { coins: 999, timber: 999, stone: 999 } });
+test("manual time advance is disabled; daily income is coins-only and settled by the gameplay resolve", () => {
+  const state = createCityState(world(), { resources: { coins: 999 } });
   const built = executeCityCommand(state, { type: "construct_building", proposal: proposal() }, context());
-  const before = built.state.resources.coins;
-  const advanced = executeCityCommand(built.state, { type: "advance_time", hours: 24 }, context());
-  assert.equal(advanced.accepted, true);
-  assert.equal(advanced.dailyProduction.coins, 33);
-  assert.equal(advanced.state.resources.coins, before + 33);
+  assert.equal(built.accepted, true);
+  assert.equal(calculateDailyIncome(built.state).coins, 33, "income is coins-only from base 24 + the building's 9 coin output");
+  assert.ok(!("timber" in calculateDailyIncome(built.state)) && !("stone" in calculateDailyIncome(built.state)));
+
+  const disabled = executeCityCommand(built.state, { type: "advance_time", hours: 24 }, context());
+  assert.equal(disabled.accepted, false);
+  assert.equal(disabled.code, "TIME_ADVANCE_DISABLED");
+  assert.equal(disabled.state.resources.coins, built.state.resources.coins, "a rejected time advance changes nothing");
+});
+
+test("engine city mutations never advance the gameplay turn; only resolveTurn does", () => {
+  const initial = createCityState(world(), { resources: { coins: 9999 } });
+  const startTurn = initial.turn;
+  const defined = executeCityCommand(initial, {
+    type: "define_district",
+    id: "district-no-turn",
+    name: "No Turn District",
+    purpose: "residential",
+    bounds: { minColumn: 2, maxColumn: 8, minRow: 2, maxRow: 8 },
+    actor: "agent:test"
+  }, context());
+  assert.equal(defined.accepted, true);
+  assert.equal(defined.state.turn, startTurn, "defining a district keeps the turn");
+  assert.equal(defined.state.version, startTurn + 1, "the version still advances for concurrency");
+
+  const built = executeCityCommand(defined.state, { type: "construct_building", proposal: proposal("cell-3-3") }, context());
+  assert.equal(built.accepted, true);
+  assert.equal(built.state.turn, startTurn, "constructing a building keeps the turn");
+  assert.equal(built.state.buildings[built.building.id].createdAtTurn, startTurn);
+
+  const road = executeCityCommand(built.state, {
+    type: "connect",
+    from: { kind: "building", id: built.building.id },
+    to: { kind: "node", id: "old_town_entry" },
+    mode: "road",
+    actor: "agent:test"
+  }, context());
+  assert.equal(road.accepted, true);
+  assert.equal(road.state.turn, startTurn, "connecting a road keeps the turn");
+
+  const cancelled = executeCityCommand(road.state, { type: "cancel_district", districtId: "district-no-turn", reason: "testing" }, context());
+  assert.equal(cancelled.accepted, true);
+  assert.equal(cancelled.state.turn, startTurn, "cancelling a district keeps the turn");
+
+  const upgradeProposal = { ...proposal("cell-3-3"), voxelDesign: {
+    generation: { sourceSpec: { floors: 2 } },
+    source: { buildingId: built.building.id },
+    id: "upgrade-x", revision: 2, specHash: "h", site: { lotId: "cell-3-3", footprint: "1x1" }, intent: { name: "Taller House", purpose: "residential", description: "x" }
+  } };
+  const upgraded = executeCityCommand(cancelled.state, { type: "upgrade_building", buildingId: built.building.id, voxelDesign: upgradeProposal.voxelDesign }, context());
+  assert.equal(upgraded.accepted, true);
+  assert.equal(upgraded.state.turn, startTurn, "upgrading a building keeps the turn");
 });
 
 test("generic road endpoints support building-to-cell and node-to-building", () => {
-  const initial = createCityState(world(), { resources: { coins: 9999, timber: 9999, stone: 9999 } });
+  const initial = createCityState(world(), { resources: { coins: 9999 } });
   const built = executeCityCommand(initial, { type: "construct_building", proposal: proposal() }, context());
   const buildingId = built.building.id;
   const toCell = executeCityCommand(built.state, { type: "connect", from: { kind: "building", id: buildingId }, to: { kind: "cell", id: "cell-8-8" }, mode: "road" }, context());
@@ -255,7 +302,7 @@ test("generic road endpoints support building-to-cell and node-to-building", () 
 });
 
 test("building road endpoints preserve the confirmed authoritative entrance cell", () => {
-  const initial = createCityState(world(), { resources: { coins: 9999, timber: 9999, stone: 9999 } });
+  const initial = createCityState(world(), { resources: { coins: 9999 } });
   const multiCell = proposal("cell-3-3");
   multiCell.site = { lotId: "cell-3-3", footprint: "2x2", entrance: "south", entranceCellId: "cell-3-5" };
   const built = executeCityCommand(initial, { type: "construct_building", proposal: multiCell }, context());
@@ -281,7 +328,7 @@ test("voxel buildings upgrade through immutable design lineage without replacing
   }, designContext);
   const confirmed = confirmBuildingDesign(draft, { expected_revision: 1 }, designContext);
   const initialProposal = { ...proposal(), voxelDesign: confirmed };
-  const initial = createCityState(world(), { resources: { coins: 999, timber: 999, stone: 999 } });
+  const initial = createCityState(world(), { resources: { coins: 999 } });
   const built = executeCityCommand(initial, { type: "construct_building", proposal: initialProposal }, context());
   const upgrade = createBuildingUpgradeDraft(built.building, { goal: { type: "add_floor", count: 1 } }, { ...designContext, id: "upgrade-1" });
   const lockedUpgrade = confirmBuildingDesign(upgrade, { expected_revision: 1 }, designContext);

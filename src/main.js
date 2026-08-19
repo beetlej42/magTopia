@@ -1406,14 +1406,6 @@ function renderCityViewerSummary(payload) {
     coins: {
       label: "金币",
       svg: `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.25"></circle><path d="M9.25 8.5h5.5M9.25 12h5.5M9.25 15.5h5.5"></path></svg>`
-    },
-    timber: {
-      label: "木材",
-      svg: `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 5.5h10v13H7z"></path><path d="M7 9h10M7 14h10"></path></svg>`
-    },
-    stone: {
-      label: "石料",
-      svg: `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m5 15 2.2-7.2L12 5l5.3 2.8L19 15l-3.2 4H8.2z"></path><path d="m7.2 7.8 4.8 4.1 5.3-4.1M12 11.9V19"></path></svg>`
     }
   };
   cityViewerResources.replaceChildren(...Object.entries(state.resources ?? {}).map(([name, value]) => {

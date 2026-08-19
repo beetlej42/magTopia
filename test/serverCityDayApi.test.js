@@ -92,6 +92,23 @@ function footprintCellsFor(state, lotId, footprint) {
 }
 
 async function resolveAndPublish(app, repository, { player, agent, city }, { turn }) {
+  const owner = await repository.authenticate(player.access_token);
+  const current = await repository.getCity(owner, city.id);
+  // Mark the current turn as already-scheduled and already-unlocked so the
+  // city-day walk can settle it without waiting for a real cooldown.
+  await repository.transactCity({
+    principal: owner,
+    cityId: city.id,
+    endpoint: "test/cityday-force-unlocked",
+    idempotencyKey: `cityday-force-unlocked-${turn}`,
+    requestBody: {},
+    expectedVersion: current.state.version
+  }, async ({ state }) => {
+    state.gameplay.turnOpenedAt = "2000-01-01T00:00:00.000Z";
+    state.gameplay.nextTurnUnlockAt = "2000-01-01T00:00:00.000Z";
+    state.gameplay.turnDeadlineAt = null;
+    return { nextState: state, response: { forced: true } };
+  });
   const strategy = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
   const settled = await json(app, auth(agent, {
     method: "POST",
@@ -605,6 +622,10 @@ test("integration walk: report -> dismiss -> card -> morning -> agent work -> da
     const unlocked = openNextTurn(state, new Date(Date.now() + 90 * 86_400_000), { turnIntervalMs: 86_400_000, turnDeadlineMs: 86_400_000 });
     const opened = openTurnCardState(unlocked, city.id, { turn: unlocked.turn });
     opened.gameplay.turnOpenedAt = new Date().toISOString();
+    // The cooldown gate for this manually opened turn already elapsed so the
+    // walk can resolve it through the real API in this same test run.
+    opened.gameplay.nextTurnUnlockAt = new Date(Date.now() - 1000).toISOString();
+    opened.gameplay.turnDeadlineAt = null;
     await repository.transactCity({
       principal: owner,
       cityId: city.id,
@@ -650,6 +671,49 @@ test("integration walk: report -> dismiss -> card -> morning -> agent work -> da
     assert.equal(day.phase, "dawn");
     assert.equal(day.report.turn, secondFactsTurn);
     assert.equal(day.report.ready, true);
+  } finally {
+    await app.close();
+  }
+});
+
+test("card offer and turn stay stable across construction/road/district mutations within one turn", async () => {
+  const repository = createMemoryRepository(config);
+  const app = await createApp({ repository, config });
+  try {
+    const { city, player, agent } = await openCity(repository, app);
+    const offerBefore = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
+    assert.equal(offerBefore.turn, 0);
+
+    // Agent performs real city work: district + road + building. None of these
+    // may advance the gameplay turn or re-roll the card offer.
+    const district = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/districts`,
+      headers: { "idempotency-key": "same-turn-district" },
+      payload: { expected_city_version: offerBefore.city_version, name: "Same Turn Quarter", purpose: "residential", bounds: { minColumn: 2, maxColumn: 8, minRow: 2, maxRow: 8 } }
+    }), 201);
+    const sites = await json(app, auth(agent, { method: "POST", url: `/api/v1/cities/${city.id}/site-searches`, payload: { district_id: district.resource.district.id, footprint: "1x1", limit: 10 } }), 200);
+    const site = sites.data[0];
+    const build = {
+      expected_city_version: sites.city_version,
+      district_id: district.resource.district.id,
+      site: { lot_id: site.lotId, footprint: "1x1", entrance: "south" },
+      program: { archetype: "starter_residence", name: "Same Turn House", purpose: "residential" },
+      design: { district_style: "london_common", creative_brief: "A brick cottage." },
+      asset: { mode: "reuse", asset_id: "starter-cottage-001" }
+    };
+    const order = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/construction-orders`,
+      headers: { "idempotency-key": "same-turn-build" },
+      payload: build
+    }), 201);
+    assert.equal(order.status, "completed");
+
+    const offerAfter = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
+    assert.equal(offerAfter.turn, 0, "the turn never advanced from city work");
+    assert.equal(offerAfter.offer.offer_id, offerBefore.offer.offer_id, "the card offer still belongs to the same turn");
+    assert.deepEqual(offerAfter.offer.cards.map((card) => card.card_id), offerBefore.offer.cards.map((card) => card.card_id));
   } finally {
     await app.close();
   }

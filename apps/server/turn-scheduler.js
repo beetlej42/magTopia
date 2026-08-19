@@ -1,16 +1,15 @@
-import { hashSeed } from "../../src/gameplay/random.js";
 import { normalizeScheduler } from "../../src/gameplay/schema.js";
-import { resolveTurn } from "../../src/gameplay/simulation.js";
-import { dueActionFor, initializeTurnSchedule, isTurnOverdue, normalizeTurnSchedule, openNextTurn } from "../../src/gameplay/turn.js";
+import { dueActionFor, initializeTurnSchedule, normalizeTurnSchedule, openNextTurn } from "../../src/gameplay/turn.js";
 import { ensureCardOffer, openTurnCardState } from "../../src/gameplay/cards.js";
 
 // The turn scheduler is the only server-owned wall-clock actor. It never
-// invents gameplay rules: it only (a) opens a settled turn once its persisted
-// unlock time is reached, (b) force-settles an unfinished turn once its
-// persisted deadline has passed through the exact same resolveTurn(), and
-// (c) lazily seeds a schedule for cities that predate scheduling. Every
-// mutation goes through repository.schedulerTransact(), which takes the city
-// row lock and deduplicates by idempotency key, so retries and concurrent
+// settles a turn and never invents gameplay: there is no deadline auto-settle
+// and no offline multi-turn catch-up. It only (a) lazily seeds a schedule for
+// cities that predate scheduling and (b) opens a settled turn once its
+// persisted unlock time is reached. Resolving a turn is always the Agent's /
+// the normal gameplay flow's job, gated by the cooldown `nextTurnUnlockAt`.
+// Every mutation goes through repository.schedulerTransact(), which takes the
+// city row lock and deduplicates by idempotency key, so retries and concurrent
 // Agent resolves can never double-settle a turn.
 export function createTurnScheduler({ repository, config, now = () => new Date(), logger = console }) {
   const schedule = normalizeTurnSchedule(config);
@@ -96,48 +95,6 @@ export function createTurnScheduler({ repository, config, now = () => new Date()
         }
       };
     }
-    if (action === "resolve-deadline") {
-      const gameplay = state.gameplay ?? {};
-      if (["resolved", "reported", "closed"].includes(gameplay.turnStatus)) {
-        return { nextState: null, response: { status: "noop", reason: "already_settled" } };
-      }
-      if (!isTurnOverdue(state, nowValue)) {
-        return { nextState: null, response: { status: "noop", reason: "not_overdue" } };
-      }
-      const assignments = gameplay.pendingAssignments ?? [];
-      const result = resolveTurn(state, { assignments, expectedTurn: state.turn }, schedulerContext(config, cityId, state.turn, nowValue));
-      if (result.error) {
-        // Pending plans are validated on submission, so this should not happen;
-        // still, an unreadable plan must never block the deadline. Fall back to
-        // a settlement without assignments: every open incident then takes the
-        // uniform conservative unaddressed path inside resolveTurn().
-        logger.error?.("Turn scheduler dropped an unreadable pending plan", { cityId, turn: state.turn, code: result.error.code });
-        const fallback = resolveTurn(state, { assignments: [], expectedTurn: state.turn }, schedulerContext(config, cityId, state.turn, nowValue));
-        const nextState = { ...fallback.nextState, gameplay: { ...fallback.nextState.gameplay, pendingAssignments: [] } };
-        return {
-          nextState,
-          response: {
-            status: "deadline_resolved",
-            turn: nextState.turn,
-            settled_by: "deadline",
-            dropped_plan: true,
-            facts: fallback.facts,
-            city_version_after: nextState.version
-          }
-        };
-      }
-      const nextState = { ...result.nextState, gameplay: { ...result.nextState.gameplay, pendingAssignments: [], scheduler: normalizeScheduler(result.nextState.gameplay.scheduler ?? {}) } };
-      return {
-        nextState,
-        response: {
-          status: "deadline_resolved",
-          turn: nextState.turn,
-          settled_by: "deadline",
-          facts: result.facts,
-          city_version_after: nextState.version
-        }
-      };
-    }
     return { nextState: null, response: { status: "noop", reason: "unknown_action" } };
   }
 
@@ -156,23 +113,10 @@ export function createTurnScheduler({ repository, config, now = () => new Date()
   };
 }
 
-function schedulerContext(config, cityId, turn, nowValue) {
-  return {
-    seed: hashSeed(`${cityId}:turn-${turn}`),
-    now: () => nowValue.toISOString(),
-    options: {
-      turnIntervalMs: config.turnIntervalMs,
-      turnDeadlineMs: config.turnDeadlineMs,
-      settlementSource: "deadline"
-    }
-  };
-}
-
 function reasonFor(action) {
   switch (action) {
     case "init": return "city predates turn scheduling; seed wall-clock schedule";
     case "open-next": return "wall-clock unlock reached for the next turn";
-    case "resolve-deadline": return "turn deadline reached without an Agent settlement";
     default: return null;
   }
 }

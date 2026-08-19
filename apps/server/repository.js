@@ -3,8 +3,9 @@ import { getAssetRegistry } from "../../src/city/assets.js";
 import { createId, createSecret, hashRequest, hashSecret } from "./ids.js";
 import { ServiceError } from "./errors.js";
 import { createServiceWorldContract } from "./world.js";
+import { initializeFreshCitySchedule } from "../../src/gameplay/turn.js";
 
-export function createRepository(database, config) {
+export function createRepository(database, config, { now = () => new Date() } = {}) {
   return {
     async seedBuiltinAssets() {
       for (const asset of getAssetRegistry()) {
@@ -53,12 +54,12 @@ export function createRepository(database, config) {
         columns: input.world_columns,
         rows: input.world_rows
       });
-      const state = createCityState(world, {
+      const state = initializeFreshCitySchedule(createCityState(world, {
         cityId: id,
         mapSeed,
         resources: input.resources,
         rulesetVersion: "magic-london-mvp@1"
-      });
+      }), now().toISOString(), config);
       await database.transaction(async (client) => {
         await client.query(
           `INSERT INTO cities(id, owner_player_id, name, visibility, ruleset_version, city_version, state_jsonb)
@@ -99,11 +100,13 @@ export function createRepository(database, config) {
     },
 
     async scanCitiesForScheduler(nowIso) {
+      // Only (a) active turns that still lack a schedule (lazy init) and
+      // (b) settled turns whose unlock slot has elapsed (open the next turn)
+      // are due. Overdue active turns are never due: there is no auto-settle.
       const result = await database.query(
         `SELECT id, city_version, state_jsonb FROM cities
          WHERE (state_jsonb->'gameplay'->>'turnStatus' IN ('open', 'building', 'strategy')
-                AND (state_jsonb->'gameplay'->>'turnDeadlineAt' IS NULL
-                     OR state_jsonb->'gameplay'->>'turnDeadlineAt' <= $1))
+                AND state_jsonb->'gameplay'->>'nextTurnUnlockAt' IS NULL)
             OR (state_jsonb->'gameplay'->>'turnStatus' IN ('resolved', 'reported', 'closed')
                 AND state_jsonb->'gameplay'->>'nextTurnUnlockAt' IS NOT NULL
                 AND state_jsonb->'gameplay'->>'nextTurnUnlockAt' <= $1)

@@ -34,7 +34,7 @@ test("water cannot host buildings and explicit water cells become reusable bridg
       })
     }
   };
-  const state = createCityState(world, { resources: { coins: 9999, timber: 9999, stone: 9999 } });
+  const state = createCityState(world, { resources: { coins: 9999 } });
   assert.equal(canOccupyFootprint(state, "cell-2-0", "1x1").ok, false);
   const first = solveConnection(state, ["cell-1-0"], { toCellId: "cell-4-0" }, "east", "cell-2-0");
   assert.equal(first.feasible, true);
@@ -43,7 +43,7 @@ test("water cannot host buildings and explicit water cells become reusable bridg
   first.roadCells.forEach((cellId) => { state.cells[cellId].infrastructure = "road"; });
   const reused = solveConnection(state, ["cell-1-0"], { toCellId: "cell-4-0" }, "east", "cell-2-0");
   assert.deepEqual(reused.bridgeCells, []);
-  assert.deepEqual(reused.cost, { coins: 0, timber: 0, stone: 0 });
+  assert.deepEqual(reused.cost, { coins: 0 });
 });
 
 test("headless subagent scenario builds three diverse connected districts without vision", { timeout: 30_000 }, () => {

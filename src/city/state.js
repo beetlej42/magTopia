@@ -27,7 +27,10 @@ export function createCityState(worldContract, options = {}) {
     },
     turn: 0,
     elapsedHours: 0,
-    resources: { coins: 600, timber: 120, stone: 120, ...(options.resources ?? {}) },
+    // New-city economy: coins are the single core consumable resource. No
+    // timber/stone initialization for new cities; legacy construction fields
+    // were consolidated to the coins-only economy.
+    resources: { coins: 600, ...(options.resources ?? {}) },
     gameplay: {
       schemaVersion: 1,
       turnStatus: "open",
@@ -55,7 +58,7 @@ export function createCityState(worldContract, options = {}) {
         placements: {}
       }
     },
-    economy: { lastIncome: { coins: 0, timber: 0, stone: 0 }, lifetimeIncome: { coins: 0, timber: 0, stone: 0 } },
+    economy: { lastIncome: { coins: 0 }, lifetimeIncome: { coins: 0 } },
     cells,
     districts: {},
     buildings: {},

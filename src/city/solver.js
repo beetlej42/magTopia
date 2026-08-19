@@ -3,8 +3,8 @@ import { districtBlockForCell, districtBlockProgress } from "./district-layout.j
 import { districtSuggestions, districtSpatialObservations } from "./district-guidance.js";
 import { canOccupyFootprint } from "./state.js";
 
-const ROAD_COST = { coins: 8, timber: 1, stone: 1 };
-const BRIDGE_COST = { coins: 30, timber: 5, stone: 8 };
+const ROAD_COST = { coins: 8 };
+const BRIDGE_COST = { coins: 30 };
 const DIRECTIONS = ["north", "east", "south", "west"];
 const DIRECTION_OFFSETS = {
   north: [0, -1],
@@ -210,7 +210,7 @@ function firstRouteableDirection(state, cellId) {
   }) ?? "south";
 }
 
-function emptyRoute() { return { feasible: true, route: [], roadCells: [], bridgeCells: [], cost: { coins: 0, timber: 0, stone: 0 } }; }
+function emptyRoute() { return { feasible: true, route: [], roadCells: [], bridgeCells: [], cost: { coins: 0 } }; }
 function allowedEntrances(state, cells) { return DIRECTIONS.filter((direction) => getEntranceFrontageCells(state, cells, direction).length > 0); }
 function adjacentRoad(state, cells, direction) {
   return getEntranceFrontageCells(state, cells, direction).some((cellId) => (
@@ -440,8 +440,10 @@ function parseCellId(cellId) {
   const match = /^cell-(-?\d+)-(-?\d+)$/.exec(cellId ?? "");
   return match ? { column: Number(match[1]), row: Number(match[2]) } : { column: 0, row: 0 };
 }
-function buildingCostFor(footprint, archetype) { const area = getFootprintCells({ column: 0, row: 0 }, footprint).length; const landmark = /station|hall|library|academy/.test(archetype); return { coins: area * (landmark ? 90 : 45), timber: area * 8, stone: area * (landmark ? 16 : 8) }; }
+// Coins-only construction costs: the authoritative economy uses a single core
+// resource. The legacy timber/stone cost ledger was consolidated away.
+function buildingCostFor(footprint, archetype) { const area = getFootprintCells({ column: 0, row: 0 }, footprint).length; const landmark = /station|hall|library|academy/.test(archetype); return { coins: area * (landmark ? 90 : 45) }; }
 function scaleCost(cost, amount) { return Object.fromEntries(Object.entries(cost).map(([key, value]) => [key, value * amount])); }
 function scaleCosts(cost, amount) { return scaleCost(cost, amount); }
-function addCosts(...costs) { return costs.reduce((sum, cost) => ({ coins: sum.coins + cost.coins, timber: sum.timber + cost.timber, stone: sum.stone + cost.stone }), { coins: 0, timber: 0, stone: 0 }); }
-function subtractCosts(resources, cost) { return { coins: resources.coins - cost.coins, timber: resources.timber - cost.timber, stone: resources.stone - cost.stone }; }
+function addCosts(...costs) { return costs.reduce((sum, cost) => ({ coins: sum.coins + cost.coins }), { coins: 0 }); }
+function subtractCosts(resources, cost) { return { coins: resources.coins - cost.coins }; }

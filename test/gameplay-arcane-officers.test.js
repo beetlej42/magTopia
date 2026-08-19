@@ -10,7 +10,7 @@ function world(columns = 12, rows = 12) {
 }
 
 function stateWithWizardPopulation(wizards) {
-  const state = createCityState(world(), { resources: { coins: 99999, timber: 99999, stone: 99999 } });
+  const state = createCityState(world(), { resources: { coins: 99999 } });
   state.gameplay.population.wizards.current = wizards;
   return state;
 }

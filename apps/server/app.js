@@ -36,6 +36,8 @@ import {
 } from "../../src/gameplay/cards.js";
 import { getCard } from "../../src/gameplay/card-catalog.js";
 import { completedReportTurn, deriveCityDayPresentation } from "../../src/gameplay/city-day.js";
+import { playbookGuidance } from "../../src/gameplay/guidance.js";
+import { isTurnResolveLocked, initializeTurnSchedule, normalizeTurnSchedule } from "../../src/gameplay/turn.js";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PLAYBOOK_PATH = path.resolve(SERVER_DIR, "../../docs/agent-playbook.md");
@@ -355,7 +357,7 @@ export async function createApp({ repository, config, logger = false, now = () =
         design_id: linkedDesign.id,
         design_revision: linkedDesign.revision,
         errors: baseMatches ? [] : ["Building changed after this upgrade design was created"],
-        cost: { coins: 0, timber: 0, stone: 0 },
+        cost: { coins: 0 },
         resources_after: state.resources
       };
     }
@@ -567,17 +569,24 @@ export async function createApp({ repository, config, logger = false, now = () =
     const principal = await authenticate(repository, request, "city:read");
     const { row, state } = await repository.getCity(principal, request.params.cityId);
     const gameplay = state.gameplay ?? {};
+    const nowValue = now();
     return {
       city_id: row.id,
       city_version: Number(row.city_version),
       turn: state.turn,
       turn_status: gameplay.turnStatus ?? "open",
       turn_opened_at: gameplay.turnOpenedAt ?? null,
-      turn_deadline_at: gameplay.turnDeadlineAt ?? null,
+      // Deprecated legacy field, always null: turns no longer carry a deadline
+      // that auto-settles. Kept only for API compatibility.
+      turn_deadline_at: null,
       next_turn_unlock_at: gameplay.nextTurnUnlockAt ?? null,
       settled_by: gameplay.scheduler?.settledBy ?? null,
       strategy: strategyPayload(state),
-      last_turn_facts: gameplay.lastTurnFacts ?? null
+      last_turn_facts: gameplay.lastTurnFacts ?? null,
+      // Progressive playbook disclosure: a short context hint plus a pointer to
+      // the authoritative playbook. Never the full document.
+      gameplay_guidance: playbookGuidance(state, { turnLocked: isTurnResolveLocked(state, nowValue) ? gameplay.nextTurnUnlockAt : null }),
+      playbook_url: `${config.publicBaseUrl}/agent/playbook.md`
     };
   });
 
@@ -634,6 +643,47 @@ export async function createApp({ repository, config, logger = false, now = () =
       action: "strategy_resolve",
       reason: body.actor_note ?? "request_system_settlement"
     }, async ({ state }) => {
+      const gameplay = state.gameplay ?? {};
+      // An active turn must always carry its cooldown gate before it can be
+      // resolved. A fresh / pre-scheduler city has none (turnOpenedAt and
+      // nextTurnUnlockAt are still null), so write the gate lazily right here
+      // instead of letting the resolve fail-open: the client re-reads and
+      // retries once the gate elapses. This is the same schedule the scheduler
+      // would lazily seed, so whichever runs first wins and the other no-ops.
+      if (!CLOSED_TURN_STATUSES.has(gameplay.turnStatus) && gameplay.nextTurnUnlockAt == null) {
+        const initialized = initializeTurnSchedule(state, now(), config);
+        if (initialized) {
+          const withCards = ensureCardOffer(initialized, request.params.cityId);
+          const gate = withCards.gameplay.nextTurnUnlockAt;
+          return {
+            nextState: withCards,
+            response: {
+              command_id: createId("command"),
+              status: "rejected",
+              code: "TURN_NOT_UNLOCKED",
+              message: "The turn was not scheduled yet, so its cooldown gate was written now. Wait until next_turn_unlock_at and resolve again.",
+              next_turn_unlock_at: gate,
+              city_version_after: withCards.version,
+              errors: [{ code: "TURN_NOT_UNLOCKED", message: `Turn ${state.turn} just received its cooldown gate; resolution unlocks at ${gate}` }]
+            }
+          };
+        }
+      }
+      if (isTurnResolveLocked(state, now())) {
+        const nextTurnUnlockAt = state.gameplay?.nextTurnUnlockAt ?? null;
+        return {
+          nextState: null,
+          response: {
+            command_id: createId("command"),
+            status: "rejected",
+            code: "TURN_NOT_UNLOCKED",
+            message: "The turn cannot be resolved before its cooldown gate elapses; wait until next_turn_unlock_at and resolve again.",
+            next_turn_unlock_at: nextTurnUnlockAt,
+            city_version_after: state.version,
+            errors: [{ code: "TURN_NOT_UNLOCKED", message: `Turn ${state.turn} is still cooling down; resolution unlocks at ${nextTurnUnlockAt ?? "a server-assigned time"}` }]
+          }
+        };
+      }
       const result = resolveTurn(state, { assignments: state.gameplay?.pendingAssignments ?? [], expectedTurn: state.turn }, strategyContext(config, now));
       if (result.error) {
         return { nextState: null, response: rejectedStrategyResponse(result.error.code, result.error.message, result.error.assignmentErrors ?? null) };
@@ -1181,8 +1231,7 @@ function strategyContext(config, now) {
     seed,
     now: () => now().toISOString(),
     options: {
-      turnIntervalMs: config.turnIntervalMs,
-      turnDeadlineMs: config.turnDeadlineMs,
+      ...normalizeTurnSchedule(config),
       settlementSource: "agent"
     }
   };
@@ -1395,7 +1444,7 @@ function districtResponse(state, district) {
   };
 }
 function numberParam(value, fallback) { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : fallback; }
-function subtract(a, b) { return { coins: a.coins - b.coins, timber: a.timber - b.timber, stone: a.stone - b.stone }; }
+function subtract(a, b) { return { coins: a.coins - b.coins }; }
 function negativeKeys(value) { return value ? Object.entries(value).filter(([, amount]) => amount < 0).map(([key]) => key) : []; }
 
 function summarizeCity(row, config) {
@@ -1440,7 +1489,10 @@ function agentSnapshot(row, state, events, orders, config) {
       spatial_query: `${config.publicBaseUrl}/api/v1/cities/${row.id}/spatial`,
       buildings: `${config.publicBaseUrl}/api/v1/cities/${row.id}/buildings`,
       events: `${config.publicBaseUrl}/api/v1/cities/${row.id}/events?after_version=${row.city_version}`
-    }
+    },
+    // Progressive playbook disclosure: a short context-appropriate hint, never
+    // the full playbook. The authoritative contract lives at links.playbook.
+    gameplay_guidance: playbookGuidance(state)
   };
 }
 

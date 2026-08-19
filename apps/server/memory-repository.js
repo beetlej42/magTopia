@@ -3,7 +3,7 @@ import path from "node:path";
 import { createCityState } from "../../src/city/state.js";
 import { getAssetRegistry } from "../../src/city/assets.js";
 import { createServiceWorldContract } from "./world.js";
-import { ACTIVE_TURN_STATUSES, SETTLED_TURN_STATUSES } from "../../src/gameplay/turn.js";
+import { ACTIVE_TURN_STATUSES, SETTLED_TURN_STATUSES, initializeFreshCitySchedule } from "../../src/gameplay/turn.js";
 import { createId, createSecret, hashRequest } from "./ids.js";
 import { ServiceError } from "./errors.js";
 
@@ -12,6 +12,7 @@ import { ServiceError } from "./errors.js";
 // without one it remains an isolated process-local repository for tests.
 export function createMemoryRepository(config, options = {}) {
   const storagePath = options.storagePath ? path.resolve(options.storagePath) : null;
+  const now = options.now ?? (() => new Date());
   const players = new Map();
   const credentials = new Map();
   const capabilities = new Map();
@@ -54,12 +55,12 @@ export function createMemoryRepository(config, options = {}) {
         columns: input.world_columns,
         rows: input.world_rows
       });
-      const state = createCityState(world, {
+      const state = initializeFreshCitySchedule(createCityState(world, {
         cityId: id,
         mapSeed,
-        resources: input.resources ?? { coins: 100000, timber: 100000, stone: 100000 },
+        resources: input.resources,
         rulesetVersion: "magic-london-mvp@1"
-      });
+      }), now().toISOString(), config);
       const row = {
         id,
         owner_player_id: principal.id,
@@ -189,12 +190,15 @@ export function createMemoryRepository(config, options = {}) {
     },
 
     async scanCitiesForScheduler(nowIso) {
+      // Only active turns missing a schedule (lazy init) and settled turns whose
+      // unlock slot elapsed (open the next turn) are due. Active overdue turns
+      // are never due: there is no deadline auto-settle.
       const due = [];
       for (const row of cities.values()) {
         const gameplay = row.state_jsonb.gameplay ?? {};
         const active = ACTIVE_TURN_STATUSES.has(gameplay.turnStatus);
         const settled = SETTLED_TURN_STATUSES.has(gameplay.turnStatus);
-        if (active && (gameplay.turnDeadlineAt == null || gameplay.turnDeadlineAt <= nowIso)) due.push(row);
+        if (active && gameplay.nextTurnUnlockAt == null) due.push(row);
         else if (settled && gameplay.nextTurnUnlockAt != null && gameplay.nextTurnUnlockAt <= nowIso) due.push(row);
       }
       return due;
