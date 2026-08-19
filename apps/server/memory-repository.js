@@ -3,7 +3,7 @@ import path from "node:path";
 import { createCityState } from "../../src/city/state.js";
 import { getAssetRegistry } from "../../src/city/assets.js";
 import { createServiceWorldContract } from "./world.js";
-import { ACTIVE_TURN_STATUSES, SETTLED_TURN_STATUSES } from "../../src/gameplay/turn.js";
+import { ACTIVE_TURN_STATUSES, SETTLED_TURN_STATUSES, initializeFreshCitySchedule } from "../../src/gameplay/turn.js";
 import { createId, createSecret, hashRequest } from "./ids.js";
 import { ServiceError } from "./errors.js";
 
@@ -12,6 +12,7 @@ import { ServiceError } from "./errors.js";
 // without one it remains an isolated process-local repository for tests.
 export function createMemoryRepository(config, options = {}) {
   const storagePath = options.storagePath ? path.resolve(options.storagePath) : null;
+  const now = options.now ?? (() => new Date());
   const players = new Map();
   const credentials = new Map();
   const capabilities = new Map();
@@ -54,12 +55,12 @@ export function createMemoryRepository(config, options = {}) {
         columns: input.world_columns,
         rows: input.world_rows
       });
-      const state = createCityState(world, {
+      const state = initializeFreshCitySchedule(createCityState(world, {
         cityId: id,
         mapSeed,
         resources: input.resources ?? { coins: 100000 },
         rulesetVersion: "magic-london-mvp@1"
-      });
+      }), now().toISOString(), config);
       const row = {
         id,
         owner_player_id: principal.id,

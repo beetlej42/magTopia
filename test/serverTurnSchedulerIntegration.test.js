@@ -23,7 +23,7 @@ test("turn scheduler never auto-settles and opens the next turn at the unlock sl
   const database = createDatabase(databaseUrl);
   await migrateDatabase(database);
   await database.query("TRUNCATE agent_action_log, outbox_jobs, construction_orders, asset_jobs, command_receipts, city_events, agent_credentials, agent_capabilities, city_memberships, cities, asset_definitions, players CASCADE");
-  const repository = createRepository(database, config);
+  const repository = createRepository(database, config, { now: clock.now });
 
   const clock = fakeClock();
   const app = await createApp({ repository, config, now: clock.now, logger: false });
@@ -99,7 +99,7 @@ test("turn scheduler never auto-settles and opens the next turn at the unlock sl
 
     // A restarted server + scheduler rediscovers the settled city at its unlock
     // slot and only opens the next turn; it never settles again.
-    const restarted = createRepository(database, config);
+    const restarted = createRepository(database, config, { now: clock.now });
     const app2 = await createApp({ repository: restarted, config, now: clock.now, logger: false });
     const scheduler2 = createTurnScheduler({ repository: restarted, config, now: clock.now, logger: { error() {} } });
     try {

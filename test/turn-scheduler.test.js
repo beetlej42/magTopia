@@ -47,39 +47,64 @@ async function openCity(app, repository) {
   return { player, city, owner, agent };
 }
 
-test("a fresh city receives a cooldown schedule from the first scheduler poll", async () => {
+test("a fresh city is scheduled with a cooldown gate at creation, before any scheduler poll", async () => {
   const clock = fakeClock();
-  const repository = createMemoryRepository(config);
+  const repository = createMemoryRepository(config, { now: clock.now });
   const { app, scheduler } = await setup(clock, repository);
   try {
     const { city } = await openCity(app, repository);
-    const results = await scheduler.pollOnce();
-    assert.equal(results.length, 1);
-    assert.equal(results[0].status, "opened");
-
     const { state } = await repository.getCityForScheduler(city.id);
     assert.equal(state.gameplay.turnStatus, "open");
-    assert.equal(state.gameplay.turnOpenedAt, clock.iso());
-    assert.equal(state.gameplay.turnDeadlineAt, null, "no deadline auto-settle is ever written");
+    assert.equal(state.gameplay.turnOpenedAt, clock.iso(), "the cooldown starts from city creation");
     assert.equal(state.gameplay.nextTurnUnlockAt, new Date(clock.now().getTime() + TURN_COOLDOWN_SECONDS * 1000).toISOString());
+    assert.equal(state.gameplay.turnDeadlineAt, null, "no deadline auto-settle is ever written");
+
+    const results = await scheduler.pollOnce();
+    assert.equal(results.length, 0, "an already-scheduled fresh city is not due for lazy init");
+    const after = (await repository.getCityForScheduler(city.id)).state;
+    assert.equal(after.gameplay.turnOpenedAt, state.gameplay.turnOpenedAt, "the scheduler does not re-seed an already-scheduled city");
   } finally {
     await app.close();
   }
 });
 
-test("a fresh city is gated by its cooldown even before the first scheduler poll", async () => {
+test("cooldown counts from city creation, not from the first resolve", async () => {
   const clock = fakeClock();
-  const repository = createMemoryRepository(config);
+  const repository = createMemoryRepository(config, { now: clock.now });
   const { app } = await setup(clock, repository);
   try {
     const { city, agent } = await openCity(app, repository);
-    // No scheduler.pollOnce() here: the city is still unscheduled.
+    const createdAt = clock.iso();
+    // No scheduler poll and no earlier resolve: the Agent simply works for a
+    // while, then resolves for the first time once the creation gate has gone.
+    clock.advance(TURN_COOLDOWN_SECONDS * 1000 + 1000);
+    const before = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
+    assert.equal(before.next_turn_unlock_at, new Date(new Date(createdAt).getTime() + TURN_COOLDOWN_SECONDS * 1000).toISOString(), "the gate is anchored to creation");
+
+    const settled = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/strategy/resolve`,
+      headers: { "idempotency-key": "resolve-from-created-gate" },
+      payload: { expected_city_version: before.city_version }
+    }), 200);
+    assert.equal(settled.status, "resolved", "the first resolve succeeds once the creation-time cooldown elapsed");
+    assert.equal(settled.facts.wallClock.openedAt, createdAt, "the cooldown was counted from turn open, not from the first resolve");
+  } finally {
+    await app.close();
+  }
+});
+
+test("a fresh city is gated by its cooldown from creation even before the first scheduler poll", async () => {
+  const clock = fakeClock();
+  const repository = createMemoryRepository(config, { now: clock.now });
+  const { app } = await setup(clock, repository);
+  try {
+    const { city, agent } = await openCity(app, repository);
+    // No scheduler.pollOnce() here: the gate already exists from creation.
     const before = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
     assert.equal(before.turn_status, "open");
-    assert.equal(before.next_turn_unlock_at, null, "a fresh city has no schedule yet");
+    assert.ok(before.next_turn_unlock_at, "a fresh city already carries its cooldown gate");
 
-    // An immediate resolve must not fail-open: it lazy-inits the gate and
-    // rejects with TURN_NOT_UNLOCKED instead of settling.
     const locked = await app.inject(auth(agent, {
       method: "POST",
       url: `/api/v1/cities/${city.id}/strategy/resolve`,
@@ -88,10 +113,10 @@ test("a fresh city is gated by its cooldown even before the first scheduler poll
     }));
     assert.equal(locked.statusCode, 422);
     assert.equal(locked.json().code, "TURN_NOT_UNLOCKED");
-    assert.ok(locked.json().next_turn_unlock_at, "the rejection carries the written gate");
+    assert.equal(locked.json().next_turn_unlock_at, before.next_turn_unlock_at, "the gate is the one written at creation");
 
     const scheduled = await repository.getCityForScheduler(city.id);
-    assert.equal(scheduled.state.gameplay.nextTurnUnlockAt, locked.json().next_turn_unlock_at, "the lazy-init persisted the cooldown gate");
+    assert.equal(scheduled.state.gameplay.nextTurnUnlockAt, before.next_turn_unlock_at);
     assert.equal(scheduled.state.gameplay.turnOpenedAt, clock.iso());
     assert.equal(scheduled.state.turn, 0, "a rejected resolve advances nothing");
 
@@ -100,7 +125,7 @@ test("a fresh city is gated by its cooldown even before the first scheduler poll
       method: "POST",
       url: `/api/v1/cities/${city.id}/strategy/resolve`,
       headers: { "idempotency-key": "resolve-fresh-unlocked" },
-      payload: { expected_city_version: scheduled.state.version }
+      payload: { expected_city_version: before.city_version }
     }), 200);
     assert.equal(settled.status, "resolved");
     assert.equal(settled.turn, 1);
@@ -111,7 +136,7 @@ test("a fresh city is gated by its cooldown even before the first scheduler poll
 
 test("resolve before the cooldown elapses is rejected with TURN_NOT_UNLOCKED and succeeds after", async () => {
   const clock = fakeClock();
-  const repository = createMemoryRepository(config);
+  const repository = createMemoryRepository(config, { now: clock.now });
   const { app, scheduler } = await setup(clock, repository);
   try {
     const { city, agent } = await openCity(app, repository);
@@ -153,7 +178,7 @@ test("resolve before the cooldown elapses is rejected with TURN_NOT_UNLOCKED and
 
 test("wall-clock far past the cooldown never auto-settles a turn without an active resolve", async () => {
   const clock = fakeClock();
-  const repository = createMemoryRepository(config);
+  const repository = createMemoryRepository(config, { now: clock.now });
   const { app, scheduler } = await setup(clock, repository);
   try {
     const { city } = await openCity(app, repository);
@@ -176,7 +201,7 @@ test("wall-clock far past the cooldown never auto-settles a turn without an acti
 
 test("the scheduler opens exactly one next turn at the unlock slot and never manufactures turns", async () => {
   const clock = fakeClock();
-  const repository = createMemoryRepository(config);
+  const repository = createMemoryRepository(config, { now: clock.now });
   const { app, scheduler } = await setup(clock, repository);
   try {
     const { city, agent } = await openCity(app, repository);
@@ -212,7 +237,7 @@ test("the scheduler opens exactly one next turn at the unlock slot and never man
 
 test("changing the wall clock without a scheduler poll changes no gameplay state", async () => {
   const clock = fakeClock();
-  const repository = createMemoryRepository(config);
+  const repository = createMemoryRepository(config, { now: clock.now });
   const { app, scheduler } = await setup(clock, repository);
   try {
     const { city } = await openCity(app, repository);
@@ -234,7 +259,7 @@ test("a server restart re-discovers unlockable turns from persisted timestamps",
   const storageDir = mkdtempSync(path.join(os.tmpdir(), "magictown-scheduler-"));
   const storagePath = path.join(storageDir, "state.json");
 
-  const first = createMemoryRepository(config, { storagePath });
+  const first = createMemoryRepository(config, { storagePath, now: clock.now });
   const app1 = await createApp({ repository: first, config, now: clock.now, logger: false });
   const scheduler1 = createTurnScheduler({ repository: first, config, now: clock.now, logger: { error() {} } });
   let cityId;
@@ -257,7 +282,7 @@ test("a server restart re-discovers unlockable turns from persisted timestamps",
     await app1.close();
   }
 
-  const second = createMemoryRepository(config, { storagePath });
+  const second = createMemoryRepository(config, { storagePath, now: clock.now });
   const app2 = await createApp({ repository: second, config, now: clock.now, logger: false });
   const scheduler2 = createTurnScheduler({ repository: second, config, now: clock.now, logger: { error() {} } });
   try {
@@ -277,7 +302,7 @@ test("a server restart re-discovers unlockable turns from persisted timestamps",
 
 test("the strategy context exposes cooldown fields read-only plus playbook guidance", async () => {
   const clock = fakeClock();
-  const repository = createMemoryRepository(config);
+  const repository = createMemoryRepository(config, { now: clock.now });
   const { app, scheduler } = await setup(clock, repository);
   try {
     const { city, agent } = await openCity(app, repository);
@@ -317,7 +342,7 @@ test("OpenAPI advertises the cooldown read-only fields and guidance", async () =
 
 test("Agent API cannot forge unlock, deadline, force, or scheduler trigger fields", async () => {
   const clock = fakeClock();
-  const repository = createMemoryRepository(config);
+  const repository = createMemoryRepository(config, { now: clock.now });
   const { app } = await setup(clock, repository);
   try {
     const { city, agent } = await openCity(app, repository);
@@ -358,7 +383,7 @@ test("Agent API cannot forge unlock, deadline, force, or scheduler trigger field
     }
 
     const after = await repository.getCityForScheduler(city.id);
-    assert.equal(after.state.gameplay.nextTurnUnlockAt, null, "no unlock was forged into state (no scheduler poll happened)");
+    assert.equal(after.state.gameplay.nextTurnUnlockAt, before.next_turn_unlock_at, "no unlock was forged into state; the creation gate is untouched");
     assert.equal(after.state.gameplay.turnDeadlineAt, null, "no deadline was forged into state");
     assert.equal(after.state.turn, 0);
   } finally {
@@ -462,7 +487,7 @@ test("a new city resource contract is coins-only with a single authoritative led
 
 test("construction spend survives settlement: balance after resolve is the debited base plus income", async () => {
   const clock = fakeClock();
-  const repository = createMemoryRepository(config);
+  const repository = createMemoryRepository(config, { now: clock.now });
   const { app, scheduler } = await setup(clock, repository);
   try {
     const { city, agent } = await openCity(app, repository);

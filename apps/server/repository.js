@@ -3,8 +3,9 @@ import { getAssetRegistry } from "../../src/city/assets.js";
 import { createId, createSecret, hashRequest, hashSecret } from "./ids.js";
 import { ServiceError } from "./errors.js";
 import { createServiceWorldContract } from "./world.js";
+import { initializeFreshCitySchedule } from "../../src/gameplay/turn.js";
 
-export function createRepository(database, config) {
+export function createRepository(database, config, { now = () => new Date() } = {}) {
   return {
     async seedBuiltinAssets() {
       for (const asset of getAssetRegistry()) {
@@ -53,12 +54,12 @@ export function createRepository(database, config) {
         columns: input.world_columns,
         rows: input.world_rows
       });
-      const state = createCityState(world, {
+      const state = initializeFreshCitySchedule(createCityState(world, {
         cityId: id,
         mapSeed,
         resources: input.resources,
         rulesetVersion: "magic-london-mvp@1"
-      });
+      }), now().toISOString(), config);
       await database.transaction(async (client) => {
         await client.query(
           `INSERT INTO cities(id, owner_player_id, name, visibility, ruleset_version, city_version, state_jsonb)

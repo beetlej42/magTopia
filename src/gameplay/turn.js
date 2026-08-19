@@ -34,6 +34,28 @@ export function normalizeTurnSchedule(config = {}) {
   return { turnCooldownMs: cooldownMs };
 }
 
+// Writes the cooldown gate as part of a fresh city's initial state (no version
+// bump: this is creation, not a mutation). turnOpenedAt and nextTurnUnlockAt
+// are persisted together with the city so the cooldown starts from the moment
+// the turn opened, regardless of when the scheduler first polls or the Agent
+// first resolves. The scheduler's lazy init and the resolve-time lazy init
+// remain as fallbacks for legacy / abnormal states that have no schedule.
+export function initializeFreshCitySchedule(state, now, config = {}) {
+  const schedule = normalizeTurnSchedule(config);
+  const openedAt = new Date(now).toISOString();
+  return {
+    ...state,
+    gameplay: {
+      ...(state.gameplay ?? {}),
+      turnStatus: state.gameplay?.turnStatus ?? "open",
+      turnOpenedAt: openedAt,
+      nextTurnUnlockAt: new Date(new Date(openedAt).getTime() + schedule.turnCooldownMs).toISOString(),
+      turnDeadlineAt: null,
+      scheduler: normalizeScheduler({ openedAt })
+    }
+  };
+}
+
 export function needsTurnScheduleInit(state) {
   const gameplay = state?.gameplay ?? {};
   if (ACTIVE_TURN_STATUSES.has(gameplay.turnStatus) && gameplay.nextTurnUnlockAt == null) return true;
