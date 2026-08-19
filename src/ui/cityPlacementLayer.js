@@ -159,8 +159,11 @@ export function createCityPlacementLayer() {
   }
 
   // Target shape: { hasTarget, isLegal, footprintCells, cells, entrance,
-  // footprintColumns, footprintRows, previewSpec? }. Only renders while
-  // hasTarget is true.
+  // footprintColumns, footprintRows, previewSource? }. Only renders while
+  // hasTarget is true. `previewSource` is the normalized preview produced by
+  // resolveSpecialStructurePreview — currently a `voxel-spec` built from the
+  // building grammar; a future `cardId -> prefab` source renders identically
+  // through this same branch without touching placement state/target logic.
   function showGhost(target = {}) {
     if (!target?.hasTarget || !target?.cells?.length) {
       clearGhost();
@@ -168,14 +171,16 @@ export function createCityPlacementLayer() {
     }
     const isLegal = Boolean(target.isLegal);
     const color = isLegal ? VALID_COLOR : INVALID_COLOR;
-    const specId = target.previewSpec?.id ?? "";
+    const source = target.previewSource ?? null;
+    const spec = source?.kind === "voxel-spec" ? source.spec : null;
+    const sourceKey = source?.kind === "voxel-spec" ? `voxel:${source.spec?.id ?? ""}` : (source?.kind ?? "massing");
     const key = [
       target.lotId ?? "",
       target.footprintColumns ?? 0,
       target.footprintRows ?? 0,
       target.entrance ?? "",
       isLegal ? "legal" : "invalid",
-      specId,
+      sourceKey,
       radius.toFixed(3),
       cellWorldSize.toFixed(3)
     ].join("|");
@@ -190,10 +195,10 @@ export function createCityPlacementLayer() {
     ghost.name = "CityPlacementGhost";
     ghostMaterial.color.set(color);
 
-    const preview = specId ? getCachedPreview(target.previewSpec) : null;
+    const preview = spec ? getCachedPreview(spec) : null;
     if (preview) {
       ghost.userData.ghostMode = "voxel-building-preview";
-      placeVoxelPreview(ghost, preview, target);
+      placeVoxelPreview(ghost, preview, spec, target);
     } else {
       ghost.userData.ghostMode = "massing-voxel-fallback";
       buildMassing(ghost, target);
@@ -215,14 +220,14 @@ export function createCityPlacementLayer() {
     return true;
   }
 
-  function placeVoxelPreview(ghost, preview, target) {
+  function placeVoxelPreview(ghost, preview, spec, target) {
     let cx = 0;
     let cz = 0;
     for (const cell of target.cells) {
       cx += Number(cell.centerX) / target.cells.length;
       cz += Number(cell.centerZ) / target.cells.length;
     }
-    const scale = previewFootprintScale(target.previewSpec, target.footprintColumns, target.footprintRows, cellWorldSize);
+    const scale = previewFootprintScale(spec, target.footprintColumns, target.footprintRows, cellWorldSize);
     preview.scale.set(scale.x, 1, scale.z);
     // Entrance yaw (matching the city renderer) is a local +Y rotation composed
     // after the sphere orientation, so the door faces the requested entrance

@@ -2622,7 +2622,7 @@ function updateInteractivePlacement() {
   });
   controller.setPlacementTarget(target, { viewMode });
   if (viewMode === "near") {
-    cityPlacementLayer.showGhost({ ...target, previewSpec: placement.previewSpec });
+    cityPlacementLayer.showGhost({ ...target, previewSource: placement.previewSource });
   } else {
     cityPlacementLayer.hideGhost();
   }

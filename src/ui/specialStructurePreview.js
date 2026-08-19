@@ -9,12 +9,33 @@
 // roof profile so the preview carries an actual building silhouette (tower,
 // shopfront, service station, statue, herb plot) instead of a generic cube.
 //
+// The placement pipeline stays replaceable behind `resolveSpecialStructurePreview`:
+// it currently returns a `{ kind: "voxel-spec" }` preview source rendered from
+// the grammar, but the long-term rule is that card-bound special structures are
+// fixed landmark prefabs. A future `cardId -> prefab/asset factory` only needs
+// to return a new preview source kind (e.g. `{ kind: "prefab", object }`) from
+// this resolver — placement session/target state and the ghost renderer consume
+// the normalized source, so no placement logic needs to be rewritten. The voxel
+// spec is the accepted MVP/fallback that remains behind that boundary.
+//
 // The placement layer clones this preview, replaces its materials with the
 // translucent ghost material, and orients it on the sphere; the preview is
 // cached per card so panning across cells never rebuilds the voxel geometry.
 
 import { createBuildingSpec } from "../generators/voxelBuildingGrammar.js";
 import { createVoxelBuildingFromSpec, VOXEL_SIZE } from "../generators/voxelBuildingLab.js";
+
+// Factory boundary for the placement preview. Returns a normalized preview
+// source the ghost renderer understands. Swap/expand this to introduce a
+// `cardId -> prefab/asset factory` without touching placement state or target
+// resolution.
+export function resolveSpecialStructurePreview({ card = {}, cellWorldSize = 4 } = {}) {
+  return {
+    kind: "voxel-spec",
+    cardId: card.card_id ?? null,
+    spec: createSpecialStructurePreviewSpec(card, cellWorldSize)
+  };
+}
 
 // Per-card preview profiles. Only the building grammar's archetypes / styles /
 // roof forms are used; heights and roof forms are chosen so distinct special

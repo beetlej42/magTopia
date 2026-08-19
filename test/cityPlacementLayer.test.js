@@ -74,9 +74,9 @@ function ghostBodyFor(target) {
   return ghost.children[0];
 }
 
-test("ghost uses the building-shaped voxel preview when a previewSpec is present", () => {
+test("ghost uses the building-shaped voxel preview when a previewSource is present", () => {
   const spec = createSpecialStructurePreviewSpec({ card_id: "owl-tower", structure: { footprint: "1x1" } }, 4);
-  const target = { ...ghostTarget(5, 5), previewSpec: spec };
+  const target = { ...ghostTarget(5, 5), previewSource: { kind: "voxel-spec", cardId: "owl-tower", spec } };
   const root = new THREE.Group();
   root.userData.surfaceNavigation = { radius: GHOST_RADIUS };
   const layer = createCityPlacementLayer();

@@ -15,7 +15,7 @@ import {
   createPlacementCandidateIndex,
   resolvePlacementTarget
 } from "./placementTargetResolver.js";
-import { createSpecialStructurePreviewSpec } from "./specialStructurePreview.js";
+import { resolveSpecialStructurePreview } from "./specialStructurePreview.js";
 
 export function createCityDayController({ experience, api, setLight, placementLayer = null, onPlayerTurnComplete = () => {} }) {
   let syncing = false;
@@ -263,9 +263,10 @@ export function createCityDayController({ experience, api, setLight, placementLa
       placementId,
       cityVersion: sessionVersion,
       footprint,
-      // Deterministic building-shaped preview for this card (voxel building
-      // grammar), used by the placement ghost instead of a generic massing.
-      previewSpec: createSpecialStructurePreviewSpec(card ?? {}, cellWorldSize),
+      // Deterministic building-shaped preview for this card, resolved through
+      // the replaceable preview factory (currently a voxel grammar spec; a
+      // future cardId -> prefab factory supplies the same ghost geometry).
+      previewSource: resolveSpecialStructurePreview({ card: card ?? {}, cellWorldSize }),
       candidateIndex: createPlacementCandidateIndex(candidates),
       quarterTurns: 0,
       viewMode: "near",
