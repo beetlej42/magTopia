@@ -44,7 +44,7 @@ async function openCity(repository, app) {
   return { player, city, agent, owner };
 }
 
-async function seedState(repository, owner, cityId, expectedVersion, { officers = { [VESPER.id]: VESPER, [MILO.id]: MILO }, incidents = { "incident-1": openIncident() } } = {}) {
+async function seedState(repository, owner, cityId, expectedVersion, { officers = { [VESPER.id]: VESPER, [MILO.id]: MILO }, incidents = { "incident-1": openIncident() }, turnStatus = "strategy" } = {}) {
   await repository.transactCity({
     principal: owner,
     cityId,
@@ -65,7 +65,12 @@ async function seedState(repository, owner, cityId, expectedVersion, { officers 
     };
     state.gameplay.arcaneOfficers = structuredClone(officers);
     state.gameplay.incidents = structuredClone(incidents);
-    state.gameplay.turnStatus = "strategy";
+    state.gameplay.turnStatus = turnStatus;
+    // The seeded turn represents an already-scheduled, already-unlocked turn:
+    // its cooldown gate elapsed long ago, so the resolve flow may settle it.
+    state.gameplay.turnOpenedAt = "2000-01-01T00:00:00.000Z";
+    state.gameplay.nextTurnUnlockAt = "2000-01-01T00:00:00.000Z";
+    state.gameplay.turnDeadlineAt = null;
     return { nextState: state, response: { seeded: true } };
   });
 }

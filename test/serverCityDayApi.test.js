@@ -92,6 +92,23 @@ function footprintCellsFor(state, lotId, footprint) {
 }
 
 async function resolveAndPublish(app, repository, { player, agent, city }, { turn }) {
+  const owner = await repository.authenticate(player.access_token);
+  const current = await repository.getCity(owner, city.id);
+  // Mark the current turn as already-scheduled and already-unlocked so the
+  // city-day walk can settle it without waiting for a real cooldown.
+  await repository.transactCity({
+    principal: owner,
+    cityId: city.id,
+    endpoint: "test/cityday-force-unlocked",
+    idempotencyKey: `cityday-force-unlocked-${turn}`,
+    requestBody: {},
+    expectedVersion: current.state.version
+  }, async ({ state }) => {
+    state.gameplay.turnOpenedAt = "2000-01-01T00:00:00.000Z";
+    state.gameplay.nextTurnUnlockAt = "2000-01-01T00:00:00.000Z";
+    state.gameplay.turnDeadlineAt = null;
+    return { nextState: state, response: { forced: true } };
+  });
   const strategy = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
   const settled = await json(app, auth(agent, {
     method: "POST",

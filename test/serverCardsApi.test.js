@@ -52,6 +52,25 @@ async function seedPopulation(repository, owner, cityId, expectedVersion, popula
   });
 }
 
+// Marks the current turn as already-scheduled and already-unlocked so a
+// strategy resolve on a fresh city can settle it without waiting for a real
+// cooldown. These tests focus on card/policy behavior, not the timing gate.
+async function forceUnlocked(repository, owner, cityId, expectedVersion) {
+  await repository.transactCity({
+    principal: owner,
+    cityId,
+    endpoint: "test/force-unlocked",
+    idempotencyKey: `force-unlocked-${cityId}`,
+    requestBody: {},
+    expectedVersion
+  }, async ({ state }) => {
+    state.gameplay.turnOpenedAt = "2000-01-01T00:00:00.000Z";
+    state.gameplay.nextTurnUnlockAt = "2000-01-01T00:00:00.000Z";
+    state.gameplay.turnDeadlineAt = null;
+    return { nextState: state, response: { forced: true } };
+  });
+}
+
 function cardById(cards, cardId) {
   return cards.find((card) => card.card_id === cardId);
 }
@@ -499,6 +518,7 @@ test("a selected policy becomes active, appears in strategy context, and advance
   const app = await createApp({ repository, config });
   try {
     const { city, player, agent, owner } = await openCity(repository, app);
+    await forceUnlocked(repository, owner, city.id, 0);
     const offer = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
     const policyCard = offer.offer.cards.find((card) => categoryOf(card.card_id) === CARD_TYPES.policy);
     assert.ok(policyCard, "offer must contain a policy card");
@@ -536,11 +556,12 @@ test("a selected policy becomes active, appears in strategy context, and advance
   }
 });
 
-test("no-card at deadline does not block settlement and records an explicit skipped choice", async () => {
+test("no-card choice does not block settlement and records an explicit skipped choice", async () => {
   const repository = createMemoryRepository(config);
   const app = await createApp({ repository, config });
   try {
-    const { city, player, agent } = await openCity(repository, app);
+    const { city, player, agent, owner } = await openCity(repository, app);
+    await forceUnlocked(repository, owner, city.id, 0);
     await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
     const strategy = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
     assert.equal(strategy.strategy.cards.choice.status, "pending");
@@ -563,7 +584,8 @@ test("card and policy facts are frozen into TurnFacts and projected into the Owl
   const repository = createMemoryRepository(config);
   const app = await createApp({ repository, config });
   try {
-    const { city, player, agent } = await openCity(repository, app);
+    const { city, player, agent, owner } = await openCity(repository, app);
+    await forceUnlocked(repository, owner, city.id, 0);
     const offer = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
     const policyCard = offer.offer.cards.find((card) => categoryOf(card.card_id) === CARD_TYPES.policy);
     const policyId = getCard(policyCard.card_id).effect.policyId;

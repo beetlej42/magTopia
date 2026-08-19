@@ -419,6 +419,9 @@ test("Agent strategy API settles assignments through the authoritative simulatio
         }
       };
       state.gameplay.turnStatus = "strategy";
+      state.gameplay.turnOpenedAt = "2000-01-01T00:00:00.000Z";
+      state.gameplay.nextTurnUnlockAt = "2000-01-01T00:00:00.000Z";
+      state.gameplay.turnDeadlineAt = null;
       return { nextState: state, response: { seeded: true } };
     });
 
@@ -524,6 +527,9 @@ test("Owl Daily reports bind to resolved turns and stay canonical (PostgreSQL)",
         "incident-1": { id: "incident-1", buildingId: "building-1", type: "investigation", attribute: "investigation", difficulty: 3, severity: 3, exposureAtCreation: 40, summary: "Magical anomaly near Lantern Tower.", status: "open", createdAtTurn: 0 }
       };
       state.gameplay.turnStatus = "strategy";
+      state.gameplay.turnOpenedAt = "2000-01-01T00:00:00.000Z";
+      state.gameplay.nextTurnUnlockAt = "2000-01-01T00:00:00.000Z";
+      state.gameplay.turnDeadlineAt = null;
       return { nextState: state, response: { seeded: true } };
     });
 

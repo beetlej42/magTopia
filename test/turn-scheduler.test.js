@@ -67,6 +67,48 @@ test("a fresh city receives a cooldown schedule from the first scheduler poll", 
   }
 });
 
+test("a fresh city is gated by its cooldown even before the first scheduler poll", async () => {
+  const clock = fakeClock();
+  const repository = createMemoryRepository(config);
+  const { app } = await setup(clock, repository);
+  try {
+    const { city, agent } = await openCity(app, repository);
+    // No scheduler.pollOnce() here: the city is still unscheduled.
+    const before = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
+    assert.equal(before.turn_status, "open");
+    assert.equal(before.next_turn_unlock_at, null, "a fresh city has no schedule yet");
+
+    // An immediate resolve must not fail-open: it lazy-inits the gate and
+    // rejects with TURN_NOT_UNLOCKED instead of settling.
+    const locked = await app.inject(auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/strategy/resolve`,
+      headers: { "idempotency-key": "resolve-fresh-locked" },
+      payload: { expected_city_version: before.city_version }
+    }));
+    assert.equal(locked.statusCode, 422);
+    assert.equal(locked.json().code, "TURN_NOT_UNLOCKED");
+    assert.ok(locked.json().next_turn_unlock_at, "the rejection carries the written gate");
+
+    const scheduled = await repository.getCityForScheduler(city.id);
+    assert.equal(scheduled.state.gameplay.nextTurnUnlockAt, locked.json().next_turn_unlock_at, "the lazy-init persisted the cooldown gate");
+    assert.equal(scheduled.state.gameplay.turnOpenedAt, clock.iso());
+    assert.equal(scheduled.state.turn, 0, "a rejected resolve advances nothing");
+
+    clock.advance(TURN_COOLDOWN_SECONDS * 1000 + 1000);
+    const settled = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/strategy/resolve`,
+      headers: { "idempotency-key": "resolve-fresh-unlocked" },
+      payload: { expected_city_version: scheduled.state.version }
+    }), 200);
+    assert.equal(settled.status, "resolved");
+    assert.equal(settled.turn, 1);
+  } finally {
+    await app.close();
+  }
+});
+
 test("resolve before the cooldown elapses is rejected with TURN_NOT_UNLOCKED and succeeds after", async () => {
   const clock = fakeClock();
   const repository = createMemoryRepository(config);
@@ -421,9 +463,10 @@ test("a new city resource contract is coins-only with a single authoritative led
 test("construction spend survives settlement: balance after resolve is the debited base plus income", async () => {
   const clock = fakeClock();
   const repository = createMemoryRepository(config);
-  const { app } = await setup(clock, repository);
+  const { app, scheduler } = await setup(clock, repository);
   try {
     const { city, agent } = await openCity(app, repository);
+    await scheduler.pollOnce();
     const startingCoins = (await repository.getCityForScheduler(city.id)).state.resources.coins;
 
     const sites = await json(app, auth(agent, { method: "POST", url: `/api/v1/cities/${city.id}/site-searches`, payload: { footprint: "1x1", limit: 10 } }), 200);
@@ -451,6 +494,7 @@ test("construction spend survives settlement: balance after resolve is the debit
     const spentBalance = spentState.resources.coins;
     assert.equal(spentBalance, startingCoins - preview.cost.coins, "the construction cost was debited from state.resources");
 
+    clock.advance(TURN_COOLDOWN_SECONDS * 1000 + 1000);
     const settled = await json(app, auth(agent, {
       method: "POST",
       url: `/api/v1/cities/${city.id}/strategy/resolve`,

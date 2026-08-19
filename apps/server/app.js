@@ -37,7 +37,7 @@ import {
 import { getCard } from "../../src/gameplay/card-catalog.js";
 import { completedReportTurn, deriveCityDayPresentation } from "../../src/gameplay/city-day.js";
 import { playbookGuidance } from "../../src/gameplay/guidance.js";
-import { isTurnResolveLocked, normalizeTurnSchedule } from "../../src/gameplay/turn.js";
+import { isTurnResolveLocked, initializeTurnSchedule, normalizeTurnSchedule } from "../../src/gameplay/turn.js";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PLAYBOOK_PATH = path.resolve(SERVER_DIR, "../../docs/agent-playbook.md");
@@ -643,6 +643,32 @@ export async function createApp({ repository, config, logger = false, now = () =
       action: "strategy_resolve",
       reason: body.actor_note ?? "request_system_settlement"
     }, async ({ state }) => {
+      const gameplay = state.gameplay ?? {};
+      // An active turn must always carry its cooldown gate before it can be
+      // resolved. A fresh / pre-scheduler city has none (turnOpenedAt and
+      // nextTurnUnlockAt are still null), so write the gate lazily right here
+      // instead of letting the resolve fail-open: the client re-reads and
+      // retries once the gate elapses. This is the same schedule the scheduler
+      // would lazily seed, so whichever runs first wins and the other no-ops.
+      if (!CLOSED_TURN_STATUSES.has(gameplay.turnStatus) && gameplay.nextTurnUnlockAt == null) {
+        const initialized = initializeTurnSchedule(state, now(), config);
+        if (initialized) {
+          const withCards = ensureCardOffer(initialized, request.params.cityId);
+          const gate = withCards.gameplay.nextTurnUnlockAt;
+          return {
+            nextState: withCards,
+            response: {
+              command_id: createId("command"),
+              status: "rejected",
+              code: "TURN_NOT_UNLOCKED",
+              message: "The turn was not scheduled yet, so its cooldown gate was written now. Wait until next_turn_unlock_at and resolve again.",
+              next_turn_unlock_at: gate,
+              city_version_after: withCards.version,
+              errors: [{ code: "TURN_NOT_UNLOCKED", message: `Turn ${state.turn} just received its cooldown gate; resolution unlocks at ${gate}` }]
+            }
+          };
+        }
+      }
       if (isTurnResolveLocked(state, now())) {
         const nextTurnUnlockAt = state.gameplay?.nextTurnUnlockAt ?? null;
         return {
@@ -653,6 +679,7 @@ export async function createApp({ repository, config, logger = false, now = () =
             code: "TURN_NOT_UNLOCKED",
             message: "The turn cannot be resolved before its cooldown gate elapses; wait until next_turn_unlock_at and resolve again.",
             next_turn_unlock_at: nextTurnUnlockAt,
+            city_version_after: state.version,
             errors: [{ code: "TURN_NOT_UNLOCKED", message: `Turn ${state.turn} is still cooling down; resolution unlocks at ${nextTurnUnlockAt ?? "a server-assigned time"}` }]
           }
         };
