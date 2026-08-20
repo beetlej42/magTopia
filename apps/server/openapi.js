@@ -212,6 +212,20 @@ export function createOpenApiDocument(baseUrl) {
           required: ["expected_revision"],
           properties: { expected_revision: { type: "integer", minimum: 1 } }
         },
+        BuildingDesignUpgradeRequest: {
+          type: "object",
+          description: "Accepted inputs for creating an editable upgrade design from a built voxel design. The design id and actor are server-owned and always assigned by the runtime; clients only provide the upgrade goal.",
+          properties: {
+            goal: {
+              type: "object",
+              required: ["type"],
+              properties: {
+                type: { enum: ["add_floor", "add_floors"], description: "add_floor is the canonical operation; add_floors is accepted as an alias." },
+                count: { type: "integer", minimum: 1, default: 1, description: "Number of storeys to add to the existing building." }
+              }
+            }
+          }
+        },
         DistrictCreateRequest: {
           type: "object",
           required: ["expected_city_version", "name", "purpose", "bounds"],
@@ -812,9 +826,26 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}": { get: operation("Read a city summary", "cities") },
       "/cities/{city_id}/snapshot": { get: operation("Read the Agent decision snapshot", "queries") },
       "/cities/{city_id}/render-state": { get: operation("Read the authenticated city state for the visual viewer", "queries") },
-      "/cities/{city_id}/events": { get: operation("Read incremental city events", "queries") },
-      "/cities/{city_id}/spatial": { get: operation("Query cells and occupants in a bounded grid rectangle", "queries") },
-      "/cities/{city_id}/buildings": { get: operation("Find buildings by name, archetype, purpose, or bounding box", "queries") },
+      "/cities/{city_id}/events": {
+        get: operation("Read incremental city events", "queries", null, json, true, [
+          queryParameter("after_version", { type: "integer", default: 0 }, "Read events after this city version. Use the last seen city_version to incrementally sync what happened."),
+          queryParameter("limit", { type: "integer", default: 100 }, "Maximum number of events to return (runtime clamps to 200).")
+        ])
+      },
+      "/cities/{city_id}/spatial": {
+        get: operation("Query cells and occupants in a bounded grid rectangle", "queries", null, json, true, gridBoundsQueryParameters())
+      },
+      "/cities/{city_id}/cells/{cell_id}": { get: operation("Read one expanded logical cell after it was discovered through /spatial or another response", "queries") },
+      "/cities/{city_id}/buildings": {
+        get: operation("Find buildings by name, archetype, purpose, or bounding box", "queries", null, json, true, [
+          queryParameter("query", { type: "string" }, "Free-text search over building name, archetype, purpose, and description."),
+          queryParameter("archetype", { type: "string" }, "Exact archetype filter."),
+          queryParameter("purpose", { type: "string" }, "Exact purpose filter."),
+          queryParameter("limit", { type: "integer", default: 20, maximum: 100 }, "Maximum number of buildings to return."),
+          ...gridBoundsQueryParameters("The bounding-box filter matches buildings with at least one footprint cell inside the requested rectangle.")
+        ])
+      },
+      "/cities/{city_id}/buildings/{building_id}": { get: operation("Read one full building after it was discovered through /buildings, /spatial, district data, events, or strategy/report facts", "queries") },
       "/cities/{city_id}/districts": {
         get: operation("List named development districts with block, road, and spatially computed building progress", "districts"),
         post: commandOperation("Name and designate a spatial development district with advisory block guidance", "districts", { $ref: "#/components/schemas/DistrictCreateRequest" })
@@ -829,11 +860,21 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}/building-designs/{design_id}": { get: operation("Read the current building design revision", "building-designs") },
       "/cities/{city_id}/building-designs/{design_id}/revisions": { post: operation("Apply structured operations and create an immutable design revision", "building-designs", { $ref: "#/components/schemas/BuildingDesignRevisionRequest" }) },
       "/cities/{city_id}/building-designs/{design_id}/confirm": { post: operation("Lock the current design revision for construction", "building-designs", { $ref: "#/components/schemas/BuildingDesignConfirmRequest" }) },
-      "/cities/{city_id}/buildings/{building_id}/upgrade-designs": { post: operation("Create an editable upgrade design from a built voxel design", "building-designs", json) },
+      "/cities/{city_id}/buildings/{building_id}/upgrade-designs": { post: operation("Create an editable upgrade design from a built voxel design", "building-designs", { $ref: "#/components/schemas/BuildingDesignUpgradeRequest" }) },
       "/cities/{city_id}/site-searches": { post: operation("List legal construction sites and objective road-frontage facts inside a named district", "construction", { $ref: "#/components/schemas/SiteSearchRequest" }) },
-      "/assets": { get: operation("Search validated reusable assets", "assets") },
+      "/assets": {
+        get: operation("Search validated reusable assets", "assets", null, json, true, [
+          queryParameter("archetype", { type: "string" }, "Exact asset archetype filter."),
+          queryParameter("footprint", { type: "string" }, "Exact footprint filter, e.g. 2x3."),
+          queryParameter("district_style", { type: "string" }, "Exact district style filter."),
+          queryParameter("limit", { type: "integer", default: 20, maximum: 50 }, "Maximum number of assets to return.")
+        ])
+      },
       "/cities/{city_id}/construction-previews": { post: operation("Preview a legacy asset request or confirmed voxel design", "construction", { oneOf: [{ $ref: "#/components/schemas/ConstructionRequest" }, { $ref: "#/components/schemas/BuildingDesignConstructionRequest" }] }) },
-      "/cities/{city_id}/construction-orders": { post: commandOperation("Submit an idempotent asset or confirmed voxel-design construction order", "construction", { oneOf: [{ $ref: "#/components/schemas/ConstructionRequest" }, { $ref: "#/components/schemas/BuildingDesignConstructionRequest" }] }) },
+      "/cities/{city_id}/construction-orders": {
+        get: operation("List construction orders", "construction"),
+        post: commandOperation("Submit an idempotent asset or confirmed voxel-design construction order", "construction", { oneOf: [{ $ref: "#/components/schemas/ConstructionRequest" }, { $ref: "#/components/schemas/BuildingDesignConstructionRequest" }] })
+      },
       "/cities/{city_id}/construction-orders/{order_id}": { get: operation("Read a construction order", "construction") },
       "/cities/{city_id}/construction-orders/{order_id}/cancel": { post: commandOperation("Cancel an asset-waiting construction order and release its site and frozen resources", "construction") },
       "/cities/{city_id}/connection-previews": { post: operation("Preview a building/cell/node road connection", "roads", { $ref: "#/components/schemas/ConnectionRequest" }) },
@@ -846,7 +887,11 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}/cards/current": { get: operation("Read the canonical three-card offer for the current turn", "cards", null, { type: "object", properties: { city_id: { type: "string" }, city_version: { type: "integer" }, turn: { type: "integer" }, turn_status: { type: "string" }, offer: { $ref: "#/components/schemas/CardOffer" }, choice: { $ref: "#/components/schemas/CardChoice" } } }) },
       "/cities/{city_id}/cards/select": { post: commandOperation("The player selects exactly one offered card for this turn", "cards", { $ref: "#/components/schemas/CardSelectRequest" }, { $ref: "#/components/schemas/CardSelectResponse" }) },
       "/cities/{city_id}/cards/place": { post: commandOperation("Place a pending special structure at a legal location (player placement or delegated Agent placement)", "cards", { $ref: "#/components/schemas/CardPlaceRequest" }, { $ref: "#/components/schemas/CardPlaceResponse" }) },
-      "/cities/{city_id}/report-context": { get: operation("Read the immutable SYSTEM newspaper source facts for a resolved turn", "reports", null, { $ref: "#/components/schemas/ReportContext" }) },
+      "/cities/{city_id}/report-context": {
+        get: operation("Read the immutable SYSTEM newspaper source facts for a resolved turn", "reports", null, { $ref: "#/components/schemas/ReportContext" }, true, [
+          queryParameter("turn", { type: "integer", minimum: 1 }, "The resolved turn to read. Omit to select the latest resolved turn that has frozen facts.")
+        ])
+      },
       "/cities/{city_id}/reports": {
         get: operation("Read the Owl Daily report history for this city", "reports", null, { type: "object", properties: { data: { type: "array", items: { $ref: "#/components/schemas/OwlReportSummary" } } } }),
         post: commandOperation("Publish the canonical Owl Daily newspaper for a resolved turn", "reports", { $ref: "#/components/schemas/OwlReportSubmitRequest" })
@@ -871,7 +916,28 @@ export function createOpenApiDocument(baseUrl) {
   return document;
 }
 
-function operation(summary, tag, requestBody = null, responseSchema = json, secured = true) {
+function queryParameter(name, schema, description) {
+  return { in: "query", name, schema, description };
+}
+
+// Shared bounded-grid query contract used by /spatial and /buildings so the
+// window semantics (inclusive bounds, 400-cell limit, 10×10 default) stay
+// consistent across every consumer instead of drifting in ad hoc duplicates.
+function gridBoundsQueryParameters(extraNote = "") {
+  const note = extraNote ? ` ${extraNote}` : "";
+  return [
+    queryParameter(
+      "min_col",
+      { type: "integer", default: 0 },
+      `Inclusive left/start column. Bounds are inclusive; reversed bounds are invalid; the maximum requested area is 400 logical cells; omitting all bounds returns the default 10×10 window. Example: ?min_col=20&min_row=10&max_col=29&max_row=19.${note}`
+    ),
+    queryParameter("min_row", { type: "integer", default: 0 }, "Inclusive start row. Bounds are inclusive; reversed bounds are invalid; the maximum requested area is 400 logical cells."),
+    queryParameter("max_col", { type: "integer" }, "Inclusive right/end column; defaults to min_col + 9. Changing these four values is how an Agent inspects another area of the city."),
+    queryParameter("max_row", { type: "integer" }, "Inclusive end row; defaults to min_row + 9. Changing these four values is how an Agent inspects another area of the city.")
+  ];
+}
+
+function operation(summary, tag, requestBody = null, responseSchema = json, secured = true, queryParameters = []) {
   const value = {
     summary,
     tags: [tag],
@@ -885,6 +951,7 @@ function operation(summary, tag, requestBody = null, responseSchema = json, secu
     }
   };
   if (requestBody) value.requestBody = { required: true, content: { "application/json": { schema: requestBody } } };
+  if (queryParameters.length) value.parameters = [...queryParameters];
   if (!secured) value.security = [];
   return value;
 }
