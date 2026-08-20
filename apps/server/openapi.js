@@ -214,7 +214,7 @@ export function createOpenApiDocument(baseUrl) {
         },
         BuildingDesignUpgradeRequest: {
           type: "object",
-          description: "Accepted inputs for creating an editable upgrade design from a built voxel design. First-version upgrades keep the original footprint and raise the existing storeys.",
+          description: "Accepted inputs for creating an editable upgrade design from a built voxel design. The design id and actor are server-owned and always assigned by the runtime; clients only provide the upgrade goal.",
           properties: {
             goal: {
               type: "object",
@@ -223,9 +223,7 @@ export function createOpenApiDocument(baseUrl) {
                 type: { enum: ["add_floor", "add_floors"], description: "add_floor is the canonical operation; add_floors is accepted as an alias." },
                 count: { type: "integer", minimum: 1, default: 1, description: "Number of storeys to add to the existing building." }
               }
-            },
-            id: { type: "string", description: "Optional design id; a stable upgrade id is generated when omitted." },
-            actor: { type: "string", description: "Optional actor identifier recorded as the design creator." }
+            }
           }
         },
         DistrictCreateRequest: {

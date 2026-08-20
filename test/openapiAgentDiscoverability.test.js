@@ -85,7 +85,7 @@ test("OpenAPI exposes GET routes for cells, buildings, and construction-orders",
   assert.ok(document.paths["/cities/{city_id}/construction-orders"].get.parameters.some((p) => p.in === "path" && p.name === "city_id"));
 });
 
-test("OpenAPI upgrade-designs request has a concrete schema instead of a generic object", () => {
+test("OpenAPI upgrade-designs request exposes only client-controllable fields", () => {
   const upgradeOperation = operation("/cities/{city_id}/buildings/{building_id}/upgrade-designs", "post");
   const schemaRef = upgradeOperation.requestBody.content["application/json"].schema.$ref;
   assert.ok(schemaRef, "expected a concrete upgrade-designs request schema");
@@ -94,85 +94,109 @@ test("OpenAPI upgrade-designs request has a concrete schema instead of a generic
   assert.ok(schema.properties.goal.properties.type.enum.includes("add_floor"));
   assert.equal(schema.properties.goal.properties.count.default, 1);
   assert.equal(schema.properties.goal.properties.count.minimum, 1);
+  const clientFields = Object.keys(schema.properties);
+  assert.deepEqual(clientFields, ["goal"], "id/actor are server-owned and must not be advertised as client inputs");
 });
 
-// Canonical Agent-facing runtime surface. Each entry maps a fastify route path
-// template and HTTP methods to the OpenAPI path key. The runtime side is
-// verified against the actual registered app so this list cannot silently drift
-// from the implementation; the OpenAPI side guards against an eligible runtime
-// route disappearing from the generated contract.
-const AGENT_ROUTES = [
-  { runtime: "/api/v1/players", methods: ["post"], openapi: "/players" },
-  { runtime: "/api/v1/cities", methods: ["get", "post"], openapi: "/cities" },
-  { runtime: "/api/v1/cities/:cityId", methods: ["get"], openapi: "/cities/{city_id}" },
-  { runtime: "/api/v1/cities/:cityId/snapshot", methods: ["get"], openapi: "/cities/{city_id}/snapshot" },
-  { runtime: "/api/v1/cities/:cityId/render-state", methods: ["get"], openapi: "/cities/{city_id}/render-state" },
-  { runtime: "/api/v1/cities/:cityId/events", methods: ["get"], openapi: "/cities/{city_id}/events" },
-  { runtime: "/api/v1/cities/:cityId/spatial", methods: ["get"], openapi: "/cities/{city_id}/spatial" },
-  { runtime: "/api/v1/cities/:cityId/cells/:cellId", methods: ["get"], openapi: "/cities/{city_id}/cells/{cell_id}" },
-  { runtime: "/api/v1/cities/:cityId/buildings", methods: ["get"], openapi: "/cities/{city_id}/buildings" },
-  { runtime: "/api/v1/cities/:cityId/buildings/:buildingId", methods: ["get"], openapi: "/cities/{city_id}/buildings/{building_id}" },
-  { runtime: "/api/v1/cities/:cityId/districts", methods: ["get", "post"], openapi: "/cities/{city_id}/districts" },
-  { runtime: "/api/v1/cities/:cityId/districts/:districtId/cancel", methods: ["post"], openapi: "/cities/{city_id}/districts/{district_id}/cancel" },
-  { runtime: "/api/v1/cities/:cityId/building-designs", methods: ["get", "post"], openapi: "/cities/{city_id}/building-designs" },
-  { runtime: "/api/v1/cities/:cityId/building-designs/:designId", methods: ["get"], openapi: "/cities/{city_id}/building-designs/{design_id}" },
-  { runtime: "/api/v1/cities/:cityId/building-designs/:designId/revisions", methods: ["post"], openapi: "/cities/{city_id}/building-designs/{design_id}/revisions" },
-  { runtime: "/api/v1/cities/:cityId/building-designs/:designId/confirm", methods: ["post"], openapi: "/cities/{city_id}/building-designs/{design_id}/confirm" },
-  { runtime: "/api/v1/cities/:cityId/buildings/:buildingId/upgrade-designs", methods: ["post"], openapi: "/cities/{city_id}/buildings/{building_id}/upgrade-designs" },
-  { runtime: "/api/v1/cities/:cityId/site-searches", methods: ["post"], openapi: "/cities/{city_id}/site-searches" },
-  { runtime: "/api/v1/assets", methods: ["get"], openapi: "/assets" },
-  { runtime: "/api/v1/cities/:cityId/construction-previews", methods: ["post"], openapi: "/cities/{city_id}/construction-previews" },
-  { runtime: "/api/v1/cities/:cityId/construction-orders", methods: ["get", "post"], openapi: "/cities/{city_id}/construction-orders" },
-  { runtime: "/api/v1/cities/:cityId/construction-orders/:orderId", methods: ["get"], openapi: "/cities/{city_id}/construction-orders/{order_id}" },
-  { runtime: "/api/v1/cities/:cityId/construction-orders/:orderId/cancel", methods: ["post"], openapi: "/cities/{city_id}/construction-orders/{order_id}/cancel" },
-  { runtime: "/api/v1/cities/:cityId/connection-previews", methods: ["post"], openapi: "/cities/{city_id}/connection-previews" },
-  { runtime: "/api/v1/cities/:cityId/connections", methods: ["post"], openapi: "/cities/{city_id}/connections" },
-  { runtime: "/api/v1/cities/:cityId/time-advances", methods: ["post"], openapi: "/cities/{city_id}/time-advances" },
-  { runtime: "/api/v1/cities/:cityId/strategy", methods: ["get"], openapi: "/cities/{city_id}/strategy" },
-  { runtime: "/api/v1/cities/:cityId/strategy/assignments", methods: ["post"], openapi: "/cities/{city_id}/strategy/assignments" },
-  { runtime: "/api/v1/cities/:cityId/strategy/resolve", methods: ["post"], openapi: "/cities/{city_id}/strategy/resolve" },
-  { runtime: "/api/v1/cards", methods: ["get"], openapi: "/cards" },
-  { runtime: "/api/v1/cities/:cityId/cards/current", methods: ["get"], openapi: "/cities/{city_id}/cards/current" },
-  { runtime: "/api/v1/cities/:cityId/cards/select", methods: ["post"], openapi: "/cities/{city_id}/cards/select" },
-  { runtime: "/api/v1/cities/:cityId/cards/place", methods: ["post"], openapi: "/cities/{city_id}/cards/place" },
-  { runtime: "/api/v1/cities/:cityId/report-context", methods: ["get"], openapi: "/cities/{city_id}/report-context" },
-  { runtime: "/api/v1/cities/:cityId/reports", methods: ["get", "post"], openapi: "/cities/{city_id}/reports" },
-  { runtime: "/api/v1/cities/:cityId/reports/:reportId", methods: ["get"], openapi: "/cities/{city_id}/reports/{report_id}" },
-  { runtime: "/api/v1/cities/:cityId/city-day", methods: ["get"], openapi: "/cities/{city_id}/city-day" },
-  { runtime: "/api/v1/cities/:cityId/city-day/report-dismissed", methods: ["post"], openapi: "/cities/{city_id}/city-day/report-dismissed" },
-  { runtime: "/api/v1/cities/:cityId/agent-links", methods: ["post"], openapi: "/cities/{city_id}/agent-links" },
-  { runtime: "/api/v1/cities/:cityId/agent-credentials", methods: ["get"], openapi: "/cities/{city_id}/agent-credentials" },
-  { runtime: "/api/v1/cities/:cityId/agent-credentials/:credentialId", methods: ["delete"], openapi: "/cities/{city_id}/agent-credentials/{credential_id}" },
-  { runtime: "/api/v1/asset-jobs/:jobId", methods: ["get"], openapi: "/asset-jobs/{job_id}" },
-  { runtime: "/api/v1/asset-jobs/:jobId/artifacts", methods: ["post"], openapi: "/asset-jobs/{job_id}/artifacts" }
-];
+// Normalize a runtime fastify path into the same shape as an OpenAPI path key:
+// drop the /api/v1 prefix and treat every dynamic segment ({name} or :name or *)
+// as an anonymous placeholder so path structure can be compared exactly.
+function normalizePath(path) {
+  return path.replace(/^\/api\/v1/, "").split("/").map((segment) => {
+    if (!segment) return segment;
+    if (segment === "*" || segment.startsWith(":") || (segment.startsWith("{") && segment.endsWith("}"))) return "{p}";
+    return segment;
+  }).join("/");
+}
 
-// Intentionally non-Agent / internal routes must be listed here explicitly
-// instead of silently dropping the OpenAPI coverage check. Keep it minimal.
-const DENY_LIST = new Set([]);
+// Derive the actual runtime surface from the fastify route registry so a new
+// Agent route cannot silently escape the OpenAPI contract. fastify's
+// printRoutes() emits a radix tree whose lines carry the node depth.
+function parseRuntimeRoutes(app) {
+  const output = app.printRoutes({ commonPrefix: false });
+  const routes = [];
+  const stack = [];
+  for (const raw of output.split("\n")) {
+    const line = raw.trimEnd();
+    const marker = line.search(/[├└]/);
+    if (marker < 0) continue;
+    const depth = Math.floor(marker / 4);
+    const content = line.slice(line.indexOf("── ") + 3).trim();
+    const suffix = content.match(/ \(([^)]+)\)$/);
+    const segment = suffix ? content.slice(0, -suffix[0].length) : content;
+    const methods = suffix ? suffix[1].split(",").map((entry) => entry.trim().toLowerCase()).filter((entry) => entry !== "head") : [];
+    while (stack.length > depth) stack.pop();
+    stack[depth] = segment;
+    routes.push({ path: stack.slice(0, depth + 1).join(""), methods });
+  }
+  return routes;
+}
+
+// Runtime routes that are intentionally not part of the Agent API contract:
+// HTML pages, static assets, health/discovery endpoints, and the one-time
+// capability exchange. Anything not listed here must appear in OpenAPI.
+const DENY_LIST = new Set([
+  "get /",
+  "get /healthz",
+  "get /agent/playbook.md",
+  "get /agent/building-design-api-v1.md",
+  "get /{p}",
+  "get /style-reference/isometric-magic-london-city.jpg",
+  "get /dashboard",
+  "get /cities/{p}",
+  "get /connect/{p}",
+  "get /.well-known/magtopia-agent.json",
+  "get /.well-known/magictown-agent.json",
+  "get /openapi.json"
+]);
 
 test("every eligible Agent-facing runtime route is present in OpenAPI", async () => {
   const config = { publicBaseUrl: BASE, voxelOnly: false };
   const app = await createApp({ repository: { database: {} }, config });
 
-  const missing = [];
-  for (const { runtime, methods, openapi } of AGENT_ROUTES) {
-    for (const method of methods) {
-      assert.ok(
-        app.hasRoute({ method: method.toUpperCase(), url: runtime }),
-        `AGENT_ROUTES claims runtime route ${method.toUpperCase()} ${runtime}, but it is not registered on the app`
-      );
-      const key = `${method.toUpperCase()} ${openapi}`;
+  const runtimeByKey = new Map();
+  for (const route of parseRuntimeRoutes(app)) {
+    for (const method of route.methods) {
+      const key = `${method} ${normalizePath(route.path)}`;
       if (DENY_LIST.has(key)) continue;
-      if (!document.paths[openapi]?.[method]) missing.push(key);
+      runtimeByKey.set(key, route);
     }
   }
+  assert.ok(runtimeByKey.size > 0, "expected to derive Agent-facing runtime routes from the fastify registry");
+
+  const openApiByKey = new Map();
+  for (const [path, item] of Object.entries(document.paths)) {
+    for (const method of Object.keys(item)) openApiByKey.set(`${method} ${normalizePath(path)}`, path);
+  }
+
+  const missing = [...runtimeByKey.keys()].filter((key) => !openApiByKey.has(key));
   assert.deepEqual(missing, [], "eligible Agent-facing runtime routes disappeared from the generated OpenAPI document");
 });
 
-// Runtime-supported query names per query-driven endpoint, coupled to the
-// OpenAPI parameter names so a future runtime query cannot become
-// undiscoverable. Names mirror apps/server/app.js and repository.js.
+test("every OpenAPI Agent path is backed by a registered runtime route", async () => {
+  const config = { publicBaseUrl: BASE, voxelOnly: false };
+  const app = await createApp({ repository: { database: {} }, config });
+
+  const runtimeKeys = new Set();
+  for (const route of parseRuntimeRoutes(app)) {
+    for (const method of route.methods) runtimeKeys.add(`${method} ${normalizePath(route.path)}`);
+  }
+
+  const orphaned = [];
+  for (const [path, item] of Object.entries(document.paths)) {
+    for (const method of Object.keys(item)) {
+      if (!runtimeKeys.has(`${method} ${normalizePath(path)}`)) orphaned.push(`${method.toUpperCase()} ${path}`);
+    }
+  }
+  assert.deepEqual(orphaned, [], "OpenAPI documents an Agent path/method that is not registered on the runtime");
+});
+
+// Documented runtime-supported query names per query-driven endpoint, coupled
+// to the OpenAPI parameter names so a runtime query cannot become
+// undiscoverable. fastify reads these ad hoc from request.query (there is no
+// runtime query registry to introspect), so this list mirrors apps/server/app.js
+// and repository.js and is the single place to extend when a runtime query is
+// added. Names here MUST keep appearing as OpenAPI query parameters.
 const QUERY_CONTRACTS = {
   "/cities/{city_id}/spatial": ["min_col", "min_row", "max_col", "max_row"],
   "/cities/{city_id}/events": ["after_version", "limit"],
