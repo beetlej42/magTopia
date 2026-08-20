@@ -229,11 +229,11 @@ Playbook 的第一版应明确告诉 Agent：
 
 ```http
 GET /api/v1/cities/{city_id}
-GET /api/v1/cities/{city_id}/snapshot?view=agent
+GET /api/v1/cities/{city_id}/snapshot
 GET /api/v1/cities/{city_id}/events?after_version=41&limit=100
 ```
 
-`view=agent` 返回压缩后的决策信息，而非渲染器的全部顶点或图片数据：
+`/snapshot` 返回压缩后的决策信息，而非渲染器的全部顶点或图片数据：
 
 ```json
 {

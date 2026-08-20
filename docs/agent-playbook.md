@@ -31,7 +31,7 @@ The core loop is: `player choice → Agent planning/building → gameplay state 
 
 ## Recommended decision loop
 
-1. `GET /api/v1/cities/{city_id}/snapshot?view=agent`.
+1. `GET /api/v1/cities/{city_id}/snapshot`.
 2. Continue a suitable named development district whose `status` is `active`. If none exists, designate one small work package with a short name, purpose, and rectangular bounds through `POST /districts`.
 3. Query that district with `/spatial`. If it has no access, use connection previews and `/connections` to connect it to the city. Then shape the local streets according to the district intention; a complete perimeter is useful feedback, not a prerequisite.
 4. Search `/buildings` and `/assets`, then call `/site-searches` with `district_id`. Candidate results contain objective terrain, road-distance, exact road-frontage, and block-role facts; the server does not score or rank them.
