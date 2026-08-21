@@ -2,11 +2,36 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  calculateShadowViewExtent,
   calculateSurfaceShadowRefreshThreshold,
   defaultShadowRefreshThreshold,
   shadowDirectionExceedsThreshold,
   shouldCommitShadowRefresh
 } from "../src/render/shadowRefreshScheduler.js";
+
+test("perspective shadow extent covers the visible surface patch plus padding", () => {
+  const fit = calculateShadowViewExtent({
+    perspective: true,
+    fovDegrees: 34,
+    cameraDistance: 58,
+    aspect: 16 / 9,
+    padding: 8
+  });
+
+  assert.ok(fit.visibleWidth > 60 && fit.visibleWidth < 64);
+  assert.ok(fit.extent > 38 && fit.extent < 40);
+});
+
+test("orthographic shadow extent follows the larger viewport dimension", () => {
+  const fit = calculateShadowViewExtent({
+    perspective: false,
+    orthographicWidth: 40,
+    orthographicHeight: 24,
+    padding: 6
+  });
+
+  assert.equal(fit.extent, 26);
+});
 
 const MOBILE_SURFACE_VIEW = Object.freeze({
   viewportHeight: 844,

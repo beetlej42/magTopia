@@ -7,6 +7,7 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { AdaptiveBokehPass, calculateBokehViewAmount } from "./render/adaptiveBokehPass.js";
 import { chooseAdaptiveQuality, detectMobileRenderProfile, shouldEnableBokeh } from "./render/mobilePerformance.js";
 import {
+  calculateShadowViewExtent,
   calculateSurfaceShadowRefreshThreshold,
   defaultShadowRefreshThreshold,
   shadowDirectionExceedsThreshold,
@@ -130,6 +131,7 @@ const startupWorldTime = startupParams.has("worldTime") && Number.isFinite(start
   ? ((startupWorldTimeValue % 1) + 1) % 1
   : null;
 const startupTimeScaleValue = Number(startupParams.get("timeScale") ?? 1);
+const shadowDebugEnabled = startupParams.get("shadowDebug") === "1";
 const startupTimeScale = Number.isFinite(startupTimeScaleValue) && startupTimeScaleValue >= 0
   ? startupTimeScaleValue
   : 1;
@@ -201,7 +203,9 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.info.autoReset = false;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = mobilePerformanceProfile ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
-renderer.shadowMap.autoUpdate = false;
+// Keep the restored baseline reliable while the city has comfortable frame budget.
+// Static-shadow scheduling remains in place so this can be tightened again later.
+renderer.shadowMap.autoUpdate = true;
 renderer.shadowMap.needsUpdate = true;
 app.appendChild(renderer.domElement);
 
@@ -620,6 +624,11 @@ const activeViewCache = {
 };
 const shadowLightDirection = new THREE.Vector3();
 const candidateShadowLightDirection = new THREE.Vector3();
+const worldSunDirection = new THREE.Vector3(4, 8, 5).normalize();
+const nextWorldSunDirection = new THREE.Vector3();
+const shadowViewFocus = new THREE.Vector3();
+const previousShadowViewFocus = new THREE.Vector3(Number.POSITIVE_INFINITY, 0, 0);
+let previousShadowViewExtent = Number.NaN;
 let shadowLightDirectionValid = false;
 const surfaceShadowRefreshIntervalMs = mobilePerformanceProfile ? 160 : 100;
 let shadowRefreshPending = true;
@@ -899,11 +908,18 @@ function addLights(targetScene) {
   key.castShadow = true;
   const shadowSize = mobilePerformanceProfile ? 1024 : 2048;
   key.shadow.mapSize.set(shadowSize, shadowSize);
-  key.shadow.camera.left = -9;
-  key.shadow.camera.right = 9;
-  key.shadow.camera.top = 9;
-  key.shadow.camera.bottom = -9;
-  targetScene.add(key);
+  key.shadow.camera.left = -24;
+  key.shadow.camera.right = 24;
+  key.shadow.camera.top = 24;
+  key.shadow.camera.bottom = -24;
+  key.shadow.camera.near = 0.5;
+  key.shadow.camera.far = 420;
+  key.shadow.bias = -0.00035;
+  key.shadow.normalBias = 0.025;
+  key.shadow.radius = mobilePerformanceProfile ? 1 : 1.6;
+  key.shadow.camera.updateProjectionMatrix();
+  key.target.name = "WorldSunTarget";
+  targetScene.add(key, key.target);
 
   const rim = new THREE.DirectionalLight("#d4b4ff", 1.5);
   rim.position.set(-6, 4, -4);
@@ -919,15 +935,60 @@ function applyWorldLighting(sunTime = 0.52, updateActiveObject = true) {
   worldLights.ambient.color.copy(style.ambientSky);
   worldLights.ambient.groundColor.copy(style.ambientGround);
   const massingContrast = currentMode === "massing" || currentMode === "styles";
-  worldLights.ambient.intensity = style.ambientIntensity * (massingContrast ? 0.72 : 1);
+  const voxelShadowContrast = ["voxel", "district", "agentcity"].includes(currentMode) ? 0.78 : 1;
+  worldLights.ambient.intensity = shadowDebugEnabled
+    ? 0.04
+    : style.ambientIntensity * (massingContrast ? 0.72 : 1) * voxelShadowContrast;
   worldLights.key.color.copy(style.sunColor);
   worldLights.key.intensity = style.sunIntensity * (massingContrast ? 1.2 : 1);
-  worldLights.key.position.copy(style.sunPosition);
+  nextWorldSunDirection.copy(style.sunPosition).normalize();
+  const sunDirectionChanged = worldSunDirection.dot(nextWorldSunDirection) < 0.9999999999;
+  worldSunDirection.copy(nextWorldSunDirection);
+  updateWorldShadowForView(sunDirectionChanged);
   requestShadowRefreshForLight(style.sunPosition);
   worldLights.rim.color.copy(style.rgbTint);
-  worldLights.rim.intensity = style.rimIntensity;
+  worldLights.rim.intensity = shadowDebugEnabled ? 0 : style.rimIntensity * voxelShadowContrast;
   if (updateActiveObject) activeObject?.userData.updateDaylight?.(style);
   return style;
+}
+
+function updateWorldShadowForView(force = false) {
+  if (!worldLights?.key || !camera || !controls) return;
+  shadowViewFocus.copy(controls.target);
+  const cameraDistance = Math.max(1, camera.position.distanceTo(shadowViewFocus));
+  const fit = calculateShadowViewExtent({
+    perspective: camera.isPerspectiveCamera,
+    fovDegrees: camera.fov,
+    cameraDistance,
+    aspect: camera.aspect,
+    orthographicWidth: camera.isOrthographicCamera ? Math.abs(camera.right - camera.left) / Math.max(0.001, camera.zoom) : 0,
+    orthographicHeight: camera.isOrthographicCamera ? Math.abs(camera.top - camera.bottom) / Math.max(0.001, camera.zoom) : 0,
+    padding: isSurfaceVoxelWorld() ? 10 : 7,
+    minimumExtent: isSurfaceVoxelWorld() ? 24 : 18,
+    maximumExtent: 180
+  });
+  const changed = force
+    || shadowViewFocus.distanceToSquared(previousShadowViewFocus) > 0.0025
+    || !Number.isFinite(previousShadowViewExtent)
+    || Math.abs(fit.extent - previousShadowViewExtent) > 0.05;
+  if (!changed) return;
+
+  const lightDistance = Math.max(96, fit.extent * 2.8);
+  worldLights.key.target.position.copy(shadowViewFocus);
+  worldLights.key.position.copy(shadowViewFocus).addScaledVector(worldSunDirection, lightDistance);
+  worldLights.key.target.updateMatrixWorld();
+  worldLights.key.updateMatrixWorld();
+  const shadowCamera = worldLights.key.shadow.camera;
+  shadowCamera.left = -fit.extent;
+  shadowCamera.right = fit.extent;
+  shadowCamera.top = fit.extent;
+  shadowCamera.bottom = -fit.extent;
+  shadowCamera.near = 0.5;
+  shadowCamera.far = lightDistance + fit.extent * 3 + 32;
+  shadowCamera.updateProjectionMatrix();
+  previousShadowViewFocus.copy(shadowViewFocus);
+  previousShadowViewExtent = fit.extent;
+  scheduleShadowRefresh("camera-shadow-fit");
 }
 
 function requestShadowRefreshForLight(position) {
@@ -1874,6 +1935,7 @@ function animate() {
     updateInteractivePlacement();
   }
   camera.updateMatrixWorld();
+  updateWorldShadowForView();
   if (voxelSky.visible) {
     voxelSky.userData.update({
       time: skyClock.time,
