@@ -935,10 +935,12 @@ function applyWorldLighting(sunTime = 0.52, updateActiveObject = true) {
   worldLights.ambient.color.copy(style.ambientSky);
   worldLights.ambient.groundColor.copy(style.ambientGround);
   const massingContrast = currentMode === "massing" || currentMode === "styles";
-  const voxelShadowContrast = ["voxel", "district", "agentcity"].includes(currentMode) ? 0.78 : 1;
+  const voxelWorldLighting = ["voxel", "district", "agentcity"].includes(currentMode);
+  const voxelAmbientContrast = voxelWorldLighting ? 0.58 : 1;
+  const voxelRimContrast = voxelWorldLighting ? 0.72 : 1;
   worldLights.ambient.intensity = shadowDebugEnabled
     ? 0.04
-    : style.ambientIntensity * (massingContrast ? 0.72 : 1) * voxelShadowContrast;
+    : style.ambientIntensity * (massingContrast ? 0.72 : 1) * voxelAmbientContrast;
   worldLights.key.color.copy(style.sunColor);
   worldLights.key.intensity = style.sunIntensity * (massingContrast ? 1.2 : 1);
   nextWorldSunDirection.copy(style.sunPosition).normalize();
@@ -947,7 +949,7 @@ function applyWorldLighting(sunTime = 0.52, updateActiveObject = true) {
   updateWorldShadowForView(sunDirectionChanged);
   requestShadowRefreshForLight(style.sunPosition);
   worldLights.rim.color.copy(style.rgbTint);
-  worldLights.rim.intensity = shadowDebugEnabled ? 0 : style.rimIntensity * voxelShadowContrast;
+  worldLights.rim.intensity = shadowDebugEnabled ? 0 : style.rimIntensity * voxelRimContrast;
   if (updateActiveObject) activeObject?.userData.updateDaylight?.(style);
   return style;
 }

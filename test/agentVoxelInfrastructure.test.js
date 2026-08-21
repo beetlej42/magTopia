@@ -38,7 +38,7 @@ test("Agent acceptance city renders roads and vegetation entirely as voxel geome
   assert.equal(city.userData.surfaceNavigation.radius, 220);
 
   const lodDiagnostics = city.userData.getPrefabLodDiagnostics();
-  assert.equal(lodDiagnostics.shadowPolicy, "low-lod-proxy");
+  assert.equal(lodDiagnostics.shadowPolicy, "low-lod-colorless-proxy");
   assert.ok(lodDiagnostics.currentLevels.length > 0);
   assert.ok(lodDiagnostics.currentLevels.every((entry) => entry.nearShadowCasterCount === 0));
   assert.ok(lodDiagnostics.currentLevels.every((entry) => entry.nearShadowCastersDisabled > 0));
@@ -66,12 +66,17 @@ test("Agent acceptance city renders roads and vegetation entirely as voxel geome
   viewCamera.updateMatrixWorld(true);
   const shadowLight = new THREE.DirectionalLight();
   const layerContract = configureVoxelShadowOnlyLayer({ viewCamera, shadowLights: [shadowLight] });
-  assert.equal(layerContract.viewCameraExcluded, true);
+  assert.equal(layerContract.viewCameraExcluded, false);
+  assert.equal(layerContract.colorPassVisibility, "color-write-disabled");
   assert.equal(layerContract.configuredShadowCameras.length, 1);
   assert.ok(shadowLight.shadow.camera.layers.isEnabled(0));
   assert.ok(shadowLight.shadow.camera.layers.isEnabled(VOXEL_SHADOW_ONLY_LAYER));
-  assert.ok(shadowProxyMeshes.every((mesh) => !viewCamera.layers.test(mesh.layers)));
+  assert.ok(shadowProxyMeshes.every((mesh) => viewCamera.layers.test(mesh.layers)));
   assert.ok(shadowProxyMeshes.every((mesh) => shadowLight.shadow.camera.layers.test(mesh.layers)));
+  assert.ok(shadowProxyMeshes.every((mesh) => {
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    return materials.every((material) => material.colorWrite === false && material.depthWrite === false);
+  }));
 
   city.userData.updateView(viewCamera, 4, { height: 720, renderScale: 1 });
   const firstMetrics = lods.map((lod) => lod.userData.currentMetrics);
