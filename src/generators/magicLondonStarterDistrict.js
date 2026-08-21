@@ -19,11 +19,11 @@ const FALLBACK_BASE_ANCHORS_UV = Object.freeze({
 });
 const DEPTH_MESH_SUBDIVISIONS = 96;
 const GROUND_SEAM_HEIGHT_RATIO = 0.08;
-// Layer 31 is reserved for coarse voxel shadow casters. The view camera must not
-// render it, while every shadow-casting light camera that should see voxel
-// buildings must enable it. Keeping this contract explicit prevents the proxy
-// meshes from adding a second color-pass draw call for every material chunk.
-export const VOXEL_SHADOW_ONLY_LAYER = 31;
+// Three.js filters shadow casters with the view camera's layer mask, so a layer
+// excluded from the color camera is also excluded from the shadow traversal.
+// Keep coarse proxies on the shared layer and make their materials colorless;
+// they remain invisible in the color pass while still writing shadow depth.
+export const VOXEL_SHADOW_ONLY_LAYER = 0;
 const EMISSIVE_STRENGTHS = Object.freeze({
   "starter-cottage-001": 1.35,
   "starter-workshop-001": 1.55,
@@ -215,11 +215,12 @@ export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cit
 }
 
 /**
- * Exclude voxel shadow proxies from the color pass and include them in selected
- * shadow maps. This should be called after cameras/lights are constructed.
+ * Keep voxel shadow proxies eligible for both the view-camera traversal and
+ * selected shadow maps. Their cloned materials disable color/depth writes in
+ * the color pass; Three.js substitutes depth materials in the shadow pass.
  */
 export function configureVoxelShadowOnlyLayer({ viewCamera, shadowLights = [] } = {}) {
-  viewCamera?.layers?.disable(VOXEL_SHADOW_ONLY_LAYER);
+  viewCamera?.layers?.enable(VOXEL_SHADOW_ONLY_LAYER);
   const configuredShadowCameras = [];
   for (const light of shadowLights) {
     const shadowCamera = light?.shadow?.camera;
@@ -229,7 +230,8 @@ export function configureVoxelShadowOnlyLayer({ viewCamera, shadowLights = [] } 
   }
   return {
     layer: VOXEL_SHADOW_ONLY_LAYER,
-    viewCameraExcluded: Boolean(viewCamera?.layers) && !viewCamera.layers.isEnabled(VOXEL_SHADOW_ONLY_LAYER),
+    viewCameraExcluded: false,
+    colorPassVisibility: "color-write-disabled",
     configuredShadowCameras
   };
 }
@@ -290,7 +292,7 @@ function createAgentVoxelBuildingLod(nearObject, design, nightLighting) {
     sphereProjectionRoot: true,
     currentLevel: null,
     boundingRadius: getObjectBoundingRadius(nearObject),
-    shadowPolicy: "low-lod-proxy",
+    shadowPolicy: "low-lod-colorless-proxy",
     nearShadowCasterCount: 0,
     nearShadowCastersDisabled: nearShadowCasterCount,
     shadowProxyMeshCount: shadowProxy.userData.shadowProxyMeshCount
@@ -298,9 +300,9 @@ function createAgentVoxelBuildingLod(nearObject, design, nightLighting) {
   lod.addLevel(nearObject, 0);
   pipeline.levels.forEach((level, index) => lod.addLevel(level.group, index + 1));
   lod.addLevel(new THREE.Group(), 3);
-  // Keep a coarse copy active on the shadow-only layer across LOD transitions.
-  // It remains available to selected light cameras without adding proxy chunks
-  // to the view camera's color-pass render list.
+  // Keep a coarse, colorless copy active across LOD transitions. It participates
+  // in the view traversal because Three.js reuses that layer mask for shadows,
+  // but its material writes only through the shadow depth override.
   shadowProxy.visible = true;
   lod.add(shadowProxy);
   lod.userData.updateDaylight = (style) => {
@@ -451,7 +453,7 @@ function getVoxelLodSummaryDiagnostics(lods) {
   }
   return {
     renderer: "agentcity-voxel-mip-lod-v1",
-    shadowPolicy: "low-lod-proxy-shadow-only-layer",
+    shadowPolicy: "low-lod-colorless-proxy",
     shadowOnlyLayer: VOXEL_SHADOW_ONLY_LAYER,
     count: lods.length,
     visibleInFrustum,
@@ -477,7 +479,7 @@ function getVoxelLodDiagnostics(lods) {
   return {
     renderer: "agentcity-voxel-mip-lod-v1",
     sourceOfTruth: "Agent City BuildingSpec/UrbanMassingSpec compiled into fixed 2x and 3x macrovoxels",
-    shadowPolicy: "low-lod-proxy",
+    shadowPolicy: "low-lod-colorless-proxy",
     count: lods.length,
     selection: "camera frustum plus projected base-voxel screen size",
     projectedVoxelThresholdsPx: { near: 1.5, medium: 0.55 },

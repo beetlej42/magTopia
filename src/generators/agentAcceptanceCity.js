@@ -3,6 +3,7 @@ import { runNonVisualAgentBuildScenario } from "../city/agent-district-simulatio
 import { createAgentVoxelRoadLayer, createAgentVoxelVegetationLayer } from "./agentVoxelInfrastructure.js";
 import { createMagicLondonStarterDistrict } from "./magicLondonStarterDistrict.js";
 import { createStreetLifeCityLayer } from "./streetLifeCityLayer.js";
+import { createBuildingContactAmbientOcclusion } from "../render/buildingContactAmbientOcclusion.js";
 import {
   createVoxelDistrictMacroSurface,
   normalizeVoxelIntentDistrictConfig,
@@ -52,6 +53,14 @@ export function createAgentAcceptanceCity(config = {}) {
   buildings.name = "AgentAcceptanceBuildings";
   root.add(buildings);
 
+  const contactAmbientOcclusion = createBuildingContactAmbientOcclusion({
+    buildings: Object.values(state.buildings),
+    cells: grid.cells,
+    cellWorldSize: grid.cellWorldSize,
+    sampleGroundHeight: constructionHeight
+  });
+  root.add(contactAmbientOcclusion);
+
   const vegetation = createAgentVoxelVegetationLayer({ state, grid, seed });
   vegetation.name = "AgentAcceptanceVegetation";
   root.add(vegetation);
@@ -87,6 +96,11 @@ export function createAgentAcceptanceCity(config = {}) {
     roadRenderer: roads.userData.contract,
     vegetation: vegetation.userData.contract,
     streetLife: streetLife.userData.getDiagnostics(),
+    contactAmbientOcclusion: {
+      method: "curved-footprint-gradient-v1",
+      patchCount: contactAmbientOcclusion.userData.patchCount,
+      triangleCount: contactAmbientOcclusion.userData.triangleCount
+    },
     buildingPlacements: buildings.userData.contract?.placements ?? [],
     skippedBuildings: buildings.userData.contract?.skipped ?? []
   };

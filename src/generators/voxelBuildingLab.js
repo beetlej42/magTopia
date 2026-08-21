@@ -1496,7 +1496,9 @@ export function voxelDaylightStyle(sunTime = 0.52) {
     starOpacity: state.starOpacity,
     sunPosition: new THREE.Vector3(
       -Math.cos(state.solarAngle) * 10,
-      0.8 + Math.max(0, state.solarHeight) * 11.2,
+      // Keep the stylized daylight lower than a physical noon sun so cast
+      // shadows remain a readable part of the voxel world's composition.
+      0.8 + Math.max(0, state.solarHeight) * 7.2,
       6.5
     )
   };
