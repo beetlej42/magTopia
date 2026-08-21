@@ -2,6 +2,32 @@ const DEFAULT_VOXEL_SIZE = 0.125;
 const DEFAULT_SHADOW_FOOTPRINT_RADIUS = 16;
 const DEFAULT_DIRECTION_THRESHOLD_DEGREES = 0.05;
 
+export function calculateShadowViewExtent({
+  perspective = true,
+  fovDegrees = 40,
+  cameraDistance = 58,
+  aspect = 1,
+  orthographicWidth = 0,
+  orthographicHeight = 0,
+  padding = 8,
+  minimumExtent = 18,
+  maximumExtent = 180
+} = {}) {
+  const resolvedAspect = positiveNumber(aspect, 1);
+  const visibleHeight = perspective
+    ? 2 * positiveNumber(cameraDistance, 58) * Math.tan(degreesToRadians(clamp(positiveNumber(fovDegrees, 40), 1, 179)) * 0.5)
+    : positiveNumber(orthographicHeight, 1);
+  const visibleWidth = perspective
+    ? visibleHeight * resolvedAspect
+    : positiveNumber(orthographicWidth, visibleHeight * resolvedAspect);
+  const extent = clamp(
+    Math.max(visibleWidth, visibleHeight) * 0.5 + Math.max(0, Number(padding) || 0),
+    positiveNumber(minimumExtent, 18),
+    positiveNumber(maximumExtent, 180)
+  );
+  return { extent, visibleWidth, visibleHeight };
+}
+
 export function calculateSurfaceShadowRefreshThreshold({
   viewportHeight,
   renderScale,

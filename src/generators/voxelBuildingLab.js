@@ -15,6 +15,7 @@ import {
   getUrbanMassingCatalog
 } from "./voxelMassingGrammar.js";
 import { getVoxelSkyState } from "../city/voxel-sky.js";
+import { sampleVoxelVertexAmbientOcclusion } from "../render/voxelAmbientOcclusion.js";
 
 export const VOXEL_SIZE = 0.125;
 export const SEMANTIC_GRID_SIGN_VOXEL_SIZE = VOXEL_SIZE / 2;
@@ -1959,6 +1960,7 @@ export class VoxelInstanceBuffer {
       for (const [chunkKey, entry] of materialChunks) {
         const positions = [];
         const normals = [];
+        const ambientOcclusion = [];
         const indices = [];
         entry.faces.forEach(({ face, plane, cells }) => {
           emitGreedyFaceRectangles({
@@ -1968,14 +1970,17 @@ export class VoxelInstanceBuffer {
             maxMergeSpan,
             positions,
             normals,
+            ambientOcclusion,
             indices,
-            voxelSize: this.voxelSize
+            voxelSize: this.voxelSize,
+            hasVoxel: (x, y, z) => this.voxels.has(voxelKey(x, y, z))
           });
         });
         if (!positions.length) continue;
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
         geometry.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+        geometry.setAttribute("voxelAo", new THREE.Float32BufferAttribute(ambientOcclusion, 1));
         geometry.setIndex(indices);
         geometry.computeBoundingSphere();
         const mesh = new THREE.Mesh(geometry, createVoxelMaterial(MATERIAL_LIBRARY[materialId]));
@@ -2004,6 +2009,7 @@ export class VoxelInstanceBuffer {
       meshCount: mergedMeshes.length,
       chunkSizeVoxels: chunkSize,
       maxMergeSpanVoxels: maxMergeSpan,
+      ambientOcclusion: "three-neighbour greedy-vertex-ao-v1",
       aggregationFactor: this.aggregationFactor,
       voxelSize: this.voxelSize
     };
@@ -2020,7 +2026,7 @@ const GREEDY_FACE_DIRECTIONS = Object.freeze([
   Object.freeze({ id: "nz", axis: 2, uAxis: 1, vAxis: 0, normal: [0, 0, -1] })
 ]);
 
-function emitGreedyFaceRectangles({ face, plane, cells, maxMergeSpan, positions, normals, indices, voxelSize }) {
+function emitGreedyFaceRectangles({ face, plane, cells, maxMergeSpan, positions, normals, ambientOcclusion, indices, voxelSize, hasVoxel }) {
   let minU = Number.POSITIVE_INFINITY;
   let maxU = Number.NEGATIVE_INFINITY;
   let minV = Number.POSITIVE_INFINITY;
@@ -2058,14 +2064,16 @@ function emitGreedyFaceRectangles({ face, plane, cells, maxMergeSpan, positions,
         height,
         positions,
         normals,
+        ambientOcclusion,
         indices,
-        voxelSize
+        voxelSize,
+        hasVoxel
       });
     }
   }
 }
 
-function appendVoxelFaceQuad({ face, plane, u, v, width, height, positions, normals, indices, voxelSize = VOXEL_SIZE }) {
+function appendVoxelFaceQuad({ face, plane, u, v, width, height, positions, normals, ambientOcclusion, indices, voxelSize = VOXEL_SIZE, hasVoxel }) {
   const base = positions.length / 3;
   const corners = [
     [u, v],
@@ -2080,6 +2088,17 @@ function appendVoxelFaceQuad({ face, plane, u, v, width, height, positions, norm
     point[face.vAxis] = cornerV;
     positions.push(point[0] * voxelSize, point[1] * voxelSize, point[2] * voxelSize);
     normals.push(...face.normal);
+    ambientOcclusion.push(sampleVoxelVertexAmbientOcclusion({
+      face,
+      plane,
+      u,
+      v,
+      width,
+      height,
+      cornerU,
+      cornerV,
+      hasVoxel
+    }));
   });
   indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
 }
@@ -2150,6 +2169,7 @@ function mergeOpaqueGreedyMeshes(meshes) {
     const definition = MATERIAL_LIBRARY[mesh.userData.materialId];
     const opaque = Number(definition.opacity ?? 1) >= 1 && !definition.emissive;
     if (!opaque) {
+      mesh.geometry.deleteAttribute("voxelAo");
       retained.push(mesh);
       return;
     }
@@ -2162,13 +2182,16 @@ function mergeOpaqueGreedyMeshes(meshes) {
     const geometries = chunkMeshes.map((mesh) => {
       const geometry = mesh.geometry;
       const color = new THREE.Color(MATERIAL_LIBRARY[mesh.userData.materialId].colors[0]);
+      const ambientOcclusion = geometry.getAttribute("voxelAo");
       const colors = new Float32Array(geometry.attributes.position.count * 3);
       for (let index = 0; index < geometry.attributes.position.count; index += 1) {
-        colors[index * 3] = color.r;
-        colors[index * 3 + 1] = color.g;
-        colors[index * 3 + 2] = color.b;
+        const ao = ambientOcclusion?.getX(index) ?? 1;
+        colors[index * 3] = color.r * ao;
+        colors[index * 3 + 1] = color.g * ao;
+        colors[index * 3 + 2] = color.b * ao;
       }
       geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+      geometry.deleteAttribute("voxelAo");
       return geometry;
     });
     const geometry = mergeGeometries(geometries, false);
