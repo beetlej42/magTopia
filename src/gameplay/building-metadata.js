@@ -137,25 +137,58 @@ function canonicalGameplayInput(building, options) {
   if (explicit) return explicit;
 
   const source = building?.voxelDesign?.generation?.sourceSpec ?? building?.voxelDesign ?? building;
-  const grammarEntries = ["units", "functionalUnits", "floorSpecs", "floorPrograms", "floors", "masses", "massSpecs"]
-    .flatMap((key) => Array.isArray(source?.[key]) ? source[key] : []);
-  const nestedGrammarEntries = [source?.massing?.masses, source?.massing?.floorSpecs]
-    .flatMap((entries) => Array.isArray(entries) ? entries : []);
-  const hasCanonicalGrammar = [...grammarEntries, ...nestedGrammarEntries].length > 0
-    && [...grammarEntries, ...nestedGrammarEntries].every((entry) => GAMEPLAY_PURPOSES.includes(String(entry?.purpose ?? "").toLowerCase()));
-  const hasGrammar = ["units", "functionalUnits", "floorSpecs", "floorPrograms", "floors", "masses", "massSpecs"]
-    .some((key) => Array.isArray(source?.[key]))
-    || Array.isArray(source?.massing?.masses)
-    || Array.isArray(source?.massing?.floorSpecs);
+  const grammarKeys = ["units", "functionalUnits", "floorSpecs", "floorPrograms", "floors", "masses", "massSpecs"];
+  const grammarEntries = grammarKeys.flatMap((key) => Array.isArray(source?.[key]) ? source[key] : []);
+  const nestedGrammarEntries = [
+    source?.massing?.units,
+    source?.massing?.functionalUnits,
+    source?.massing?.floors,
+    source?.massing?.floorPrograms,
+    source?.massing?.floorSpecs,
+    source?.massing?.masses,
+    source?.massing?.massSpecs,
+    source?.grammar?.units,
+    source?.grammar?.functionalUnits,
+    source?.grammar?.floors,
+    source?.grammar?.floorPrograms,
+    source?.grammar?.floorSpecs,
+    source?.grammar?.masses,
+    source?.grammar?.massSpecs
+  ].flatMap((entries) => Array.isArray(entries) ? entries : []);
+  const allGrammarEntries = [...grammarEntries, ...nestedGrammarEntries];
+  const hasFunctionalFields = ["units", "functionalUnits"].some((key) => Array.isArray(source?.[key]))
+    || [source?.massing?.units, source?.massing?.functionalUnits, source?.grammar?.units, source?.grammar?.functionalUnits]
+      .some((entries) => Array.isArray(entries));
+  // A units/functionalUnits field is an explicit gameplay contract.  The
+  // visual floor/mass grammars are only gameplay when they carry purpose
+  // annotations; unannotated geometry remains on the legacy path.
+  const allPurposesCanonical = allGrammarEntries.length > 0
+    && allGrammarEntries.every((entry) => GAMEPLAY_PURPOSES.includes(String(entry?.purpose ?? "").toLowerCase()));
+  const hasCanonicalGrammar = allGrammarEntries.length > 0
+    && (hasFunctionalFields || allPurposesCanonical);
+  const hasGrammar = grammarKeys.some((key) => Array.isArray(source?.[key]))
+    || nestedGrammarEntries.length > 0;
+  const hasExplicitTopLevelGrammar = source === building && (
+    grammarKeys.some((key) => Array.isArray(source?.[key]))
+    || nestedGrammarEntries.length > 0
+  );
+  const gameplayGrammarPresent = hasExplicitTopLevelGrammar || hasCanonicalGrammar;
   const purpose = building?.program?.purpose ?? building?.purpose ?? source?.purpose;
-  if (hasGrammar && hasCanonicalGrammar && GAMEPLAY_PURPOSES.includes(String(purpose ?? "").toLowerCase())) {
+  const validRootPurpose = purpose == null || GAMEPLAY_PURPOSES.includes(String(purpose).toLowerCase());
+  if (hasGrammar && gameplayGrammarPresent && validRootPurpose) {
     return {
       ...source,
-      purpose,
+      ...(purpose == null ? {} : { purpose }),
       footprintCells: building?.footprintCells ?? source?.footprintCells,
       site: building?.site ?? source?.site,
       magicRatio: options.magicRatio ?? source?.magicRatio ?? building?.magicRatio
     };
+  }
+  // Explicitly annotated grammar with an invalid root purpose must not be
+  // silently downgraded to legacy metadata.  Let the canonical normalizer
+  // produce the actionable purpose error.
+  if (hasGrammar && gameplayGrammarPresent && purpose != null) {
+    return { ...source, purpose };
   }
   return null;
 }
@@ -167,8 +200,7 @@ function deriveCanonicalGameplayBuilding(building, input) {
     canonical: true,
     units: normalized.units,
     functionalAreas: normalized.functionalAreas,
-    defaultMagicRatio: normalized.defaultMagicRatio,
-    status: building?.status ?? "active"
+    defaultMagicRatio: normalized.defaultMagicRatio
   };
 }
 

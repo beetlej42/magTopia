@@ -84,9 +84,24 @@ test("compound public building accepts cell/mass grammar including a greenhouse 
 test("invalid units are rejected and old category normalization remains separate", () => {
   assert.throws(() => normalizeFunctionalUnit({ purpose: "production", area: 0 }), /positive integer/);
   assert.throws(() => normalizeGameplayBuilding({ purpose: "workshop", area: 1 }), /Unsupported gameplay purpose/);
+  assert.throws(() => normalizeGameplayBuilding({ units: [] }), /must not be empty/);
+  assert.throws(() => normalizeGameplayBuilding({ functionalUnits: [] }), /must not be empty/);
+  assert.throws(() => normalizeGameplayBuilding({ floors: [] }), /must not be empty/);
+  assert.throws(() => normalizeGameplayBuilding({ masses: [] }), /must not be empty/);
   assert.equal(normalizeGameplayBuilding({ category: "workshop", magicLevel: 0.63 }).category, "workshop");
   assert.equal(validateGameplayBuilding({ purpose: "production", area: 1, magicRatio: 0.75 }).valid, true);
   assert.equal(validateGameplayBuilding({ purpose: "production", area: 1, magicRatio: 0.7 }).valid, false);
+});
+
+test("nested massing defaults are inherited by units and reflected in the building output", () => {
+  const normalized = normalizeGameplayBuilding({
+    massing: {
+      defaultMagicRatio: 0.5,
+      masses: [{ purpose: "greenhouse", area: 1 }]
+    }
+  });
+  assert.equal(normalized.units[0].magicRatio, 0.5);
+  assert.equal(normalized.defaultMagicRatio, 0.5);
 });
 
 test("metadata adapter exposes canonical units without enabling later economy rules", () => {
@@ -104,4 +119,27 @@ test("metadata adapter exposes canonical units without enabling later economy ru
   assert.equal(metadata.functionalAreas.residential, 2);
   assert.equal("coinOutput" in metadata, false);
   assert.equal("jobs" in metadata, false);
+});
+
+test("metadata detects per-unit canonical floor grammar without a root purpose", () => {
+  const metadata = deriveGameplayBuilding({
+    floorSpecs: [{ purpose: "commercial", area: 1, magicRatio: 0.25 }]
+  });
+  assert.equal(metadata.canonical, true);
+  assert.deepEqual(metadata.units, [{ purpose: "commercial", area: 1, magicRatio: 0.25 }]);
+});
+
+test("explicit gameplay grammar rejects invalid purposes instead of falling back to legacy metadata", () => {
+  assert.throws(() => deriveGameplayBuilding({
+    floorSpecs: [{ purpose: "workshop", area: 1, magicRatio: 0.25 }]
+  }), /Unsupported gameplay purpose/);
+  assert.throws(() => deriveGameplayBuilding({
+    gameplay: { units: [{ purpose: "workshop", area: 1 }] }
+  }), /Unsupported gameplay purpose/);
+  const visual = deriveGameplayBuilding({
+    program: { purpose: "residential" },
+    voxelDesign: { floorSpecs: [{ purpose: "home" }] }
+  });
+  assert.equal(visual.canonical, undefined);
+  assert.equal(visual.category, "residential");
 });

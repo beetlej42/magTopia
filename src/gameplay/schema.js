@@ -114,11 +114,29 @@ function aggregateFunctionalAreas(units) {
   ]));
 }
 
+function gameplayGrammar(value) {
+  return value.massing ?? value.grammar ?? value;
+}
+
+function effectiveDefaultMagicRatio(value) {
+  const grammar = gameplayGrammar(value);
+  return normalizeMagicRatio(value.defaultMagicRatio
+    ?? value.magicRatio
+    ?? grammar.defaultMagicRatio
+    ?? grammar.magicRatio);
+}
+
 function canonicalUnitsFromGrammar(value) {
-  const grammar = value.massing ?? value.grammar ?? value;
-  const defaultMagicRatio = normalizeMagicRatio(value.defaultMagicRatio ?? value.magicRatio ?? grammar.defaultMagicRatio ?? grammar.magicRatio);
-  if (Array.isArray(value.units ?? value.functionalUnits ?? grammar.units ?? grammar.functionalUnits)) {
-    const source = value.units ?? value.functionalUnits ?? grammar.units ?? grammar.functionalUnits;
+  const grammar = gameplayGrammar(value);
+  if (Object.prototype.hasOwnProperty.call(value, "purpose")) normalizeGameplayPurpose(value.purpose);
+  if (grammar !== value && Object.prototype.hasOwnProperty.call(grammar, "purpose")) {
+    normalizeGameplayPurpose(grammar.purpose);
+  }
+  const defaultMagicRatio = effectiveDefaultMagicRatio(value);
+  const unitSource = value.units ?? value.functionalUnits ?? grammar.units ?? grammar.functionalUnits;
+  if (Array.isArray(unitSource)) {
+    if (!unitSource.length) throw new Error("GameplayBuilding functional units must not be empty");
+    const source = unitSource;
     return source.map((unit, index) => normalizeFunctionalUnit(unit, index, { magicRatio: defaultMagicRatio }));
   }
 
@@ -127,7 +145,8 @@ function canonicalUnitsFromGrammar(value) {
   // the area total.
   const floors = value.floors ?? value.floorSpecs ?? value.floorPrograms
     ?? grammar.floors ?? grammar.floorSpecs ?? grammar.floorPrograms;
-  if (Array.isArray(floors) && floors.length) {
+  if (Array.isArray(floors)) {
+    if (!floors.length) throw new Error("GameplayBuilding floor grammar must not be empty");
     const footprintArea = value.footprintArea ?? grammar.footprintArea
       ?? areaFromCells(value.footprintCells)
       ?? areaFromCells(value.footprint?.cells)
@@ -153,7 +172,8 @@ function canonicalUnitsFromGrammar(value) {
   // cell is therefore one functional cell unless the mass explicitly gives
   // an area or functionalArea.
   const masses = value.masses ?? value.massSpecs ?? grammar.masses ?? grammar.massSpecs;
-  if (Array.isArray(masses) && masses.length) {
+  if (Array.isArray(masses)) {
+    if (!masses.length) throw new Error("GameplayBuilding mass grammar must not be empty");
     return masses.map((mass, index) => normalizeFunctionalUnit(mass, index, {
       area: areaFromCells(mass.cells) ?? 1,
       purpose: value.purpose ?? grammar.purpose,
@@ -186,7 +206,17 @@ export function normalizeGameplayBuilding(value = {}, options = {}) {
     || Array.isArray(value.floors)
     || Array.isArray(value.masses)
     || Array.isArray(value.massSpecs)
+    || Array.isArray(value.grammar?.units)
+    || Array.isArray(value.grammar?.functionalUnits)
+    || Array.isArray(value.grammar?.floors)
+    || Array.isArray(value.grammar?.floorPrograms)
+    || Array.isArray(value.grammar?.masses)
+    || Array.isArray(value.grammar?.massSpecs)
+    || Array.isArray(value.massing?.units)
+    || Array.isArray(value.massing?.functionalUnits)
     || Array.isArray(value.massing?.masses)
+    || Array.isArray(value.massing?.floors)
+    || Array.isArray(value.massing?.floorPrograms)
     || Array.isArray(value.massing?.floorSpecs)
     || Object.prototype.hasOwnProperty.call(value, "purpose")
     || value.schemaVersion === GAMEPLAY_BUILDING_SCHEMA_VERSION;
@@ -196,7 +226,7 @@ export function normalizeGameplayBuilding(value = {}, options = {}) {
       schemaVersion: GAMEPLAY_BUILDING_SCHEMA_VERSION,
       units,
       functionalAreas: aggregateFunctionalAreas(units),
-      defaultMagicRatio: normalizeMagicRatio(value.defaultMagicRatio ?? value.magicRatio)
+      defaultMagicRatio: effectiveDefaultMagicRatio(value)
     };
   }
 
