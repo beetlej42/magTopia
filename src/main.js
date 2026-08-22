@@ -5,6 +5,8 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { AdaptiveBokehPass, calculateBokehViewAmount } from "./render/adaptiveBokehPass.js";
+import { StorybookColorPass } from "./render/storybookColorPass.js";
+import { setStorybookSurfaceStrength } from "./render/storybookSurfaceMaterial.js";
 import { chooseAdaptiveQuality, detectMobileRenderProfile, shouldEnableBokeh } from "./render/mobilePerformance.js";
 import {
   calculateShadowViewExtent,
@@ -122,6 +124,13 @@ scene.matrixAutoUpdate = false;
 
 const startupParams = new URLSearchParams(window.location.search);
 setVoxelMaterialMode(startupParams.get("voxelShader") ?? "diffuse");
+const storybookEnabled = startupParams.get("storybook") !== "0";
+const startupStorybookStrength = THREE.MathUtils.clamp(Number(startupParams.get("storybookStrength") ?? 0.78), 0, 1);
+const startupStorybookMaterialStrength = setStorybookSurfaceStrength(
+  startupParams.get("storybookMaterials") === "0"
+    ? 0
+    : Number(startupParams.get("storybookMaterialStrength") ?? 0.78)
+);
 const adaptiveQualityEnabled = startupParams.get("adaptiveQuality") !== "0";
 const detailedRuntimeDiagnostics = startupParams.get("detailedDiagnostics") === "1";
 const requestedBokeh = startupParams.get("bokeh");
@@ -231,9 +240,12 @@ const districtDepthOfField = new AdaptiveBokehPass(scene, camera, {
   maxblur: districtBokehDefaults.maxblur,
   quality: renderQuality.depthOfFieldQuality
 });
+const storybookColorPass = new StorybookColorPass({ strength: startupStorybookStrength });
+storybookColorPass.enabled = storybookEnabled;
 const outputPass = new OutputPass();
 composer.addPass(renderPass);
 composer.addPass(districtDepthOfField);
+composer.addPass(storybookColorPass);
 composer.addPass(outputPass);
 composer.setPixelRatio(renderQuality.pixelRatio);
 
@@ -950,6 +962,14 @@ function applyWorldLighting(sunTime = 0.52, updateActiveObject = true) {
   requestShadowRefreshForLight(style.sunPosition);
   worldLights.rim.color.copy(style.rgbTint);
   worldLights.rim.intensity = shadowDebugEnabled ? 0 : style.rimIntensity * voxelRimContrast;
+  const storybookState = storybookColorPass.setStyle(style, {
+    enabled: storybookEnabled && voxelWorldLighting,
+    strength: startupStorybookStrength
+  });
+  document.documentElement.dataset.magicTownStorybookGrade = String(storybookState.enabled);
+  document.documentElement.dataset.magicTownStorybookStrength = storybookState.strength.toFixed(3);
+  document.documentElement.dataset.magicTownStorybookNightBlend = storybookState.nightBlend.toFixed(3);
+  document.documentElement.dataset.magicTownStorybookMaterialStrength = startupStorybookMaterialStrength.toFixed(3);
   if (updateActiveObject) activeObject?.userData.updateDaylight?.(style);
   return style;
 }
@@ -2028,7 +2048,7 @@ function animate() {
     districtDepthOfField.enabled = bokehActive;
     if (activeAnimatedShadowCasters) scheduleShadowRefresh("animated-caster", true);
     commitPendingShadowRefresh(performance.now(), cameraInMotion);
-    if (districtDepthOfField.enabled) composer.render();
+    if (districtDepthOfField.enabled || storybookColorPass.enabled) composer.render();
     else renderer.render(scene, camera);
   } else {
     districtDepthOfField.enabled = false;

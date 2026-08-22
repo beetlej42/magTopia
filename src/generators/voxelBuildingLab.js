@@ -16,6 +16,10 @@ import {
 } from "./voxelMassingGrammar.js";
 import { getVoxelSkyState } from "../city/voxel-sky.js";
 import { sampleVoxelVertexAmbientOcclusion } from "../render/voxelAmbientOcclusion.js";
+import {
+  applyStorybookSurfaceMaterial,
+  storybookSurfaceKindForMaterial
+} from "../render/storybookSurfaceMaterial.js";
 
 export const VOXEL_SIZE = 0.125;
 export const SEMANTIC_GRID_SIGN_VOXEL_SIZE = VOXEL_SIZE / 2;
@@ -1874,7 +1878,9 @@ export class VoxelInstanceBuffer {
     const dummy = new THREE.Object3D();
     const meshes = [...this.getVisibleInstances()].map(([materialId, instances]) => {
       const definition = MATERIAL_LIBRARY[materialId];
-      const material = createVoxelMaterial(definition);
+      const material = createVoxelMaterial(definition, {
+        surfaceKind: storybookSurfaceKindForMaterial(materialId)
+      });
       const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), material, instances.length);
       mesh.name = `VoxelMaterial-${materialId}`;
       mesh.userData.materialId = materialId;
@@ -1983,9 +1989,17 @@ export class VoxelInstanceBuffer {
         geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
         geometry.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
         geometry.setAttribute("voxelAo", new THREE.Float32BufferAttribute(ambientOcclusion, 1));
+        const surfaceKind = storybookSurfaceKindForMaterial(materialId);
+        geometry.setAttribute("voxelSurfaceKind", new THREE.Float32BufferAttribute(
+          new Float32Array(positions.length / 3).fill(surfaceKind),
+          1
+        ));
         geometry.setIndex(indices);
         geometry.computeBoundingSphere();
-        const mesh = new THREE.Mesh(geometry, createVoxelMaterial(MATERIAL_LIBRARY[materialId]));
+        const mesh = new THREE.Mesh(geometry, createVoxelMaterial(MATERIAL_LIBRARY[materialId], {
+          surfaceKind,
+          useSurfaceKindAttribute: true
+        }));
         mesh.name = `VoxelGreedy-${materialId}-${chunkKey}`;
         mesh.userData.materialId = materialId;
         mesh.userData.voxelRenderStrategy = "greedy-chunk";
@@ -2129,7 +2143,7 @@ class VoxelDiffuseMaterial extends THREE.MeshStandardMaterial {
   }
 }
 
-function createVoxelMaterial(definition) {
+function createVoxelMaterial(definition, storybookOptions = {}) {
   const parameters = {
     color: definition.colors[0],
     roughness: definition.roughness,
@@ -2140,9 +2154,12 @@ function createVoxelMaterial(definition) {
     opacity: definition.opacity ?? 1,
     flatShading: true
   };
-  if (!supportsDiffuseVoxelShader(definition)) return new THREE.MeshStandardMaterial(parameters);
-  if (voxelMaterialMode === "diffuse") return new VoxelDiffuseMaterial(parameters);
-  return new THREE.MeshStandardMaterial(parameters);
+  const material = !supportsDiffuseVoxelShader(definition)
+    ? new THREE.MeshStandardMaterial(parameters)
+    : voxelMaterialMode === "diffuse"
+      ? new VoxelDiffuseMaterial(parameters)
+      : new THREE.MeshStandardMaterial(parameters);
+  return applyStorybookSurfaceMaterial(material, storybookOptions);
 }
 
 function supportsDiffuseVoxelShader(definition) {
@@ -2160,8 +2177,10 @@ function createOpaquePaletteMaterial() {
     metalness: 0.02,
     flatShading: true
   };
-  if (voxelMaterialMode === "diffuse") return new VoxelDiffuseMaterial(parameters);
-  return new THREE.MeshStandardMaterial(parameters);
+  const material = voxelMaterialMode === "diffuse"
+    ? new VoxelDiffuseMaterial(parameters)
+    : new THREE.MeshStandardMaterial(parameters);
+  return applyStorybookSurfaceMaterial(material, { useSurfaceKindAttribute: true });
 }
 
 function mergeOpaqueGreedyMeshes(meshes) {
