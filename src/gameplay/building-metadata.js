@@ -1,4 +1,9 @@
-import { normalizeGameplayBuilding } from "./schema.js";
+import {
+  GAMEPLAY_GRAMMAR_FIELDS,
+  GAMEPLAY_PURPOSES,
+  hasGameplayGrammar,
+  normalizeGameplayBuilding,
+} from "./schema.js";
 
 const CATEGORY_BY_PURPOSE = Object.freeze({
   residential: "residential",
@@ -126,7 +131,131 @@ export function footprintArea(building) {
   return 1;
 }
 
+function describeGameplayGrammar(value) {
+  const hasDirectGrammar = GAMEPLAY_GRAMMAR_FIELDS.some((field) => Array.isArray(value?.[field]));
+  const selected = hasDirectGrammar
+    ? value
+    : hasGameplayGrammar(value?.massing)
+      ? value.massing
+      : hasGameplayGrammar(value?.grammar)
+        ? value.grammar
+        : null;
+  if (!selected) return { hasGrammar: false, hasFunctionalFields: false, allPurposesCanonical: false };
+  const entries = GAMEPLAY_GRAMMAR_FIELDS.flatMap((field) => Array.isArray(selected[field]) ? selected[field] : []);
+  return {
+    hasGrammar: true,
+    hasFunctionalFields: ["units", "functionalUnits"].some((field) => Array.isArray(selected[field])),
+    allPurposesCanonical: entries.length > 0
+      && entries.every((entry) => GAMEPLAY_PURPOSES.includes(String(entry?.purpose ?? "").toLowerCase()))
+  };
+}
+
+function canonicalRootForCandidate(building, source, description, explicitSource) {
+  // A direct gameplay root is authoritative and is validated by the schema,
+  // even when all units are otherwise self-describing.
+  if (explicitSource || source === building) {
+    if (Object.prototype.hasOwnProperty.call(source ?? {}, "purpose")) return { purpose: source.purpose };
+  }
+  if (description.allPurposesCanonical) return {};
+  if (Object.prototype.hasOwnProperty.call(source ?? {}, "purpose")
+      && GAMEPLAY_PURPOSES.includes(String(source.purpose).toLowerCase())) {
+    return { purpose: source.purpose };
+  }
+  if (Object.prototype.hasOwnProperty.call(building ?? {}, "purpose")) return { purpose: building.purpose };
+  const programPurpose = building?.program?.purpose;
+  if (GAMEPLAY_PURPOSES.includes(String(programPurpose ?? "").toLowerCase())) return { purpose: programPurpose };
+  // Do not pass an old alias such as home/shop as a canonical root. Missing
+  // unit purpose then fails loudly in normalizeGameplayBuilding.
+  return {};
+}
+
+function isPositiveInteger(value) {
+  return Number.isSafeInteger(Number(value)) && Number(value) > 0;
+}
+
+function hasSupportedAreaGeometry(source) {
+  if (!source || typeof source !== "object") return false;
+  if (isPositiveInteger(source.footprintArea)) return true;
+  if (Array.isArray(source.footprintCells)) return source.footprintCells.length > 0;
+  if (isPositiveInteger(source.footprintCells)) return true;
+  if (Array.isArray(source.footprint?.cells)) return source.footprint.cells.length > 0;
+  if (isPositiveInteger(source.footprint?.cells)) return true;
+  if (isPositiveInteger(source.footprint?.widthCells)
+      && isPositiveInteger(source.footprint?.depthCells)) return true;
+  if (typeof source.site?.footprint === "string" && /^(\d+)x(\d+)$/.test(source.site.footprint)) return true;
+  return hasSupportedAreaGeometry(source.massing) || hasSupportedAreaGeometry(source.grammar);
+}
+
+function makeCanonicalGameplayInput(building, source, options, description, explicitSource = false) {
+  const root = canonicalRootForCandidate(building, source, description, explicitSource);
+  const sourceHasGeometry = hasSupportedAreaGeometry(source);
+  const defaultMagicRatio = options.magicRatio
+    ?? source?.defaultMagicRatio
+    ?? source?.magicRatio
+    ?? building?.defaultMagicRatio
+    ?? building?.magicRatio;
+  return {
+    ...source,
+    ...root,
+    ...(source?.footprintCells != null
+      ? { footprintCells: source.footprintCells }
+      : !sourceHasGeometry && building?.footprintCells != null
+        ? { footprintCells: building.footprintCells }
+        : {}),
+    ...(source?.site != null
+      ? { site: source.site }
+      : !sourceHasGeometry && building?.site != null
+        ? { site: building.site }
+        : {}),
+    ...(defaultMagicRatio == null ? {} : { defaultMagicRatio })
+  };
+}
+
+function canonicalGameplayInput(building, options) {
+  const explicit = options.gameplayBuilding
+    ?? building?.gameplayBuilding
+    ?? building?.gameplay
+    ?? building?.program?.gameplay;
+  if (explicit) {
+    return makeCanonicalGameplayInput(
+      building,
+      explicit,
+      options,
+      describeGameplayGrammar(explicit),
+      true
+    );
+  }
+
+  // A top-level grammar is an explicit gameplay candidate and always wins
+  // over renderer-owned voxel data.
+  const topLevelDescription = describeGameplayGrammar(building);
+  if (topLevelDescription.hasGrammar) {
+    return makeCanonicalGameplayInput(building, building, options, topLevelDescription, true);
+  }
+
+  const visualSource = building?.voxelDesign?.generation?.sourceSpec ?? building?.voxelDesign;
+  const visualDescription = describeGameplayGrammar(visualSource);
+  if (visualDescription.hasGrammar
+      && (visualDescription.hasFunctionalFields || visualDescription.allPurposesCanonical)) {
+    return makeCanonicalGameplayInput(building, visualSource, options, visualDescription);
+  }
+  return null;
+}
+
+function deriveCanonicalGameplayBuilding(building, input) {
+  const normalized = normalizeGameplayBuilding(input, { canonical: true });
+  return {
+    schemaVersion: normalized.schemaVersion,
+    canonical: true,
+    units: normalized.units,
+    functionalAreas: normalized.functionalAreas,
+    defaultMagicRatio: normalized.defaultMagicRatio
+  };
+}
+
 export function deriveGameplayBuilding(building, options = {}) {
+  const canonicalInput = canonicalGameplayInput(building, options);
+  if (canonicalInput) return deriveCanonicalGameplayBuilding(building, canonicalInput);
   const category = options.category ?? getBuildingCategory(building);
   const magicLevel = options.magicLevel ?? getMagicLevel(building);
   const area = footprintArea(building);
