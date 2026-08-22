@@ -12,6 +12,15 @@ export const GAMEPLAY_PURPOSES = Object.freeze([
   "greenhouse"
 ]);
 export const MAGIC_RATIOS = Object.freeze([0, 0.25, 0.5, 0.75, 1]);
+export const GAMEPLAY_GRAMMAR_FIELDS = Object.freeze([
+  "units",
+  "functionalUnits",
+  "floors",
+  "floorSpecs",
+  "floorPrograms",
+  "masses",
+  "massSpecs"
+]);
 
 export const TURN_STATUSES = Object.freeze(["open", "building", "strategy", "resolved", "reported", "closed"]);
 
@@ -114,8 +123,19 @@ function aggregateFunctionalAreas(units) {
   ]));
 }
 
+function hasGrammarArrays(value) {
+  return Boolean(value) && GAMEPLAY_GRAMMAR_FIELDS.some((field) => Array.isArray(value[field]));
+}
+
+export function hasGameplayGrammar(value = {}) {
+  return hasGrammarArrays(value) || hasGrammarArrays(value.grammar) || hasGrammarArrays(value.massing);
+}
+
 function gameplayGrammar(value) {
-  return value.massing ?? value.grammar ?? value;
+  if (hasGrammarArrays(value)) return value;
+  if (hasGrammarArrays(value.massing)) return value.massing;
+  if (hasGrammarArrays(value.grammar)) return value.grammar;
+  return value;
 }
 
 function effectiveDefaultMagicRatio(value) {
@@ -199,25 +219,7 @@ function canonicalUnitsFromGrammar(value) {
  */
 export function normalizeGameplayBuilding(value = {}, options = {}) {
   const canonical = options.canonical === true
-    || Array.isArray(value.units)
-    || Array.isArray(value.functionalUnits)
-    || Array.isArray(value.floorSpecs)
-    || Array.isArray(value.floorPrograms)
-    || Array.isArray(value.floors)
-    || Array.isArray(value.masses)
-    || Array.isArray(value.massSpecs)
-    || Array.isArray(value.grammar?.units)
-    || Array.isArray(value.grammar?.functionalUnits)
-    || Array.isArray(value.grammar?.floors)
-    || Array.isArray(value.grammar?.floorPrograms)
-    || Array.isArray(value.grammar?.masses)
-    || Array.isArray(value.grammar?.massSpecs)
-    || Array.isArray(value.massing?.units)
-    || Array.isArray(value.massing?.functionalUnits)
-    || Array.isArray(value.massing?.masses)
-    || Array.isArray(value.massing?.floors)
-    || Array.isArray(value.massing?.floorPrograms)
-    || Array.isArray(value.massing?.floorSpecs)
+    || hasGameplayGrammar(value)
     || Object.prototype.hasOwnProperty.call(value, "purpose")
     || value.schemaVersion === GAMEPLAY_BUILDING_SCHEMA_VERSION;
   if (canonical) {

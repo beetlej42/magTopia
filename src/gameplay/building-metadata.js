@@ -1,5 +1,7 @@
 import {
+  GAMEPLAY_GRAMMAR_FIELDS,
   GAMEPLAY_PURPOSES,
+  hasGameplayGrammar,
   normalizeGameplayBuilding,
 } from "./schema.js";
 
@@ -137,40 +139,25 @@ function canonicalGameplayInput(building, options) {
   if (explicit) return explicit;
 
   const source = building?.voxelDesign?.generation?.sourceSpec ?? building?.voxelDesign ?? building;
-  const grammarKeys = ["units", "functionalUnits", "floorSpecs", "floorPrograms", "floors", "masses", "massSpecs"];
+  const grammarKeys = GAMEPLAY_GRAMMAR_FIELDS;
   const grammarEntries = grammarKeys.flatMap((key) => Array.isArray(source?.[key]) ? source[key] : []);
-  const nestedGrammarEntries = [
-    source?.massing?.units,
-    source?.massing?.functionalUnits,
-    source?.massing?.floors,
-    source?.massing?.floorPrograms,
-    source?.massing?.floorSpecs,
-    source?.massing?.masses,
-    source?.massing?.massSpecs,
-    source?.grammar?.units,
-    source?.grammar?.functionalUnits,
-    source?.grammar?.floors,
-    source?.grammar?.floorPrograms,
-    source?.grammar?.floorSpecs,
-    source?.grammar?.masses,
-    source?.grammar?.massSpecs
-  ].flatMap((entries) => Array.isArray(entries) ? entries : []);
+  const nestedGrammarSources = [source?.massing, source?.grammar].filter(Boolean);
+  const nestedGrammarEntries = nestedGrammarSources.flatMap((container) => grammarKeys
+    .flatMap((key) => Array.isArray(container[key]) ? container[key] : []));
   const allGrammarEntries = [...grammarEntries, ...nestedGrammarEntries];
   const hasFunctionalFields = ["units", "functionalUnits"].some((key) => Array.isArray(source?.[key]))
-    || [source?.massing?.units, source?.massing?.functionalUnits, source?.grammar?.units, source?.grammar?.functionalUnits]
-      .some((entries) => Array.isArray(entries));
+    || nestedGrammarSources.some((container) => ["units", "functionalUnits"]
+      .some((key) => Array.isArray(container[key])));
   // A units/functionalUnits field is an explicit gameplay contract.  The
   // visual floor/mass grammars are only gameplay when they carry purpose
   // annotations; unannotated geometry remains on the legacy path.
   const allPurposesCanonical = allGrammarEntries.length > 0
     && allGrammarEntries.every((entry) => GAMEPLAY_PURPOSES.includes(String(entry?.purpose ?? "").toLowerCase()));
-  const hasCanonicalGrammar = allGrammarEntries.length > 0
-    && (hasFunctionalFields || allPurposesCanonical);
-  const hasGrammar = grammarKeys.some((key) => Array.isArray(source?.[key]))
-    || nestedGrammarEntries.length > 0;
+  const hasCanonicalGrammar = hasFunctionalFields
+    || (allGrammarEntries.length > 0 && allPurposesCanonical);
+  const hasGrammar = hasGameplayGrammar(source);
   const hasExplicitTopLevelGrammar = source === building && (
-    grammarKeys.some((key) => Array.isArray(source?.[key]))
-    || nestedGrammarEntries.length > 0
+    hasGameplayGrammar(source)
   );
   const gameplayGrammarPresent = hasExplicitTopLevelGrammar || hasCanonicalGrammar;
   const purpose = building?.program?.purpose ?? building?.purpose ?? source?.purpose;

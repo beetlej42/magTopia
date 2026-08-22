@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  GAMEPLAY_GRAMMAR_FIELDS,
   GAMEPLAY_PURPOSES,
   MAGIC_RATIOS,
   normalizeFunctionalUnit,
@@ -93,6 +94,23 @@ test("invalid units are rejected and old category normalization remains separate
   assert.equal(validateGameplayBuilding({ purpose: "production", area: 1, magicRatio: 0.7 }).valid, false);
 });
 
+test("all grammar fields are detected symmetrically in top-level, grammar, and massing containers", () => {
+  for (const container of ["top-level", "grammar", "massing"]) {
+    for (const field of GAMEPLAY_GRAMMAR_FIELDS) {
+      const value = container === "top-level" ? { [field]: [] } : { [container]: { [field]: [] } };
+      assert.throws(
+        () => normalizeGameplayBuilding(value),
+        /must not be empty/,
+        `${container}.${field} should enter canonical validation`
+      );
+    }
+  }
+  const grammarFloor = normalizeGameplayBuilding({ grammar: { floorSpecs: [{ purpose: "residential", area: 1 }] } });
+  const massingMass = normalizeGameplayBuilding({ massing: { massSpecs: [{ purpose: "greenhouse", area: 1 }] } });
+  assert.equal(grammarFloor.units[0].purpose, "residential");
+  assert.equal(massingMass.units[0].purpose, "greenhouse");
+});
+
 test("nested massing defaults are inherited by units and reflected in the building output", () => {
   const normalized = normalizeGameplayBuilding({
     massing: {
@@ -142,4 +160,20 @@ test("explicit gameplay grammar rejects invalid purposes instead of falling back
   });
   assert.equal(visual.canonical, undefined);
   assert.equal(visual.category, "residential");
+});
+
+test("metadata rejects empty explicit functional grammar in every supported container", () => {
+  for (const container of ["top-level", "grammar", "massing"]) {
+    for (const field of ["units", "functionalUnits"]) {
+      const value = container === "top-level" ? { [field]: [] } : { [container]: { [field]: [] } };
+      assert.throws(() => deriveGameplayBuilding(value), /must not be empty/, `${container}.${field}`);
+    }
+  }
+  assert.throws(() => deriveGameplayBuilding({ voxelDesign: { functionalUnits: [] } }), /must not be empty/);
+  for (const container of ["grammar", "massing"]) {
+    for (const field of ["floors", "floorSpecs", "floorPrograms", "masses", "massSpecs"]) {
+      const value = { [container]: { [field]: [] } };
+      assert.throws(() => deriveGameplayBuilding(value), /must not be empty/, `${container}.${field}`);
+    }
+  }
 });
