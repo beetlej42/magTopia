@@ -147,6 +147,29 @@ test("metadata detects per-unit canonical floor grammar without a root purpose",
   assert.deepEqual(metadata.units, [{ purpose: "commercial", area: 1, magicRatio: 0.25 }]);
 });
 
+test("top-level canonical grammar takes precedence over unannotated voxel visuals", () => {
+  const metadata = deriveGameplayBuilding({
+    program: { purpose: "home" },
+    floorSpecs: [{ purpose: "commercial", area: 2, magicRatio: 0.25 }],
+    voxelDesign: { floorSpecs: [{ purpose: "home", area: 99 }] }
+  });
+  assert.equal(metadata.canonical, true);
+  assert.deepEqual(metadata.units, [{ purpose: "commercial", area: 2, magicRatio: 0.25 }]);
+});
+
+test("self-describing canonical units ignore an old program purpose, while missing purpose fails", () => {
+  const metadata = deriveGameplayBuilding({
+    program: { purpose: "home" },
+    floorSpecs: [{ purpose: "residential", area: 1, magicRatio: 0.5 }]
+  });
+  assert.equal(metadata.canonical, true);
+  assert.equal(metadata.units[0].purpose, "residential");
+  assert.throws(() => deriveGameplayBuilding({
+    program: { purpose: "home" },
+    units: [{ area: 1, magicRatio: 0.5 }]
+  }), /Unsupported gameplay purpose|requires a purpose/);
+});
+
 test("explicit gameplay grammar rejects invalid purposes instead of falling back to legacy metadata", () => {
   assert.throws(() => deriveGameplayBuilding({
     floorSpecs: [{ purpose: "workshop", area: 1, magicRatio: 0.25 }]
@@ -154,12 +177,28 @@ test("explicit gameplay grammar rejects invalid purposes instead of falling back
   assert.throws(() => deriveGameplayBuilding({
     gameplay: { units: [{ purpose: "workshop", area: 1 }] }
   }), /Unsupported gameplay purpose/);
+  assert.throws(() => deriveGameplayBuilding({
+    gameplay: { purpose: "workshop", units: [{ purpose: "residential", area: 1 }] }
+  }), /Unsupported gameplay purpose/);
   const visual = deriveGameplayBuilding({
     program: { purpose: "residential" },
     voxelDesign: { floorSpecs: [{ purpose: "home" }] }
   });
   assert.equal(visual.canonical, undefined);
   assert.equal(visual.category, "residential");
+});
+
+test("canonical normalization is deterministic for identical input", () => {
+  const input = {
+    grammar: {
+      defaultMagicRatio: 0.25,
+      floorSpecs: [
+        { purpose: "commercial", area: 2 },
+        { purpose: "residential", area: 2, magicRatio: 0.5 }
+      ]
+    }
+  };
+  assert.deepEqual(normalizeGameplayBuilding(input), normalizeGameplayBuilding(input));
 });
 
 test("metadata rejects empty explicit functional grammar in every supported container", () => {

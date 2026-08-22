@@ -131,6 +131,55 @@ export function footprintArea(building) {
   return 1;
 }
 
+function describeGameplayGrammar(value) {
+  const hasDirectGrammar = GAMEPLAY_GRAMMAR_FIELDS.some((field) => Array.isArray(value?.[field]));
+  const selected = hasDirectGrammar
+    ? value
+    : hasGameplayGrammar(value?.massing)
+      ? value.massing
+      : hasGameplayGrammar(value?.grammar)
+        ? value.grammar
+        : null;
+  if (!selected) return { hasGrammar: false, hasFunctionalFields: false, allPurposesCanonical: false };
+  const entries = GAMEPLAY_GRAMMAR_FIELDS.flatMap((field) => Array.isArray(selected[field]) ? selected[field] : []);
+  return {
+    hasGrammar: true,
+    hasFunctionalFields: ["units", "functionalUnits"].some((field) => Array.isArray(selected[field])),
+    allPurposesCanonical: entries.length > 0
+      && entries.every((entry) => GAMEPLAY_PURPOSES.includes(String(entry?.purpose ?? "").toLowerCase()))
+  };
+}
+
+function canonicalRootForCandidate(building, source, description, explicitSource) {
+  // A direct gameplay root is authoritative and is validated by the schema,
+  // even when all units are otherwise self-describing.
+  if (explicitSource || source === building) {
+    if (Object.prototype.hasOwnProperty.call(source ?? {}, "purpose")) return { purpose: source.purpose };
+  }
+  if (description.allPurposesCanonical) return {};
+  if (Object.prototype.hasOwnProperty.call(source ?? {}, "purpose")
+      && GAMEPLAY_PURPOSES.includes(String(source.purpose).toLowerCase())) {
+    return { purpose: source.purpose };
+  }
+  if (Object.prototype.hasOwnProperty.call(building ?? {}, "purpose")) return { purpose: building.purpose };
+  const programPurpose = building?.program?.purpose;
+  if (GAMEPLAY_PURPOSES.includes(String(programPurpose ?? "").toLowerCase())) return { purpose: programPurpose };
+  // Do not pass an old alias such as home/shop as a canonical root. Missing
+  // unit purpose then fails loudly in normalizeGameplayBuilding.
+  return {};
+}
+
+function makeCanonicalGameplayInput(building, source, options, description, explicitSource = false) {
+  const root = canonicalRootForCandidate(building, source, description, explicitSource);
+  return {
+    ...source,
+    ...root,
+    footprintCells: building?.footprintCells ?? source?.footprintCells,
+    site: building?.site ?? source?.site,
+    magicRatio: options.magicRatio ?? source?.magicRatio ?? building?.magicRatio
+  };
+}
+
 function canonicalGameplayInput(building, options) {
   const explicit = options.gameplayBuilding
     ?? building?.gameplayBuilding
@@ -138,44 +187,18 @@ function canonicalGameplayInput(building, options) {
     ?? building?.program?.gameplay;
   if (explicit) return explicit;
 
-  const source = building?.voxelDesign?.generation?.sourceSpec ?? building?.voxelDesign ?? building;
-  const grammarKeys = GAMEPLAY_GRAMMAR_FIELDS;
-  const grammarEntries = grammarKeys.flatMap((key) => Array.isArray(source?.[key]) ? source[key] : []);
-  const nestedGrammarSources = [source?.massing, source?.grammar].filter(Boolean);
-  const nestedGrammarEntries = nestedGrammarSources.flatMap((container) => grammarKeys
-    .flatMap((key) => Array.isArray(container[key]) ? container[key] : []));
-  const allGrammarEntries = [...grammarEntries, ...nestedGrammarEntries];
-  const hasFunctionalFields = ["units", "functionalUnits"].some((key) => Array.isArray(source?.[key]))
-    || nestedGrammarSources.some((container) => ["units", "functionalUnits"]
-      .some((key) => Array.isArray(container[key])));
-  // A units/functionalUnits field is an explicit gameplay contract.  The
-  // visual floor/mass grammars are only gameplay when they carry purpose
-  // annotations; unannotated geometry remains on the legacy path.
-  const allPurposesCanonical = allGrammarEntries.length > 0
-    && allGrammarEntries.every((entry) => GAMEPLAY_PURPOSES.includes(String(entry?.purpose ?? "").toLowerCase()));
-  const hasCanonicalGrammar = hasFunctionalFields
-    || (allGrammarEntries.length > 0 && allPurposesCanonical);
-  const hasGrammar = hasGameplayGrammar(source);
-  const hasExplicitTopLevelGrammar = source === building && (
-    hasGameplayGrammar(source)
-  );
-  const gameplayGrammarPresent = hasExplicitTopLevelGrammar || hasCanonicalGrammar;
-  const purpose = building?.program?.purpose ?? building?.purpose ?? source?.purpose;
-  const validRootPurpose = purpose == null || GAMEPLAY_PURPOSES.includes(String(purpose).toLowerCase());
-  if (hasGrammar && gameplayGrammarPresent && validRootPurpose) {
-    return {
-      ...source,
-      ...(purpose == null ? {} : { purpose }),
-      footprintCells: building?.footprintCells ?? source?.footprintCells,
-      site: building?.site ?? source?.site,
-      magicRatio: options.magicRatio ?? source?.magicRatio ?? building?.magicRatio
-    };
+  // A top-level grammar is an explicit gameplay candidate and always wins
+  // over renderer-owned voxel data.
+  const topLevelDescription = describeGameplayGrammar(building);
+  if (topLevelDescription.hasGrammar) {
+    return makeCanonicalGameplayInput(building, building, options, topLevelDescription, true);
   }
-  // Explicitly annotated grammar with an invalid root purpose must not be
-  // silently downgraded to legacy metadata.  Let the canonical normalizer
-  // produce the actionable purpose error.
-  if (hasGrammar && gameplayGrammarPresent && purpose != null) {
-    return { ...source, purpose };
+
+  const visualSource = building?.voxelDesign?.generation?.sourceSpec ?? building?.voxelDesign;
+  const visualDescription = describeGameplayGrammar(visualSource);
+  if (visualDescription.hasGrammar
+      && (visualDescription.hasFunctionalFields || visualDescription.allPurposesCanonical)) {
+    return makeCanonicalGameplayInput(building, visualSource, options, visualDescription);
   }
   return null;
 }
