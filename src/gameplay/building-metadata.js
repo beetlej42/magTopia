@@ -171,12 +171,26 @@ function canonicalRootForCandidate(building, source, description, explicitSource
 
 function makeCanonicalGameplayInput(building, source, options, description, explicitSource = false) {
   const root = canonicalRootForCandidate(building, source, description, explicitSource);
+  const sourceHasGeometry = source?.footprintCells != null || source?.site != null || source?.footprint != null;
+  const defaultMagicRatio = options.magicRatio
+    ?? source?.defaultMagicRatio
+    ?? source?.magicRatio
+    ?? building?.defaultMagicRatio
+    ?? building?.magicRatio;
   return {
     ...source,
     ...root,
-    footprintCells: building?.footprintCells ?? source?.footprintCells,
-    site: building?.site ?? source?.site,
-    magicRatio: options.magicRatio ?? source?.magicRatio ?? building?.magicRatio
+    ...(source?.footprintCells != null
+      ? { footprintCells: source.footprintCells }
+      : !sourceHasGeometry && building?.footprintCells != null
+        ? { footprintCells: building.footprintCells }
+        : {}),
+    ...(source?.site != null
+      ? { site: source.site }
+      : !sourceHasGeometry && building?.site != null
+        ? { site: building.site }
+        : {}),
+    ...(defaultMagicRatio == null ? {} : { defaultMagicRatio })
   };
 }
 
@@ -185,7 +199,15 @@ function canonicalGameplayInput(building, options) {
     ?? building?.gameplayBuilding
     ?? building?.gameplay
     ?? building?.program?.gameplay;
-  if (explicit) return explicit;
+  if (explicit) {
+    return makeCanonicalGameplayInput(
+      building,
+      explicit,
+      options,
+      describeGameplayGrammar(explicit),
+      true
+    );
+  }
 
   // A top-level grammar is an explicit gameplay candidate and always wins
   // over renderer-owned voxel data.

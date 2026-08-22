@@ -157,6 +157,43 @@ test("top-level canonical grammar takes precedence over unannotated voxel visual
   assert.deepEqual(metadata.units, [{ purpose: "commercial", area: 2, magicRatio: 0.25 }]);
 });
 
+test("explicit gameplay wrappers inherit outer footprint and honor wrapper geometry", () => {
+  const floorSpecs = [
+    { purpose: "residential", magicRatio: 0.25 },
+    { purpose: "residential", magicRatio: 0.5 },
+    { purpose: "residential", magicRatio: 0.75 }
+  ];
+  const fromBuildingWrapper = deriveGameplayBuilding({
+    footprintCells: ["a", "b"],
+    gameplay: { floorSpecs }
+  });
+  const fromOptionsWrapper = deriveGameplayBuilding(
+    { footprintCells: ["a", "b"] },
+    { gameplayBuilding: { floorSpecs } }
+  );
+  assert.deepEqual(fromBuildingWrapper.units.map((unit) => unit.area), [2, 2, 2]);
+  assert.deepEqual(fromOptionsWrapper.units.map((unit) => unit.area), [2, 2, 2]);
+
+  const wrapperOwnGeometry = deriveGameplayBuilding({
+    footprintCells: ["a", "b"],
+    gameplay: { site: { footprint: "3x1" }, floorSpecs }
+  });
+  assert.deepEqual(wrapperOwnGeometry.units.map((unit) => unit.area), [3, 3, 3]);
+});
+
+test("explicit options ratio overrides wrapper and outer canonical defaults", () => {
+  const metadata = deriveGameplayBuilding(
+    { footprintCells: ["a", "b"], defaultMagicRatio: 0.25, gameplay: {
+      defaultMagicRatio: 0.75,
+      magicLevel: 0.99,
+      units: [{ purpose: "greenhouse", area: 2 }]
+    } },
+    { magicRatio: 0.5 }
+  );
+  assert.equal(metadata.defaultMagicRatio, 0.5);
+  assert.equal(metadata.units[0].magicRatio, 0.5);
+});
+
 test("self-describing canonical units ignore an old program purpose, while missing purpose fails", () => {
   const metadata = deriveGameplayBuilding({
     program: { purpose: "home" },
