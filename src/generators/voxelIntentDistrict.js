@@ -16,6 +16,10 @@ import {
   createVoxelMassingLab,
   voxelDaylightStyle
 } from "./voxelBuildingLab.js";
+import {
+  STORYBOOK_SURFACE_KINDS,
+  applyStorybookSurfaceMaterial
+} from "../render/storybookSurfaceMaterial.js";
 
 const DISTRICT_CELL_VOXELS = 32;
 const DISTRICT_COLUMNS = 10;
@@ -692,7 +696,7 @@ export function createVoxelDistrictMacroSurface(config = {}) {
     soil: new THREE.Color("#765a45"),
     stone: new THREE.Color("#77766d")
   };
-  const material = new THREE.MeshStandardMaterial({
+  const material = applyStorybookSurfaceMaterial(new THREE.MeshStandardMaterial({
     vertexColors: true,
     roughness: 0.98,
     metalness: 0,
@@ -701,7 +705,7 @@ export function createVoxelDistrictMacroSurface(config = {}) {
     // flat geometry is baked onto the sphere, so hidden back faces can remain
     // culled without dropping visible terrain tops.
     side: THREE.FrontSide
-  });
+  }), { useSurfaceKindAttribute: true });
   const terrainGrid = createMacroTerrainGrid(params, {
     terrainColumns,
     terrainRows,
@@ -1183,6 +1187,7 @@ function createMacroTerrainChunkGeometry(terrainGrid, palette, {
 }) {
   const positions = [];
   const colors = [];
+  const surfaceKinds = [];
   const indices = [];
   const chunkWidth = endColumn - startTerrainColumn;
   const chunkHeight = endRow - startTerrainRow;
@@ -1190,10 +1195,11 @@ function createMacroTerrainChunkGeometry(terrainGrid, palette, {
   const surfaceColors = MACRO_TERRAIN_COLOR_NAMES.map((name) => palette[name]);
   let triangleCount = 0;
   let waterCellCount = 0;
-  const addQuad = (points, color) => {
+  const addQuad = (points, color, surfaceKind) => {
     const base = positions.length / 3;
     points.forEach(([x, y, z]) => positions.push(x, y, z));
     for (let vertex = 0; vertex < 4; vertex += 1) colors.push(color.r, color.g, color.b);
+    for (let vertex = 0; vertex < 4; vertex += 1) surfaceKinds.push(surfaceKind);
     indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
     triangleCount += 2;
   };
@@ -1240,7 +1246,17 @@ function createMacroTerrainChunkGeometry(terrainGrid, palette, {
       const z0 = -worldDepth / 2 + row * terrainVoxelWorldSize;
       const z1 = z0 + rectangleHeight * terrainVoxelWorldSize;
       const height = GLOBAL_CONSTRUCTION_HEIGHT + terrainGrid.elevationSteps[cellIndex] * VOXEL_SIZE;
-      addQuad([[x0, height, z0], [x0, height, z1], [x1, height, z1], [x1, height, z0]], surfaceColors[terrainGrid.colors[cellIndex]]);
+      const surfaceName = MACRO_TERRAIN_COLOR_NAMES[terrainGrid.colors[cellIndex]];
+      const surfaceKind = surfaceName === "water" || surfaceName === "waterLight"
+        ? STORYBOOK_SURFACE_KINDS.none
+        : surfaceName === "road" || surfaceName === "shore"
+          ? STORYBOOK_SURFACE_KINDS.stone
+          : STORYBOOK_SURFACE_KINDS.felt;
+      addQuad(
+        [[x0, height, z0], [x0, height, z1], [x1, height, z1], [x1, height, z0]],
+        surfaceColors[terrainGrid.colors[cellIndex]],
+        surfaceKind
+      );
     }
   }
 
@@ -1274,7 +1290,7 @@ function createMacroTerrainChunkGeometry(terrainGrid, palette, {
             : terrainGrid.kinds[cellIndex] === MACRO_TERRAIN_KIND.terrain
               ? palette.grassDark
               : surfaceColors[terrainGrid.colors[cellIndex]];
-        addQuad(neighbor.points, sideColor);
+        addQuad(neighbor.points, sideColor, STORYBOOK_SURFACE_KINDS.stone);
       });
     }
   }
@@ -1282,6 +1298,7 @@ function createMacroTerrainChunkGeometry(terrainGrid, palette, {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  geometry.setAttribute("voxelSurfaceKind", new THREE.Float32BufferAttribute(surfaceKinds, 1));
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
   geometry.computeBoundingSphere();

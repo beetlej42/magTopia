@@ -244,8 +244,12 @@ test("the diffuse voxel shader is opt-in and invalid modes fall back safely", ()
     const [mesh] = buffer.createMeshes({ strategy: "greedy" });
     assert.equal(mesh.material.isMeshStandardMaterial, true);
     assert.equal(mesh.material.userData.voxelShader, "diffuse");
-    assert.equal(mesh.material.customProgramCacheKey(), "voxel-diffuse-v1");
-    const shader = { fragmentShader: "#include <lights_physical_pars_fragment>" };
+    assert.equal(mesh.material.customProgramCacheKey(), "voxel-diffuse-v1|storybook-surface-v1:attribute");
+    const shader = {
+      uniforms: {},
+      vertexShader: "#include <common>\n#include <project_vertex>",
+      fragmentShader: "#include <common>\n#include <map_fragment>\n#include <roughnessmap_fragment>\n#include <lights_physical_pars_fragment>"
+    };
     mesh.material.onBeforeCompile(shader);
     assert.equal(shader.fragmentShader.includes("reflectedLight.directSpecular += irradiance * BRDF_GGX"), false);
     assert.equal(shader.fragmentShader.includes("#define RE_IndirectSpecular"), false);
