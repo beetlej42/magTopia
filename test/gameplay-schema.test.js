@@ -179,6 +179,18 @@ test("explicit gameplay wrappers inherit outer footprint and honor wrapper geome
     gameplay: { site: { footprint: "3x1" }, floorSpecs }
   });
   assert.deepEqual(wrapperOwnGeometry.units.map((unit) => unit.area), [3, 3, 3]);
+
+  const identityOnlySite = deriveGameplayBuilding({
+    footprintCells: ["a", "b"],
+    gameplay: { site: { lotId: "lot-1" }, floorSpecs: floorSpecs.slice(0, 2) }
+  });
+  assert.deepEqual(identityOnlySite.units.map((unit) => unit.area), [2, 2]);
+
+  const unsupportedRawFootprint = deriveGameplayBuilding({
+    footprintCells: ["a", "b"],
+    gameplay: { footprint: "9x1", floorSpecs: floorSpecs.slice(0, 1) }
+  });
+  assert.deepEqual(unsupportedRawFootprint.units.map((unit) => unit.area), [2]);
 });
 
 test("explicit options ratio overrides wrapper and outer canonical defaults", () => {

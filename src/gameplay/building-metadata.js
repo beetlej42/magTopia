@@ -169,9 +169,26 @@ function canonicalRootForCandidate(building, source, description, explicitSource
   return {};
 }
 
+function isPositiveInteger(value) {
+  return Number.isSafeInteger(Number(value)) && Number(value) > 0;
+}
+
+function hasSupportedAreaGeometry(source) {
+  if (!source || typeof source !== "object") return false;
+  if (isPositiveInteger(source.footprintArea)) return true;
+  if (Array.isArray(source.footprintCells)) return source.footprintCells.length > 0;
+  if (isPositiveInteger(source.footprintCells)) return true;
+  if (Array.isArray(source.footprint?.cells)) return source.footprint.cells.length > 0;
+  if (isPositiveInteger(source.footprint?.cells)) return true;
+  if (isPositiveInteger(source.footprint?.widthCells)
+      && isPositiveInteger(source.footprint?.depthCells)) return true;
+  if (typeof source.site?.footprint === "string" && /^(\d+)x(\d+)$/.test(source.site.footprint)) return true;
+  return hasSupportedAreaGeometry(source.massing) || hasSupportedAreaGeometry(source.grammar);
+}
+
 function makeCanonicalGameplayInput(building, source, options, description, explicitSource = false) {
   const root = canonicalRootForCandidate(building, source, description, explicitSource);
-  const sourceHasGeometry = source?.footprintCells != null || source?.site != null || source?.footprint != null;
+  const sourceHasGeometry = hasSupportedAreaGeometry(source);
   const defaultMagicRatio = options.magicRatio
     ?? source?.defaultMagicRatio
     ?? source?.magicRatio
