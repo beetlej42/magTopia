@@ -147,10 +147,6 @@ function effectiveDefaultMagicRatio(value) {
 }
 
 function canonicalPricingFacts(value) {
-  if (value?.canonical === true && value?.pricingFacts?.sourceKind) return {
-    sourceKind: String(value.pricingFacts.sourceKind),
-    floorCount: value.pricingFacts.floorCount == null ? null : Number(value.pricingFacts.floorCount)
-  };
   const grammar = gameplayGrammar(value);
   const unitSource = value.units ?? value.functionalUnits ?? grammar.units ?? grammar.functionalUnits;
   if (Array.isArray(unitSource)) return { sourceKind: "units", floorCount: null };

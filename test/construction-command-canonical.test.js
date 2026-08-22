@@ -14,9 +14,9 @@ function world(columns = 12, rows = 12) {
   return { mapId: "canonical-cost-test", grid: { columns, rows, cells } };
 }
 
-function context() {
+function context(options = {}) {
   let sequence = 0;
-  return createEngineContext({ createId: (prefix) => `${prefix}-canonical-${++sequence}`, now: () => "2026-08-22T12:00:00.000Z" });
+  return createEngineContext({ ...options, createId: (prefix) => `${prefix}-canonical-${++sequence}`, now: () => "2026-08-22T12:00:00.000Z" });
 }
 
 function proposal(lotId = "cell-3-3", gameplayBuilding = { units: [{ purpose: "residential", area: 1, magicRatio: 0 }] }) {
@@ -77,13 +77,15 @@ test("discounted odd canonical cost rounds to an integer through resources and r
   assert.equal(preview.cost.coins, 53);
   assert.equal(Number.isInteger(preview.cost.coins), true);
   assert.equal(Number.isInteger(preview.resourcesAfter.coins), true);
-  const reserved = executeCityCommand(state, { type: "reserve_construction", proposal: odd, reservationId: "odd-reservation" }, context());
+  const reserved = executeCityCommand(state, { type: "reserve_construction", proposal: odd, reservationId: "odd-reservation" }, context({ constructionDiscountRate: 0.5 }));
   assert.equal(reserved.accepted, true);
-  assert.equal(reserved.reservation.frozenCost.coins, 105);
-  const completed = executeCityCommand(reserved.state, { type: "complete_reserved_construction", reservationId: "odd-reservation" }, context());
+  assert.equal(reserved.reservation.frozenCost.coins, 53);
+  assert.equal(Number.isInteger(reserved.reservation.frozenCost.coins), true);
+  const completed = executeCityCommand(reserved.state, { type: "complete_reserved_construction", reservationId: "odd-reservation" }, context({ constructionDiscountRate: 0.5 }));
   assert.equal(completed.accepted, true);
-  assert.equal(completed.state.resources.coins, 495);
-  const reservation = executeCityCommand(state, { type: "reserve_construction", proposal: odd, reservationId: "refund-reservation" }, context());
+  assert.equal(completed.state.resources.coins, 547);
+  const reservation = executeCityCommand(state, { type: "reserve_construction", proposal: odd, reservationId: "refund-reservation" }, context({ constructionDiscountRate: 0.5 }));
+  assert.equal(reservation.reservation.frozenCost.coins, 53);
   const cancelled = executeCityCommand(reservation.state, { type: "cancel_construction_reservation", reservationId: "refund-reservation" }, context());
   assert.equal(cancelled.accepted, true);
   assert.equal(cancelled.state.resources.coins, state.resources.coins);

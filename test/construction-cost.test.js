@@ -81,7 +81,6 @@ test("height multiplier has explicit boundaries and expected values", () => {
   assert.equal(ordinaryResidentialHeightMultiplier(4), 1.15);
   assert.equal(ordinaryResidentialHeightMultiplier(21), 2);
   assert.throws(() => ordinaryResidentialHeightMultiplier(0), /floor count/);
-  assert.throws(() => ordinaryResidentialHeightMultiplier(0), /floor count/);
   assert.throws(() => ordinaryResidentialHeightMultiplier(1.5), /floor count/);
 });
 
@@ -99,6 +98,7 @@ test("road and bridge rates are centralized, integer, and reject illegal counts"
   });
   assert.throws(() => calculateRoadCost({ roadCells: -1 }), /road cell count/);
   assert.throws(() => calculateRoadCost({ bridgeCells: 1.5 }), /bridge cell count/);
+  assert.throws(() => calculateRoadCost({ roadCells: Number.MAX_SAFE_INTEGER, bridgeCells: Number.MAX_SAFE_INTEGER }), /safe integer/);
 });
 
 test("legacy proposals are explicitly labelled adapters and cannot masquerade as canonical cost", () => {
@@ -126,9 +126,9 @@ test("raw, normalized, derived, and persisted-shaped canonical metadata keep the
   assert.deepEqual(normalized.pricingFacts, { sourceKind: "floors", floorCount: 2 });
   assert.deepEqual(derived.pricingFacts, normalized.pricingFacts);
   assert.equal(calculateBuildingConstructionCost(raw).coins, 210);
-  assert.equal(calculateBuildingConstructionCost(normalized).coins, 210);
-  assert.equal(calculateBuildingConstructionCost(derived).coins, 210);
-  assert.equal(calculateBuildingConstructionCost(persisted.gameplay).coins, 210);
+  assert.equal(calculateBuildingConstructionCost(normalized, { trustedMetadata: true }).coins, 210);
+  assert.equal(calculateBuildingConstructionCost(derived, { trustedMetadata: true }).coins, 210);
+  assert.equal(calculateBuildingConstructionCost(persisted.gameplay, { trustedMetadata: true }).coins, 210);
 });
 
 test("explicit gameplay wrapper wins over a conflicting top-level floor grammar", () => {
@@ -140,6 +140,17 @@ test("explicit gameplay wrapper wins over a conflicting top-level floor grammar"
   assert.equal(cost.heightPricingApplied, false);
   assert.equal(cost.heightFloors, null);
   assert.equal(cost.coins, 50);
+});
+
+test("client-supplied canonical/pricingFacts cannot suppress real floor pricing", () => {
+  const forged = {
+    canonical: true,
+    footprintCells: ["a"],
+    floorSpecs: [{ purpose: "residential" }, { purpose: "residential" }],
+    pricingFacts: { sourceKind: "units", floorCount: null }
+  };
+  assert.deepEqual(deriveGameplayBuilding(forged).pricingFacts, { sourceKind: "floors", floorCount: 2 });
+  assert.equal(calculateBuildingConstructionCost(forged).coins, 105);
 });
 
 test("construction proposals preserve explicit canonical gameplay grammar", () => {

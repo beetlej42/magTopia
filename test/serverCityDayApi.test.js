@@ -730,6 +730,97 @@ test("card offer and turn stay stable across construction/road/district mutation
   }
 });
 
+test("construction APIs reject missing or invalid gameplay grammar without mutating city state", async () => {
+  const repository = createMemoryRepository(config);
+  const app = await createApp({ repository, config });
+  try {
+    const { city, agent, owner } = await openCity(repository, app);
+    const sites = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/site-searches`,
+      payload: { footprint: "1x1", limit: 10 }
+    }), 200);
+    const lotId = sites.data[0].lotId;
+    const base = {
+      expected_city_version: sites.city_version,
+      site: { lot_id: lotId, footprint: "1x1", entrance: "south" },
+      program: { archetype: "starter_residence", name: "Boundary House", purpose: "residential" },
+      design: { district_style: "london_common", creative_brief: "A compact brick cottage." },
+      asset: { mode: "reuse", asset_id: "starter-cottage-001" }
+    };
+    const invalidCases = [
+      { label: "missing gameplay_building", code: "GAMEPLAY_BUILDING_REQUIRED", body: {} },
+      { label: "non-discrete magic ratio", code: "INVALID_MAGIC_RATIO", body: { gameplay_building: { units: [{ purpose: "residential", area: 1, magicRatio: 0.63 }] } } },
+      { label: "unknown purpose", code: "INVALID_GAMEPLAY_PURPOSE", body: { gameplay_building: { units: [{ purpose: "workshop", area: 1, magicRatio: 0 }] } } },
+      { label: "non-positive area", code: "INVALID_GAMEPLAY_BUILDING", body: { gameplay_building: { units: [{ purpose: "residential", area: 0, magicRatio: 0 }] } } }
+    ];
+    for (const [index, scenario] of invalidCases.entries()) {
+      const before = await repository.getCity(owner, city.id);
+      const body = { ...base, ...scenario.body, expected_city_version: before.state.version };
+      const preview = await json(app, auth(agent, {
+        method: "POST",
+        url: `/api/v1/cities/${city.id}/construction-previews`,
+        payload: body
+      }), 200);
+      assert.equal(preview.feasible, false, scenario.label);
+      assert.equal(preview.code, scenario.code, scenario.label);
+      assert.deepEqual(preview.resourcesAfter, before.state.resources, scenario.label);
+
+      const order = await json(app, auth(agent, {
+        method: "POST",
+        url: `/api/v1/cities/${city.id}/construction-orders`,
+        headers: { "idempotency-key": `invalid-gameplay-${index}` },
+        payload: body
+      }), 422);
+      assert.equal(order.status, "rejected", scenario.label);
+      assert.equal(order.code, scenario.code, scenario.label);
+      const after = await repository.getCity(owner, city.id);
+      assert.equal(after.state.version, before.state.version, `${scenario.label} does not advance city version`);
+      assert.deepEqual(after.state.resources, before.state.resources, `${scenario.label} does not debit resources`);
+      assert.deepEqual(after.state.reservations, before.state.reservations, `${scenario.label} does not create a reservation`);
+    }
+  } finally {
+    await app.close();
+  }
+});
+
+test("construction preview derives pricing from submitted floor grammar, never forged pricing facts", async () => {
+  const repository = createMemoryRepository(config);
+  const app = await createApp({ repository, config });
+  try {
+    const { city, agent, owner } = await openCity(repository, app);
+    const sites = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/site-searches`,
+      payload: { footprint: "1x1", limit: 10 }
+    }), 200);
+    const before = await repository.getCity(owner, city.id);
+    const preview = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/construction-previews`,
+      payload: {
+        expected_city_version: before.state.version,
+        site: { lot_id: sites.data[0].lotId, footprint: "1x1", entrance: "south" },
+        program: { archetype: "starter_residence", name: "Two Floor House", purpose: "residential" },
+        gameplay_building: {
+          canonical: true,
+          floorSpecs: [{ purpose: "residential", magicRatio: 0 }, { purpose: "residential", magicRatio: 0 }],
+          pricingFacts: { sourceKind: "units", floorCount: null }
+        },
+        design: { district_style: "london_common", creative_brief: "A two-storey brick cottage." },
+        asset: { mode: "reuse", asset_id: "starter-cottage-001" }
+      }
+    }), 200);
+    assert.equal(preview.feasible, true);
+    assert.equal(preview.buildingCost.coins, 105, "real floor grammar retains the two-floor multiplier");
+    const after = await repository.getCity(owner, city.id);
+    assert.equal(after.state.version, before.state.version, "preview remains read-only");
+    assert.deepEqual(after.state.resources, before.state.resources);
+  } finally {
+    await app.close();
+  }
+});
+
 function auth(account, request) {
   return { ...request, headers: { ...(request.headers ?? {}), authorization: `Bearer ${account.access_token}` } };
 }

@@ -112,11 +112,15 @@ function canonicalCostBreakdown(metadata, building, options = {}) {
 /**
  * Calculate the authoritative v0.3 cost for a canonical GameplayBuilding.
  * `building` may be a raw canonical grammar or the metadata returned by
- * deriveGameplayBuilding. Invalid canonical input throws. Legacy category
- * pricing is available only through an explicit opt-in.
+ * deriveGameplayBuilding. Normalized metadata is trusted only when the
+ * caller explicitly opts in; HTTP/request-shaped objects are always
+ * re-normalized from their selected grammar so canonical/pricingFacts cannot
+ * be forged. Invalid canonical input throws. Legacy category pricing is
+ * available only through an explicit opt-in.
  */
 export function calculateBuildingConstructionCost(building, options = {}) {
-  const metadata = building?.canonical && building?.units && building?.functionalAreas
+  const metadata = options.trustedMetadata === true
+    && building?.canonical && building?.units && building?.functionalAreas
     ? building
     : deriveGameplayBuilding(building, options);
   if (!metadata?.canonical || !Array.isArray(metadata.units)) {
@@ -163,8 +167,9 @@ export function legacyBuildingConstructionCost(building = {}) {
 export function calculateRoadCost({ roadCells = 0, bridgeCells = 0 } = {}) {
   const road = integer(roadCells, "road cell count", { min: 0 });
   const bridge = integer(bridgeCells, "bridge cell count", { min: 0 });
+  const coins = roundConstructionCoins(road * ROAD_COST_BY_KIND.standard + bridge * ROAD_COST_BY_KIND.bridge);
   return {
-    coins: road * ROAD_COST_BY_KIND.standard + bridge * ROAD_COST_BY_KIND.bridge,
+    coins,
     source: "canonical_road_rates",
     roadCells: road,
     bridgeCells: bridge,

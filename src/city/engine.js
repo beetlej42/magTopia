@@ -7,6 +7,7 @@ export function createEngineContext(options = {}) {
   const sequences = new Map();
   return {
     now: options.now ?? (() => new Date().toISOString()),
+    constructionDiscountRate: options.constructionDiscountRate ?? 0,
     createId: options.createId ?? ((prefix) => {
       const sequence = (sequences.get(prefix) ?? 0) + 1;
       sequences.set(prefix, sequence);
