@@ -303,6 +303,11 @@ export function createOpenApiDocument(baseUrl) {
                 attributes: json
               }
             },
+            gameplay_building: {
+              type: "object",
+              description: "Canonical v0.3 functional-unit grammar. Costs use only these units; renderer or mesh fields are not gameplay authority.",
+              additionalProperties: true
+            },
             design: {
               type: "object",
               required: ["district_style", "creative_brief"],

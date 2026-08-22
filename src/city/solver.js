@@ -2,9 +2,8 @@ import { getFootprintCells } from "./contracts.js";
 import { districtBlockForCell, districtBlockProgress } from "./district-layout.js";
 import { districtSuggestions, districtSpatialObservations } from "./district-guidance.js";
 import { canOccupyFootprint } from "./state.js";
+import { calculateBuildingConstructionCost, calculateRoadCost } from "../gameplay/construction-cost.js";
 
-const ROAD_COST = { coins: 8 };
-const BRIDGE_COST = { coins: 30 };
 const DIRECTIONS = ["north", "east", "south", "west"];
 const DIRECTION_OFFSETS = {
   north: [0, -1],
@@ -85,12 +84,12 @@ export function previewConstruction(state, proposal, options = {}) {
     ? solveConnection(state, occupancy.cells, proposal.connectionRequest, proposal.site.entrance, explicitEntrance)
     : emptyRoute();
   if (!route.feasible) return { feasible: false, errors: [route.reason] };
-  const buildingCost = buildingCostFor(proposal.site.footprint, proposal.program.archetype);
+  const buildingCost = calculateBuildingConstructionCost(proposal);
   // System-owned construction policy discount (City Construction Mobilization).
   // Consumed through the unified preview path so every construction cost stays
   // in one solver. Client input never carries the discount.
   const discountRate = Math.min(1, Math.max(0, Number(options.constructionDiscountRate ?? 0)));
-  const discountedBuildingCost = scaleCosts(buildingCost, 1 - discountRate);
+  const discountedBuildingCost = scaleCost({ coins: buildingCost.coins }, 1 - discountRate);
   const cost = addCosts(discountedBuildingCost, route.cost);
   const resourcesAfter = subtractCosts(state.resources, cost);
   const shortages = Object.entries(resourcesAfter).filter(([, value]) => value < 0).map(([key]) => key);
@@ -103,6 +102,7 @@ export function previewConstruction(state, proposal, options = {}) {
     connectionPlan: route,
     guidance: constructionGuidance(state, proposal, occupancy.cells),
     cost,
+    buildingCost,
     resourcesAfter,
     warnings: route.bridgeCells.length ? [`Bridge required across ${route.bridgeCells.length} water cell(s).`] : []
   };
@@ -153,7 +153,8 @@ export function solveConnection(state, footprintCells, request, entrance = "sout
       && !targetFootprintCells.includes(cellId)
       && cell.infrastructure !== "road";
   });
-  return { feasible: true, targetId, targetBuildingId: request.toBuildingId ?? null, entrance, targetEntrance, entranceCellId: startId, route, roadCells, bridgeCells, bridgeRouteCells, cost: addCosts(scaleCost(ROAD_COST, roadCells.length), scaleCost(BRIDGE_COST, bridgeCells.length)) };
+  const roadCost = calculateRoadCost({ roadCells: roadCells.length, bridgeCells: bridgeCells.length });
+  return { feasible: true, targetId, targetBuildingId: request.toBuildingId ?? null, entrance, targetEntrance, entranceCellId: startId, route, roadCells, bridgeCells, bridgeRouteCells, cost: { coins: roadCost.coins }, roadCost };
 }
 
 export function previewConnectionBetween(state, from, to) {
@@ -210,7 +211,7 @@ function firstRouteableDirection(state, cellId) {
   }) ?? "south";
 }
 
-function emptyRoute() { return { feasible: true, route: [], roadCells: [], bridgeCells: [], cost: { coins: 0 } }; }
+function emptyRoute() { return { feasible: true, route: [], roadCells: [], bridgeCells: [], cost: { coins: 0 }, roadCost: calculateRoadCost() }; }
 function allowedEntrances(state, cells) { return DIRECTIONS.filter((direction) => getEntranceFrontageCells(state, cells, direction).length > 0); }
 function adjacentRoad(state, cells, direction) {
   return getEntranceFrontageCells(state, cells, direction).some((cellId) => (
@@ -440,10 +441,6 @@ function parseCellId(cellId) {
   const match = /^cell-(-?\d+)-(-?\d+)$/.exec(cellId ?? "");
   return match ? { column: Number(match[1]), row: Number(match[2]) } : { column: 0, row: 0 };
 }
-// Coins-only construction costs: the authoritative economy uses a single core
-// resource. The legacy timber/stone cost ledger was consolidated away.
-function buildingCostFor(footprint, archetype) { const area = getFootprintCells({ column: 0, row: 0 }, footprint).length; const landmark = /station|hall|library|academy/.test(archetype); return { coins: area * (landmark ? 90 : 45) }; }
 function scaleCost(cost, amount) { return Object.fromEntries(Object.entries(cost).map(([key, value]) => [key, value * amount])); }
-function scaleCosts(cost, amount) { return scaleCost(cost, amount); }
 function addCosts(...costs) { return costs.reduce((sum, cost) => ({ coins: sum.coins + cost.coins }), { coins: 0 }); }
 function subtractCosts(resources, cost) { return { coins: resources.coins - cost.coins }; }

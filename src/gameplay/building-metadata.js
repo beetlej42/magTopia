@@ -233,11 +233,15 @@ function canonicalGameplayInput(building, options) {
     return makeCanonicalGameplayInput(building, building, options, topLevelDescription, true);
   }
 
+  // Renderer-owned voxel data is never a v0.3 gameplay authority. Keep the
+  // malformed-empty check for migration diagnostics, but do not infer a
+  // purpose from a mesh/design grammar when no stable gameplay field was
+  // supplied at the building root.
   const visualSource = building?.voxelDesign?.generation?.sourceSpec ?? building?.voxelDesign;
   const visualDescription = describeGameplayGrammar(visualSource);
-  if (visualDescription.hasGrammar
-      && (visualDescription.hasFunctionalFields || visualDescription.allPurposesCanonical)) {
-    return makeCanonicalGameplayInput(building, visualSource, options, visualDescription);
+  if (visualDescription.hasGrammar) {
+    const entries = GAMEPLAY_GRAMMAR_FIELDS.flatMap((field) => Array.isArray(visualSource?.[field]) ? visualSource[field] : []);
+    if (!entries.length) normalizeGameplayBuilding(visualSource, { canonical: true });
   }
   return null;
 }
