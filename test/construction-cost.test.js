@@ -64,9 +64,19 @@ test("pure residential height pricing is invariant across floor and unit represe
     site: { footprint: "2x1" },
     units: [{ purpose: "residential", area: 4 }]
   });
+  const massGrammar = calculateBuildingConstructionCost({
+    site: { footprint: "1x1" },
+    massSpecs: [{ purpose: "residential" }, { purpose: "residential" }]
+  });
+  const explicitMassArea = calculateBuildingConstructionCost({
+    site: { footprint: "1x1" },
+    masses: [{ purpose: "residential", area: 2 }]
+  });
   assert.equal(floorGrammar.coins, 105);
   assert.equal(unitGrammar.coins, 105);
   assert.equal(twoCellUnitGrammar.coins, 210);
+  assert.equal(massGrammar.coins, 105);
+  assert.equal(explicitMassArea.coins, 105);
   assert.equal(floorGrammar.heightFloors, unitGrammar.heightFloors);
   assert.equal(unitGrammar.heightFloors, 2);
   const unitInput = { site: { footprint: "1x1" }, units: [{ purpose: "residential", area: 2 }] };
@@ -161,7 +171,8 @@ test("raw, normalized, derived, and persisted-shaped canonical metadata keep the
   assert.equal(calculateBuildingConstructionCost(normalized, { trustedMetadata: true }).coins, 210);
   assert.equal(calculateBuildingConstructionCost(derived, { trustedMetadata: true }).coins, 210);
   assert.equal(calculateBuildingConstructionCost(persisted.gameplay, { trustedMetadata: true }).coins, 210);
-  assert.equal(calculateBuildingConstructionCost(persisted).coins, 210);
+  assert.throws(() => calculateBuildingConstructionCost(persisted), /Ambiguous GameplayBuilding grammar/);
+  assert.equal(calculateBuildingConstructionCost(persisted, { persistedBuilding: true }).coins, 210);
 });
 
 test("conflicting gameplay wrapper and top-level grammar are rejected as ambiguous", () => {

@@ -218,7 +218,7 @@ function canonicalGameplayInput(building, options) {
     && Array.isArray(building.gameplay.units)
     && building.gameplay.functionalAreas
     && building.gameplay.pricingFacts;
-  if (persistedGameplay) {
+  if (options.persistedBuilding === true && persistedGameplay) {
     return makeCanonicalGameplayInput(
       building,
       building.gameplay,

@@ -3,6 +3,7 @@ import test from "node:test";
 import { createCityState } from "../src/city/state.js";
 import { createEngineContext, executeCityCommand } from "../src/city/engine.js";
 import { previewConstruction } from "../src/city/solver.js";
+import { calculateBuildingConstructionCost } from "../src/gameplay/construction-cost.js";
 
 function world(columns = 12, rows = 12) {
   const cells = [];
@@ -81,6 +82,33 @@ test("ambiguous canonical grammar is rejected without reservation or resource mu
   assert.equal(result.state.version, state.version);
   assert.deepEqual(result.state.resources, state.resources);
   assert.deepEqual(result.state.reservations, state.reservations);
+});
+
+test("residential area and authoritative footprint mismatches are classified as invalid gameplay", () => {
+  const state = createCityState(world(), { resources: { coins: 600 } });
+  const result = executeCityCommand(state, {
+    type: "construct_building",
+    proposal: {
+      ...proposal("cell-3-3", { units: [{ purpose: "residential", area: 3, magicRatio: 0 }] }),
+      site: { lotId: "cell-3-3", footprint: "2x1", entrance: "south" }
+    }
+  }, context());
+  assert.equal(result.accepted, false);
+  assert.equal(result.code, "INVALID_GAMEPLAY_BUILDING");
+  assert.equal(result.state.version, state.version);
+  assert.deepEqual(result.state.resources, state.resources);
+});
+
+test("completed canonical buildings recompute through the explicit persisted-building path", () => {
+  const state = createCityState(world(), { resources: { coins: 600 } });
+  const completed = executeCityCommand(state, {
+    type: "construct_building",
+    proposal: proposal("cell-3-3", {
+      floorSpecs: [{ purpose: "residential" }, { purpose: "residential" }]
+    })
+  }, context());
+  assert.equal(completed.accepted, true);
+  assert.equal(calculateBuildingConstructionCost(completed.building, { persistedBuilding: true }).coins, 105);
 });
 
 test("discounted odd canonical cost rounds to an integer through resources and reservation refund", () => {

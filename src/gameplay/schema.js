@@ -215,7 +215,7 @@ function canonicalPricingFacts(value, units = []) {
   const footprintArea = footprintAreaFromGeometry(value);
   const allResidential = units.length > 0 && units.every((unit) => unit.purpose === "residential");
   let effectiveFloorCount = null;
-  if (allResidential && kind !== "masses") {
+  if (allResidential) {
     if (!footprintArea) throw new Error("Pure residential GameplayBuilding requires an authoritative footprint area");
     const totalArea = units.reduce((total, unit) => total + unit.area, 0);
     if (totalArea < footprintArea || totalArea % footprintArea !== 0) {

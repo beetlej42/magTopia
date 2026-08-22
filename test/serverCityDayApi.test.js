@@ -846,6 +846,23 @@ test("construction preview derives pricing from submitted floor grammar, never f
     }), 200);
     assert.equal(unitPreview.feasible, true);
     assert.equal(unitPreview.buildingCost.coins, 105, "unit grammar cannot use forged pricing facts to avoid the multiplier");
+    const massPreview = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/construction-previews`,
+      payload: {
+        expected_city_version: before.state.version,
+        site: { lot_id: sites.data[0].lotId, footprint: "1x1", entrance: "south" },
+        program: { archetype: "starter_residence", name: "Two Floor House", purpose: "residential" },
+        gameplay_building: {
+          massSpecs: [{ purpose: "residential" }, { purpose: "residential" }],
+          pricingFacts: { sourceKind: "masses", effectiveFloorCount: null }
+        },
+        design: { district_style: "london_common", creative_brief: "A two-storey brick cottage." },
+        asset: { mode: "reuse", asset_id: "starter-cottage-001" }
+      }
+    }), 200);
+    assert.equal(massPreview.feasible, true);
+    assert.equal(massPreview.buildingCost.coins, 105, "pure residential mass grammar receives the same height multiplier");
     const after = await repository.getCity(owner, city.id);
     assert.equal(after.state.version, before.state.version, "preview remains read-only");
     assert.deepEqual(after.state.resources, before.state.resources);

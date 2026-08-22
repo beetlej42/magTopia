@@ -53,8 +53,7 @@ function roundCoins(value) {
 function isOrdinaryResidentialFloorGrammar(metadata) {
   const facts = metadata?.pricingFacts;
   if (!metadata?.units?.length) return false;
-  return facts?.sourceKind !== "masses"
-    && Number.isSafeInteger(facts?.effectiveFloorCount)
+  return Number.isSafeInteger(facts?.effectiveFloorCount)
     && facts.effectiveFloorCount > 0
     && metadata.units.every((unit) => unit.purpose === "residential");
 }
