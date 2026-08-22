@@ -23,6 +23,7 @@ function proposal(lotId = "cell-3-3") {
     actor: "agent:test",
     site: { lotId, footprint: "1x1", entrance: "south" },
     program: { archetype: "starter_residence", purpose: "residential", name: "Test Cottage", attributes: { coinOutput: 9 } },
+    gameplayBuilding: { units: [{ purpose: "residential", area: 1, magicRatio: 0 }] },
     design: { districtStyle: "willow_magic", patterns: [], prompt: "A compact magical cottage." }
   };
 }

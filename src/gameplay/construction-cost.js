@@ -19,7 +19,6 @@ export const ROAD_COST_BY_KIND = Object.freeze({
   bridge: 15
 });
 
-export const MAX_ORDINARY_RESIDENTIAL_FLOORS = 20;
 export const HEIGHT_MULTIPLIER_STEP = 0.05;
 
 function integer(value, label, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
@@ -33,14 +32,14 @@ function integer(value, label, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) 
 /**
  * Height pricing applies only to an ordinary, all-residential floor grammar.
  * Public/mass grammar and mixed-purpose units intentionally do not use this
- * multiplier. The 20-floor upper bound is an explicit v0.3 pricing boundary,
- * rather than an accidental extrapolation of a visual building height.
+ * multiplier. Floors are a safe positive integer; the design's formula is
+ * intentionally allowed to continue beyond the examples in the document.
  */
 export function ordinaryResidentialHeightMultiplier(floors) {
-  const count = integer(floors, "ordinary residential floor count", {
-    max: MAX_ORDINARY_RESIDENTIAL_FLOORS
-  });
-  return Number((1 + HEIGHT_MULTIPLIER_STEP * (count - 1)).toFixed(2));
+  const count = integer(floors, "ordinary residential floor count");
+  const multiplier = 1 + HEIGHT_MULTIPLIER_STEP * (count - 1);
+  if (!Number.isFinite(multiplier)) throw new Error("ordinary residential height multiplier is not finite");
+  return Number(multiplier.toFixed(2));
 }
 
 export const heightMultiplierForFloors = ordinaryResidentialHeightMultiplier;
@@ -53,8 +52,15 @@ function roundCoins(value) {
 
 function canonicalGrammar(value, options = {}) {
   if (!value || typeof value !== "object") return null;
-  const candidates = [options.gameplayBuilding, value, value.gameplayBuilding, value.gameplay, value.program?.gameplay,
-    value.grammar, value.massing];
+  const candidates = [
+    options.gameplayBuilding,
+    value.gameplayBuilding,
+    value.gameplay,
+    value.program?.gameplay,
+    value,
+    value.grammar,
+    value.massing
+  ];
   return candidates.find((candidate) => {
     if (!candidate || typeof candidate !== "object") return false;
     return ["floors", "floorSpecs", "floorPrograms", "units", "functionalUnits", "masses", "massSpecs"]
@@ -64,7 +70,15 @@ function canonicalGrammar(value, options = {}) {
 
 function isOrdinaryResidentialFloorGrammar(building, metadata, options = {}) {
   const grammar = canonicalGrammar(building, options);
-  if (!grammar || !metadata?.units?.length) return false;
+  const facts = metadata?.pricingFacts;
+  if (!metadata?.units?.length) return false;
+  if (facts?.sourceKind) {
+    return facts.sourceKind === "floors"
+      && Number.isSafeInteger(facts.floorCount)
+      && facts.floorCount > 0
+      && metadata.units.every((unit) => unit.purpose === "residential");
+  }
+  if (!grammar) return false;
   const hasFloors = ["floors", "floorSpecs", "floorPrograms"].some((field) => Array.isArray(grammar[field]));
   if (!hasFloors || ["masses", "massSpecs"].some((field) => Array.isArray(grammar[field]))) return false;
   return metadata.units.every((unit) => unit.purpose === "residential");
@@ -73,7 +87,8 @@ function isOrdinaryResidentialFloorGrammar(building, metadata, options = {}) {
 function canonicalCostBreakdown(metadata, building, options = {}) {
   const eligibleForHeight = isOrdinaryResidentialFloorGrammar(building, metadata, options);
   const floors = eligibleForHeight
-    ? ["floors", "floorSpecs", "floorPrograms"].map((field) => canonicalGrammar(building, options)?.[field]).find(Array.isArray)?.length
+    ? metadata.pricingFacts?.floorCount
+      ?? ["floors", "floorSpecs", "floorPrograms"].map((field) => canonicalGrammar(building, options)?.[field]).find(Array.isArray)?.length
     : null;
   const heightMultiplier = eligibleForHeight ? ordinaryResidentialHeightMultiplier(floors) : 1;
   const breakdown = metadata.units.map((unit, index) => ({
@@ -97,19 +112,20 @@ function canonicalCostBreakdown(metadata, building, options = {}) {
 /**
  * Calculate the authoritative v0.3 cost for a canonical GameplayBuilding.
  * `building` may be a raw canonical grammar or the metadata returned by
- * deriveGameplayBuilding. Invalid canonical input throws; it never falls
- * through to the legacy category formula.
+ * deriveGameplayBuilding. Invalid canonical input throws. Legacy category
+ * pricing is available only through an explicit opt-in.
  */
 export function calculateBuildingConstructionCost(building, options = {}) {
   const metadata = building?.canonical && building?.units && building?.functionalAreas
     ? building
     : deriveGameplayBuilding(building, options);
   if (!metadata?.canonical || !Array.isArray(metadata.units)) {
-    if (options.allowLegacy === false) throw new Error("Canonical GameplayBuilding functional units are required for v0.3 construction cost");
-    return legacyBuildingConstructionCost(building);
+    if (options.allowLegacy === true) return legacyBuildingConstructionCost(building);
+    throw new Error("Canonical GameplayBuilding functional units are required for v0.3 construction cost");
   }
   const result = canonicalCostBreakdown(metadata, building, options);
-  const coins = roundCoins(result.breakdown.reduce((total, entry) => total + entry.cost, 0));
+  const unrounded = result.breakdown.reduce((total, entry) => total + entry.cost, 0);
+  const coins = roundConstructionCoins(unrounded);
   return {
     coins,
     source: "canonical_functional_units",
@@ -161,5 +177,7 @@ export function calculateRoadCost({ roadCells = 0, bridgeCells = 0 } = {}) {
 
 export function roundConstructionCoins(value) {
   if (!Number.isFinite(Number(value)) || Number(value) < 0) throw new Error(`Construction coin value must be a finite non-negative number; received ${String(value)}`);
-  return roundCoins(Number(value));
+  const rounded = roundCoins(Number(value));
+  if (!Number.isSafeInteger(rounded)) throw new Error(`Construction cost exceeds the safe integer coin ledger; received ${String(value)}`);
+  return rounded;
 }

@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   BUILDING_COST_BY_PURPOSE,
-  MAX_ORDINARY_RESIDENTIAL_FLOORS,
   ROAD_COST_BY_KIND,
   calculateBuildingConstructionCost,
   calculateRoadCost,
   ordinaryResidentialHeightMultiplier
 } from "../src/gameplay/construction-cost.js";
 import { normalizeConstructionProposal } from "../src/city/contracts.js";
+import { deriveGameplayBuilding } from "../src/gameplay/building-metadata.js";
+import { normalizeGameplayBuilding } from "../src/gameplay/schema.js";
 
 test("canonical ordinary multi-floor residence aggregates every functional cell and applies height cost", () => {
   const input = {
@@ -78,9 +79,9 @@ test("height multiplier has explicit boundaries and expected values", () => {
   assert.equal(ordinaryResidentialHeightMultiplier(2), 1.05);
   assert.equal(ordinaryResidentialHeightMultiplier(3), 1.1);
   assert.equal(ordinaryResidentialHeightMultiplier(4), 1.15);
-  assert.equal(ordinaryResidentialHeightMultiplier(MAX_ORDINARY_RESIDENTIAL_FLOORS), 1.95);
+  assert.equal(ordinaryResidentialHeightMultiplier(21), 2);
   assert.throws(() => ordinaryResidentialHeightMultiplier(0), /floor count/);
-  assert.throws(() => ordinaryResidentialHeightMultiplier(MAX_ORDINARY_RESIDENTIAL_FLOORS + 1), /floor count/);
+  assert.throws(() => ordinaryResidentialHeightMultiplier(0), /floor count/);
   assert.throws(() => ordinaryResidentialHeightMultiplier(1.5), /floor count/);
 });
 
@@ -101,19 +102,44 @@ test("road and bridge rates are centralized, integer, and reject illegal counts"
 });
 
 test("legacy proposals are explicitly labelled adapters and cannot masquerade as canonical cost", () => {
-  const cost = calculateBuildingConstructionCost({ site: { footprint: "2x1" }, program: { archetype: "starter_house" } });
-  assert.equal(cost.source, "legacy_category_adapter");
-  assert.equal(cost.coins, 90);
-  assert.throws(() => calculateBuildingConstructionCost({ category: "residential" }, { allowLegacy: false }), /Canonical GameplayBuilding/);
+  assert.throws(() => calculateBuildingConstructionCost({ site: { footprint: "2x1" }, program: { archetype: "starter_house" } }), /Canonical GameplayBuilding/);
+  const adapter = calculateBuildingConstructionCost({ site: { footprint: "2x1" }, program: { archetype: "starter_house" } }, { allowLegacy: true });
+  assert.equal(adapter.source, "legacy_category_adapter");
+  assert.equal(adapter.coins, 90);
 });
 
 test("renderer-owned mesh grammar never becomes the canonical cost source", () => {
-  const cost = calculateBuildingConstructionCost({
+  assert.throws(() => calculateBuildingConstructionCost({
     program: { purpose: "residential", archetype: "visual-house" },
     voxelDesign: { floorSpecs: [{ purpose: "production", area: 99, magicRatio: 1 }] }
-  });
-  assert.equal(cost.source, "legacy_category_adapter");
-  assert.equal(cost.coins, 45);
+  }), /Canonical GameplayBuilding/);
+});
+
+test("raw, normalized, derived, and persisted-shaped canonical metadata keep the same pricing facts", () => {
+  const raw = {
+    footprintCells: ["a", "b"],
+    floorSpecs: [{ purpose: "residential" }, { purpose: "residential" }]
+  };
+  const normalized = normalizeGameplayBuilding(raw);
+  const derived = deriveGameplayBuilding(raw);
+  const persisted = { ...derived, id: "building-1", gameplay: derived };
+  assert.deepEqual(normalized.pricingFacts, { sourceKind: "floors", floorCount: 2 });
+  assert.deepEqual(derived.pricingFacts, normalized.pricingFacts);
+  assert.equal(calculateBuildingConstructionCost(raw).coins, 210);
+  assert.equal(calculateBuildingConstructionCost(normalized).coins, 210);
+  assert.equal(calculateBuildingConstructionCost(derived).coins, 210);
+  assert.equal(calculateBuildingConstructionCost(persisted.gameplay).coins, 210);
+});
+
+test("explicit gameplay wrapper wins over a conflicting top-level floor grammar", () => {
+  const input = {
+    gameplayBuilding: { units: [{ purpose: "residential", area: 1, magicRatio: 0 }] },
+    floorSpecs: [{ purpose: "residential" }, { purpose: "residential" }, { purpose: "residential" }]
+  };
+  const cost = calculateBuildingConstructionCost(input);
+  assert.equal(cost.heightPricingApplied, false);
+  assert.equal(cost.heightFloors, null);
+  assert.equal(cost.coins, 50);
 });
 
 test("construction proposals preserve explicit canonical gameplay grammar", () => {

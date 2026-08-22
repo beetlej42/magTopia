@@ -253,7 +253,8 @@ function deriveCanonicalGameplayBuilding(building, input) {
     canonical: true,
     units: normalized.units,
     functionalAreas: normalized.functionalAreas,
-    defaultMagicRatio: normalized.defaultMagicRatio
+    defaultMagicRatio: normalized.defaultMagicRatio,
+    pricingFacts: normalized.pricingFacts
   };
 }
 

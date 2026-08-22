@@ -317,6 +317,7 @@ test("first accepted meaningful Agent city work moves presentation to day", asyn
       expected_city_version: sites.city_version,
       site: { lot_id: site.lotId, footprint: "1x1", entrance: "south" },
       program: { archetype: "starter_residence", name: "Daylight House", purpose: "residential" },
+      gameplay_building: { units: [{ purpose: "residential", area: 1, magicRatio: 0 }] },
       design: { district_style: "london_common", creative_brief: "A warm brick cottage." },
       asset: { mode: "reuse", asset_id: "starter-cottage-001" }
     };
@@ -327,6 +328,13 @@ test("first accepted meaningful Agent city work moves presentation to day", asyn
       payload: build
     }), 201);
     assert.equal(order.status, "completed");
+    const replay = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/construction-orders`,
+      headers: { "idempotency-key": "cityday-build-1" },
+      payload: build
+    }), 201);
+    assert.equal(replay.idempotent_replay, true, "canonical construction replay does not debit twice");
 
     const day = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/city-day` }), 200);
     assert.equal(day.agent.workStarted, true, "the accepted construction is the start-of-work signal");
@@ -535,6 +543,7 @@ test("reload during morning/day/night restores the same phase without a second c
         expected_city_version: sites.city_version,
         site: { lot_id: sites.data[0].lotId, footprint: "1x1", entrance: "south" },
         program: { archetype: "starter_residence", name: "Reload House", purpose: "residential" },
+        gameplay_building: { units: [{ purpose: "residential", area: 1, magicRatio: 0 }] },
         design: { district_style: "london_common", creative_brief: "A brick cottage." },
         asset: { mode: "reuse", asset_id: "starter-cottage-001" }
       }
@@ -656,6 +665,7 @@ test("integration walk: report -> dismiss -> card -> morning -> agent work -> da
         expected_city_version: sites.city_version,
         site: { lot_id: sites.data[0].lotId, footprint: "1x1", entrance: "south" },
         program: { archetype: "starter_residence", name: "Walk House", purpose: "residential" },
+        gameplay_building: { units: [{ purpose: "residential", area: 1, magicRatio: 0 }] },
         design: { district_style: "london_common", creative_brief: "A brick cottage." },
         asset: { mode: "reuse", asset_id: "starter-cottage-001" }
       }
@@ -699,6 +709,7 @@ test("card offer and turn stay stable across construction/road/district mutation
       district_id: district.resource.district.id,
       site: { lot_id: site.lotId, footprint: "1x1", entrance: "south" },
       program: { archetype: "starter_residence", name: "Same Turn House", purpose: "residential" },
+      gameplay_building: { units: [{ purpose: "residential", area: 1, magicRatio: 0 }] },
       design: { district_style: "london_common", creative_brief: "A brick cottage." },
       asset: { mode: "reuse", asset_id: "starter-cottage-001" }
     };

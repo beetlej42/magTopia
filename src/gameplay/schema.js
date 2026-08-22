@@ -146,6 +146,22 @@ function effectiveDefaultMagicRatio(value) {
     ?? grammar.magicRatio);
 }
 
+function canonicalPricingFacts(value) {
+  if (value?.canonical === true && value?.pricingFacts?.sourceKind) return {
+    sourceKind: String(value.pricingFacts.sourceKind),
+    floorCount: value.pricingFacts.floorCount == null ? null : Number(value.pricingFacts.floorCount)
+  };
+  const grammar = gameplayGrammar(value);
+  const unitSource = value.units ?? value.functionalUnits ?? grammar.units ?? grammar.functionalUnits;
+  if (Array.isArray(unitSource)) return { sourceKind: "units", floorCount: null };
+  const floors = value.floors ?? value.floorSpecs ?? value.floorPrograms
+    ?? grammar.floors ?? grammar.floorSpecs ?? grammar.floorPrograms;
+  if (Array.isArray(floors)) return { sourceKind: "floors", floorCount: floors.length };
+  const masses = value.masses ?? value.massSpecs ?? grammar.masses ?? grammar.massSpecs;
+  if (Array.isArray(masses)) return { sourceKind: "masses", floorCount: null };
+  return { sourceKind: "single", floorCount: null };
+}
+
 function canonicalUnitsFromGrammar(value) {
   const grammar = gameplayGrammar(value);
   if (Object.prototype.hasOwnProperty.call(value, "purpose")) normalizeGameplayPurpose(value.purpose);
@@ -226,9 +242,11 @@ export function normalizeGameplayBuilding(value = {}, options = {}) {
     const units = canonicalUnitsFromGrammar(value);
     return {
       schemaVersion: GAMEPLAY_BUILDING_SCHEMA_VERSION,
+      canonical: true,
       units,
       functionalAreas: aggregateFunctionalAreas(units),
-      defaultMagicRatio: effectiveDefaultMagicRatio(value)
+      defaultMagicRatio: effectiveDefaultMagicRatio(value),
+      pricingFacts: canonicalPricingFacts(value)
     };
   }
 

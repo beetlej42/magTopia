@@ -755,6 +755,7 @@ test("policy effects feed the deterministic simulation through the unified modif
   const proposal = {
     site: { lotId: null, footprint: "1x1", entrance: "south" },
     program: { archetype: "starter_residence", name: "Discount Test House" },
+    gameplayBuilding: { units: [{ purpose: "residential", area: 1, magicRatio: 0 }] },
     design: { prompt: "A compact cottage." }
   };
   const lot = Object.values(policyState.cells).find((cell) => (

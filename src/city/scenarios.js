@@ -6,6 +6,7 @@ const STARTER_DESIGNS = [
     actor: "system:starter-district",
     site: { footprint: "1x1" },
     program: { assetId: "starter-cottage-001", archetype: "starter_residence", purpose: "residential", name: "Rosebank Cottage" },
+    gameplayBuilding: { units: [{ purpose: "residential", area: 1, magicRatio: 0 }] },
     design: { districtStyle: "london_common", patterns: ["quiet_front_garden"], prompt: "A welcoming compact London brick cottage with a slate roof, warm windows, and a small front threshold." },
     connectionRequest: null
   },
@@ -13,6 +14,7 @@ const STARTER_DESIGNS = [
     actor: "system:starter-district",
     site: { footprint: "1x1" },
     program: { assetId: "starter-workshop-001", archetype: "starter_workshop", purpose: "workshop", name: "Brass & Briar Workshop" },
+    gameplayBuilding: { units: [{ purpose: "production", area: 1, magicRatio: 0 }] },
     design: { districtStyle: "london_common", patterns: ["warm_lantern_rhythm"], prompt: "A small Victorian brick workshop with a broad timber door, slate roof, and a practical lantern over the entrance." },
     connectionRequest: null
   },
@@ -20,6 +22,7 @@ const STARTER_DESIGNS = [
     actor: "system:starter-district",
     site: { footprint: "1x1" },
     program: { assetId: "starter-herbalist-001", archetype: "starter_herbalist", purpose: "residential", name: "Moss & Moon Herbalist" },
+    gameplayBuilding: { units: [{ purpose: "residential", area: 1, magicRatio: 0.25 }] },
     design: { districtStyle: "willow_magic", patterns: ["preserve_existing_trees", "warm_lantern_rhythm"], prompt: "A friendly magical herbalist cottage with brick walls, slate roof, teal window glow, and restrained botanical details." },
     connectionRequest: null
   }

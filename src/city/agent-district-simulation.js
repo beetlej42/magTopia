@@ -173,6 +173,13 @@ export function runNonVisualAgentBuildScenario(options = {}) {
             description: `${definition.name} in ${district.name}`,
             attributes: { districtId: district.id }
           },
+          gameplayBuilding: {
+            units: [{
+              purpose: gameplayPurposeFor(definition.purpose),
+              area: footprintAreaFor(definition.footprint),
+              magicRatio: 0
+            }]
+          },
           design: { districtStyle: definition.style, patterns: [], prompt: `${definition.name}, ${definition.style}, ${definition.purpose}` },
           voxelDesign: confirmed
         };
@@ -233,6 +240,19 @@ export function runNonVisualAgentBuildScenario(options = {}) {
       success: failures.length === 0 && diagnostics.allChecksPassed
     }
   };
+}
+
+function gameplayPurposeFor(purpose) {
+  if (purpose === "workshop" || purpose === "industry") return "production";
+  if (purpose === "civic" || purpose === "institutional") return "public_service";
+  if (purpose === "green" || purpose === "garden") return "greenhouse";
+  if (["residential", "commercial", "public_service", "production", "greenhouse"].includes(purpose)) return purpose;
+  return "residential";
+}
+
+function footprintAreaFor(footprint = "1x1") {
+  const match = /^(\d+)x(\d+)$/.exec(String(footprint));
+  return match ? Number(match[1]) * Number(match[2]) : 1;
 }
 
 export function diagnoseAgentBuild(state, actions = []) {

@@ -319,6 +319,7 @@ function rejected(state, code, message, extra = {}) {
 
 function classifyPreviewError(preview) {
   const text = preview.errors?.join(" ") ?? "";
+  if (preview.code) return preview.code;
   if (/district .*cancelled/i.test(text)) return "DISTRICT_CANCELLED";
   if (/Insufficient/.test(text)) return "INSUFFICIENT_RESOURCES";
   if (/occupied|reserved/i.test(text)) return "LOT_OCCUPIED";
