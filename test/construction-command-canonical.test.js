@@ -66,6 +66,23 @@ test("invalid canonical input is a deterministic preview rejection with no reser
   }
 });
 
+test("ambiguous canonical grammar is rejected without reservation or resource mutation", () => {
+  const state = createCityState(world(), { resources: { coins: 600 } });
+  const result = executeCityCommand(state, {
+    type: "reserve_construction",
+    proposal: proposal("cell-3-3", {
+      units: [{ purpose: "residential", area: 1, magicRatio: 0 }],
+      floorSpecs: [{ purpose: "residential", magicRatio: 0 }]
+    }),
+    reservationId: "ambiguous-reservation"
+  }, context());
+  assert.equal(result.accepted, false);
+  assert.equal(result.code, "AMBIGUOUS_GAMEPLAY_GRAMMAR");
+  assert.equal(result.state.version, state.version);
+  assert.deepEqual(result.state.resources, state.resources);
+  assert.deepEqual(result.state.reservations, state.reservations);
+});
+
 test("discounted odd canonical cost rounds to an integer through resources and reservation refund", () => {
   const state = createCityState(world(), { resources: { coins: 600 } });
   const odd = proposal("cell-3-3", {

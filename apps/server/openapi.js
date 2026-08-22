@@ -290,6 +290,28 @@ export function createOpenApiDocument(baseUrl) {
             name: { type: "string" }
           }
         },
+        GameplayGrammarContainer: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            purpose: { enum: ["residential", "commercial", "public_service", "production", "greenhouse"] },
+            magicRatio: { enum: [0, 0.25, 0.5, 0.75, 1] },
+            defaultMagicRatio: { enum: [0, 0.25, 0.5, 0.75, 1] },
+            units: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
+            functionalUnits: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
+            floors: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
+            floorSpecs: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
+            floorPrograms: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
+            masses: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
+            massSpecs: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } }
+          },
+          oneOf: [
+            { required: ["units"] }, { required: ["functionalUnits"] },
+            { required: ["floors"] }, { required: ["floorSpecs"] },
+            { required: ["floorPrograms"] }, { required: ["masses"] },
+            { required: ["massSpecs"] }
+          ]
+        },
         ConstructionRequest: {
           type: "object",
           required: ["expected_city_version", "site", "program", "gameplay_building", "design", "asset"],
@@ -325,20 +347,22 @@ export function createOpenApiDocument(baseUrl) {
                 purpose: { enum: ["residential", "commercial", "public_service", "production", "greenhouse"] },
                 magicRatio: { enum: [0, 0.25, 0.5, 0.75, 1] },
                 defaultMagicRatio: { enum: [0, 0.25, 0.5, 0.75, 1] },
-                footprintArea: { type: "integer", minimum: 1 },
                 units: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
                 functionalUnits: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
                 floors: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
                 floorSpecs: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
                 floorPrograms: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
                 masses: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
-                massSpecs: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } }
+                massSpecs: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
+                grammar: { $ref: "#/components/schemas/GameplayGrammarContainer" },
+                massing: { $ref: "#/components/schemas/GameplayGrammarContainer" }
               },
               oneOf: [
                 { required: ["units"] }, { required: ["functionalUnits"] },
                 { required: ["floors"] }, { required: ["floorSpecs"] },
                 { required: ["floorPrograms"] }, { required: ["masses"] },
-                { required: ["massSpecs"] }
+                { required: ["massSpecs"] }, { required: ["grammar"] },
+                { required: ["massing"] }
               ]
             },
             design: {

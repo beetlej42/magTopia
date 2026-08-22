@@ -51,6 +51,36 @@ test("mixed-use floors use purpose rates and do not receive the ordinary-residen
   });
 });
 
+test("pure residential height pricing is invariant across floor and unit representations", () => {
+  const floorGrammar = calculateBuildingConstructionCost({
+    site: { footprint: "1x1" },
+    floorSpecs: [{ purpose: "residential" }, { purpose: "residential" }]
+  });
+  const unitGrammar = calculateBuildingConstructionCost({
+    site: { footprint: "1x1" },
+    units: [{ purpose: "residential", area: 2 }]
+  });
+  const twoCellUnitGrammar = calculateBuildingConstructionCost({
+    site: { footprint: "2x1" },
+    units: [{ purpose: "residential", area: 4 }]
+  });
+  assert.equal(floorGrammar.coins, 105);
+  assert.equal(unitGrammar.coins, 105);
+  assert.equal(twoCellUnitGrammar.coins, 210);
+  assert.equal(floorGrammar.heightFloors, unitGrammar.heightFloors);
+  assert.equal(unitGrammar.heightFloors, 2);
+  const unitInput = { site: { footprint: "1x1" }, units: [{ purpose: "residential", area: 2 }] };
+  const normalized = normalizeGameplayBuilding(unitInput);
+  const derived = deriveGameplayBuilding(unitInput);
+  assert.deepEqual(derived.pricingFacts, normalized.pricingFacts);
+  assert.equal(calculateBuildingConstructionCost(normalized, { trustedMetadata: true }).coins, 105);
+  assert.equal(calculateBuildingConstructionCost(derived, { trustedMetadata: true }).coins, 105);
+  assert.throws(() => calculateBuildingConstructionCost({
+    site: { footprint: "2x1" },
+    units: [{ purpose: "residential", area: 3 }]
+  }), /positive integer multiple of footprint area/);
+});
+
 test("compound public mass grammar is not interpreted as floors", () => {
   const cost = calculateBuildingConstructionCost({
     purpose: "public_service",
@@ -67,7 +97,7 @@ test("compound public mass grammar is not interpreted as floors", () => {
 
 test("all five base purpose rates are centralized and deterministic", () => {
   for (const [purpose, rate] of Object.entries(BUILDING_COST_BY_PURPOSE)) {
-    const input = { units: [{ purpose, area: 2, magicRatio: 0.5 }] };
+    const input = { footprintCells: ["a", "b"], units: [{ purpose, area: 2, magicRatio: 0.5 }] };
     const first = calculateBuildingConstructionCost(input);
     assert.equal(first.coins, rate * 2);
     assert.deepEqual(first, calculateBuildingConstructionCost(input));
@@ -122,24 +152,28 @@ test("raw, normalized, derived, and persisted-shaped canonical metadata keep the
   };
   const normalized = normalizeGameplayBuilding(raw);
   const derived = deriveGameplayBuilding(raw);
-  const persisted = { ...derived, id: "building-1", gameplay: derived };
-  assert.deepEqual(normalized.pricingFacts, { sourceKind: "floors", floorCount: 2 });
+  const persisted = { ...derived, id: "building-1", footprintCells: ["a", "b"], gameplay: derived };
+  assert.deepEqual(normalized.pricingFacts, {
+    sourceKind: "floors", floorCount: 2, footprintArea: 2, effectiveFloorCount: 2
+  });
   assert.deepEqual(derived.pricingFacts, normalized.pricingFacts);
   assert.equal(calculateBuildingConstructionCost(raw).coins, 210);
   assert.equal(calculateBuildingConstructionCost(normalized, { trustedMetadata: true }).coins, 210);
   assert.equal(calculateBuildingConstructionCost(derived, { trustedMetadata: true }).coins, 210);
   assert.equal(calculateBuildingConstructionCost(persisted.gameplay, { trustedMetadata: true }).coins, 210);
+  assert.equal(calculateBuildingConstructionCost(persisted).coins, 210);
 });
 
-test("explicit gameplay wrapper wins over a conflicting top-level floor grammar", () => {
+test("conflicting gameplay wrapper and top-level grammar are rejected as ambiguous", () => {
   const input = {
     gameplayBuilding: { units: [{ purpose: "residential", area: 1, magicRatio: 0 }] },
     floorSpecs: [{ purpose: "residential" }, { purpose: "residential" }, { purpose: "residential" }]
   };
-  const cost = calculateBuildingConstructionCost(input);
-  assert.equal(cost.heightPricingApplied, false);
-  assert.equal(cost.heightFloors, null);
-  assert.equal(cost.coins, 50);
+  assert.throws(() => calculateBuildingConstructionCost(input), /Ambiguous GameplayBuilding grammar/);
+  assert.throws(() => normalizeGameplayBuilding({
+    units: [{ purpose: "residential", area: 1 }],
+    floor_specs: [{ purpose: "residential" }]
+  }), /Unsupported gameplay grammar field/);
 });
 
 test("client-supplied canonical/pricingFacts cannot suppress real floor pricing", () => {
@@ -149,7 +183,9 @@ test("client-supplied canonical/pricingFacts cannot suppress real floor pricing"
     floorSpecs: [{ purpose: "residential" }, { purpose: "residential" }],
     pricingFacts: { sourceKind: "units", floorCount: null }
   };
-  assert.deepEqual(deriveGameplayBuilding(forged).pricingFacts, { sourceKind: "floors", floorCount: 2 });
+  assert.deepEqual(deriveGameplayBuilding(forged).pricingFacts, {
+    sourceKind: "floors", floorCount: 2, footprintArea: 1, effectiveFloorCount: 2
+  });
   assert.equal(calculateBuildingConstructionCost(forged).coins, 105);
 });
 

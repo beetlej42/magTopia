@@ -752,7 +752,22 @@ test("construction APIs reject missing or invalid gameplay grammar without mutat
       { label: "missing gameplay_building", code: "GAMEPLAY_BUILDING_REQUIRED", body: {} },
       { label: "non-discrete magic ratio", code: "INVALID_MAGIC_RATIO", body: { gameplay_building: { units: [{ purpose: "residential", area: 1, magicRatio: 0.63 }] } } },
       { label: "unknown purpose", code: "INVALID_GAMEPLAY_PURPOSE", body: { gameplay_building: { units: [{ purpose: "workshop", area: 1, magicRatio: 0 }] } } },
-      { label: "non-positive area", code: "INVALID_GAMEPLAY_BUILDING", body: { gameplay_building: { units: [{ purpose: "residential", area: 0, magicRatio: 0 }] } } }
+      { label: "non-positive area", code: "INVALID_GAMEPLAY_BUILDING", body: { gameplay_building: { units: [{ purpose: "residential", area: 0, magicRatio: 0 }] } } },
+      {
+        label: "ambiguous grammar",
+        code: "AMBIGUOUS_GAMEPLAY_GRAMMAR",
+        body: {
+          gameplay_building: {
+            units: [{ purpose: "residential", area: 1, magicRatio: 0 }],
+            floorSpecs: [{ purpose: "residential", magicRatio: 0 }]
+          }
+        }
+      },
+      {
+        label: "unsupported snake-case grammar",
+        code: "INVALID_GAMEPLAY_GRAMMAR",
+        body: { gameplay_building: { floor_specs: [{ purpose: "residential" }] } }
+      }
     ];
     for (const [index, scenario] of invalidCases.entries()) {
       const before = await repository.getCity(owner, city.id);
@@ -813,6 +828,24 @@ test("construction preview derives pricing from submitted floor grammar, never f
     }), 200);
     assert.equal(preview.feasible, true);
     assert.equal(preview.buildingCost.coins, 105, "real floor grammar retains the two-floor multiplier");
+    const unitPreview = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/construction-previews`,
+      payload: {
+        expected_city_version: before.state.version,
+        site: { lot_id: sites.data[0].lotId, footprint: "1x1", entrance: "south" },
+        program: { archetype: "starter_residence", name: "Two Floor House", purpose: "residential" },
+        gameplay_building: {
+          canonical: true,
+          units: [{ purpose: "residential", area: 2, magicRatio: 0 }],
+          pricingFacts: { sourceKind: "units", effectiveFloorCount: 1, footprintArea: 99 }
+        },
+        design: { district_style: "london_common", creative_brief: "A two-storey brick cottage." },
+        asset: { mode: "reuse", asset_id: "starter-cottage-001" }
+      }
+    }), 200);
+    assert.equal(unitPreview.feasible, true);
+    assert.equal(unitPreview.buildingCost.coins, 105, "unit grammar cannot use forged pricing facts to avoid the multiplier");
     const after = await repository.getCity(owner, city.id);
     assert.equal(after.state.version, before.state.version, "preview remains read-only");
     assert.deepEqual(after.state.resources, before.state.resources);

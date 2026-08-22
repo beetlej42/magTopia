@@ -50,45 +50,19 @@ function roundCoins(value) {
   return Math.round(value);
 }
 
-function canonicalGrammar(value, options = {}) {
-  if (!value || typeof value !== "object") return null;
-  const candidates = [
-    options.gameplayBuilding,
-    value.gameplayBuilding,
-    value.gameplay,
-    value.program?.gameplay,
-    value,
-    value.grammar,
-    value.massing
-  ];
-  return candidates.find((candidate) => {
-    if (!candidate || typeof candidate !== "object") return false;
-    return ["floors", "floorSpecs", "floorPrograms", "units", "functionalUnits", "masses", "massSpecs"]
-      .some((field) => Array.isArray(candidate[field]));
-  }) ?? null;
-}
-
-function isOrdinaryResidentialFloorGrammar(building, metadata, options = {}) {
-  const grammar = canonicalGrammar(building, options);
+function isOrdinaryResidentialFloorGrammar(metadata) {
   const facts = metadata?.pricingFacts;
   if (!metadata?.units?.length) return false;
-  if (facts?.sourceKind) {
-    return facts.sourceKind === "floors"
-      && Number.isSafeInteger(facts.floorCount)
-      && facts.floorCount > 0
-      && metadata.units.every((unit) => unit.purpose === "residential");
-  }
-  if (!grammar) return false;
-  const hasFloors = ["floors", "floorSpecs", "floorPrograms"].some((field) => Array.isArray(grammar[field]));
-  if (!hasFloors || ["masses", "massSpecs"].some((field) => Array.isArray(grammar[field]))) return false;
-  return metadata.units.every((unit) => unit.purpose === "residential");
+  return facts?.sourceKind !== "masses"
+    && Number.isSafeInteger(facts?.effectiveFloorCount)
+    && facts.effectiveFloorCount > 0
+    && metadata.units.every((unit) => unit.purpose === "residential");
 }
 
-function canonicalCostBreakdown(metadata, building, options = {}) {
-  const eligibleForHeight = isOrdinaryResidentialFloorGrammar(building, metadata, options);
+function canonicalCostBreakdown(metadata) {
+  const eligibleForHeight = isOrdinaryResidentialFloorGrammar(metadata);
   const floors = eligibleForHeight
-    ? metadata.pricingFacts?.floorCount
-      ?? ["floors", "floorSpecs", "floorPrograms"].map((field) => canonicalGrammar(building, options)?.[field]).find(Array.isArray)?.length
+    ? metadata.pricingFacts.effectiveFloorCount
     : null;
   const heightMultiplier = eligibleForHeight ? ordinaryResidentialHeightMultiplier(floors) : 1;
   const breakdown = metadata.units.map((unit, index) => ({
@@ -127,7 +101,7 @@ export function calculateBuildingConstructionCost(building, options = {}) {
     if (options.allowLegacy === true) return legacyBuildingConstructionCost(building);
     throw new Error("Canonical GameplayBuilding functional units are required for v0.3 construction cost");
   }
-  const result = canonicalCostBreakdown(metadata, building, options);
+  const result = canonicalCostBreakdown(metadata);
   const unrounded = result.breakdown.reduce((total, entry) => total + entry.cost, 0);
   const coins = roundConstructionCoins(unrounded);
   return {

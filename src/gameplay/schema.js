@@ -21,6 +21,15 @@ export const GAMEPLAY_GRAMMAR_FIELDS = Object.freeze([
   "masses",
   "massSpecs"
 ]);
+// Accepted grammar spellings are deliberately enumerated so a near-miss
+// such as floor_specs cannot silently fall through to a different source.
+export const GAMEPLAY_GRAMMAR_ARRAY_FIELDS = Object.freeze([
+  ...GAMEPLAY_GRAMMAR_FIELDS,
+  "floor_specs",
+  "functional_units",
+  "floor_programs",
+  "mass_specs"
+]);
 
 export const TURN_STATUSES = Object.freeze(["open", "building", "strategy", "resolved", "reported", "closed"]);
 
@@ -93,6 +102,26 @@ function areaFromCells(value) {
   return null;
 }
 
+function footprintAreaFromGeometry(value) {
+  const explicit = value?.footprintArea;
+  if (explicit != null) return normalizeFunctionalArea(explicit, "authoritative footprint");
+  const cells = areaFromCells(value?.footprintCells)
+    ?? areaFromCells(value?.footprint?.cells)
+    ?? (Number.isSafeInteger(Number(value?.footprint?.widthCells))
+      && Number.isSafeInteger(Number(value?.footprint?.depthCells))
+      && Number(value.footprint.widthCells) > 0
+      && Number(value.footprint.depthCells) > 0
+      ? Number(value.footprint.widthCells) * Number(value.footprint.depthCells)
+      : null);
+  if (cells != null) return cells;
+  const footprint = value?.site?.footprint ?? value?.footprint;
+  if (typeof footprint === "string" && /^(\d+)x(\d+)$/.test(footprint)) {
+    const [columns, rows] = footprint.split("x").map(Number);
+    return normalizeFunctionalArea(columns * rows, "authoritative footprint");
+  }
+  return null;
+}
+
 /** Normalize one stable v0.3 functional unit. */
 export function normalizeFunctionalUnit(value = {}, index = 0, defaults = {}) {
   const purpose = normalizeGameplayPurpose(value.purpose ?? defaults.purpose);
@@ -124,7 +153,35 @@ function aggregateFunctionalAreas(units) {
 }
 
 function hasGrammarArrays(value) {
-  return Boolean(value) && GAMEPLAY_GRAMMAR_FIELDS.some((field) => Array.isArray(value[field]));
+  return Boolean(value) && GAMEPLAY_GRAMMAR_ARRAY_FIELDS.some((field) => Array.isArray(value[field]));
+}
+
+function collectGrammarArrays(value, path = "gameplayBuilding", result = [], visited = new Set()) {
+  if (!value || typeof value !== "object" || visited.has(value)) return result;
+  visited.add(value);
+  for (const field of GAMEPLAY_GRAMMAR_ARRAY_FIELDS) {
+    if (Array.isArray(value[field])) result.push({ field, path: `${path}.${field}`, value: value[field] });
+  }
+  for (const container of ["grammar", "massing", "gameplay", "gameplayBuilding"]) {
+    if (value[container] && typeof value[container] === "object") {
+      collectGrammarArrays(value[container], `${path}.${container}`, result, visited);
+    }
+  }
+  return result;
+}
+
+export function assertUnambiguousGameplayGrammar(value) {
+  const arrays = collectGrammarArrays(value);
+  const aliases = arrays.filter(({ field }) => field.includes("_"));
+  if (aliases.length) {
+    throw new Error(`Unsupported gameplay grammar field ${aliases[0].path}; use the documented camelCase grammar field`);
+  }
+  if (arrays.length > 1) {
+    throw new Error(`Ambiguous GameplayBuilding grammar; choose exactly one array: ${arrays.map(({ path }) => path).join(", ")}`);
+  }
+  if (arrays.length === 1 && arrays[0].value.length === 0) {
+    throw new Error("GameplayBuilding functional grammar must not be empty");
+  }
 }
 
 export function hasGameplayGrammar(value = {}) {
@@ -146,16 +203,30 @@ function effectiveDefaultMagicRatio(value) {
     ?? grammar.magicRatio);
 }
 
-function canonicalPricingFacts(value) {
+function canonicalPricingFacts(value, units = []) {
   const grammar = gameplayGrammar(value);
   const unitSource = value.units ?? value.functionalUnits ?? grammar.units ?? grammar.functionalUnits;
-  if (Array.isArray(unitSource)) return { sourceKind: "units", floorCount: null };
+  const sourceKind = Array.isArray(unitSource) ? "units" : null;
   const floors = value.floors ?? value.floorSpecs ?? value.floorPrograms
     ?? grammar.floors ?? grammar.floorSpecs ?? grammar.floorPrograms;
-  if (Array.isArray(floors)) return { sourceKind: "floors", floorCount: floors.length };
+  const floorCount = Array.isArray(floors) ? floors.length : null;
   const masses = value.masses ?? value.massSpecs ?? grammar.masses ?? grammar.massSpecs;
-  if (Array.isArray(masses)) return { sourceKind: "masses", floorCount: null };
-  return { sourceKind: "single", floorCount: null };
+  const kind = sourceKind ?? (Array.isArray(floors) ? "floors" : Array.isArray(masses) ? "masses" : "single");
+  const footprintArea = footprintAreaFromGeometry(value);
+  const allResidential = units.length > 0 && units.every((unit) => unit.purpose === "residential");
+  let effectiveFloorCount = null;
+  if (allResidential && kind !== "masses") {
+    if (!footprintArea) throw new Error("Pure residential GameplayBuilding requires an authoritative footprint area");
+    const totalArea = units.reduce((total, unit) => total + unit.area, 0);
+    if (totalArea < footprintArea || totalArea % footprintArea !== 0) {
+      throw new Error(`Pure residential functional area ${totalArea} must be a positive integer multiple of footprint area ${footprintArea}`);
+    }
+    effectiveFloorCount = totalArea / footprintArea;
+    if (kind === "floors" && floorCount !== effectiveFloorCount) {
+      throw new Error(`Residential floor grammar count ${floorCount} does not match effective floor count ${effectiveFloorCount}`);
+    }
+  }
+  return { sourceKind: kind, floorCount, footprintArea, effectiveFloorCount };
 }
 
 function canonicalUnitsFromGrammar(value) {
@@ -230,6 +301,7 @@ function canonicalUnitsFromGrammar(value) {
  * the compatibility branch below.
  */
 export function normalizeGameplayBuilding(value = {}, options = {}) {
+  assertUnambiguousGameplayGrammar(value);
   const canonical = options.canonical === true
     || hasGameplayGrammar(value)
     || Object.prototype.hasOwnProperty.call(value, "purpose")
@@ -242,7 +314,7 @@ export function normalizeGameplayBuilding(value = {}, options = {}) {
       units,
       functionalAreas: aggregateFunctionalAreas(units),
       defaultMagicRatio: effectiveDefaultMagicRatio(value),
-      pricingFacts: canonicalPricingFacts(value)
+      pricingFacts: canonicalPricingFacts(value, units)
     };
   }
 

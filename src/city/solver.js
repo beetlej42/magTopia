@@ -472,6 +472,8 @@ function parseCellId(cellId) {
 
 function classifyConstructionCostError(error) {
   const text = String(error?.message ?? error);
+  if (/Ambiguous GameplayBuilding grammar/i.test(text)) return "AMBIGUOUS_GAMEPLAY_GRAMMAR";
+  if (/Unsupported gameplay grammar field/i.test(text)) return "INVALID_GAMEPLAY_GRAMMAR";
   if (/magicRatio/i.test(text)) return "INVALID_MAGIC_RATIO";
   if (/Unsupported gameplay purpose/i.test(text)) return "INVALID_GAMEPLAY_PURPOSE";
   if (/area must be|functional units must|requires units|requires a purpose/i.test(text)) return "INVALID_GAMEPLAY_BUILDING";

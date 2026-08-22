@@ -1,5 +1,7 @@
 import {
+  GAMEPLAY_GRAMMAR_ARRAY_FIELDS,
   GAMEPLAY_GRAMMAR_FIELDS,
+  assertUnambiguousGameplayGrammar,
   GAMEPLAY_PURPOSES,
   hasGameplayGrammar,
   normalizeGameplayBuilding,
@@ -132,7 +134,7 @@ export function footprintArea(building) {
 }
 
 function describeGameplayGrammar(value) {
-  const hasDirectGrammar = GAMEPLAY_GRAMMAR_FIELDS.some((field) => Array.isArray(value?.[field]));
+  const hasDirectGrammar = GAMEPLAY_GRAMMAR_ARRAY_FIELDS.some((field) => Array.isArray(value?.[field]));
   const selected = hasDirectGrammar
     ? value
     : hasGameplayGrammar(value?.massing)
@@ -141,7 +143,7 @@ function describeGameplayGrammar(value) {
         ? value.grammar
         : null;
   if (!selected) return { hasGrammar: false, hasFunctionalFields: false, allPurposesCanonical: false };
-  const entries = GAMEPLAY_GRAMMAR_FIELDS.flatMap((field) => Array.isArray(selected[field]) ? selected[field] : []);
+  const entries = GAMEPLAY_GRAMMAR_ARRAY_FIELDS.flatMap((field) => Array.isArray(selected[field]) ? selected[field] : []);
   return {
     hasGrammar: true,
     hasFunctionalFields: ["units", "functionalUnits"].some((field) => Array.isArray(selected[field])),
@@ -169,49 +171,63 @@ function canonicalRootForCandidate(building, source, description, explicitSource
   return {};
 }
 
-function isPositiveInteger(value) {
-  return Number.isSafeInteger(Number(value)) && Number(value) > 0;
-}
-
-function hasSupportedAreaGeometry(source) {
-  if (!source || typeof source !== "object") return false;
-  if (isPositiveInteger(source.footprintArea)) return true;
-  if (Array.isArray(source.footprintCells)) return source.footprintCells.length > 0;
-  if (isPositiveInteger(source.footprintCells)) return true;
-  if (Array.isArray(source.footprint?.cells)) return source.footprint.cells.length > 0;
-  if (isPositiveInteger(source.footprint?.cells)) return true;
-  if (isPositiveInteger(source.footprint?.widthCells)
-      && isPositiveInteger(source.footprint?.depthCells)) return true;
-  if (typeof source.site?.footprint === "string" && /^(\d+)x(\d+)$/.test(source.site.footprint)) return true;
-  return hasSupportedAreaGeometry(source.massing) || hasSupportedAreaGeometry(source.grammar);
-}
-
 function makeCanonicalGameplayInput(building, source, options, description, explicitSource = false) {
   const root = canonicalRootForCandidate(building, source, description, explicitSource);
-  const sourceHasGeometry = hasSupportedAreaGeometry(source);
+  const systemFootprintArea = options.footprintArea ?? authoritativeFootprintArea(building);
+  const sanitizedSource = { ...source };
+  // Geometry and pricing facts inside the gameplay wrapper are client data.
+  // The authoritative area comes from the outer proposal/site or an
+  // explicitly system-supplied option.
+  delete sanitizedSource.footprintArea;
+  delete sanitizedSource.pricingFacts;
+  delete sanitizedSource.effectiveFloorCount;
+  delete sanitizedSource.footprintCells;
+  delete sanitizedSource.footprint;
+  delete sanitizedSource.site;
   const defaultMagicRatio = options.magicRatio
     ?? source?.defaultMagicRatio
     ?? source?.magicRatio
     ?? building?.defaultMagicRatio
     ?? building?.magicRatio;
   return {
-    ...source,
+    ...sanitizedSource,
     ...root,
-    ...(source?.footprintCells != null
-      ? { footprintCells: source.footprintCells }
-      : !sourceHasGeometry && building?.footprintCells != null
-        ? { footprintCells: building.footprintCells }
-        : {}),
-    ...(source?.site != null
-      ? { site: source.site }
-      : !sourceHasGeometry && building?.site != null
-        ? { site: building.site }
-        : {}),
+    ...(systemFootprintArea != null ? { footprintArea: systemFootprintArea } : {}),
     ...(defaultMagicRatio == null ? {} : { defaultMagicRatio })
   };
 }
 
+function authoritativeFootprintArea(building) {
+  if (Array.isArray(building?.footprintCells) && building.footprintCells.length > 0) return building.footprintCells.length;
+  const footprint = building?.site?.footprint;
+  if (typeof footprint === "string" && /^(\d+)x(\d+)$/.test(footprint)) {
+    const [columns, rows] = footprint.split("x").map(Number);
+    return columns * rows;
+  }
+  if (Number.isSafeInteger(building?.footprint?.widthCells)
+      && Number.isSafeInteger(building?.footprint?.depthCells)
+      && building.footprint.widthCells > 0
+      && building.footprint.depthCells > 0) {
+    return building.footprint.widthCells * building.footprint.depthCells;
+  }
+  return null;
+}
+
 function canonicalGameplayInput(building, options) {
+  const persistedGameplay = building?.gameplay?.canonical
+    && Array.isArray(building.gameplay.units)
+    && building.gameplay.functionalAreas
+    && building.gameplay.pricingFacts;
+  if (persistedGameplay) {
+    return makeCanonicalGameplayInput(
+      building,
+      building.gameplay,
+      options,
+      describeGameplayGrammar(building.gameplay),
+      true
+    );
+  }
+  assertUnambiguousGameplayGrammar(building);
   const explicit = options.gameplayBuilding
     ?? building?.gameplayBuilding
     ?? building?.gameplay
