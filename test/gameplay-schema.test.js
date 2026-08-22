@@ -1,0 +1,107 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  GAMEPLAY_PURPOSES,
+  MAGIC_RATIOS,
+  normalizeFunctionalUnit,
+  normalizeGameplayBuilding,
+  normalizeGameplayPurpose,
+  normalizeMagicRatio,
+  validateGameplayBuilding
+} from "../src/gameplay/schema.js";
+import { deriveGameplayBuilding } from "../src/gameplay/building-metadata.js";
+
+test("v0.3 exposes exactly five gameplay purposes and five discrete magic ratios", () => {
+  assert.deepEqual([...GAMEPLAY_PURPOSES], ["residential", "commercial", "public_service", "production", "greenhouse"]);
+  assert.deepEqual([...MAGIC_RATIOS], [0, 0.25, 0.5, 0.75, 1]);
+  assert.equal(normalizeGameplayPurpose("PUBLIC_SERVICE"), "public_service");
+  assert.equal(normalizeMagicRatio("0.5"), 0.5);
+  assert.throws(() => normalizeGameplayPurpose("workshop"), /Unsupported gameplay purpose/);
+  assert.throws(() => normalizeMagicRatio(0.63), /magicRatio/);
+  assert.throws(() => normalizeMagicRatio(Infinity), /magicRatio/);
+});
+
+test("ordinary two-cell three-floor residence includes every vertical functional cell", () => {
+  const normalized = normalizeGameplayBuilding({
+    id: "cottage-2x3",
+    footprintCells: ["a", "b"],
+    floorSpecs: [
+      { purpose: "residential", magicRatio: 0 },
+      { purpose: "residential", magicRatio: 0.25 },
+      { purpose: "residential", magicRatio: 0.5 }
+    ]
+  });
+  assert.deepEqual(normalized.units, [
+    { purpose: "residential", area: 2, magicRatio: 0 },
+    { purpose: "residential", area: 2, magicRatio: 0.25 },
+    { purpose: "residential", area: 2, magicRatio: 0.5 }
+  ]);
+  assert.deepEqual(normalized.functionalAreas, {
+    residential: 6,
+    commercial: 0,
+    public_service: 0,
+    production: 0,
+    greenhouse: 0
+  });
+});
+
+test("mixed-use floors normalize to one shared unit representation", () => {
+  const normalized = normalizeGameplayBuilding({
+    site: { footprint: "2x1" },
+    floorPrograms: [
+      { purpose: "commercial", magicRatio: 0.25 },
+      { purpose: "residential", magicRatio: 0.5 },
+      { purpose: "residential", magicRatio: 0.75 }
+    ]
+  });
+  assert.deepEqual(normalized.units, [
+    { purpose: "commercial", area: 2, magicRatio: 0.25 },
+    { purpose: "residential", area: 2, magicRatio: 0.5 },
+    { purpose: "residential", area: 2, magicRatio: 0.75 }
+  ]);
+  assert.equal(normalized.functionalAreas.commercial, 2);
+  assert.equal(normalized.functionalAreas.residential, 4);
+});
+
+test("compound public building accepts cell/mass grammar including a greenhouse wing", () => {
+  const normalized = normalizeGameplayBuilding({
+    purpose: "public_service",
+    masses: [
+      { id: "archive", purpose: "public_service", cells: [[0, 0], [0, 1]], magicRatio: 0.25 },
+      { id: "conservatory", purpose: "greenhouse", cells: [[1, 0]], magicRatio: 1 },
+      { id: "courtyard", purpose: "public_service", area: 1, magicRatio: 0 }
+    ]
+  });
+  assert.deepEqual(normalized.units, [
+    { purpose: "public_service", area: 2, magicRatio: 0.25 },
+    { purpose: "greenhouse", area: 1, magicRatio: 1 },
+    { purpose: "public_service", area: 1, magicRatio: 0 }
+  ]);
+  assert.equal(normalized.functionalAreas.public_service, 3);
+  assert.equal(normalized.functionalAreas.greenhouse, 1);
+});
+
+test("invalid units are rejected and old category normalization remains separate", () => {
+  assert.throws(() => normalizeFunctionalUnit({ purpose: "production", area: 0 }), /positive integer/);
+  assert.throws(() => normalizeGameplayBuilding({ purpose: "workshop", area: 1 }), /Unsupported gameplay purpose/);
+  assert.equal(normalizeGameplayBuilding({ category: "workshop", magicLevel: 0.63 }).category, "workshop");
+  assert.equal(validateGameplayBuilding({ purpose: "production", area: 1, magicRatio: 0.75 }).valid, true);
+  assert.equal(validateGameplayBuilding({ purpose: "production", area: 1, magicRatio: 0.7 }).valid, false);
+});
+
+test("metadata adapter exposes canonical units without enabling later economy rules", () => {
+  const metadata = deriveGameplayBuilding({
+    id: "mixed-house",
+    footprintCells: ["a", "b"],
+    program: { purpose: "residential" },
+    floorSpecs: [
+      { purpose: "commercial", magicRatio: 0.25 },
+      { purpose: "residential", magicRatio: 0.5 }
+    ]
+  });
+  assert.equal(metadata.canonical, true);
+  assert.equal(metadata.functionalAreas.commercial, 2);
+  assert.equal(metadata.functionalAreas.residential, 2);
+  assert.equal("coinOutput" in metadata, false);
+  assert.equal("jobs" in metadata, false);
+});

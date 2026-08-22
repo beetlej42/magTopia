@@ -1,4 +1,7 @@
-import { normalizeGameplayBuilding } from "./schema.js";
+import {
+  GAMEPLAY_PURPOSES,
+  normalizeGameplayBuilding,
+} from "./schema.js";
 
 const CATEGORY_BY_PURPOSE = Object.freeze({
   residential: "residential",
@@ -126,7 +129,52 @@ export function footprintArea(building) {
   return 1;
 }
 
+function canonicalGameplayInput(building, options) {
+  const explicit = options.gameplayBuilding
+    ?? building?.gameplayBuilding
+    ?? building?.gameplay
+    ?? building?.program?.gameplay;
+  if (explicit) return explicit;
+
+  const source = building?.voxelDesign?.generation?.sourceSpec ?? building?.voxelDesign ?? building;
+  const grammarEntries = ["units", "functionalUnits", "floorSpecs", "floorPrograms", "floors", "masses", "massSpecs"]
+    .flatMap((key) => Array.isArray(source?.[key]) ? source[key] : []);
+  const nestedGrammarEntries = [source?.massing?.masses, source?.massing?.floorSpecs]
+    .flatMap((entries) => Array.isArray(entries) ? entries : []);
+  const hasCanonicalGrammar = [...grammarEntries, ...nestedGrammarEntries].length > 0
+    && [...grammarEntries, ...nestedGrammarEntries].every((entry) => GAMEPLAY_PURPOSES.includes(String(entry?.purpose ?? "").toLowerCase()));
+  const hasGrammar = ["units", "functionalUnits", "floorSpecs", "floorPrograms", "floors", "masses", "massSpecs"]
+    .some((key) => Array.isArray(source?.[key]))
+    || Array.isArray(source?.massing?.masses)
+    || Array.isArray(source?.massing?.floorSpecs);
+  const purpose = building?.program?.purpose ?? building?.purpose ?? source?.purpose;
+  if (hasGrammar && hasCanonicalGrammar && GAMEPLAY_PURPOSES.includes(String(purpose ?? "").toLowerCase())) {
+    return {
+      ...source,
+      purpose,
+      footprintCells: building?.footprintCells ?? source?.footprintCells,
+      site: building?.site ?? source?.site,
+      magicRatio: options.magicRatio ?? source?.magicRatio ?? building?.magicRatio
+    };
+  }
+  return null;
+}
+
+function deriveCanonicalGameplayBuilding(building, input) {
+  const normalized = normalizeGameplayBuilding(input, { canonical: true });
+  return {
+    schemaVersion: normalized.schemaVersion,
+    canonical: true,
+    units: normalized.units,
+    functionalAreas: normalized.functionalAreas,
+    defaultMagicRatio: normalized.defaultMagicRatio,
+    status: building?.status ?? "active"
+  };
+}
+
 export function deriveGameplayBuilding(building, options = {}) {
+  const canonicalInput = canonicalGameplayInput(building, options);
+  if (canonicalInput) return deriveCanonicalGameplayBuilding(building, canonicalInput);
   const category = options.category ?? getBuildingCategory(building);
   const magicLevel = options.magicLevel ?? getMagicLevel(building);
   const area = footprintArea(building);
