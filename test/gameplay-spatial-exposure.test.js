@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createCityState } from "../src/city/state.js";
 import {
   EXPOSURE_RADIUS,
+  LEGACY_EXPOSURE_RADIUS,
   calculateMagicLoad,
   inspectBuildingRisk,
   inspectSpatialExposure,
+  neighborhoodConcealment,
   spatialDistanceWeight
 } from "../src/gameplay/exposure.js";
+import { resolveTurn } from "../src/gameplay/simulation.js";
+import { normalizeGameplayBuilding } from "../src/gameplay/schema.js";
 
 function building(id, cells, extra = {}) {
   return { id, footprintCells: cells, status: "completed", ...extra };
@@ -14,6 +19,45 @@ function building(id, cells, extra = {}) {
 
 function canonical(units) {
   return { canonical: true, units };
+}
+
+function productionState(withCover = false) {
+  const cells = [];
+  for (let row = 0; row < 12; row += 1) {
+    for (let column = 0; column < 12; column += 1) {
+      cells.push({ id: `cell-${column}-${row}`, column, row, center: { x: column * 4, z: row * 4 }, buildable: true });
+    }
+  }
+  const state = createCityState({ mapId: "spatial-production", grid: { columns: 12, rows: 12, cells } }, { resources: { coins: 99999 } });
+  state.cells["cell-5-5"].occupancy = "greenhouse";
+  state.buildings.greenhouse = {
+    id: "greenhouse",
+    footprintCells: ["cell-5-5"],
+    site: { lotId: "cell-5-5", footprint: "1x1" },
+    gameplay: canonical([{ purpose: "greenhouse", area: 1, magicRatio: 1 }]),
+    status: "completed"
+  };
+  if (withCover) {
+    for (const [id, cell, purpose] of [
+      ["house", "cell-4-5", "residential"],
+      ["market", "cell-6-5", "commercial"],
+      ["courtyard", "cell-5-4", "public_service"]
+    ]) {
+      state.cells[cell].occupancy = id;
+      state.buildings[id] = {
+        id,
+        footprintCells: [cell],
+        site: { lotId: cell, footprint: "1x1" },
+        gameplay: canonical([{ purpose, area: 1, magicRatio: 0 }]),
+        status: "completed"
+      };
+    }
+  }
+  return state;
+}
+
+function productionContext() {
+  return { now: () => "2026-07-22T12:00:00.000Z", seed: "spatial-production", createId: (prefix) => `${prefix}-spatial` };
 }
 
 function fixture() {
@@ -75,13 +119,32 @@ test("pure magic facilities approach bare risk while mixed ordinary area does no
   assert.ok(clustered.finalIncidentChance > 0.09);
 });
 
-test("system-owned prefab intensity overrides the purpose default without changing magic ratio", () => {
+test("client unit intensity cannot change load, while trusted prefab resolver can", () => {
   const { state, greenhouse, metadata } = fixture();
   metadata.greenhouse = canonical([{ purpose: "greenhouse", area: 1, magicRatio: 0.5, typeIntensity: 7 }]);
-  assert.equal(calculateMagicLoad(metadata.greenhouse), 3.5);
-  const result = inspectBuildingRisk(state, greenhouse, { metadataOf: () => metadata.greenhouse });
-  assert.equal(result.magicLoadBreakdown[0].typeIntensity, 7);
-  assert.equal(result.magicLoad, 3.5);
+  assert.equal(calculateMagicLoad(metadata.greenhouse), 2);
+  const clientResult = inspectBuildingRisk(state, greenhouse, { metadataOf: () => metadata.greenhouse });
+  assert.equal(clientResult.magicLoadBreakdown[0].typeIntensity, 4);
+  assert.equal(clientResult.magicLoad, 2);
+  const trustedResult = inspectBuildingRisk(state, greenhouse, {
+    metadataOf: () => metadata.greenhouse,
+    typeIntensityResolver: ({ building, unit }) => building.id === "greenhouse" && unit.purpose === "greenhouse" ? 7 : null
+  });
+  assert.equal(trustedResult.magicLoadBreakdown[0].typeIntensity, 7);
+  assert.equal(trustedResult.magicLoad, 3.5);
+  const malformedResult = inspectBuildingRisk(state, greenhouse, {
+    metadataOf: () => metadata.greenhouse,
+    typeIntensityResolver: () => Number.POSITIVE_INFINITY
+  });
+  assert.ok(Number.isFinite(malformedResult.magicLoad));
+  assert.ok(Number.isFinite(malformedResult.finalIncidentChance));
+});
+
+test("canonical schema does not persist client-supplied typeIntensity", () => {
+  const normalized = normalizeGameplayBuilding({
+    units: [{ purpose: "greenhouse", area: 1, magicRatio: 1, typeIntensity: 0 }]
+  });
+  assert.deepEqual(normalized.units, [{ purpose: "greenhouse", area: 1, magicRatio: 1 }]);
 });
 
 test("distance boundary and multi-cell footprint use shortest Manhattan distance", () => {
@@ -110,6 +173,38 @@ test("risk inspection is independent of district and block labels", () => {
   assert.deepEqual(inspectSpatialExposure(left.state, { metadataOf: (candidate) => left.metadata[candidate.id] }), inspectSpatialExposure(right.state, { metadataOf: (candidate) => right.metadata[candidate.id] }));
 });
 
+test("string building ids resolve map keys even when stored buildings omit embedded id", () => {
+  const state = { buildings: { greenhouse: { footprintCells: ["cell-5-5"], status: "completed" } } };
+  const result = inspectBuildingRisk(state, "greenhouse", {
+    metadataOf: (candidate) => candidate.id === "greenhouse" ? canonical([{ purpose: "greenhouse", area: 1, magicRatio: 1 }]) : null
+  });
+  assert.equal(result.buildingId, "greenhouse");
+  assert.equal(result.magicLoad, 4);
+  assert.equal(result.localMagicRatio, 1);
+});
+
+test("production TurnFacts expose canonical spatial risks and ordinary cover lowers them", () => {
+  const alone = resolveTurn(productionState(), {}, productionContext());
+  const covered = resolveTurn(productionState(true), {}, productionContext());
+  assert.equal(alone.error, null);
+  assert.equal(covered.error, null);
+  const bare = alone.facts.nextRisks.find((risk) => risk.buildingId === "greenhouse");
+  const diluted = covered.facts.nextRisks.find((risk) => risk.buildingId === "greenhouse");
+  assert.ok(bare && diluted);
+  for (const key of ["magicLoad", "riskTier", "baseRisk", "localMagicRatio", "spatialModifier", "finalIncidentChance"]) {
+    assert.ok(key in bare, `nextRisks greenhouse has ${key}`);
+  }
+  assert.ok(diluted.localMagicRatio < bare.localMagicRatio);
+  assert.ok(diluted.finalIncidentChance < bare.finalIncidentChance);
+  assert.deepEqual(alone.facts.spatialRisks, alone.facts.nextRisks);
+
+  const relabeled = productionState(true);
+  relabeled.districtId = "different-district";
+  relabeled.buildings.greenhouse.blockId = "different-block";
+  const relabeledResult = resolveTurn(relabeled, {}, productionContext());
+  assert.equal(relabeledResult.facts.nextRisks.find((risk) => risk.buildingId === "greenhouse").finalIncidentChance, diluted.finalIncidentChance);
+});
+
 test("legacy category metadata is never promoted to authoritative PR-E load", () => {
   const legacy = building("legacy", ["cell-1-1"], { program: { purpose: "greenhouse", intent: { magicLevel: 1 } } });
   const state = { buildings: { legacy } };
@@ -118,4 +213,23 @@ test("legacy category metadata is never promoted to authoritative PR-E load", ()
   assert.equal(result.status, "UNSUPPORTED_LEGACY_METADATA");
   assert.equal(result.magicLoad, 0);
   assert.equal(calculateMagicLoad({ category: "green", magicLevel: 1 }), 0);
+});
+
+test("legacy concealment keeps its two-cell radius while PR-E uses five cells", () => {
+  const state = {
+    buildings: {
+      source: building("source", ["cell-5-5"]),
+      near: building("near", ["cell-7-5"]),
+      outside: building("outside", ["cell-8-5"])
+    }
+  };
+  const metadata = {
+    near: { concealment: 2 },
+    outside: { concealment: 20 }
+  };
+  assert.equal(LEGACY_EXPOSURE_RADIUS, 2);
+  assert.ok(neighborhoodConcealment(state, state.buildings.source, { metadataOf: (candidate) => metadata[candidate.id] }) > 0);
+  state.buildings.near.footprintCells = ["cell-8-5"];
+  assert.equal(neighborhoodConcealment(state, state.buildings.source, { metadataOf: (candidate) => metadata[candidate.id] }), 0);
+  assert.equal(EXPOSURE_RADIUS, 5);
 });

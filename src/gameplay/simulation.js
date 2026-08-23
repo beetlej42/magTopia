@@ -15,6 +15,7 @@ import {
   incidentDifficulty,
   incidentProbability,
   incidentSeverity,
+  inspectSpatialExposure,
   isSealedExposure,
   neighborhoodConcealment
 } from "./exposure.js";
@@ -502,11 +503,36 @@ function resolveTurnInternal(state, input = {}, context = {}, profile = "product
     next.buildings[id] = { ...next.buildings[id], exposure: change.to, status: change.sealed ? "sealed" : next.buildings[id].status };
   }
 
-  const nextRisks = Object.entries(exposureChanges)
+  const legacyNextRisks = Object.entries(exposureChanges)
     .filter(([, change]) => change.to > 0)
     .sort((a, b) => b[1].pressure - a[1].pressure)
     .slice(0, Number(options.maxRisks ?? 5))
     .map(([buildingId, change]) => ({ buildingId, exposure: change.to, pressure: change.pressure, concealment: change.concealment }));
+
+  // PR-E risk inspection is an observable production projection, but does
+  // not alter the existing exposure accumulator or incident roll. Only
+  // canonical functional-unit buildings with positive MagicLoad participate.
+  const spatialRiskSnapshot = inspectSpatialExposure(next, {
+    metadataOf: (building) => metadataMap[building.id],
+    typeIntensityResolver: options.typeIntensityResolver
+  })
+    .filter((risk) => risk.authoritative && risk.magicLoad > 0 && !["sealed", "inactive"].includes(metadataMap[risk.buildingId]?.status))
+    .map((risk) => ({
+      ...risk,
+      // Preserve the legacy projection fields for consumers that already
+      // render nextRisks, while the PR-E fields explain the authoritative
+      // spatial risk alongside them.
+      exposure: exposureChanges[risk.buildingId]?.to ?? metadataMap[risk.buildingId]?.exposure ?? 0,
+      pressure: exposureChanges[risk.buildingId]?.pressure ?? 0,
+      concealment: exposureChanges[risk.buildingId]?.concealment ?? 0
+    }))
+    .sort((a, b) => b.finalIncidentChance - a.finalIncidentChance || a.buildingId.localeCompare(b.buildingId))
+    .slice(0, Number(options.maxRisks ?? 5));
+  // Legacy-only states retain their historical nextRisks shape for API
+  // compatibility. As soon as canonical buildings exist, the projection is
+  // exclusively the authoritative PR-E snapshot.
+  const hasCanonicalBuilding = Object.values(metadataMap).some((metadata) => metadata?.canonical === true);
+  const nextRisks = hasCanonicalBuilding ? spatialRiskSnapshot : legacyNextRisks;
 
   // Freeze a complete incident snapshot into the facts so a later backfilled
   // report reads exactly what this turn saw. The frozen facts must be the only
@@ -583,6 +609,7 @@ function resolveTurnInternal(state, input = {}, context = {}, profile = "product
     outcomes: assignmentSettlement.outcomes,
     sealedBuildings,
     nextRisks,
+    spatialRisks: spatialRiskSnapshot,
     cardOfferId: cardStateFacts.cardOfferId,
     offeredCardIds: cardStateFacts.offeredCardIds,
     selectedCardId: cardStateFacts.selectedCardId,

@@ -13,8 +13,9 @@ export const GAMEPLAY_PURPOSES = Object.freeze([
 ]);
 export const MAGIC_RATIOS = Object.freeze([0, 0.25, 0.5, 0.75, 1]);
 // Authoritative intensity multipliers used by the unified spatial exposure
-// model.  A canonical unit may override this with a validated `typeIntensity`
-// for a system-owned prefab; purpose names remain the stable gameplay schema.
+// model. Gameplay grammar carries only purpose and discrete magicRatio. Any
+// prefab-specific override must come from a trusted system resolver at
+// inspection time; it is never persisted in a client-authored unit.
 export const FUNCTIONAL_TYPE_INTENSITY = Object.freeze({
   residential: 1,
   commercial: 2,
@@ -139,19 +140,10 @@ export function normalizeFunctionalUnit(value = {}, index = 0, defaults = {}) {
     value.area ?? value.functionalArea ?? areaFromCells(value.cells) ?? defaults.area,
     `functional unit ${index + 1}`
   );
-  const rawTypeIntensity = value.typeIntensity ?? defaults.typeIntensity;
-  let typeIntensity;
-  if (rawTypeIntensity != null) {
-    typeIntensity = Number(rawTypeIntensity);
-    if (!Number.isFinite(typeIntensity) || typeIntensity < 0) {
-      throw new Error(`functional unit ${index + 1} typeIntensity must be a finite non-negative number`);
-    }
-  }
   return {
     purpose,
     area,
-    magicRatio: normalizeMagicRatio(value.magicRatio ?? defaults.magicRatio),
-    ...(typeIntensity == null ? {} : { typeIntensity })
+    magicRatio: normalizeMagicRatio(value.magicRatio ?? defaults.magicRatio)
   };
 }
 
@@ -635,6 +627,7 @@ export function normalizeTurnFacts(value = {}) {
     outcomes: [...(value.outcomes ?? [])].map((entry) => ({ ...entry })),
     sealedBuildings: [...(value.sealedBuildings ?? [])],
     nextRisks: [...(value.nextRisks ?? [])].map((entry) => ({ ...entry })),
+    spatialRisks: [...(value.spatialRisks ?? [])].map((entry) => ({ ...entry })),
     cardOfferId: value.cardOfferId == null ? null : String(value.cardOfferId),
     offeredCardIds: [...(value.offeredCardIds ?? [])].map(String),
     selectedCardId: value.selectedCardId == null ? null : String(value.selectedCardId),

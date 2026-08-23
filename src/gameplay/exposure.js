@@ -9,6 +9,9 @@ import {
 // Distances are measured in city cells and the boundary is strict: a source
 // farther than five cells contributes no weight at all.
 export const EXPOSURE_RADIUS = 5;
+// Legacy exposure accumulation/incident compatibility remains on its v0.2
+// two-cell concealment neighbourhood until that system is explicitly migrated.
+export const LEGACY_EXPOSURE_RADIUS = 2;
 export const SPATIAL_RISK_MODIFIER_MIN = 0.2;
 export const SPATIAL_RISK_MODIFIER_MAX = 1;
 export const BASE_RISK_BY_TIER = Object.freeze({ low: 0.02, medium: 0.05, high: 0.1 });
@@ -107,10 +110,22 @@ function canonicalUnits(metadata) {
     : [];
 }
 
-export function typeIntensityForUnit(unit, options = {}) {
-  const explicit = unit?.typeIntensity ?? options.typeIntensityByPurpose?.[unit?.purpose];
-  if (explicit != null && Number.isFinite(Number(explicit)) && Number(explicit) >= 0) return Number(explicit);
-  return FUNCTIONAL_TYPE_INTENSITY[unit?.purpose] ?? 0;
+export function typeIntensityForUnit(unit, options = {}, context = {}) {
+  const fallback = FUNCTIONAL_TYPE_INTENSITY[unit?.purpose] ?? 0;
+  let explicit;
+  if (typeof options.typeIntensityResolver === "function") {
+    try {
+      explicit = options.typeIntensityResolver({ ...context, unit });
+    } catch {
+      explicit = null;
+    }
+  }
+  // Resolver output is trusted only after a finite/product-safe check. A
+  // malformed prefab catalog therefore falls back to the system default and
+  // can never create Infinity/NaN risk totals.
+  const numeric = Number(explicit);
+  if (Number.isFinite(numeric) && numeric >= 0 && numeric <= Number.MAX_SAFE_INTEGER) return numeric;
+  return fallback;
 }
 
 /**
@@ -118,19 +133,20 @@ export function typeIntensityForUnit(unit, options = {}) {
  * `magicLoad` is the sum of functionalArea × discrete magicRatio × intensity;
  * no legacy metadata is accepted as an authority.
  */
-export function magicLoadDetails(metadata, options = {}) {
+export function magicLoadDetails(metadata, options = {}, context = {}) {
   const units = canonicalUnits(metadata);
   const details = units.map((unit, index) => {
     const area = Number(unit.area);
     const magicRatio = Number(unit.magicRatio);
-    const typeIntensity = typeIntensityForUnit(unit, options);
+    const typeIntensity = typeIntensityForUnit(unit, options, context);
+    const magicLoad = area * magicRatio * typeIntensity;
     return {
       unitIndex: index,
       purpose: unit.purpose,
       area,
       magicRatio,
       typeIntensity,
-      magicLoad: area * magicRatio * typeIntensity,
+      magicLoad: Number.isFinite(magicLoad) ? magicLoad : 0,
       magicArea: area * magicRatio
     };
   });
@@ -170,28 +186,12 @@ function sourceArea(metadata, building, state) {
 export function calculateLocalMagicRatio(state, building, options = {}) {
   const targetMetadata = canonicalMetadataFor(building, options);
   if (!targetMetadata) return 0;
-  const radius = options.radius ?? EXPOSURE_RADIUS;
-  const buildings = stateBuildings(state);
-  const candidates = buildings.some((candidate) => candidate?.id === building?.id)
-    ? buildings
-    : [building, ...buildings];
-  let weightedMagicArea = 0;
-  let weightedArea = 0;
-  for (const candidate of candidates) {
-    if (!candidate?.id) continue;
-    const metadata = canonicalMetadataFor(candidate, options);
-    if (!metadata) continue;
-    if (metadata.status === "sealed" || candidate.status === "sealed") continue;
-    const area = sourceArea(metadata, candidate, state);
-    if (!(area > 0)) continue;
-    const distance = footprintDistance(building, candidate, state);
-    const weight = spatialDistanceWeight(distance, { radius });
-    if (!(weight > 0)) continue;
-    const magicArea = magicLoadDetails(metadata).magicArea;
-    weightedArea += weight * area;
-    weightedMagicArea += weight * magicArea;
-  }
-  return weightedArea > 0 ? weightedMagicArea / weightedArea : 0;
+  const contributions = contributionDetails(state, building, options);
+  const weightedArea = contributions.reduce((total, entry) => total + entry.weightedArea, 0);
+  const weightedMagicArea = contributions.reduce((total, entry) => total + entry.weightedMagicArea, 0);
+  return weightedArea > 0 && Number.isFinite(weightedArea) && Number.isFinite(weightedMagicArea)
+    ? weightedMagicArea / weightedArea
+    : 0;
 }
 
 export const localMagicRatio = calculateLocalMagicRatio;
@@ -230,13 +230,14 @@ function contributionDetails(state, building, options = {}) {
     const distance = footprintDistance(building, candidate, state);
     const weight = spatialDistanceWeight(distance, { radius });
     if (!(weight > 0)) continue;
-    const details = magicLoadDetails(metadata);
+    const details = magicLoadDetails(metadata, options, { state, building: candidate });
     entries.push({
       buildingId: String(candidate.id),
       distance,
       weight,
       area,
       magicArea: details.magicArea,
+      magicLoad: details.magicLoad,
       weightedArea: weight * area,
       weightedMagicArea: weight * details.magicArea
     });
@@ -249,14 +250,20 @@ function contributionDetails(state, building, options = {}) {
  * directly: all numbers are deterministic and contributions are sorted by id.
  */
 export function inspectBuildingRisk(state, buildingOrId, options = {}) {
-  const building = typeof buildingOrId === "string" ? state?.buildings?.[buildingOrId] : buildingOrId;
+  const building = typeof buildingOrId === "string"
+    ? (() => {
+      const stored = state?.buildings?.[buildingOrId];
+      return stored ? { ...stored, id: stored.id ?? buildingOrId } : stored;
+    })()
+    : buildingOrId;
   const buildingId = String(building?.id ?? buildingOrId ?? "");
   const metadata = canonicalMetadataFor(building, options);
-  const details = magicLoadDetails(metadata);
+  const details = magicLoadDetails(metadata, options, { state, building });
   const contributions = metadata ? contributionDetails(state, building, options) : [];
   const weightedArea = contributions.reduce((total, entry) => total + entry.weightedArea, 0);
   const weightedMagicArea = contributions.reduce((total, entry) => total + entry.weightedMagicArea, 0);
-  const localRatio = weightedArea > 0 ? weightedMagicArea / weightedArea : 0;
+  const finiteTotals = Number.isFinite(weightedArea) && Number.isFinite(weightedMagicArea);
+  const localRatio = finiteTotals && weightedArea > 0 ? weightedMagicArea / weightedArea : 0;
   const tier = riskTierForLoad(details);
   const baseRisk = baseRiskForMagicLoad(details);
   const modifier = spatialRiskModifier(localRatio);
@@ -276,8 +283,8 @@ export function inspectBuildingRisk(state, buildingOrId, options = {}) {
     spatialModifier: modifier,
     finalIncidentChance: baseRisk * modifier,
     finalIncidentChancePercent: baseRisk * modifier * 100,
-    weightedArea,
-    weightedMagicArea,
+    weightedArea: finiteTotals ? weightedArea : 0,
+    weightedMagicArea: finiteTotals ? weightedMagicArea : 0,
     contributions
   };
 }
@@ -292,7 +299,7 @@ export function inspectSpatialExposure(state, options = {}) {
 }
 
 export function buildingsWithinRadius(state, building, options = {}) {
-  const radius = options.radius ?? EXPOSURE_RADIUS;
+  const radius = options.radius ?? LEGACY_EXPOSURE_RADIUS;
   const footprint = cellFootprint(building);
   const others = Object.values(state?.buildings ?? {}).filter((candidate) => candidate.id !== building.id);
   return others.filter((candidate) => {
@@ -307,7 +314,7 @@ export function concealmentOf(building, metadata = null) {
 }
 
 export function neighborhoodConcealment(state, building, options = {}) {
-  const radius = options.radius ?? EXPOSURE_RADIUS;
+  const radius = options.radius ?? LEGACY_EXPOSURE_RADIUS;
   const falloff = options.falloff ?? 0.5;
   const metadataOf = options.metadataOf ?? (() => null);
   const neighbors = buildingsWithinRadius(state, building, { radius });
