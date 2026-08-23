@@ -4,6 +4,7 @@ import test from "node:test";
 import { createCityState } from "../src/city/state.js";
 import { getEntranceFrontageCells } from "../src/city/solver.js";
 import { createBlankVoxelWorldContract } from "../src/city/voxel-world.js";
+import { BUILDING_COST_BY_PURPOSE } from "../src/gameplay/construction-cost.js";
 import { resolvePublicServiceBaselineTurn, resolveTurn } from "../src/gameplay/simulation.js";
 import { runCitySimulation } from "../src/gameplay/city-simulator.js";
 
@@ -51,7 +52,22 @@ test("schedule is monotonic through the authoritative openNextTurn transition an
   const resolved = report.timeline.map((entry) => entry.schedule.resolvedAt);
   assert.ok(reopened.every((value, index) => index === 0 || value > reopened[index - 1]));
   assert.ok(resolved.every((value, index) => index === 0 || value > resolved[index - 1]));
+  report.timeline.forEach((entry, index) => {
+    const schedule = entry.schedule;
+    assert.ok(schedule.openedAt <= schedule.resolvedAt);
+    assert.ok(schedule.resolvedAt <= schedule.reopenedAt);
+    if (index + 1 < report.timeline.length) assert.ok(schedule.reopenedAt < report.timeline[index + 1].schedule.resolvedAt);
+    assert.equal(new Date(schedule.nextUnlockAt).getTime(), new Date(schedule.reopenedAt).getTime() + 1000);
+  });
   assert.ok(report.timeline.every((entry) => entry.actions.some((action) => action.type === "resolve_turn_retry" && !action.accepted && action.code === "TURN_ALREADY_RESOLVED" && action.stateUnchanged)));
+});
+
+test("canAffordNextBuild reports the authoritative minimum construction cost", () => {
+  const report = runCitySimulation({ turns: 20, strategy: "balanced", seed: "cost-authority" });
+  const minimum = Math.min(...Object.values(report.rules.buildingCostByPurpose));
+  assert.equal(minimum, Math.min(...Object.values(BUILDING_COST_BY_PURPOSE)));
+  assert.deepEqual(report.rules.buildingCostByPurpose, BUILDING_COST_BY_PURPOSE);
+  assert.equal(report.summary.canAffordNextBuild, report.summary.final.coins >= minimum);
 });
 
 test("public service changes coverage, target and migration rate in the report", () => {
@@ -61,6 +77,17 @@ test("public service changes coverage, target and migration rate in the report",
   assert.ok(entries.at(-1).target.total <= report.finalState.gameplay.population.muggles.capacity + report.finalState.gameplay.population.wizards.capacity);
   assert.ok(entries.every((entry) => Number.isFinite(entry.coverage) && Object.values(entry.migrationRates).every(Number.isFinite)));
 });
+
+test("insufficient-resource construction rejection is explainable and deeply unchanged", () => {
+  const report = runCitySimulation({ turns: 30, strategy: "service-first", seed: "audit" });
+  const rejected = report.timeline.flatMap((entry) => entry.actions)
+    .find((action) => action.type === "construct_building" && !action.accepted && action.code === "INSUFFICIENT_RESOURCES");
+  assert.ok(rejected);
+  assert.equal(rejected.stateUnchanged, true);
+  assert.match(rejected.reason, /Insufficient coins/);
+  assert.ok(report.timeline.every((entry) => entry.invariants.every((invariant) => invariant.ok)));
+});
+
 test("all supported strategies run 30 turns and intentionally diverge", () => {
   const strategies = ["balanced", "housing-first", "economy-first", "service-first"];
   const reports = strategies.map((strategy) => runCitySimulation({ turns: 30, strategy, seed: "strategy-city" }));

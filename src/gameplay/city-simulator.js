@@ -4,6 +4,7 @@ import { createEngineContext, executeCityCommand } from "../city/engine.js";
 import { findCandidateParcels, getEntranceFrontageCells } from "../city/solver.js";
 import { initializeFreshCitySchedule, openNextTurn } from "./turn.js";
 import { ECONOMY_RULES } from "./economy.js";
+import { BUILDING_COST_BY_PURPOSE } from "./construction-cost.js";
 import { resolvePublicServiceBaselineTurn } from "./simulation.js";
 
 export const CITY_SIMULATION_STRATEGIES = Object.freeze([
@@ -70,6 +71,7 @@ export function runCitySimulation(options = {}) {
       const roadTarget = pickBootstrapRoadTarget(state);
       if (roadTarget) {
         const commandState = state;
+        const commandDigest = stableStateDigest(commandState);
         const roadResult = executeCityCommand(state, {
           type: "connect",
           from: { kind: "node", id: "old_town_entry" },
@@ -80,7 +82,7 @@ export function runCitySimulation(options = {}) {
         actions.push(actionRecord("connect", roadResult, {
           target: roadTarget,
           purpose: "bootstrap_access",
-          stateUnchanged: roadResult.accepted ? null : roadResult.state === commandState
+          stateUnchanged: roadResult.accepted ? null : stableStateDigest(roadResult.state) === commandDigest
         }));
         if (roadResult.accepted) {
           state = roadResult.state;
@@ -108,6 +110,7 @@ export function runCitySimulation(options = {}) {
     }
     if (proposalChoice) {
       const commandState = state;
+      const commandDigest = stableStateDigest(commandState);
       const result = executeCityCommand(state, {
         type: "construct_building",
         proposal: makeProposal(proposalChoice, strategy, turnNumber, seed)
@@ -116,7 +119,7 @@ export function runCitySimulation(options = {}) {
         lotId: proposalChoice.lotId,
         requestedPurpose: proposalChoice.purpose,
         entrance: proposalChoice.entrance,
-        stateUnchanged: result.accepted ? null : result.state === commandState
+        stateUnchanged: result.accepted ? null : stableStateDigest(result.state) === commandDigest
       }));
       if (result.accepted) {
         state = result.state;
@@ -130,35 +133,36 @@ export function runCitySimulation(options = {}) {
     }
 
     const settlementBefore = snapshotSettlement(state);
+    const settlementStateDigest = stableStateDigest(state);
     const resolvedAt = simulationTime(turnNumber);
     const resolved = resolvePublicServiceBaselineTurn(state, { expectedTurn: state.turn }, {
       now: () => resolvedAt,
       createId: context.createId,
       // A fixed roller is supplied even though PR-D mode disables incidents.
       roller: () => 0.5,
-      options: { settlementSource: "agent" }
+      options: { settlementSource: "agent", turnCooldownMs: SIMULATION_COOLDOWN_MS }
     });
     let schedule = null;
     if (resolved.error) {
       anomalies.push({ turn: turnNumber, code: resolved.error.code, message: resolved.error.message });
-      actions.push({ type: "resolve_turn", accepted: false, code: resolved.error.code, reason: resolved.error.message, stateUnchanged: resolved.nextState === state });
+      actions.push({ type: "resolve_turn", accepted: false, code: resolved.error.code, reason: resolved.error.message, stateUnchanged: stableStateDigest(resolved.nextState) === settlementStateDigest });
     } else {
       actions.push({ type: "resolve_turn", accepted: true, turn: turnNumber });
-      const retryState = structuredClone(resolved.nextState);
+      const retryDigest = stableStateDigest(resolved.nextState);
       const retry = resolvePublicServiceBaselineTurn(resolved.nextState, { expectedTurn: resolved.nextState.turn }, {
         now: () => resolvedAt,
         createId: context.createId,
-        options: { settlementSource: "agent" }
+        options: { settlementSource: "agent", turnCooldownMs: SIMULATION_COOLDOWN_MS }
       });
       actions.push({
         type: "resolve_turn_retry",
         accepted: !retry.error,
         code: retry.error?.code ?? "UNEXPECTED_RETRY_SUCCESS",
         reason: retry.error?.message ?? "A resolved turn was accepted twice",
-        stateUnchanged: retry.nextState === resolved.nextState && JSON.stringify(retry.nextState) === JSON.stringify(retryState)
+        stateUnchanged: stableStateDigest(retry.nextState) === retryDigest
       });
       const unlockAt = resolved.nextState.gameplay.nextTurnUnlockAt;
-      const reopenAt = new Date(new Date(unlockAt).getTime()).toISOString();
+      const reopenAt = new Date(Math.max(new Date(resolvedAt).getTime(), new Date(unlockAt).getTime())).toISOString();
       const reopened = openNextTurn(resolved.nextState, reopenAt, { turnCooldownMs: SIMULATION_COOLDOWN_MS });
       if (!reopened) {
         anomalies.push({ turn: turnNumber, code: "TURN_REOPEN_FAILED", message: `Turn did not unlock at ${reopenAt}` });
@@ -244,7 +248,7 @@ export function runCitySimulation(options = {}) {
   };
   const cumulativeSpend = timeline.reduce((sum, entry) => sum + entry.coins.actionsSpend, 0);
   const selfFunding = cumulativeIncome >= cumulativeSpend && recent.income >= recent.spend && recent.stalls === 0;
-  const canAffordNextBuild = final.coins >= Math.min(...Object.values({ residential: 50, commercial: 60, production: 80, public_service: 70, greenhouse: 90 }));
+  const canAffordNextBuild = final.coins >= Math.min(...Object.values(BUILDING_COST_BY_PURPOSE));
   return {
     schemaVersion: 1,
     seed,
@@ -254,6 +258,7 @@ export function runCitySimulation(options = {}) {
       initialCoins: ECONOMY_RULES.initialCoins,
       initialArcaneEnergy: ECONOMY_RULES.initialArcaneEnergy,
       migrationRate: ECONOMY_RULES.defaultMigrationRate,
+      buildingCostByPurpose: structuredClone(BUILDING_COST_BY_PURPOSE),
       publicService: structuredClone(ECONOMY_RULES.publicService)
     },
     timeline,
@@ -316,6 +321,17 @@ function stableToken(value) {
   let hash = 2166136261;
   for (const character of String(value)) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
   return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+// A canonical, insertion-order-independent state digest lets rejected command
+// records prove that an engine failure did not mutate the authority state.
+function stableStateDigest(value) {
+  const serialize = (entry) => {
+    if (entry === null || typeof entry !== "object") return JSON.stringify(entry);
+    if (Array.isArray(entry)) return `[${entry.map(serialize).join(",")}]`;
+    return `{${Object.keys(entry).sort().map((key) => `${JSON.stringify(key)}:${serialize(entry[key])}`).join(",")}}`;
+  };
+  return serialize(value);
 }
 
 function simulationTime(turn) {
@@ -390,6 +406,7 @@ function extendRoadFrontage(state, strategy, seed, turn, context) {
   if (!selected) return null;
   const source = roads.sort((left, right) => manhattan(left.id, selected.target) - manhattan(right.id, selected.target) || left.id.localeCompare(right.id))[0];
   const commandState = state;
+  const commandDigest = stableStateDigest(commandState);
   const result = executeCityCommand(state, {
     type: "connect",
     from: { kind: "cell", id: source.id },
@@ -403,7 +420,7 @@ function extendRoadFrontage(state, strategy, seed, turn, context) {
     action: actionRecord("connect", result, {
       target: selected.target,
       purpose: "frontage_extension",
-      stateUnchanged: result.accepted ? null : result.state === commandState
+      stateUnchanged: result.accepted ? null : stableStateDigest(result.state) === commandDigest
     })
   };
 }
