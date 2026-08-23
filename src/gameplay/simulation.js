@@ -83,7 +83,7 @@ function asMap(state, field) {
         canonical: metadata.canonical === true,
         status: building.status ?? metadata.status ?? "active",
         exposure: Number.isFinite(Number(building.exposure)) ? Number(building.exposure) : (metadata.exposure ?? 0),
-        ...(systemOwnedBonus ? { systemOwnedCardId: building.specialStructure.cardId, systemOwnedBonus } : {})
+        ...(systemOwnedBonus ? { systemOwnedCardId: building.specialStructure.cardId } : {})
       };
     })()
   ]));

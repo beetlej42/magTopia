@@ -262,10 +262,7 @@ export function calculateDailyIncome(state) {
       ...(building.gameplay?.canonical ? building.gameplay : {}),
       canonical: building.gameplay?.canonical === true,
       status: building.status,
-      ...(systemOwnedBonusForBuilding(building) ? {
-        systemOwnedCardId: building.specialStructure.cardId,
-        systemOwnedBonus: systemOwnedBonusForBuilding(building)
-      } : {})
+      ...(systemOwnedBonusForBuilding(building) ? { systemOwnedCardId: building.specialStructure.cardId } : {})
     }]));
   return incomeForSettlement(metadata, state.gameplay?.population ?? {});
 }

@@ -208,18 +208,19 @@ test("Moonlight Herb Plot uses arcaneEnergyOutput and only persisted card ids re
 test("whitelisted system cards retain catalog economy bonuses and join the housing target", () => {
   assert.deepEqual(systemOwnedBonusForBuilding({ status: "completed", specialStructure: { cardId: "owl-tower", effect: { coinOutput: 999, wizardCapacity: 999 } } }), { coins: 4, arcaneEnergy: 0, wizardCapacity: 3 });
   assert.deepEqual(systemOwnedBonusForBuilding({ status: "completed", specialStructure: { cardId: "floo-fireplace-station" } }), { coins: 5, arcaneEnergy: 0, wizardCapacity: 2 });
-  assert.deepEqual(systemOwnedBonusForBuilding({ status: "completed", specialStructure: { cardId: "moonlight-herb-plot", effect: { magicOutput: 6 } } }), { coins: 0, arcaneEnergy: 6, wizardCapacity: 0 });
+  assert.deepEqual(systemOwnedBonusForBuilding({ status: "completed", specialStructure: { cardId: "moonlight-herb-plot", effect: { magicOutput: 999999, arcaneEnergyOutput: 999999 } } }), { coins: 0, arcaneEnergy: 6, wizardCapacity: 0 });
   assert.equal(systemOwnedBonusForBuilding({ status: "sealed", specialStructure: { cardId: "owl-tower" } }), null);
   assert.equal(systemOwnedBonusForBuilding({ status: "completed", specialStructure: { cardId: "fake-owl-tower", effect: { coinOutput: 999, wizardCapacity: 999 } } }), null);
 
   const metadata = {
-    owl: { canonical: false, status: "completed", systemOwnedCardId: "owl-tower", systemOwnedBonus: { coins: 4, arcaneEnergy: 0, wizardCapacity: 3 } },
-    floo: { canonical: false, status: "completed", systemOwnedCardId: "floo-fireplace-station", systemOwnedBonus: { coins: 5, arcaneEnergy: 0, wizardCapacity: 2 } },
-    moon: { canonical: false, status: "completed", systemOwnedCardId: "moonlight-herb-plot", systemOwnedBonus: { coins: 0, arcaneEnergy: 6, wizardCapacity: 0 } }
+    owl: { canonical: false, status: "completed", systemOwnedCardId: "owl-tower", systemOwnedBonus: { coins: 777, arcaneEnergy: 999, wizardCapacity: 888 } },
+    floo: { canonical: false, status: "completed", systemOwnedCardId: "floo-fireplace-station", systemOwnedBonus: { coins: 777, arcaneEnergy: 999, wizardCapacity: 888 } },
+    moon: { canonical: false, status: "completed", systemOwnedCardId: "moonlight-herb-plot", systemOwnedBonus: { coins: 777, arcaneEnergy: 999, wizardCapacity: 888 } }
   };
   assert.deepEqual(capacitiesFromSettlementMetadata(metadata), { muggles: 0, wizards: 5 });
   assert.deepEqual(incomeForSettlement(metadata, {}), { coins: 9, arcaneEnergy: 6 });
   assert.deepEqual(incomeForSettlement({ forged: { canonical: false, status: "completed", systemOwnedBonus: { coins: 999, arcaneEnergy: 999, wizardCapacity: 999 } } }, {}), { coins: 0, arcaneEnergy: 0 });
+  assert.deepEqual(incomeForSettlement({ forgedCard: { canonical: false, status: "completed", systemOwnedCardId: "fake-owl-tower", systemOwnedBonus: { coins: 999, arcaneEnergy: 999, wizardCapacity: 999 } } }, {}), { coins: 0, arcaneEnergy: 0 });
   assert.deepEqual(incomeForSettlement({ sealed: { ...metadata.owl, status: "sealed" } }, {}), { coins: 0, arcaneEnergy: 0 });
 });
 

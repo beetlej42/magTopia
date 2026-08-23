@@ -44,25 +44,22 @@ export function systemOwnedBonusForBuilding(building = {}) {
   }
   const definition = getCard(cardId);
   const catalogEffect = definition?.effect ?? {};
-  const persistedEffect = building.specialStructure?.effect ?? {};
   if (cardId === "owl-tower") {
     return { coins: Number(catalogEffect.coinOutput), arcaneEnergy: 0, wizardCapacity: Number(catalogEffect.wizardCapacity) };
   }
   if (cardId === "floo-fireplace-station") {
     return { coins: Number(catalogEffect.coinOutput), arcaneEnergy: 0, wizardCapacity: Number(catalogEffect.wizardCapacity) };
   }
-  // `magicOutput` is accepted only for an already-persisted Moonlight card;
-  // new catalog/persisted effects use arcaneEnergyOutput. The card id remains
-  // the authority, so unrelated legacy metadata cannot create income.
-  const arcaneEnergy = persistedEffect.arcaneEnergyOutput ?? persistedEffect.magicOutput ?? catalogEffect.arcaneEnergyOutput;
-  return { coins: 0, arcaneEnergy: Number(arcaneEnergy), wizardCapacity: 0 };
+  // Legacy Moonlight persistence may still contain `magicOutput`; the
+  // card-id adapter recognizes it, but the catalog remains authoritative.
+  return { coins: 0, arcaneEnergy: Number(catalogEffect.arcaneEnergyOutput), wizardCapacity: 0 };
 }
 
 function systemOwnedBonusForMetadata(metadata = {}) {
   const cardId = metadata.systemOwnedCardId;
   if (!SYSTEM_OWNED_ECONOMY_CARDS.has(cardId) || metadata.status !== "completed") return null;
   const effect = getCard(cardId)?.effect ?? {};
-  if (cardId === "moonlight-herb-plot") return metadata.systemOwnedBonus ?? { coins: 0, arcaneEnergy: Number(effect.arcaneEnergyOutput), wizardCapacity: 0 };
+  if (cardId === "moonlight-herb-plot") return { coins: 0, arcaneEnergy: Number(effect.arcaneEnergyOutput), wizardCapacity: 0 };
   return {
     coins: Number(effect.coinOutput),
     arcaneEnergy: 0,
