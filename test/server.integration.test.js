@@ -617,6 +617,9 @@ function buildRequest(version, lotId, name) {
     actor_note: "增加可达的居民住房",
     site: { lot_id: lotId, footprint: "1x1", entrance: "south" },
     program: { archetype: "starter_residence", purpose: "residential", name, attributes: {} },
+    // v0.3 construction is canonical: the server preview/settlement path
+    // must receive functional units rather than infer economy from purpose.
+    gameplay_building: { units: [{ purpose: "residential", area: 1, magicRatio: 0 }] },
     design: { district_style: "london_common", patterns: ["quiet_front_garden"], creative_brief: "A compact warm brick cottage." },
     asset: { mode: "reuse", asset_id: "starter-cottage-001" }
   };
@@ -628,6 +631,7 @@ function produceRequest(version, lotId, name) {
     actor_note: "现有资产无法表达月光花住宅",
     site: { lot_id: lotId, footprint: "1x1", entrance: "south" },
     program: { archetype: "moon_residence", purpose: "residential", name, attributes: { coinOutput: 7 } },
+    gameplay_building: { units: [{ purpose: "residential", area: 1, magicRatio: 0.5 }] },
     design: { district_style: "willow_magic", patterns: ["quiet_front_garden"], creative_brief: "A narrow magical London brick home surrounded by restrained moonflowers." },
     asset: { mode: "produce", spec: { archetype: "moon_residence", footprint: "1x1", district_style: "willow_magic", guide_volume: "1x1x2", creative_brief: "A moonflower residence." } }
   };

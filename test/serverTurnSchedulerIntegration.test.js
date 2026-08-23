@@ -137,7 +137,7 @@ test("a new city created through the production repository is coins-only with no
     const owner = await repository.authenticate(player.access_token);
     const { state } = await repository.getCity(owner, city.id);
     assert.deepEqual(state.resources, { coins: 600 }, "a fresh production city holds only the authoritative 600 coins");
-    assert.deepEqual(state.gameplay.resources, { coins: 600, magic: 0 });
+    assert.deepEqual(state.gameplay.resources, { coins: 600, arcaneEnergy: 0 });
     assert.ok(!("timber" in state.resources) && !("stone" in state.resources), "timber/stone are never initialized");
   } finally {
     await app.close();
