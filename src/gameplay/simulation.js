@@ -359,7 +359,19 @@ function applyOutcome(outcome, options = {}) {
   }
 }
 
+// Production settlement always runs the complete gameplay stack. The baseline
+// wrapper below is the only supported way for deterministic PR-D balance
+// harnesses to omit later systems; callers cannot toggle individual systems on
+// the normal resolveTurn context.
 export function resolveTurn(state, input = {}, context = {}) {
+  return resolveTurnInternal(state, input, context, "production");
+}
+
+export function resolvePublicServiceBaselineTurn(state, input = {}, context = {}) {
+  return resolveTurnInternal(state, input, context, "public_service_baseline");
+}
+
+function resolveTurnInternal(state, input = {}, context = {}, profile = "production") {
   const guardError = guardTurnResolve(state, input);
   if (guardError) return { nextState: state, facts: null, error: guardError };
   const gameplay = migrateGameplay(state);
@@ -388,10 +400,18 @@ export function resolveTurn(state, input = {}, context = {}) {
   // this turn is ensured, an un-answered choice is recorded explicitly as
   // skipped (never blocking settlement), active policy modifiers feed the
   // deterministic simulation, and the policy lifecycle advances exactly once.
+  // Headless balance runs deliberately stay on the PR-D economy surface. The
+  // explicit internal profile keeps later systems out of that wrapper while
+  // preserving the complete production resolve path for normal callers.
+  const enableCards = profile === "production";
+  const enableIncidents = profile === "production";
+  const enableExposure = profile === "production";
   const cityId = state.cityId ?? "";
-  next = ensureCardOffer(next, cityId);
-  next = markChoiceSkipped(next, { now });
-  const policyEffects = collectPolicyEffects(next);
+  if (enableCards) {
+    next = ensureCardOffer(next, cityId);
+    next = markChoiceSkipped(next, { now });
+  }
+  const policyEffects = enableCards ? collectPolicyEffects(next) : {};
 
   let metadataMap;
   let resourceSettlement;
@@ -416,18 +436,22 @@ export function resolveTurn(state, input = {}, context = {}) {
     };
   }
 
-  const exposureSettlement = updateExposures(next, metadataMap, {
-    ...options,
-    modifier: Number(options.modifier ?? 0) + specialStructureExposureModifier(next),
-    concealmentBonus: policyEffects.concealmentBonus,
-    concealmentBonusFor: (building) => specialStructureConcealment(next, building)
-  });
+  const exposureSettlement = enableExposure
+    ? updateExposures(next, metadataMap, {
+      ...options,
+      modifier: Number(options.modifier ?? 0) + specialStructureExposureModifier(next),
+      concealmentBonus: policyEffects.concealmentBonus,
+      concealmentBonusFor: (building) => specialStructureConcealment(next, building)
+    })
+    : { changes: {}, nextMetadata: metadataMap };
   const exposureChanges = exposureSettlement.changes;
-  const incidents = generateIncidents(next, exposureSettlement.nextMetadata, roller, {
-    ...options,
-    createId,
-    turn: state.turn
-  });
+  const incidents = enableIncidents
+    ? generateIncidents(next, exposureSettlement.nextMetadata, roller, {
+      ...options,
+      createId,
+      turn: state.turn
+    })
+    : [];
   for (const incident of incidents) next.gameplay.incidents[incident.id] = incident;
 
   const assignmentValidation = validateAssignments(next, incidents, input.assignments, {
@@ -518,7 +542,9 @@ export function resolveTurn(state, input = {}, context = {}) {
   // Advance the deterministic policy lifecycle after this turn's effects have
   // been consumed. The choice's started/refreshed/expired records are captured
   // for the frozen facts, and the offer stays open for the player to read.
-  const policyAdvance = advancePolicies(next, { now, turn: state.turn });
+  const policyAdvance = enableCards
+    ? advancePolicies(next, { now, turn: state.turn })
+    : { nextState: next };
   next.gameplay.cardState = policyAdvance.nextState.gameplay.cardState;
   const cardStateFacts = cardFacts(next, state.turn);
   const facts = normalizeTurnFacts({
