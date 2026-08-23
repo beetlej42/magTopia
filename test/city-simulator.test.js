@@ -14,7 +14,6 @@ test("headless city simulation is deterministic and uses the canonical ledger", 
   assert.ok(first.timeline.some((entry) => entry.coins.income > 0));
   assert.ok(first.finalState.events.some((event) => event.type === "building_constructed"));
 });
-
 test("all supported strategies run 30 turns and intentionally diverge", () => {
   const strategies = ["balanced", "housing-first", "economy-first", "service-first"];
   const reports = strategies.map((strategy) => runCitySimulation({ turns: 30, strategy, seed: "strategy-city" }));
@@ -29,4 +28,3 @@ test("invalid simulator arguments fail clearly", () => {
   assert.throws(() => runCitySimulation({ turns: 0 }), /turns must be an integer/);
   assert.throws(() => runCitySimulation({ turns: 20, strategy: "random" }), /strategy must be one of/);
 });
-
