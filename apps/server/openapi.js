@@ -62,14 +62,15 @@ export function createOpenApiDocument(baseUrl) {
         },
         BuildingDesignConstructionRequest: {
           type: "object",
-          required: ["expected_city_version", "design_id", "design_revision", "design_hash"],
+          required: ["expected_city_version", "design_id", "design_revision", "design_hash", "gameplay_building"],
           properties: {
             expected_city_version: { type: "integer", minimum: 0 },
             district_id: { type: "string", description: "Named development district this building contributes to" },
             design_id: { type: "string" },
             design_revision: { type: "integer", minimum: 1 },
             design_hash: { type: "string", description: "Exact hash returned when the design revision was confirmed" },
-            actor_note: { type: "string" }
+            actor_note: { type: "string" },
+            gameplay_building: { $ref: "#/components/schemas/GameplayGrammarContainer", description: "Canonical v0.3 functional-unit grammar remains explicit even when site/program/design are resolved from a confirmed visual design." }
           }
         },
         Site: {
@@ -572,7 +573,7 @@ export function createOpenApiDocument(baseUrl) {
           properties: {
             turn: { type: "integer" },
             wallClock: { type: "object", nullable: true, additionalProperties: true },
-            resourceDelta: { type: "object", additionalProperties: true },
+            resourceDelta: { type: "object", properties: { coins: { type: "integer", minimum: 0 }, arcaneEnergy: { type: "number", minimum: 0 } }, required: ["coins", "arcaneEnergy"], additionalProperties: false },
             populationDelta: { type: "object", additionalProperties: true },
             buildingsStarted: { type: "array", items: { type: "string" } },
             buildingsCompleted: { type: "array", items: { type: "string" } },
@@ -683,7 +684,7 @@ export function createOpenApiDocument(baseUrl) {
                 nextTurnUnlockAt: { type: ["string", "null"] }
               }
             },
-            resourceDelta: { type: "object", properties: { factRef: { type: "string" }, coins: { type: "number" }, magic: { type: "number" } } },
+            resourceDelta: { type: "object", properties: { factRef: { type: "string" }, coins: { type: "integer", minimum: 0 }, arcaneEnergy: { type: "number", minimum: 0 } }, required: ["coins", "arcaneEnergy"] },
             populationDelta: { type: "object", additionalProperties: true },
             buildingsStarted: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, buildingId: { type: "string" }, name: { type: "string" }, archetype: { type: ["string", "null"] }, purpose: { type: ["string", "null"] } } } },
             buildingsCompleted: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, buildingId: { type: "string" }, name: { type: "string" }, archetype: { type: ["string", "null"] }, purpose: { type: ["string", "null"] } } } },

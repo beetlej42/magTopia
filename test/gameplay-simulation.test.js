@@ -42,9 +42,9 @@ test("legacy city state migrates coins into gameplay without losing balance on f
   legacy.resources = { coins: 123, timber: 12, stone: 12 };
   const { nextState, facts, error } = resolveTurn(legacy, {}, context());
   assert.equal(error, null);
-  assert.equal(nextState.gameplay.schemaVersion, 1);
-  assert.equal(nextState.gameplay.resources.coins, 123 + 30);
-  assert.equal(nextState.resources.coins, 123 + 30, "legacy coins follow the gameplay balance");
+  assert.equal(nextState.gameplay.schemaVersion, 3);
+  assert.equal(nextState.gameplay.resources.coins, 123, "legacy non-canonical buildings provide no PR-C income");
+  assert.equal(nextState.resources.coins, 123, "legacy coins follow the gameplay balance");
   assert.equal(legacy.resources.coins, 123, "source state stays untouched");
 });
 
@@ -58,7 +58,7 @@ test("an already resolved turn cannot be resolved twice", () => {
   assert.equal(second.error.code, "TURN_ALREADY_RESOLVED");
   assert.equal(second.nextState, first.nextState, "resolving again changes nothing");
   assert.equal(second.facts, null);
-  assert.equal(second.nextState.gameplay.resources.coins, 99999 + 30, "income was not granted twice");
+  assert.equal(second.nextState.gameplay.resources.coins, 99999, "income was not granted twice");
 });
 
 test("resolving against a mismatched expectedTurn is rejected", () => {
@@ -93,9 +93,8 @@ test("one resolveTurn() settles income exactly once", () => {
     { id: "b1", cellId: "cell-3-3", name: "House", purpose: "residential", magicLevel: 0.2 }
   ]);
   const { nextState, facts } = resolveTurn(state, {}, context());
-  assert.equal(facts.resourceDelta.coins, 24 + 6);
-  assert.equal(facts.resourceDelta.magic, 1);
-  assert.equal(nextState.gameplay.resources.coins, 99999 + 30);
+  assert.deepEqual(facts.resourceDelta, { coins: 0, arcaneEnergy: 0 });
+  assert.equal(nextState.gameplay.resources.coins, 99999);
   assert.equal(state.gameplay.resources.coins, 99999, "source state stays untouched");
   assert.equal(facts.turn, 1);
   assert.equal(nextState.turn, 1);
@@ -147,8 +146,8 @@ test("TurnFacts fully describe the state change", () => {
   }
   assert.ok(Object.isFrozen(facts));
   assert.ok(Object.isFrozen(facts.exposureChanges));
-  assert.ok(facts.populationDelta.muggles.capacity > 0);
-  assert.ok(facts.populationDelta.wizards.capacity > 0);
+  assert.equal(facts.populationDelta.muggles.capacity, 0);
+  assert.equal(facts.populationDelta.wizards.capacity, 0);
   assert.equal(nextState.gameplay.lastTurnFacts, facts);
   assert.deepEqual(facts.sealedBuildings, []);
 });
@@ -165,10 +164,10 @@ test("full scenario: ordinary cover plus two high-magic towers resolves into fac
   ];
   const state = cityWithBuildings(specs);
   const { nextState, facts } = resolveTurn(state, {}, context());
-  assert.ok(facts.resourceDelta.coins > 24);
-  assert.ok(facts.resourceDelta.magic > 0);
-  assert.ok(facts.populationDelta.muggles.capacity > 0);
-  assert.ok(facts.populationDelta.wizards.capacity > 0);
+  assert.equal(facts.resourceDelta.coins, 0);
+  assert.equal(facts.resourceDelta.arcaneEnergy, 0);
+  assert.equal(facts.populationDelta.muggles.capacity, 0);
+  assert.equal(facts.populationDelta.wizards.capacity, 0);
   assert.ok(facts.exposureChanges["magic-1"].to > facts.exposureChanges["magic-1"].from);
   assert.ok(facts.exposureChanges["magic-2"].to > facts.exposureChanges["magic-2"].from);
   assert.ok(Array.isArray(facts.incidents));

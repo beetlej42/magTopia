@@ -239,8 +239,7 @@ test("manual time advance is disabled; daily income is coins-only and settled by
   const state = createCityState(world(), { resources: { coins: 999 } });
   const built = executeCityCommand(state, { type: "construct_building", proposal: proposal() }, context());
   assert.equal(built.accepted, true);
-  assert.equal(calculateDailyIncome(built.state).coins, 33, "income is coins-only from base 24 + the building's 9 coin output");
-  assert.ok(!("timber" in calculateDailyIncome(built.state)) && !("stone" in calculateDailyIncome(built.state)));
+  assert.deepEqual(calculateDailyIncome(built.state), { coins: 0, arcaneEnergy: 0 }, "the preview no longer runs a legacy category/base-income economy");
 
   const disabled = executeCityCommand(built.state, { type: "advance_time", hours: 24 }, context());
   assert.equal(disabled.accepted, false);

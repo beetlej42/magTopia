@@ -35,7 +35,7 @@ export const EFFECT_VALUES = Object.freeze({
   owlTowerCoinOutput: 4,
   flooCoinOutput: 5,
   flooWizardCapacity: 2,
-  moonlightMagicOutput: 6,
+  moonlightArcaneEnergyOutput: 6,
   moonlightExposureModifier: 2
 });
 
@@ -153,7 +153,7 @@ export const CARD_CATALOG = Object.freeze([
     {
       kind: "special_structure",
       magicLevel: 0.8,
-      magicOutput: EFFECT_VALUES.moonlightMagicOutput,
+      arcaneEnergyOutput: EFFECT_VALUES.moonlightArcaneEnergyOutput,
       exposureModifier: EFFECT_VALUES.moonlightExposureModifier
     },
     { decisionMode: CARD_DECISION_MODES.player_place, structure: SPECIAL_STRUCTURES["moonlight-herb-plot"] }

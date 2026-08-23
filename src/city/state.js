@@ -1,4 +1,5 @@
 import { getFootprintCells } from "./contracts.js";
+import { GAMEPLAY_SCHEMA_VERSION } from "../gameplay/schema.js";
 
 export function createCityState(worldContract, options = {}) {
   if (!worldContract?.grid?.cells?.length) throw new Error("CityState requires a world contract with valid cells");
@@ -32,13 +33,13 @@ export function createCityState(worldContract, options = {}) {
     // were consolidated to the coins-only economy.
     resources: { coins: 600, ...(options.resources ?? {}) },
     gameplay: {
-      schemaVersion: 1,
+      schemaVersion: GAMEPLAY_SCHEMA_VERSION,
       turnStatus: "open",
       turnOpenedAt: null,
       turnDeadlineAt: null,
       nextTurnUnlockAt: null,
       scheduler: null,
-      resources: { coins: (options.resources?.coins ?? 600), magic: 0 },
+      resources: { coins: (options.resources?.coins ?? 600), arcaneEnergy: 0 },
       population: {
         muggles: { current: 0, capacity: 0 },
         wizards: { current: 0, capacity: 0 }

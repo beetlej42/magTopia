@@ -480,7 +480,7 @@ test("a new city resource contract is coins-only with a single authoritative led
   };
   const state = createCityState(world);
   assert.deepEqual(state.resources, { coins: 600 }, "a fresh city holds only coins at the authoritative default");
-  assert.deepEqual(state.gameplay.resources, { coins: 600, magic: 0 });
+  assert.deepEqual(state.gameplay.resources, { coins: 600, arcaneEnergy: 0 });
   assert.equal(state.gameplay.resources.coins, state.resources.coins, "state and gameplay share one coins ledger");
   assert.ok(!("timber" in state.resources) && !("stone" in state.resources), "timber/stone are never initialized as core resources");
 });
@@ -578,7 +578,7 @@ test("legacy timber/stone resource overrides never become a second authoritative
   });
   assert.equal(nextState.gameplay.resources.coins, 900 + facts.resourceDelta.coins, "gameplay is the single coins authority");
   assert.equal(nextState.gameplay.resources.coins, nextState.resources.coins, "state.resources follows the gameplay ledger");
-  assert.deepEqual(facts.resourceDelta, { coins: 24, magic: 0 });
+  assert.deepEqual(facts.resourceDelta, { coins: 0, arcaneEnergy: 0 });
 });
 
 function auth(account, request) {

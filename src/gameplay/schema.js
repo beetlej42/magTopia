@@ -1,4 +1,4 @@
-export const GAMEPLAY_SCHEMA_VERSION = 2;
+export const GAMEPLAY_SCHEMA_VERSION = 3;
 
 // v0.3 gameplay is expressed in functional units.  Keep this contract
 // separate from GAMEPLAY_SCHEMA_VERSION, which is the persisted turn/state
@@ -337,23 +337,59 @@ export function validateGameplayBuilding(value = {}, options = {}) {
 }
 
 export function normalizeGameplayResources(value = {}) {
+  const resources = value && typeof value === "object" ? value : {};
+  const hasCoins = Object.prototype.hasOwnProperty.call(resources, "coins");
+  const rawCoins = Number(resources.coins);
+  const hasCanonicalArcane = Object.prototype.hasOwnProperty.call(resources, "arcaneEnergy");
+  const hasLegacyMagic = Object.prototype.hasOwnProperty.call(resources, "magic");
+  const canonicalArcane = Number(resources.arcaneEnergy);
+  const legacyMagic = Number(resources.magic);
+  if (hasCanonicalArcane && hasLegacyMagic && canonicalArcane !== legacyMagic) {
+    const error = new Error("arcaneEnergy and legacy magic resource aliases conflict");
+    error.code = "RESOURCE_ALIAS_CONFLICT";
+    throw error;
+  }
+  const rawArcaneEnergy = hasCanonicalArcane ? canonicalArcane : hasLegacyMagic ? legacyMagic : 0;
+  if (hasCoins && (!Number.isSafeInteger(rawCoins) || rawCoins < 0)) {
+    const error = new Error("coins must be a non-negative safe integer");
+    error.code = "INVALID_COINS_LEDGER";
+    throw error;
+  }
+  if ((hasCanonicalArcane || hasLegacyMagic)
+      && (!Number.isFinite(rawArcaneEnergy) || rawArcaneEnergy < 0 || rawArcaneEnergy > Number.MAX_SAFE_INTEGER)) {
+    const error = new Error("arcaneEnergy must be finite and within the safe range");
+    error.code = "INVALID_ARCANE_ENERGY";
+    throw error;
+  }
   return {
-    coins: clampNumber(value.coins, 0, 0, Number.MAX_SAFE_INTEGER),
-    magic: clampNumber(value.magic, 0, 0, Number.MAX_SAFE_INTEGER)
+    // Coins are a safe integer ledger. Invalid/unsafe values are rejected at
+    // the boundary rather than allowing a fractional or overflowing balance.
+    coins: hasCoins ? rawCoins : 0,
+    // `magic` is accepted only as a read-compatibility alias for persisted
+    // pre-PR-C state. Canonical state and facts expose arcaneEnergy only.
+    arcaneEnergy: hasCanonicalArcane || hasLegacyMagic ? rawArcaneEnergy : 0
   };
 }
 
-export function normalizePopulationBucket(value = {}) {
+export function normalizePopulationBucket(value = {}, options = {}) {
+  const allowSigned = options.allowSignedCurrent === true;
+  const allowSignedCapacity = options.allowSignedCapacity === true;
+  const current = Number(value.current);
+  const capacity = Number(value.capacity);
   return {
-    current: clampNumber(value.current, 0, 0, Number.MAX_SAFE_INTEGER),
-    capacity: clampNumber(value.capacity, 0, 0, Number.MAX_SAFE_INTEGER)
+    current: Number.isSafeInteger(current) && (allowSigned || current >= 0)
+      ? current
+      : 0,
+    capacity: Number.isSafeInteger(capacity) && (allowSignedCapacity || capacity >= 0)
+      ? capacity
+      : 0
   };
 }
 
-export function normalizePopulationState(value = {}) {
+export function normalizePopulationState(value = {}, options = {}) {
   return {
-    muggles: normalizePopulationBucket(value.muggles),
-    wizards: normalizePopulationBucket(value.wizards)
+    muggles: normalizePopulationBucket(value.muggles, options),
+    wizards: normalizePopulationBucket(value.wizards, options)
   };
 }
 
@@ -525,7 +561,7 @@ export function normalizeTurnFacts(value = {}) {
     turn: clampNumber(value.turn, 0, 0, Number.MAX_SAFE_INTEGER),
     wallClock: value.wallClock ? { ...value.wallClock } : null,
     resourceDelta: normalizeGameplayResources(value.resourceDelta),
-    populationDelta: normalizePopulationState(value.populationDelta),
+    populationDelta: normalizePopulationState(value.populationDelta, { allowSignedCurrent: true, allowSignedCapacity: true }),
     buildingsStarted: [...(value.buildingsStarted ?? [])],
     buildingsCompleted: [...(value.buildingsCompleted ?? [])],
     exposureChanges: Object.fromEntries(Object.entries(value.exposureChanges ?? {}).map(([id, change]) => [id, { ...change }])),

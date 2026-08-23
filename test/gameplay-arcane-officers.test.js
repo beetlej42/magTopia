@@ -33,6 +33,7 @@ test("hiring an arcane officer deducts the system price and adds an available of
   assert.equal(result.accepted, true);
   assert.equal(result.cost, ARCANE_OFFICER_HIRE_COST_COINS);
   assert.equal(result.nextState.gameplay.resources.coins, 99999 - ARCANE_OFFICER_HIRE_COST_COINS);
+  assert.equal(result.nextState.resources.coins, 99999 - ARCANE_OFFICER_HIRE_COST_COINS);
   assert.equal(result.nextState.gameplay.arcaneOfficers["officer-1"].status, "available");
   assert.equal(result.nextState.gameplay.arcaneOfficers["officer-1"].investigation, 3);
   assert.equal(result.nextState.gameplay.arcaneOfficers["officer-1"].archetype, "investigation");
@@ -109,9 +110,27 @@ test("hiring is rejected when the roster is at capacity", () => {
 test("hiring is rejected without enough coins", () => {
   const state = stateWithWizardPopulation(10);
   state.gameplay.resources.coins = 10;
+  state.resources.coins = 10;
   const result = hireArcaneOfficer(state, { id: "officer-1" }, context());
   assert.equal(result.accepted, false);
   assert.equal(result.error.code, "INSUFFICIENT_COINS");
+});
+
+test("hiring uses outer construction coins as authority in both desync directions", () => {
+  const outerShort = stateWithWizardPopulation(10);
+  outerShort.resources.coins = 0;
+  outerShort.gameplay.resources.coins = 100;
+  const rejected = hireArcaneOfficer(outerShort, { id: "outer-short" }, context());
+  assert.equal(rejected.accepted, false);
+  assert.equal(rejected.error.code, "INSUFFICIENT_COINS");
+  assert.deepEqual(rejected.nextState, undefined);
+  const gameplayShort = stateWithWizardPopulation(10);
+  gameplayShort.resources.coins = 100;
+  gameplayShort.gameplay.resources.coins = 0;
+  const hired = hireArcaneOfficer(gameplayShort, { id: "outer-authority" }, context());
+  assert.equal(hired.accepted, true);
+  assert.equal(hired.nextState.resources.coins, 50);
+  assert.equal(hired.nextState.gameplay.resources.coins, 50);
 });
 
 test("arcane officer status transitions through the helper", () => {

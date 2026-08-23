@@ -23,6 +23,7 @@ import { chance, createRoller, pick, rollDice } from "./random.js";
 import { normalizeTurnSchedule } from "./turn.js";
 import {
   deepFreeze,
+  GAMEPLAY_SCHEMA_VERSION,
   INCIDENT_TYPES,
   normalizeExposureIncident,
   normalizeGameplayResources,
@@ -32,8 +33,20 @@ import {
   normalizeTurnFacts,
   SEALED_EXPOSURE_THRESHOLD
 } from "./schema.js";
+import {
+  ECONOMY_RULES,
+  capacitiesFromSettlementMetadata,
+  incomeForSettlement,
+  migratePopulationBucket,
+  supportedPopulationTargets,
+  EconomyDataError,
+  systemOwnedBonusForBuilding
+} from "./economy.js";
 
-export const DEFAULT_BASE_COINS = 24;
+// Kept as named exports for callers that used the old tuning surface. PR C
+// deliberately has no unconditional base income; all canonical income comes
+// from residents or functional cells.
+export const DEFAULT_BASE_COINS = 0;
 export const DEFAULT_BASE_MAGIC = 0;
 
 // How many resolved turns keep their frozen facts available for backfilled Owl
@@ -57,58 +70,86 @@ export function appendTurnFacts(history = {}, facts) {
 function asMap(state, field) {
   return Object.fromEntries(Object.entries(state?.buildings ?? {}).map(([id, building]) => [
     id,
-    // Completed canonical buildings persist the system-derived metadata next
-    // to the original request grammar. Use that sealed metadata directly so
-    // the two storage representations are not mistaken for an ambiguous
-    // client grammar during later settlement.
-    building.metadata ?? (building.gameplay?.canonical ? building.gameplay : deriveGameplayBuilding(building))
+    // Completed canonical buildings persist system-derived units next to the
+    // original request grammar. Legacy category metadata is still derived for
+    // exposure compatibility, but is explicitly marked non-canonical and is
+    // never eligible for PR C economy/capacity.
+    (() => {
+      const persisted = building.metadata ?? (building.gameplay?.canonical ? building.gameplay : null);
+      const metadata = persisted ?? deriveGameplayBuilding(building);
+      const systemOwnedBonus = systemOwnedBonusForBuilding(building);
+      return {
+        ...metadata,
+        canonical: metadata.canonical === true,
+        status: building.status ?? metadata.status ?? "active",
+        exposure: Number.isFinite(Number(building.exposure)) ? Number(building.exposure) : (metadata.exposure ?? 0),
+        ...(systemOwnedBonus ? { systemOwnedCardId: building.specialStructure.cardId } : {})
+      };
+    })()
   ]));
 }
 
 export function effectiveBuildings(metadataMap) {
-  return Object.entries(metadataMap).filter(([, metadata]) => metadata.status !== "sealed");
+  return Object.entries(metadataMap).filter(([, metadata]) => metadata.canonical === true
+    && (metadata.status == null || metadata.status === "completed")
+    && metadata.status !== "sealed");
 }
 
 export function settleResources(state, metadataMap, options = {}) {
-  const baseCoins = Number(options.baseCoins ?? DEFAULT_BASE_COINS);
-  const baseMagic = Number(options.baseMagic ?? DEFAULT_BASE_MAGIC);
-  const income = effectiveBuildings(metadataMap).reduce((acc, [, metadata]) => {
-    acc.coins += Number(metadata.coinOutput ?? 0);
-    acc.magic += Number(metadata.magicOutput ?? 0);
-    return acc;
-  }, { coins: baseCoins, magic: baseMagic });
+  const population = normalizePopulationState(state.gameplay?.population);
+  const income = incomeForSettlement(metadataMap, population, {
+    rules: options.economyRules ?? ECONOMY_RULES
+  });
+  // Optional baseCoins is an explicit harness hook only; the PR-C default is
+  // zero and no legacy coinOutput/magicOutput field is read.
+  const baseCoins = Number.isSafeInteger(Number(options.baseCoins)) && Number(options.baseCoins) >= 0
+    ? Number(options.baseCoins)
+    : DEFAULT_BASE_COINS;
+  const baseArcaneEnergy = Number.isFinite(Number(options.baseArcaneEnergy ?? options.baseMagic))
+    ? Math.max(0, Number(options.baseArcaneEnergy ?? options.baseMagic))
+    : DEFAULT_BASE_MAGIC;
+  if (!Number.isSafeInteger(income.coins + baseCoins)) throw new EconomyDataError("coin income exceeds the safe integer range");
+  income.coins += baseCoins;
+  if (!Number.isFinite(income.arcaneEnergy + baseArcaneEnergy) || income.arcaneEnergy + baseArcaneEnergy > Number.MAX_SAFE_INTEGER) {
+    throw new EconomyDataError("arcane income exceeds the safe range");
+  }
+  income.arcaneEnergy += baseArcaneEnergy;
   // Coins have one authoritative source: `state.resources.coins`, which is
   // debited by construction/road/reservation mutations and credited by card
   // grants. `gameplay.resources` mirrors it at settlement. Basing the settle on
   // `state.resources.coins` means a construction spend is never wiped out by a
   // stale gameplay ledger value.
   const gameplayBefore = normalizeGameplayResources(state.gameplay?.resources);
-  const spendableCoins = Number.isFinite(Number(state.resources?.coins)) ? Number(state.resources.coins) : gameplayBefore.coins;
+  const hasOuterCoins = Object.prototype.hasOwnProperty.call(state.resources ?? {}, "coins");
+  const outerCoins = Number(state.resources?.coins);
+  if (hasOuterCoins && (!Number.isSafeInteger(outerCoins) || outerCoins < 0)) {
+    throw new EconomyDataError("outer construction coins ledger is invalid", "INVALID_COINS_LEDGER");
+  }
+  const spendableCoins = Number.isSafeInteger(outerCoins) && outerCoins >= 0 ? outerCoins : gameplayBefore.coins;
   const before = { ...gameplayBefore, coins: spendableCoins };
-  const after = normalizeGameplayResources({ coins: before.coins + income.coins, magic: before.magic + income.magic });
+  if (!Number.isSafeInteger(before.coins + income.coins)) throw new EconomyDataError("coin balance exceeds the safe integer range");
+  if (!Number.isFinite(before.arcaneEnergy + income.arcaneEnergy) || before.arcaneEnergy + income.arcaneEnergy > Number.MAX_SAFE_INTEGER) {
+    throw new EconomyDataError("arcane balance exceeds the safe range");
+  }
+  const after = normalizeGameplayResources({ coins: before.coins + income.coins, arcaneEnergy: before.arcaneEnergy + income.arcaneEnergy });
   return { before, after, income };
 }
 
 export function settlePopulation(state, metadataMap, options = {}) {
-  const capacities = { muggles: 0, wizards: 0 };
-  for (const [, metadata] of effectiveBuildings(metadataMap)) {
-    capacities.muggles += Number(metadata.muggleCapacity ?? 0);
-    capacities.wizards += Number(metadata.wizardCapacity ?? 0);
-  }
+  const capacities = capacitiesFromSettlementMetadata(metadataMap);
   const before = normalizePopulationState(state.gameplay?.population);
-  const migrate = (bucket, capacity, rate) => {
-    const target = Math.min(capacity, bucket.current + Math.ceil(Math.max(0, capacity - bucket.current) * rate));
-    return { current: target, capacity };
-  };
-  const muggleRate = Number(options.muggleMigrationRate ?? 0.1);
-  const wizardRate = Number(options.wizardMigrationRate ?? 0.1);
+  const targets = supportedPopulationTargets(capacities, options);
+  const migrationRate = options.migrationRate;
+  const muggleRate = migrationRate ?? options.muggleMigrationRate ?? ECONOMY_RULES.defaultMigrationRate;
+  const wizardRate = migrationRate ?? options.wizardMigrationRate ?? ECONOMY_RULES.defaultMigrationRate;
   return {
     before,
     after: {
-      muggles: migrate(before.muggles, capacities.muggles, muggleRate),
-      wizards: migrate(before.wizards, capacities.wizards, wizardRate)
+      muggles: { ...migratePopulationBucket(before.muggles, targets.muggles, muggleRate), capacity: capacities.muggles },
+      wizards: { ...migratePopulationBucket(before.wizards, targets.wizards, wizardRate), capacity: capacities.wizards }
     },
-    capacityDelta: capacities
+    capacityDelta: capacities,
+    target: targets
   };
 }
 
@@ -306,11 +347,17 @@ export function resolveTurn(state, input = {}, context = {}) {
   const createId = context.createId ?? ((prefix) => `${prefix}-${state.turn}`);
   const now = context.now ?? (() => new Date().toISOString());
   const roller = createRoller(context);
+  let normalizedResources;
+  try {
+    normalizedResources = normalizeGameplayResources(gameplay.resources);
+  } catch (error) {
+    return { nextState: state, facts: null, error: { code: error?.code ?? "INVALID_ECONOMY_DATA", message: error?.message ?? "Gameplay resources are invalid" } };
+  }
   let next = {
     ...state,
     gameplay: {
       ...gameplay,
-      resources: normalizeGameplayResources(gameplay.resources),
+      resources: normalizedResources,
       population: normalizePopulationState(gameplay.population),
       arcaneOfficers: { ...(gameplay.arcaneOfficers ?? {}) },
       incidents: { ...(gameplay.incidents ?? {}) }
@@ -326,15 +373,28 @@ export function resolveTurn(state, input = {}, context = {}) {
   next = markChoiceSkipped(next, { now });
   const policyEffects = collectPolicyEffects(next);
 
-  const metadataMap = asMap(next, "metadata");
-  const resourceSettlement = settleResources(next, metadataMap, options);
-  next.gameplay.resources = resourceSettlement.after;
-
-  const populationSettlement = settlePopulation(next, metadataMap, {
-    ...options,
-    wizardMigrationRate: Number(options.wizardMigrationRate ?? 0.1) + policyEffects.wizardGrowthBonusRate
-  });
-  next.gameplay.population = populationSettlement.after;
+  let metadataMap;
+  let resourceSettlement;
+  let populationSettlement;
+  try {
+    metadataMap = asMap(next, "metadata");
+    resourceSettlement = settleResources(next, metadataMap, options);
+    next.gameplay.resources = resourceSettlement.after;
+    populationSettlement = settlePopulation(next, metadataMap, {
+      ...options,
+      wizardMigrationRate: Number(options.wizardMigrationRate ?? ECONOMY_RULES.defaultMigrationRate) + policyEffects.wizardGrowthBonusRate
+    });
+    next.gameplay.population = populationSettlement.after;
+  } catch (error) {
+    return {
+      nextState: state,
+      facts: null,
+      error: {
+        code: error?.code ?? "INVALID_ECONOMY_DATA",
+        message: error?.message ?? "Canonical economy data is invalid"
+      }
+    };
+  }
 
   const exposureSettlement = updateExposures(next, metadataMap, {
     ...options,
@@ -454,7 +514,7 @@ export function resolveTurn(state, input = {}, context = {}) {
     },
     resourceDelta: {
       coins: resourceSettlement.income.coins,
-      magic: resourceSettlement.income.magic
+      arcaneEnergy: resourceSettlement.income.arcaneEnergy
     },
     populationDelta: {
       muggles: {
@@ -501,7 +561,10 @@ export function resolveTurn(state, input = {}, context = {}) {
     resolvedAt,
     settledBy
   });
-  next.resources = { ...next.resources, coins: resourceSettlement.after.coins, magic: resourceSettlement.after.magic };
+  // Construction owns the outer coins ledger. Gameplay owns Arcane Energy;
+  // do not mirror it into construction resources or retain the legacy `magic`
+  // key as a second account.
+  next.resources = { coins: resourceSettlement.after.coins };
   next.turn = state.turn + 1;
   next.version = (next.version ?? 0) + 1;
 
@@ -525,13 +588,13 @@ function migrateGameplay(state) {
     const legacy = state.resources ?? {};
     const coins = Number.isFinite(Number(legacy.coins)) ? Number(legacy.coins) : 0;
     return {
-      schemaVersion: 1,
+      schemaVersion: GAMEPLAY_SCHEMA_VERSION,
       turnStatus: "open",
       turnOpenedAt: null,
       turnDeadlineAt: null,
       nextTurnUnlockAt: null,
       scheduler: null,
-      resources: { coins, magic: 0 },
+      resources: { coins, arcaneEnergy: 0 },
       population: { muggles: { current: 0, capacity: 0 }, wizards: { current: 0, capacity: 0 } },
       arcaneOfficers: {},
       incidents: {},
@@ -547,6 +610,10 @@ function migrateGameplay(state) {
     };
   }
   const migrated = { ...existing };
+  migrated.schemaVersion = GAMEPLAY_SCHEMA_VERSION;
+  // Normalize legacy `magic` on the first resolve; no legacy key is copied to
+  // the canonical state. The resource normalizer below also handles old
+  // persisted gameplay resources that have no explicit migration marker.
   const legacyRoster = migrated.wardens != null && Object.keys(migrated.wardens).length > 0;
   const newRoster = migrated.arcaneOfficers != null && Object.keys(migrated.arcaneOfficers).length > 0;
   if (legacyRoster && !newRoster) {

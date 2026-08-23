@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { deepFreeze } from "./schema.js";
+import { deepFreeze, normalizeGameplayResources } from "./schema.js";
 import { getCard } from "./card-catalog.js";
 
 // PR E — Owl Daily / Narrative Interface.
@@ -189,7 +189,9 @@ export function buildReportContext({ cityId = null, state = {}, facts, options =
       turnDeadlineAt: facts.wallClock?.turnDeadlineAt ?? null,
       nextTurnUnlockAt: facts.wallClock?.nextTurnUnlockAt ?? null
     },
-    resourceDelta: { factRef: factRef("resource-delta"), ...facts.resourceDelta },
+    // Historical TurnFacts are immutable and may still contain `magic`; only
+    // this read projection adopts the v0.3 canonical resource names.
+    resourceDelta: { factRef: factRef("resource-delta"), ...normalizeGameplayResources(facts.resourceDelta) },
     populationDelta: { factRef: factRef("population-delta"), ...facts.populationDelta },
     buildingsStarted: buildingFacts(facts.buildingsStarted),
     buildingsCompleted: buildingFacts(facts.buildingsCompleted),
