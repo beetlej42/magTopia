@@ -280,12 +280,14 @@ function checkedUnitArea(unit, label = "functional area") {
  * eventually closes, and the clamp prevents overshooting after a capacity
  * reduction.
  */
-export function migratePopulationBucket(bucket = {}, target = 0, rate = ECONOMY_RULES.defaultMigrationRate) {
+export function migratePopulationBucket(bucket = {}, target = 0, rate = ECONOMY_RULES.defaultMigrationRate, outboundRate = rate) {
   const current = Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Math.trunc(finiteNumber(bucket.current, 0))));
   const safeTarget = Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Math.trunc(finiteNumber(target, 0))));
   const gap = safeTarget - current;
   if (gap === 0) return { current, capacity: Math.max(0, Math.trunc(finiteNumber(bucket.capacity, 0))) };
-  const normalizedRate = clampRate(rate);
+  // Service improves attraction only. A capacity reduction uses the baseline
+  // outbound rate unless a caller explicitly supplies another one.
+  const normalizedRate = clampRate(gap > 0 ? rate : outboundRate);
   if (normalizedRate === 0) return { current, capacity: Math.max(0, Math.trunc(finiteNumber(bucket.capacity, 0))) };
   const step = Math.max(1, Math.ceil(Math.abs(gap) * normalizedRate));
   const nextCurrent = gap > 0
@@ -316,10 +318,10 @@ function canonicalUnits(metadata) {
 
 /**
  * Derive spatial public-service support without consulting renderer metadata.
- * Distance is Manhattan distance on logical grid cells. A source functional
- * unit is counted once per residential unit when any footprint cells touch its
- * radius; a multi-floor unit therefore contributes its vertical area once,
- * while overlapping footprint cells cannot multiply-count it.
+ * Distance is Manhattan distance on logical grid cells. Each source unit has
+ * finite support capacity and allocates it proportionally across all nearby
+ * residential functional area; a multi-floor source contributes its vertical
+ * area once, while overlapping footprint cells cannot multiply-count it.
  */
 export function publicServiceCoverageForSettlement(state = {}, metadataMap = {}, options = {}) {
   const rules = options.rules ?? ECONOMY_RULES;
@@ -330,7 +332,7 @@ export function publicServiceCoverageForSettlement(state = {}, metadataMap = {},
   const capacityPerCell = Number.isFinite(configuredCapacity) ? Math.max(0, configuredCapacity) : serviceRules.serviceCapacityPerFunctionalCell;
   const residentialUnits = [];
   const serviceUnits = [];
-  for (const [buildingId, metadata] of Object.entries(metadataMap)) {
+  for (const [buildingId, metadata] of Object.entries(metadataMap).sort(([left], [right]) => left.localeCompare(right))) {
     const units = canonicalUnits(metadata);
     const footprint = geometryCells(state, state.buildings?.[buildingId] ?? {});
     if (!footprint.length) continue;
@@ -339,29 +341,47 @@ export function publicServiceCoverageForSettlement(state = {}, metadataMap = {},
       if (unit.purpose === "public_service") serviceUnits.push({ buildingId, unitIndex, unit, footprint });
     });
   }
-  const details = residentialUnits.map((entry) => {
+  residentialUnits.sort((left, right) => left.buildingId.localeCompare(right.buildingId) || left.unitIndex - right.unitIndex);
+  serviceUnits.sort((left, right) => left.buildingId.localeCompare(right.buildingId) || left.unitIndex - right.unitIndex);
+  const detailByKey = new Map(residentialUnits.map((entry) => {
     const residentialArea = checkedUnitArea(entry.unit, "residential functional area");
-    const nearby = serviceUnits.filter((service) => footprintsWithinRadius(entry.footprint, service.footprint, radius));
-    const serviceArea = nearby.reduce((total, service) => checkedAdd(total, checkedUnitArea(service.unit, "public service functional area"), "nearby public service area"), 0);
     const residentialCapacity = checkedMultiply(residentialArea, Number(rules.residentialCapacityPerCell ?? ECONOMY_RULES.residentialCapacityPerCell), "nearby residential capacity");
-    const serviceCapacity = checkedArcane(serviceArea * capacityPerCell, "service capacity");
-    const coverage = clampOccupancy(serviceCapacity / residentialCapacity, 0);
-    return {
+    return [`${entry.buildingId}:${entry.unitIndex}`, {
       buildingId: entry.buildingId,
       unitIndex: entry.unitIndex,
       residentialArea,
       residentialCapacity,
-      serviceArea,
-      serviceCapacity,
-      serviceCoverage: coverage,
-      nearbyPublicServiceUnits: nearby.map((service) => `${service.buildingId}:${service.unitIndex}`)
-    };
+      serviceArea: 0,
+      serviceCapacity: 0,
+      serviceCoverage: 0,
+      nearbyPublicServiceUnits: []
+    }];
+  }));
+  let serviceCapacity = 0;
+  for (const service of serviceUnits) {
+    const nearby = residentialUnits.filter((entry) => footprintsWithinRadius(entry.footprint, service.footprint, radius));
+    if (!nearby.length) continue;
+    const sourceArea = checkedUnitArea(service.unit, "public service functional area");
+    const sourceCapacity = checkedArcane(sourceArea * capacityPerCell, "service capacity");
+    const nearbyArea = nearby.reduce((total, entry) => total + detailByKey.get(`${entry.buildingId}:${entry.unitIndex}`).residentialArea, 0);
+    serviceCapacity = checkedArcane(serviceCapacity + sourceCapacity, "service capacity");
+    for (const entry of nearby) {
+      const detail = detailByKey.get(`${entry.buildingId}:${entry.unitIndex}`);
+      const allocated = sourceCapacity * detail.residentialArea / nearbyArea;
+      detail.serviceCapacity = checkedArcane(detail.serviceCapacity + allocated, "allocated service capacity");
+      detail.serviceArea = detail.serviceCapacity / capacityPerCell;
+      detail.nearbyPublicServiceUnits.push(`${service.buildingId}:${service.unitIndex}`);
+    }
+  }
+  const details = [...detailByKey.values()].map((detail) => {
+    detail.nearbyPublicServiceUnits.sort();
+    detail.serviceCoverage = clampOccupancy(detail.serviceCapacity / detail.residentialArea, 0);
+    return detail;
   });
   const residentialFunctionalArea = details.reduce((sum, entry) => sum + entry.residentialArea, 0);
   const residentialCapacity = details.reduce((sum, entry) => sum + entry.residentialCapacity, 0);
-  const serviceCapacity = details.reduce((sum, entry) => sum + entry.serviceCapacity, 0);
-  const weightedCoverage = residentialCapacity > 0
-    ? details.reduce((sum, entry) => sum + entry.residentialCapacity * entry.serviceCoverage, 0) / residentialCapacity
+  const weightedCoverage = residentialFunctionalArea > 0
+    ? details.reduce((sum, entry) => sum + entry.residentialArea * entry.serviceCoverage, 0) / residentialFunctionalArea
     : 0;
   return {
     radius,

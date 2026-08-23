@@ -413,6 +413,10 @@ function normalizePublicServiceFacts(value = {}) {
       muggles: clampNumber(migrationRate.muggles, 0.25, 0, 1),
       wizards: clampNumber(migrationRate.wizards, 0.25, 0, 1)
     },
+    outboundMigrationRate: {
+      muggles: clampNumber(service.outboundMigrationRate?.muggles, 0.25, 0, 1),
+      wizards: clampNumber(service.outboundMigrationRate?.wizards, 0.25, 0, 1)
+    },
     details: Array.isArray(service.details) ? service.details.map((entry) => ({
       buildingId: String(entry?.buildingId ?? ""),
       unitIndex: clampNumber(entry?.unitIndex, 0, 0, Number.MAX_SAFE_INTEGER),
