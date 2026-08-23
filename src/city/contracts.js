@@ -39,6 +39,12 @@ export function normalizeConstructionProposal(input = {}, context = {}) {
       description: input.program.description ?? "",
       attributes: { ...(input.program.attributes ?? {}) }
     },
+    // v0.3 gameplay semantics travel beside the visual/design contract. They
+    // are preserved verbatim for the gameplay normalizer; no renderer field
+    // is promoted into this authority.
+    gameplayBuilding: (input.gameplayBuilding ?? input.gameplay ?? input.program.gameplay)
+      ? structuredClone(input.gameplayBuilding ?? input.gameplay ?? input.program.gameplay)
+      : null,
     design: {
       districtStyle: input.design.districtStyle ?? "london_common",
       patterns: [...(input.design.patterns ?? [])],

@@ -1009,6 +1009,7 @@ function proposalFromBody(body, principal, asset) {
         description: body.program?.description,
         attributes: body.program?.attributes
       },
+      gameplayBuilding: body.gameplay_building ?? body.gameplayBuilding ?? body.gameplay ?? body.program?.gameplay,
       design: {
         districtStyle: body.design?.district_style,
         patterns: body.design?.patterns,
@@ -1053,7 +1054,8 @@ function normalizeConstructionBody(input = {}) {
         guide_volume: spec.guide_volume ?? spec.guideVolume ?? spec.volume
       }
     },
-    voxel_design: input.voxel_design ?? input.voxelDesign
+    voxel_design: input.voxel_design ?? input.voxelDesign,
+    gameplay_building: input.gameplay_building ?? input.gameplayBuilding ?? input.gameplay
   };
 }
 

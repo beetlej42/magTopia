@@ -57,7 +57,11 @@ export function appendTurnFacts(history = {}, facts) {
 function asMap(state, field) {
   return Object.fromEntries(Object.entries(state?.buildings ?? {}).map(([id, building]) => [
     id,
-    building.metadata ?? deriveGameplayBuilding(building)
+    // Completed canonical buildings persist the system-derived metadata next
+    // to the original request grammar. Use that sealed metadata directly so
+    // the two storage representations are not mistaken for an ambiguous
+    // client grammar during later settlement.
+    building.metadata ?? (building.gameplay?.canonical ? building.gameplay : deriveGameplayBuilding(building))
   ]));
 }
 

@@ -1,11 +1,13 @@
 import { completeAssetPrompt, normalizeConnectionRequest, normalizeConstructionProposal, normalizeDistrictDefinition } from "./contracts.js";
 import { appendEvent, cloneCityState } from "./state.js";
 import { previewConnectionBetween, previewConstruction } from "./solver.js";
+import { deriveGameplayBuilding } from "../gameplay/building-metadata.js";
 
 export function createEngineContext(options = {}) {
   const sequences = new Map();
   return {
     now: options.now ?? (() => new Date().toISOString()),
+    constructionDiscountRate: options.constructionDiscountRate ?? 0,
     createId: options.createId ?? ((prefix) => {
       const sequence = (sequences.get(prefix) ?? 0) + 1;
       sequences.set(prefix, sequence);
@@ -271,6 +273,9 @@ function applyCompletedBuilding(next, { proposal, preview, buildingId, assetId, 
   preview.footprintCells.forEach((cellId) => { next.cells[cellId].occupancy = buildingId; });
   applyRoadPlan(next, preview.connectionPlan);
   if (!resourcesAlreadyDebited) next.resources = preview.resourcesAfter;
+  const canonicalMetadata = preview.buildingCost?.source === "canonical_functional_units"
+    ? deriveGameplayBuilding(proposal)
+    : null;
   next.buildings[buildingId] = {
     ...proposal,
     id: buildingId,
@@ -279,6 +284,7 @@ function applyCompletedBuilding(next, { proposal, preview, buildingId, assetId, 
     assetPrompt: completeAssetPrompt(proposal),
     footprintCells: preview.footprintCells,
     gradingPlan: structuredClone(preview.gradingPlan ?? null),
+    ...(canonicalMetadata ? { gameplay: canonicalMetadata, constructionCost: structuredClone(preview.buildingCost) } : {}),
     createdAtTurn: next.turn
   };
   bump(next, false);
@@ -314,6 +320,7 @@ function rejected(state, code, message, extra = {}) {
 
 function classifyPreviewError(preview) {
   const text = preview.errors?.join(" ") ?? "";
+  if (preview.code) return preview.code;
   if (/district .*cancelled/i.test(text)) return "DISTRICT_CANCELLED";
   if (/Insufficient/.test(text)) return "INSUFFICIENT_RESOURCES";
   if (/occupied|reserved/i.test(text)) return "LOT_OCCUPIED";

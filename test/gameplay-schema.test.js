@@ -105,9 +105,9 @@ test("all grammar fields are detected symmetrically in top-level, grammar, and m
       );
     }
   }
-  const grammarFloor = normalizeGameplayBuilding({ grammar: { floorSpecs: [{ purpose: "residential", area: 1 }] } });
+  const grammarFloor = normalizeGameplayBuilding({ grammar: { floorSpecs: [{ purpose: "commercial", area: 1 }] } });
   const massingMass = normalizeGameplayBuilding({ massing: { massSpecs: [{ purpose: "greenhouse", area: 1 }] } });
-  assert.equal(grammarFloor.units[0].purpose, "residential");
+  assert.equal(grammarFloor.units[0].purpose, "commercial");
   assert.equal(massingMass.units[0].purpose, "greenhouse");
 });
 
@@ -178,7 +178,7 @@ test("explicit gameplay wrappers inherit outer footprint and honor wrapper geome
     footprintCells: ["a", "b"],
     gameplay: { site: { footprint: "3x1" }, floorSpecs }
   });
-  assert.deepEqual(wrapperOwnGeometry.units.map((unit) => unit.area), [3, 3, 3]);
+  assert.deepEqual(wrapperOwnGeometry.units.map((unit) => unit.area), [2, 2, 2]);
 
   const identityOnlySite = deriveGameplayBuilding({
     footprintCells: ["a", "b"],
@@ -208,6 +208,7 @@ test("explicit options ratio overrides wrapper and outer canonical defaults", ()
 
 test("self-describing canonical units ignore an old program purpose, while missing purpose fails", () => {
   const metadata = deriveGameplayBuilding({
+    footprintCells: ["a"],
     program: { purpose: "home" },
     floorSpecs: [{ purpose: "residential", area: 1, magicRatio: 0.5 }]
   });

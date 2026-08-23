@@ -317,6 +317,7 @@ test("first accepted meaningful Agent city work moves presentation to day", asyn
       expected_city_version: sites.city_version,
       site: { lot_id: site.lotId, footprint: "1x1", entrance: "south" },
       program: { archetype: "starter_residence", name: "Daylight House", purpose: "residential" },
+      gameplay_building: { units: [{ purpose: "residential", area: 1, magicRatio: 0 }] },
       design: { district_style: "london_common", creative_brief: "A warm brick cottage." },
       asset: { mode: "reuse", asset_id: "starter-cottage-001" }
     };
@@ -327,6 +328,13 @@ test("first accepted meaningful Agent city work moves presentation to day", asyn
       payload: build
     }), 201);
     assert.equal(order.status, "completed");
+    const replay = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/construction-orders`,
+      headers: { "idempotency-key": "cityday-build-1" },
+      payload: build
+    }), 201);
+    assert.equal(replay.idempotent_replay, true, "canonical construction replay does not debit twice");
 
     const day = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/city-day` }), 200);
     assert.equal(day.agent.workStarted, true, "the accepted construction is the start-of-work signal");
@@ -535,6 +543,7 @@ test("reload during morning/day/night restores the same phase without a second c
         expected_city_version: sites.city_version,
         site: { lot_id: sites.data[0].lotId, footprint: "1x1", entrance: "south" },
         program: { archetype: "starter_residence", name: "Reload House", purpose: "residential" },
+        gameplay_building: { units: [{ purpose: "residential", area: 1, magicRatio: 0 }] },
         design: { district_style: "london_common", creative_brief: "A brick cottage." },
         asset: { mode: "reuse", asset_id: "starter-cottage-001" }
       }
@@ -656,6 +665,7 @@ test("integration walk: report -> dismiss -> card -> morning -> agent work -> da
         expected_city_version: sites.city_version,
         site: { lot_id: sites.data[0].lotId, footprint: "1x1", entrance: "south" },
         program: { archetype: "starter_residence", name: "Walk House", purpose: "residential" },
+        gameplay_building: { units: [{ purpose: "residential", area: 1, magicRatio: 0 }] },
         design: { district_style: "london_common", creative_brief: "A brick cottage." },
         asset: { mode: "reuse", asset_id: "starter-cottage-001" }
       }
@@ -699,6 +709,7 @@ test("card offer and turn stay stable across construction/road/district mutation
       district_id: district.resource.district.id,
       site: { lot_id: site.lotId, footprint: "1x1", entrance: "south" },
       program: { archetype: "starter_residence", name: "Same Turn House", purpose: "residential" },
+      gameplay_building: { units: [{ purpose: "residential", area: 1, magicRatio: 0 }] },
       design: { district_style: "london_common", creative_brief: "A brick cottage." },
       asset: { mode: "reuse", asset_id: "starter-cottage-001" }
     };
@@ -714,6 +725,147 @@ test("card offer and turn stay stable across construction/road/district mutation
     assert.equal(offerAfter.turn, 0, "the turn never advanced from city work");
     assert.equal(offerAfter.offer.offer_id, offerBefore.offer.offer_id, "the card offer still belongs to the same turn");
     assert.deepEqual(offerAfter.offer.cards.map((card) => card.card_id), offerBefore.offer.cards.map((card) => card.card_id));
+  } finally {
+    await app.close();
+  }
+});
+
+test("construction APIs reject missing or invalid gameplay grammar without mutating city state", async () => {
+  const repository = createMemoryRepository(config);
+  const app = await createApp({ repository, config });
+  try {
+    const { city, agent, owner } = await openCity(repository, app);
+    const sites = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/site-searches`,
+      payload: { footprint: "1x1", limit: 10 }
+    }), 200);
+    const lotId = sites.data[0].lotId;
+    const base = {
+      expected_city_version: sites.city_version,
+      site: { lot_id: lotId, footprint: "1x1", entrance: "south" },
+      program: { archetype: "starter_residence", name: "Boundary House", purpose: "residential" },
+      design: { district_style: "london_common", creative_brief: "A compact brick cottage." },
+      asset: { mode: "reuse", asset_id: "starter-cottage-001" }
+    };
+    const invalidCases = [
+      { label: "missing gameplay_building", code: "GAMEPLAY_BUILDING_REQUIRED", body: {} },
+      { label: "non-discrete magic ratio", code: "INVALID_MAGIC_RATIO", body: { gameplay_building: { units: [{ purpose: "residential", area: 1, magicRatio: 0.63 }] } } },
+      { label: "unknown purpose", code: "INVALID_GAMEPLAY_PURPOSE", body: { gameplay_building: { units: [{ purpose: "workshop", area: 1, magicRatio: 0 }] } } },
+      { label: "non-positive area", code: "INVALID_GAMEPLAY_BUILDING", body: { gameplay_building: { units: [{ purpose: "residential", area: 0, magicRatio: 0 }] } } },
+      {
+        label: "ambiguous grammar",
+        code: "AMBIGUOUS_GAMEPLAY_GRAMMAR",
+        body: {
+          gameplay_building: {
+            units: [{ purpose: "residential", area: 1, magicRatio: 0 }],
+            floorSpecs: [{ purpose: "residential", magicRatio: 0 }]
+          }
+        }
+      },
+      {
+        label: "unsupported snake-case grammar",
+        code: "INVALID_GAMEPLAY_GRAMMAR",
+        body: { gameplay_building: { floor_specs: [{ purpose: "residential" }] } }
+      }
+    ];
+    for (const [index, scenario] of invalidCases.entries()) {
+      const before = await repository.getCity(owner, city.id);
+      const body = { ...base, ...scenario.body, expected_city_version: before.state.version };
+      const preview = await json(app, auth(agent, {
+        method: "POST",
+        url: `/api/v1/cities/${city.id}/construction-previews`,
+        payload: body
+      }), 200);
+      assert.equal(preview.feasible, false, scenario.label);
+      assert.equal(preview.code, scenario.code, scenario.label);
+      assert.deepEqual(preview.resourcesAfter, before.state.resources, scenario.label);
+
+      const order = await json(app, auth(agent, {
+        method: "POST",
+        url: `/api/v1/cities/${city.id}/construction-orders`,
+        headers: { "idempotency-key": `invalid-gameplay-${index}` },
+        payload: body
+      }), 422);
+      assert.equal(order.status, "rejected", scenario.label);
+      assert.equal(order.code, scenario.code, scenario.label);
+      const after = await repository.getCity(owner, city.id);
+      assert.equal(after.state.version, before.state.version, `${scenario.label} does not advance city version`);
+      assert.deepEqual(after.state.resources, before.state.resources, `${scenario.label} does not debit resources`);
+      assert.deepEqual(after.state.reservations, before.state.reservations, `${scenario.label} does not create a reservation`);
+    }
+  } finally {
+    await app.close();
+  }
+});
+
+test("construction preview derives pricing from submitted floor grammar, never forged pricing facts", async () => {
+  const repository = createMemoryRepository(config);
+  const app = await createApp({ repository, config });
+  try {
+    const { city, agent, owner } = await openCity(repository, app);
+    const sites = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/site-searches`,
+      payload: { footprint: "1x1", limit: 10 }
+    }), 200);
+    const before = await repository.getCity(owner, city.id);
+    const preview = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/construction-previews`,
+      payload: {
+        expected_city_version: before.state.version,
+        site: { lot_id: sites.data[0].lotId, footprint: "1x1", entrance: "south" },
+        program: { archetype: "starter_residence", name: "Two Floor House", purpose: "residential" },
+        gameplay_building: {
+          canonical: true,
+          floorSpecs: [{ purpose: "residential", magicRatio: 0 }, { purpose: "residential", magicRatio: 0 }],
+          pricingFacts: { sourceKind: "units", floorCount: null }
+        },
+        design: { district_style: "london_common", creative_brief: "A two-storey brick cottage." },
+        asset: { mode: "reuse", asset_id: "starter-cottage-001" }
+      }
+    }), 200);
+    assert.equal(preview.feasible, true);
+    assert.equal(preview.buildingCost.coins, 105, "real floor grammar retains the two-floor multiplier");
+    const unitPreview = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/construction-previews`,
+      payload: {
+        expected_city_version: before.state.version,
+        site: { lot_id: sites.data[0].lotId, footprint: "1x1", entrance: "south" },
+        program: { archetype: "starter_residence", name: "Two Floor House", purpose: "residential" },
+        gameplay_building: {
+          canonical: true,
+          units: [{ purpose: "residential", area: 2, magicRatio: 0 }],
+          pricingFacts: { sourceKind: "units", effectiveFloorCount: 1, footprintArea: 99 }
+        },
+        design: { district_style: "london_common", creative_brief: "A two-storey brick cottage." },
+        asset: { mode: "reuse", asset_id: "starter-cottage-001" }
+      }
+    }), 200);
+    assert.equal(unitPreview.feasible, true);
+    assert.equal(unitPreview.buildingCost.coins, 105, "unit grammar cannot use forged pricing facts to avoid the multiplier");
+    const massPreview = await json(app, auth(agent, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/construction-previews`,
+      payload: {
+        expected_city_version: before.state.version,
+        site: { lot_id: sites.data[0].lotId, footprint: "1x1", entrance: "south" },
+        program: { archetype: "starter_residence", name: "Two Floor House", purpose: "residential" },
+        gameplay_building: {
+          massSpecs: [{ purpose: "residential" }, { purpose: "residential" }],
+          pricingFacts: { sourceKind: "masses", effectiveFloorCount: null }
+        },
+        design: { district_style: "london_common", creative_brief: "A two-storey brick cottage." },
+        asset: { mode: "reuse", asset_id: "starter-cottage-001" }
+      }
+    }), 200);
+    assert.equal(massPreview.feasible, true);
+    assert.equal(massPreview.buildingCost.coins, 105, "pure residential mass grammar receives the same height multiplier");
+    const after = await repository.getCity(owner, city.id);
+    assert.equal(after.state.version, before.state.version, "preview remains read-only");
+    assert.deepEqual(after.state.resources, before.state.resources);
   } finally {
     await app.close();
   }

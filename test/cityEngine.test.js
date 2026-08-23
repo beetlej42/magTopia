@@ -23,6 +23,7 @@ function proposal(lotId = "cell-3-3") {
     actor: "agent:test",
     site: { lotId, footprint: "1x1", entrance: "south" },
     program: { archetype: "starter_residence", purpose: "residential", name: "Test Cottage", attributes: { coinOutput: 9 } },
+    gameplayBuilding: { units: [{ purpose: "residential", area: 1, magicRatio: 0 }] },
     design: { districtStyle: "willow_magic", patterns: [], prompt: "A compact magical cottage." }
   };
 }
@@ -305,6 +306,7 @@ test("building road endpoints preserve the confirmed authoritative entrance cell
   const initial = createCityState(world(), { resources: { coins: 9999 } });
   const multiCell = proposal("cell-3-3");
   multiCell.site = { lotId: "cell-3-3", footprint: "2x2", entrance: "south", entranceCellId: "cell-3-5" };
+  multiCell.gameplayBuilding = { units: [{ purpose: "residential", area: 4, magicRatio: 0 }] };
   const built = executeCityCommand(initial, { type: "construct_building", proposal: multiCell }, context());
   assert.equal(built.accepted, true);
   const building = built.building;

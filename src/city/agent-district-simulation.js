@@ -5,6 +5,7 @@ import {
   reviseBuildingDesign
 } from "./building-design.js";
 import { createEngineContext, executeCityCommand } from "./engine.js";
+import { GAMEPLAY_PURPOSES } from "../gameplay/schema.js";
 import { findCandidateParcels } from "./solver.js";
 import { createCityState } from "./state.js";
 import { createBlankVoxelWorldContract } from "./voxel-world.js";
@@ -18,9 +19,9 @@ const DISTRICT_PROGRAM = Object.freeze([
     purpose: "compact residential and shopping street",
     bounds: { minColumn: 42, maxColumn: 47, minRow: 18, maxRow: 25 },
     buildings: [
-      { name: "Lantern House", footprint: "1x1", entrance: "south", purpose: "residential", style: "victorian_domestic", frontage: "residential", floors: 2 },
-      { name: "Moon Tailor", footprint: "1x1", entrance: "north", purpose: "tailor shop", style: "victorian_gothic", frontage: "display", floors: 3 },
-      { name: "Briar Apothecary", footprint: "1x1", entrance: "west", purpose: "apothecary", style: "victorian_gothic", frontage: "display", floors: 1 }
+      { name: "Lantern House", footprint: "1x1", entrance: "south", purpose: "residential", gameplayPurpose: "residential", style: "victorian_domestic", frontage: "residential", floors: 2 },
+      { name: "Moon Tailor", footprint: "1x1", entrance: "north", purpose: "tailor shop", gameplayPurpose: "commercial", style: "victorian_gothic", frontage: "display", floors: 3 },
+      { name: "Briar Apothecary", footprint: "1x1", entrance: "west", purpose: "apothecary", gameplayPurpose: "commercial", style: "victorian_gothic", frontage: "display", floors: 1 }
     ]
   },
   {
@@ -29,9 +30,9 @@ const DISTRICT_PROGRAM = Object.freeze([
     purpose: "market, guild and workshop quarter",
     bounds: { minColumn: 27, maxColumn: 34, minRow: 23, maxRow: 30 },
     buildings: [
-      { name: "Mercury Market Hall", footprint: "3x2", entrance: "east", purpose: "covered market", style: "victorian_gothic", composition: "hall", frontage: "large_bay", prominence: "important" },
-      { name: "Guild Courtyard", footprint: "2x2", entrance: "south", purpose: "guild meeting hall", style: "civic_classical", composition: "court", frontage: "institutional", prominence: "ordinary" },
-      { name: "Clockmakers Yard", footprint: "2x2", entrance: "north", purpose: "clockwork workshops", style: "industrial_iron", composition: "yard", frontage: "workshop", prominence: "ordinary" }
+      { name: "Mercury Market Hall", footprint: "3x2", entrance: "east", purpose: "covered market", gameplayPurpose: "commercial", style: "victorian_gothic", composition: "hall", frontage: "large_bay", prominence: "important" },
+      { name: "Guild Courtyard", footprint: "2x2", entrance: "south", purpose: "guild meeting hall", gameplayPurpose: "public_service", style: "civic_classical", composition: "court", frontage: "institutional", prominence: "ordinary" },
+      { name: "Clockmakers Yard", footprint: "2x2", entrance: "north", purpose: "clockwork workshops", gameplayPurpose: "production", style: "industrial_iron", composition: "yard", frontage: "workshop", prominence: "ordinary" }
     ]
   },
   {
@@ -40,8 +41,8 @@ const DISTRICT_PROGRAM = Object.freeze([
     purpose: "riverside residential and civic quarter",
     bounds: { minColumn: 1, maxColumn: 5, minRow: 20, maxRow: 27 },
     buildings: [
-      { name: "Bridgekeeper Cottage", footprint: "1x1", entrance: "east", purpose: "residential", style: "victorian_domestic", frontage: "residential", floors: 2 },
-      { name: "Starlight Academy", footprint: "3x2", entrance: "south", purpose: "neighbourhood school", style: "civic_classical", composition: "tower", frontage: "institutional", prominence: "landmark" }
+      { name: "Bridgekeeper Cottage", footprint: "1x1", entrance: "east", purpose: "residential", gameplayPurpose: "residential", style: "victorian_domestic", frontage: "residential", floors: 2 },
+      { name: "Starlight Academy", footprint: "3x2", entrance: "south", purpose: "neighbourhood school", gameplayPurpose: "public_service", style: "civic_classical", composition: "tower", frontage: "institutional", prominence: "landmark" }
     ]
   }
 ]);
@@ -108,6 +109,10 @@ export function runNonVisualAgentBuildScenario(options = {}) {
   for (const district of DISTRICT_PROGRAM) {
     const buildingIds = [];
     for (const definition of district.buildings) {
+      if (!GAMEPLAY_PURPOSES.includes(definition.gameplayPurpose)) {
+        failures.push({ stage: "fixture_validation", districtId: district.id, building: definition.name, error: "Every fixture building must declare a valid gameplayPurpose" });
+        continue;
+      }
       const candidates = findCandidateParcels(state, {
         footprint: definition.footprint,
         bounds: district.bounds,
@@ -173,6 +178,13 @@ export function runNonVisualAgentBuildScenario(options = {}) {
             description: `${definition.name} in ${district.name}`,
             attributes: { districtId: district.id }
           },
+          gameplayBuilding: {
+            units: [{
+              purpose: definition.gameplayPurpose,
+              area: footprintAreaFor(definition.footprint),
+              magicRatio: 0
+            }]
+          },
           design: { districtStyle: definition.style, patterns: [], prompt: `${definition.name}, ${definition.style}, ${definition.purpose}` },
           voxelDesign: confirmed
         };
@@ -233,6 +245,11 @@ export function runNonVisualAgentBuildScenario(options = {}) {
       success: failures.length === 0 && diagnostics.allChecksPassed
     }
   };
+}
+
+function footprintAreaFor(footprint = "1x1") {
+  const match = /^(\d+)x(\d+)$/.exec(String(footprint));
+  return match ? Number(match[1]) * Number(match[2]) : 1;
 }
 
 export function diagnoseAgentBuild(state, actions = []) {
