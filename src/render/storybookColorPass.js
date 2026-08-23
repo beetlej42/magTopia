@@ -156,9 +156,9 @@ function gradePalette(input, night) {
     ? green - Math.max(red, blue)
     : sourceGreen - Math.max(sourceRed, sourceBlue);
   const greenMask = smoothstep(night ? 0.015 : 0.01, night ? 0.2 : 0.1, greenDifference) * (1 - smoothstep(0.7, 1, luminance));
-  red += greenMask * green * (night ? 0.105 : 0.22);
-  green *= 1 - greenMask * (night ? 0.105 : 0.24);
-  blue += greenMask * green * (night ? 0.035 : 0.12);
+  red += greenMask * green * (night ? 0.105 : 0.1);
+  green *= 1 - greenMask * (night ? 0.105 : 0.12);
+  blue += greenMask * green * (night ? 0.035 : 0.045);
 
   const redDifference = night
     ? red - Math.max(green, blue)
@@ -188,11 +188,11 @@ function gradePalette(input, night) {
     green *= skyCompression;
     blue *= skyCompression;
   } else {
-    const skyMask = smoothstep(0.015, 0.1, sourceBlue - Math.max(sourceRed, sourceGreen)) * smoothstep(0.2, 0.5, luminance);
+    const skyMask = smoothstep(0.015, 0.1, sourceBlue - Math.max(sourceRed, sourceGreen)) * smoothstep(0.4, 0.62, luminance);
     const paperSky = [
-      0.61 + luminance * 0.39,
-      0.56 + luminance * 0.36,
-      0.47 + luminance * 0.3
+      0.54 + luminance * 0.37,
+      0.53 + luminance * 0.35,
+      0.48 + luminance * 0.3
     ];
     red = mix(red, paperSky[0], skyMask * 0.94);
     green = mix(green, paperSky[1], skyMask * 0.94);
@@ -204,9 +204,9 @@ function gradePalette(input, night) {
       * (1 - smoothstep(0.14, 0.25, sourceChroma))
       * smoothstep(0.4, 0.72, luminance)
       * (1 - smoothstep(0.82, 0.96, luminance));
-    red += warmNeutral * 0.23;
-    green += warmNeutral * 0.12;
-    blue += warmNeutral * 0.045;
+    red += warmNeutral * 0.18;
+    green += warmNeutral * 0.1;
+    blue += warmNeutral * 0.04;
   }
 
   const shadow = 1 - smoothstep(0.14, 0.58, luminance);
@@ -214,7 +214,7 @@ function gradePalette(input, night) {
   const coolTint = night ? [0.72, 0.88, 1.15] : [0.88, 0.96, 1.03];
   const warmTint = night ? [1.06, 1.025, 0.9] : [1.16, 1.07, 0.82];
   const shadowAmount = night ? 0.27 : 0.12;
-  const highlightAmount = night ? 0.08 : 0.27;
+  const highlightAmount = night ? 0.08 : 0.23;
   red *= mix(1, coolTint[0], shadow * shadowAmount) * mix(1, warmTint[0], highlight * highlightAmount);
   green *= mix(1, coolTint[1], shadow * shadowAmount) * mix(1, warmTint[1], highlight * highlightAmount);
   blue *= mix(1, coolTint[2], shadow * shadowAmount) * mix(1, warmTint[2], highlight * highlightAmount);

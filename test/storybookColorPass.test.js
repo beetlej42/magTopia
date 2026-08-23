@@ -26,17 +26,20 @@ test("storybook palette warms highlights and cools dark values", () => {
 });
 
 test("day palette maps sampled city colors toward the calibrated storybook anchors", () => {
-  const sky = gradeStorybookColor([92 / 255, 127 / 255, 162 / 255], 0);
-  const grass = gradeStorybookColor([123 / 255, 141 / 255, 89 / 255], 0);
-  const brick = gradeStorybookColor([132 / 255, 102 / 255, 76 / 255], 0);
-  const cream = gradeStorybookColor([171 / 255, 162 / 255, 134 / 255], 0);
+  const highSky = gradeStorybookColor([0.08, 0.17, 0.35], 0);
+  const horizon = gradeStorybookColor([0.28, 0.32, 0.34], 0);
+  const grass = gradeStorybookColor([0.2, 0.27, 0.1], 0);
+  const brick = gradeStorybookColor([0.23, 0.13, 0.07], 0);
+  const creamInput = [0.41, 0.36, 0.24];
+  const cream = gradeStorybookColor(creamInput, 0);
   const roofInput = [56 / 255, 64 / 255, 73 / 255];
   const roof = gradeStorybookColor(roofInput, 0);
 
-  assert.ok(sky[0] > sky[1] && sky[1] > sky[2], "blue sky should resolve to warm paper light");
-  assert.ok(grass[0] > grass[1] && grass[1] > grass[2], "grass should rotate toward olive");
-  assert.ok(brick[0] - brick[1] > 0.2, "brick should gain a clear terracotta red lead");
-  assert.ok(cream[0] > 0.9 && cream[0] > cream[1] && cream[1] > cream[2], "plaster should become bright cream");
+  assert.ok(highSky[2] > highSky[1] && highSky[1] > highSky[0], "upper sky should retain its blue gradient");
+  assert.ok(horizon[2] - horizon[0] < 0.08, "horizon should approach a neutral paper light");
+  assert.ok(grass[1] > grass[0] && grass[0] > grass[2], "grass should remain sage green");
+  assert.ok(brick[0] - brick[1] > 0.08, "brick should retain a clear terracotta red lead");
+  assert.ok(cream[0] > creamInput[0] && cream[0] > cream[1] && cream[1] > cream[2], "plaster should become brighter cream");
   roof.forEach((value, index) => assert.ok(Math.abs(value - roofInput[index]) < 0.015));
 });
 
