@@ -39,6 +39,8 @@ import {
   incomeForSettlement,
   migratePopulationBucket,
   supportedPopulationTargets,
+  supportedPopulationTargetsForSettlement,
+  clampRate,
   EconomyDataError,
   systemOwnedBonusForBuilding
 } from "./economy.js";
@@ -136,20 +138,38 @@ export function settleResources(state, metadataMap, options = {}) {
 }
 
 export function settlePopulation(state, metadataMap, options = {}) {
-  const capacities = capacitiesFromSettlementMetadata(metadataMap);
   const before = normalizePopulationState(state.gameplay?.population);
-  const targets = supportedPopulationTargets(capacities, options);
-  const migrationRate = options.migrationRate;
-  const muggleRate = migrationRate ?? options.muggleMigrationRate ?? ECONOMY_RULES.defaultMigrationRate;
-  const wizardRate = migrationRate ?? options.wizardMigrationRate ?? ECONOMY_RULES.defaultMigrationRate;
+  const targets = supportedPopulationTargetsForSettlement(state, metadataMap, options);
+  const capacities = capacitiesFromSettlementMetadata(metadataMap);
+  const serviceCoverage = targets.service?.serviceCoverage ?? 0;
+  const serviceRules = (options.rules ?? ECONOMY_RULES).publicService ?? ECONOMY_RULES.publicService;
+  const serviceRate = ECONOMY_RULES.defaultMigrationRate
+    + (serviceRules.servicedMigrationRate - ECONOMY_RULES.defaultMigrationRate) * serviceCoverage;
+  const wizardBonus = Number(options.wizardMigrationRateBonus ?? 0);
+  const muggleRate = clampRate(options.migrationRate ?? options.muggleMigrationRate ?? serviceRate);
+  const wizardRate = clampRate((options.wizardMigrationRate ?? options.migrationRate ?? serviceRate) + wizardBonus);
+  const defaultOutbound = options.migrationRate != null ? options.migrationRate : ECONOMY_RULES.defaultMigrationRate;
+  const muggleOutboundRate = options.muggleOutboundMigrationRate ?? options.outboundMigrationRate ?? defaultOutbound;
+  const wizardOutboundRate = options.wizardOutboundMigrationRate ?? options.outboundMigrationRate
+    ?? (options.wizardMigrationRate != null ? options.wizardMigrationRate : defaultOutbound);
   return {
     before,
     after: {
-      muggles: { ...migratePopulationBucket(before.muggles, targets.muggles, muggleRate), capacity: capacities.muggles },
-      wizards: { ...migratePopulationBucket(before.wizards, targets.wizards, wizardRate), capacity: capacities.wizards }
+      muggles: { ...migratePopulationBucket(before.muggles, targets.muggles, muggleRate, muggleOutboundRate), capacity: capacities.muggles },
+      wizards: { ...migratePopulationBucket(before.wizards, targets.wizards, wizardRate, wizardOutboundRate), capacity: capacities.wizards }
     },
     capacityDelta: capacities,
-    target: targets
+    target: targets,
+    publicService: {
+      ...targets.service,
+      supportedTarget: { muggles: targets.muggles, wizards: targets.wizards, total: targets.total },
+      migrationRate: { muggles: muggleRate, wizards: wizardRate },
+      outboundMigrationRate: { muggles: clampRate(muggleOutboundRate), wizards: clampRate(wizardOutboundRate) },
+      supportedOccupancy: targets.service
+        ? (targets.baseSupportedOccupancy ?? ECONOMY_RULES.defaultSupportedOccupancy)
+          + ((targets.servicedMaxOccupancy ?? serviceRules.servicedMaxOccupancy) - (targets.baseSupportedOccupancy ?? ECONOMY_RULES.defaultSupportedOccupancy)) * (targets.service.serviceCoverage ?? 0)
+        : ECONOMY_RULES.defaultSupportedOccupancy
+    }
   };
 }
 
@@ -382,7 +402,7 @@ export function resolveTurn(state, input = {}, context = {}) {
     next.gameplay.resources = resourceSettlement.after;
     populationSettlement = settlePopulation(next, metadataMap, {
       ...options,
-      wizardMigrationRate: Number(options.wizardMigrationRate ?? ECONOMY_RULES.defaultMigrationRate) + policyEffects.wizardGrowthBonusRate
+      wizardMigrationRateBonus: policyEffects.wizardGrowthBonusRate
     });
     next.gameplay.population = populationSettlement.after;
   } catch (error) {
@@ -526,6 +546,7 @@ export function resolveTurn(state, input = {}, context = {}) {
         capacity: populationSettlement.after.wizards.capacity - populationSettlement.before.wizards.capacity
       }
     },
+    publicService: populationSettlement.publicService,
     buildingsStarted: [...(input.buildingsStarted ?? [])],
     buildingsCompleted: [...(input.buildingsCompleted ?? [])],
     exposureChanges,

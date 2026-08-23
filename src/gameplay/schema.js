@@ -393,6 +393,49 @@ export function normalizePopulationState(value = {}, options = {}) {
   };
 }
 
+function normalizePublicServiceFacts(value = {}) {
+  const service = value && typeof value === "object" ? value : {};
+  const target = service.supportedTarget && typeof service.supportedTarget === "object" ? service.supportedTarget : {};
+  const migrationRate = service.migrationRate && typeof service.migrationRate === "object" ? service.migrationRate : {};
+  return {
+    radius: clampNumber(service.radius, 5, 0, Number.MAX_SAFE_INTEGER),
+    residentialFunctionalArea: clampNumber(service.residentialFunctionalArea, 0, 0, Number.MAX_SAFE_INTEGER),
+    residentialCapacity: clampNumber(service.residentialCapacity, 0, 0, Number.MAX_SAFE_INTEGER),
+    serviceCapacity: clampNumber(service.serviceCapacity, 0, 0, Number.MAX_SAFE_INTEGER),
+    serviceCoverage: clampNumber(service.serviceCoverage, 0, 0, 1),
+    supportedOccupancy: clampNumber(service.supportedOccupancy, 0.5, 0, 1),
+    supportedTarget: {
+      muggles: clampNumber(target.muggles, 0, 0, Number.MAX_SAFE_INTEGER),
+      wizards: clampNumber(target.wizards, 0, 0, Number.MAX_SAFE_INTEGER),
+      total: clampNumber(target.total, 0, 0, Number.MAX_SAFE_INTEGER)
+    },
+    migrationRate: {
+      muggles: clampNumber(migrationRate.muggles, 0.25, 0, 1),
+      wizards: clampNumber(migrationRate.wizards, 0.25, 0, 1)
+    },
+    outboundMigrationRate: {
+      muggles: clampNumber(service.outboundMigrationRate?.muggles, 0.25, 0, 1),
+      wizards: clampNumber(service.outboundMigrationRate?.wizards, 0.25, 0, 1)
+    },
+    details: Array.isArray(service.details) ? service.details.map((entry) => ({
+      buildingId: String(entry?.buildingId ?? ""),
+      unitIndex: clampNumber(entry?.unitIndex, 0, 0, Number.MAX_SAFE_INTEGER),
+      residentialArea: clampNumber(entry?.residentialArea, 0, 0, Number.MAX_SAFE_INTEGER),
+      residentialCapacity: clampNumber(entry?.residentialCapacity, 0, 0, Number.MAX_SAFE_INTEGER),
+      serviceArea: clampNumber(entry?.serviceArea, 0, 0, Number.MAX_SAFE_INTEGER),
+      serviceCapacity: clampNumber(entry?.serviceCapacity, 0, 0, Number.MAX_SAFE_INTEGER),
+      serviceCoverage: clampNumber(entry?.serviceCoverage, 0, 0, 1),
+      supportedOccupancy: clampNumber(entry?.supportedOccupancy, 0.5, 0, 1),
+      supportedTarget: {
+        muggles: clampNumber(entry?.supportedTarget?.muggles, 0, 0, Number.MAX_SAFE_INTEGER),
+        wizards: clampNumber(entry?.supportedTarget?.wizards, 0, 0, Number.MAX_SAFE_INTEGER),
+        total: clampNumber(entry?.supportedTarget?.total, 0, 0, Number.MAX_SAFE_INTEGER)
+      },
+      nearbyPublicServiceUnits: [...(entry?.nearbyPublicServiceUnits ?? [])].map(String)
+    })) : []
+  };
+}
+
 function normalizeLegacyGameplayBuilding(value = {}) {
   return {
     category: String(value.category ?? "mixed"),
@@ -562,6 +605,7 @@ export function normalizeTurnFacts(value = {}) {
     wallClock: value.wallClock ? { ...value.wallClock } : null,
     resourceDelta: normalizeGameplayResources(value.resourceDelta),
     populationDelta: normalizePopulationState(value.populationDelta, { allowSignedCurrent: true, allowSignedCapacity: true }),
+    publicService: normalizePublicServiceFacts(value.publicService),
     buildingsStarted: [...(value.buildingsStarted ?? [])],
     buildingsCompleted: [...(value.buildingsCompleted ?? [])],
     exposureChanges: Object.fromEntries(Object.entries(value.exposureChanges ?? {}).map(([id, change]) => [id, { ...change }])),

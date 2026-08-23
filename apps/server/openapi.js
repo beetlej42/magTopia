@@ -569,12 +569,37 @@ export function createOpenApiDocument(baseUrl) {
         TurnFacts: {
           type: "object",
           description: "Immutable system-generated settlement record. Agents read rolls, outcomes, and state changes here; they never author them.",
-          required: ["turn", "resourceDelta", "populationDelta", "exposureChanges", "incidents", "assignments", "rolls", "outcomes", "sealedBuildings", "nextRisks"],
+          required: ["turn", "resourceDelta", "populationDelta", "publicService", "exposureChanges", "incidents", "assignments", "rolls", "outcomes", "sealedBuildings", "nextRisks"],
           properties: {
             turn: { type: "integer" },
             wallClock: { type: "object", nullable: true, additionalProperties: true },
             resourceDelta: { type: "object", properties: { coins: { type: "integer", minimum: 0 }, arcaneEnergy: { type: "number", minimum: 0 } }, required: ["coins", "arcaneEnergy"], additionalProperties: false },
             populationDelta: { type: "object", additionalProperties: true },
+            publicService: {
+              type: "object",
+              description: "System-derived spatial public-service coverage and supported population target for this settlement.",
+              properties: {
+                radius: { type: "number", minimum: 0 },
+                residentialFunctionalArea: { type: "number", minimum: 0 },
+                residentialCapacity: { type: "number", minimum: 0 },
+                serviceCapacity: { type: "number", minimum: 0 },
+                serviceCoverage: { type: "number", minimum: 0, maximum: 1 },
+                supportedOccupancy: { type: "number", minimum: 0, maximum: 1 },
+                supportedTarget: { type: "object", additionalProperties: true },
+                migrationRate: { type: "object", additionalProperties: true },
+                outboundMigrationRate: {
+                  type: "object",
+                  properties: {
+                    muggles: { type: "number", minimum: 0, maximum: 1 },
+                    wizards: { type: "number", minimum: 0, maximum: 1 }
+                  },
+                  required: ["muggles", "wizards"],
+                  additionalProperties: false
+                },
+                details: { type: "array", items: { type: "object", additionalProperties: true } }
+              },
+              required: ["radius", "serviceCoverage", "supportedTarget", "migrationRate", "outboundMigrationRate"]
+            },
             buildingsStarted: { type: "array", items: { type: "string" } },
             buildingsCompleted: { type: "array", items: { type: "string" } },
             exposureChanges: { type: "object", additionalProperties: true },
@@ -667,7 +692,7 @@ export function createOpenApiDocument(baseUrl) {
         ReportContext: {
           type: "object",
           description: "SYSTEM-owned immutable newspaper source for one resolved turn. A deterministic projection of the frozen TurnFacts plus read-only city metadata. Never contains prose and never recomputes gameplay. The Agent edits an OwlReport from it and references facts through factRefs.",
-          required: ["schemaVersion", "cityId", "turn", "worldDay", "factsDigest", "settlement", "resourceDelta", "populationDelta", "incidents", "factRefs"],
+          required: ["schemaVersion", "cityId", "turn", "worldDay", "factsDigest", "settlement", "resourceDelta", "populationDelta", "publicService", "incidents", "factRefs"],
           properties: {
             schemaVersion: { type: "integer" },
             cityId: { type: "string" },
@@ -686,6 +711,7 @@ export function createOpenApiDocument(baseUrl) {
             },
             resourceDelta: { type: "object", properties: { factRef: { type: "string" }, coins: { type: "integer", minimum: 0 }, arcaneEnergy: { type: "number", minimum: 0 } }, required: ["coins", "arcaneEnergy"] },
             populationDelta: { type: "object", additionalProperties: true },
+            publicService: { type: "object", additionalProperties: true },
             buildingsStarted: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, buildingId: { type: "string" }, name: { type: "string" }, archetype: { type: ["string", "null"] }, purpose: { type: ["string", "null"] } } } },
             buildingsCompleted: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, buildingId: { type: "string" }, name: { type: "string" }, archetype: { type: ["string", "null"] }, purpose: { type: ["string", "null"] } } } },
             exposureChanges: { type: "object", additionalProperties: { type: "object", properties: { factRef: { type: "string" }, buildingId: { type: "string" }, name: { type: "string" }, from: { type: "number" }, to: { type: "number" }, delta: { type: "number" }, pressure: { type: "number" }, concealment: { type: "number" }, sealed: { type: "boolean" } } } },

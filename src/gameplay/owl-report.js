@@ -175,6 +175,7 @@ export function buildReportContext({ cityId = null, state = {}, facts, options =
   refs.add(factRef("turn"));
   refs.add(factRef("resource-delta"));
   refs.add(factRef("population-delta"));
+  refs.add(factRef("public-service"));
 
   const context = {
     schemaVersion: REPORT_CONTEXT_SCHEMA_VERSION,
@@ -193,6 +194,7 @@ export function buildReportContext({ cityId = null, state = {}, facts, options =
     // this read projection adopts the v0.3 canonical resource names.
     resourceDelta: { factRef: factRef("resource-delta"), ...normalizeGameplayResources(facts.resourceDelta) },
     populationDelta: { factRef: factRef("population-delta"), ...facts.populationDelta },
+    publicService: { factRef: factRef("public-service"), ...(facts.publicService ?? {}) },
     buildingsStarted: buildingFacts(facts.buildingsStarted),
     buildingsCompleted: buildingFacts(facts.buildingsCompleted),
     exposureChanges,
