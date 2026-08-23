@@ -359,7 +359,19 @@ function applyOutcome(outcome, options = {}) {
   }
 }
 
+// Production settlement always runs the complete gameplay stack. The baseline
+// wrapper below is the only supported way for deterministic PR-D balance
+// harnesses to omit later systems; callers cannot toggle individual systems on
+// the normal resolveTurn context.
 export function resolveTurn(state, input = {}, context = {}) {
+  return resolveTurnInternal(state, input, context, "production");
+}
+
+export function resolvePublicServiceBaselineTurn(state, input = {}, context = {}) {
+  return resolveTurnInternal(state, input, context, "public_service_baseline");
+}
+
+function resolveTurnInternal(state, input = {}, context = {}, profile = "production") {
   const guardError = guardTurnResolve(state, input);
   if (guardError) return { nextState: state, facts: null, error: guardError };
   const gameplay = migrateGameplay(state);
@@ -389,11 +401,11 @@ export function resolveTurn(state, input = {}, context = {}) {
   // skipped (never blocking settlement), active policy modifiers feed the
   // deterministic simulation, and the policy lifecycle advances exactly once.
   // Headless balance runs deliberately stay on the PR-D economy surface. The
-  // opt-in switch keeps later card/incident systems out of the simulator while
-  // preserving the production resolve path for normal callers.
-  const enableCards = options.enableCards !== false;
-  const enableIncidents = options.enableIncidents !== false;
-  const enableExposure = options.enableExposure !== false && enableIncidents;
+  // explicit internal profile keeps later systems out of that wrapper while
+  // preserving the complete production resolve path for normal callers.
+  const enableCards = profile === "production";
+  const enableIncidents = profile === "production";
+  const enableExposure = profile === "production";
   const cityId = state.cityId ?? "";
   if (enableCards) {
     next = ensureCardOffer(next, cityId);

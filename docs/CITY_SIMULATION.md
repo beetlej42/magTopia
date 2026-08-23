@@ -26,11 +26,16 @@ roads, longest continuous stall, sustainability, final resources/population, and
 anomalies. `finalState` is included for diagnostics; the timeline and summary
 are the stable report surface.
 
-The simulator explicitly runs `resolveTurn` in PR-D mode with later cards,
-incidents, and exposure systems disabled. This keeps the baseline about the
-canonical economy, population, and public-service rules rather than silently
-introducing PR-F+ mechanics. No balance constants are overridden. On the
-current baseline, the balanced seed `smoke` completes 20/20 and 30/30 builds
-with no stalls; service-first can stall when it spends its initial ledger on
-service capacity before productive buildings, which is reported rather than
-hidden.
+The simulator explicitly runs the exported `resolvePublicServiceBaselineTurn`
+PR-D profile with later cards, incidents, and exposure systems disabled. The
+production `resolveTurn` path remains complete and cannot be partially disabled
+through context flags. This keeps the baseline about canonical economy,
+population, and public-service rules rather than silently introducing PR-F+
+mechanics. No balance constants are overridden.
+
+On the current `audit` baseline, balanced completes 30/30 buildings, lays 31
+road/bridge cells for 88 coins, earns 4,230 coins, has no stalls, and is
+`selfFunding=true` / `sustainable=true`. Economy-first also self-funds; housing-
+first builds 30 but is not self-funding under the cumulative-income criterion;
+service-first builds 16, stalls for up to 4 consecutive turns, and is reported
+as `sustainable=false`. These are observed outcomes, not strategy assertions.
