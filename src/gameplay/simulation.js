@@ -388,10 +388,18 @@ export function resolveTurn(state, input = {}, context = {}) {
   // this turn is ensured, an un-answered choice is recorded explicitly as
   // skipped (never blocking settlement), active policy modifiers feed the
   // deterministic simulation, and the policy lifecycle advances exactly once.
+  // Headless balance runs deliberately stay on the PR-D economy surface. The
+  // opt-in switch keeps later card/incident systems out of the simulator while
+  // preserving the production resolve path for normal callers.
+  const enableCards = options.enableCards !== false;
+  const enableIncidents = options.enableIncidents !== false;
+  const enableExposure = options.enableExposure !== false && enableIncidents;
   const cityId = state.cityId ?? "";
-  next = ensureCardOffer(next, cityId);
-  next = markChoiceSkipped(next, { now });
-  const policyEffects = collectPolicyEffects(next);
+  if (enableCards) {
+    next = ensureCardOffer(next, cityId);
+    next = markChoiceSkipped(next, { now });
+  }
+  const policyEffects = enableCards ? collectPolicyEffects(next) : {};
 
   let metadataMap;
   let resourceSettlement;
@@ -416,18 +424,22 @@ export function resolveTurn(state, input = {}, context = {}) {
     };
   }
 
-  const exposureSettlement = updateExposures(next, metadataMap, {
-    ...options,
-    modifier: Number(options.modifier ?? 0) + specialStructureExposureModifier(next),
-    concealmentBonus: policyEffects.concealmentBonus,
-    concealmentBonusFor: (building) => specialStructureConcealment(next, building)
-  });
+  const exposureSettlement = enableExposure
+    ? updateExposures(next, metadataMap, {
+      ...options,
+      modifier: Number(options.modifier ?? 0) + specialStructureExposureModifier(next),
+      concealmentBonus: policyEffects.concealmentBonus,
+      concealmentBonusFor: (building) => specialStructureConcealment(next, building)
+    })
+    : { changes: {}, nextMetadata: metadataMap };
   const exposureChanges = exposureSettlement.changes;
-  const incidents = generateIncidents(next, exposureSettlement.nextMetadata, roller, {
-    ...options,
-    createId,
-    turn: state.turn
-  });
+  const incidents = enableIncidents
+    ? generateIncidents(next, exposureSettlement.nextMetadata, roller, {
+      ...options,
+      createId,
+      turn: state.turn
+    })
+    : [];
   for (const incident of incidents) next.gameplay.incidents[incident.id] = incident;
 
   const assignmentValidation = validateAssignments(next, incidents, input.assignments, {
@@ -518,7 +530,9 @@ export function resolveTurn(state, input = {}, context = {}) {
   // Advance the deterministic policy lifecycle after this turn's effects have
   // been consumed. The choice's started/refreshed/expired records are captured
   // for the frozen facts, and the offer stays open for the player to read.
-  const policyAdvance = advancePolicies(next, { now, turn: state.turn });
+  const policyAdvance = enableCards
+    ? advancePolicies(next, { now, turn: state.turn })
+    : { nextState: next };
   next.gameplay.cardState = policyAdvance.nextState.gameplay.cardState;
   const cardStateFacts = cardFacts(next, state.turn);
   const facts = normalizeTurnFacts({
