@@ -11,7 +11,8 @@ import {
   supportedPopulationTargetsForSettlement,
   residentialCapacityForUnit,
   supportedPopulationTargets,
-  systemOwnedBonusForBuilding
+  systemOwnedBonusForBuilding,
+  EconomyDataError
 } from "../src/gameplay/economy.js";
 import { runNoServiceScenario, runPublicServiceScenario } from "../src/gameplay/simulation-harness.js";
 import { createCityState } from "../src/city/state.js";
@@ -115,6 +116,42 @@ test("one service source shares finite capacity across four, five, and eight hom
   assert.deepEqual(five.details.map((entry) => entry.serviceCoverage), [0.8, 0.8, 0.8, 0.8, 0.8]);
   assert.deepEqual(eight.details.map((entry) => entry.serviceCoverage), Array(8).fill(0.5));
   assert.equal(eight.serviceCapacity, 4, "adding homes cannot duplicate the same source capacity");
+});
+
+test("zero service capacity is a finite baseline with no NaN or null facts", () => {
+  const state = {
+    cells: { home: { column: 0, row: 0 }, service: { column: 0, row: 1 } },
+    buildings: { home: { footprintCells: ["home"] }, service: { footprintCells: ["service"] } }
+  };
+  const metadata = {
+    home: { canonical: true, status: "completed", units: [{ purpose: "residential", area: 2, magicRatio: 0.5 }] },
+    service: { canonical: true, status: "completed", units: [{ purpose: "public_service", area: 1, magicRatio: 0 }] }
+  };
+  const result = supportedPopulationTargetsForSettlement(state, metadata, { serviceCapacityPerFunctionalCell: 0 });
+  const assertFinite = (value) => {
+    if (typeof value === "number") assert.ok(Number.isFinite(value), `non-finite value: ${value}`);
+    else if (Array.isArray(value)) value.forEach(assertFinite);
+    else if (value && typeof value === "object") Object.values(value).forEach(assertFinite);
+  };
+  assertFinite(result);
+  assert.equal(result.service.serviceCapacity, 0);
+  assert.equal(result.service.details[0].serviceArea, 0);
+  assert.equal(result.service.details[0].serviceCoverage, 0);
+  assert.equal(result.total, 4, "zero service capacity keeps the baseline 50% target");
+});
+
+test("spatial aggregate overflow rejects safe individual areas", () => {
+  const area = Math.floor(Number.MAX_SAFE_INTEGER / 4);
+  const cells = {};
+  const buildings = {};
+  const metadata = {};
+  for (let index = 0; index < 5; index += 1) {
+    const id = `home-${index}`;
+    cells[id] = { column: index, row: 0 };
+    buildings[id] = { footprintCells: [id] };
+    metadata[id] = { canonical: true, status: "completed", units: [{ purpose: "residential", area, magicRatio: 0 }] };
+  }
+  assert.throws(() => publicServiceCoverageForSettlement({ cells, buildings }, metadata), EconomyDataError);
 });
 
 test("overlapping service units stack by functional unit, while legacy/inactive sources are ignored", () => {
@@ -234,12 +271,13 @@ test("wizard migration bonus is wizard-only and explicit wizard baselines still 
     buildings: { home: { footprintCells: ["home"] } },
     gameplay: { population: { muggles: { current: 0 }, wizards: { current: 0 } } }
   };
-  const metadata = { home: { canonical: true, status: "completed", units: [{ purpose: "residential", area: 1, magicRatio: 0.5 }] } };
+  const metadata = { home: { canonical: true, status: "completed", units: [{ purpose: "residential", area: 20, magicRatio: 0.5 }] } };
+  const baseline = settlePopulation(state, metadata, { wizardMigrationRate: 0.1 });
   const settled = settlePopulation(state, metadata, { wizardMigrationRateBonus: 0.2, wizardMigrationRate: 0.1 });
   assert.equal(settled.publicService.migrationRate.muggles, 0.25);
   assert.ok(Math.abs(settled.publicService.migrationRate.wizards - 0.3) < Number.EPSILON);
-  assert.equal(settled.after.muggles.current, 1);
-  assert.equal(settled.after.wizards.current, 1);
+  assert.equal(baseline.after.muggles.current, settled.after.muggles.current, "wizard policy does not change muggle migration");
+  assert.ok(settled.after.wizards.current > baseline.after.wizards.current, "wizard policy changes actual wizard migration for a large gap");
 });
 
 test("service attraction rate is not reused to accelerate outbound migration", () => {

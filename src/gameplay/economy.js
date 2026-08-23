@@ -363,13 +363,13 @@ export function publicServiceCoverageForSettlement(state = {}, metadataMap = {},
     if (!nearby.length) continue;
     const sourceArea = checkedUnitArea(service.unit, "public service functional area");
     const sourceCapacity = checkedArcane(sourceArea * capacityPerCell, "service capacity");
-    const nearbyArea = nearby.reduce((total, entry) => total + detailByKey.get(`${entry.buildingId}:${entry.unitIndex}`).residentialArea, 0);
+    const nearbyArea = nearby.reduce((total, entry) => checkedAdd(total, detailByKey.get(`${entry.buildingId}:${entry.unitIndex}`).residentialArea, "nearby residential functional area"), 0);
     serviceCapacity = checkedArcane(serviceCapacity + sourceCapacity, "service capacity");
     for (const entry of nearby) {
       const detail = detailByKey.get(`${entry.buildingId}:${entry.unitIndex}`);
       const allocated = sourceCapacity * detail.residentialArea / nearbyArea;
       detail.serviceCapacity = checkedArcane(detail.serviceCapacity + allocated, "allocated service capacity");
-      detail.serviceArea = detail.serviceCapacity / capacityPerCell;
+      detail.serviceArea = capacityPerCell === 0 ? 0 : detail.serviceCapacity / capacityPerCell;
       detail.nearbyPublicServiceUnits.push(`${service.buildingId}:${service.unitIndex}`);
     }
   }
@@ -378,10 +378,11 @@ export function publicServiceCoverageForSettlement(state = {}, metadataMap = {},
     detail.serviceCoverage = clampOccupancy(detail.serviceCapacity / detail.residentialArea, 0);
     return detail;
   });
-  const residentialFunctionalArea = details.reduce((sum, entry) => sum + entry.residentialArea, 0);
-  const residentialCapacity = details.reduce((sum, entry) => sum + entry.residentialCapacity, 0);
+  const residentialFunctionalArea = details.reduce((sum, entry) => checkedAdd(sum, entry.residentialArea, "residential functional area"), 0);
+  const residentialCapacity = details.reduce((sum, entry) => checkedAdd(sum, entry.residentialCapacity, "residential capacity"), 0);
+  const weightedCoverageNumerator = details.reduce((sum, entry) => checkedArcane(sum + entry.residentialArea * entry.serviceCoverage, "weighted service coverage"), 0);
   const weightedCoverage = residentialFunctionalArea > 0
-    ? details.reduce((sum, entry) => sum + entry.residentialArea * entry.serviceCoverage, 0) / residentialFunctionalArea
+    ? weightedCoverageNumerator / residentialFunctionalArea
     : 0;
   return {
     radius,
@@ -420,11 +421,11 @@ export function supportedPopulationTargetsForSettlement(state = {}, metadataMap 
   // target and cannot inherit service from an unrelated footprint.
   const unsitedMuggles = Math.max(0, capacities.muggles - spatial.details.reduce((sum, detail) => {
     const unit = canonicalUnits(metadataMap[detail.buildingId])[detail.unitIndex];
-    return sum + residentialCapacityForUnit(unit).muggles;
+    return checkedAdd(sum, residentialCapacityForUnit(unit).muggles, "sited muggle capacity");
   }, 0));
   const unsitedWizards = Math.max(0, capacities.wizards - spatial.details.reduce((sum, detail) => {
     const unit = canonicalUnits(metadataMap[detail.buildingId])[detail.unitIndex];
-    return sum + residentialCapacityForUnit(unit).wizards;
+    return checkedAdd(sum, residentialCapacityForUnit(unit).wizards, "sited wizard capacity");
   }, 0));
   totals.muggles = checkedAdd(totals.muggles, roundPopulationTarget(unsitedMuggles * base), "supported muggle target");
   totals.wizards = checkedAdd(totals.wizards, roundPopulationTarget(unsitedWizards * base), "supported wizard target");

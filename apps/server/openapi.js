@@ -587,9 +587,18 @@ export function createOpenApiDocument(baseUrl) {
                 supportedOccupancy: { type: "number", minimum: 0, maximum: 1 },
                 supportedTarget: { type: "object", additionalProperties: true },
                 migrationRate: { type: "object", additionalProperties: true },
+                outboundMigrationRate: {
+                  type: "object",
+                  properties: {
+                    muggles: { type: "number", minimum: 0, maximum: 1 },
+                    wizards: { type: "number", minimum: 0, maximum: 1 }
+                  },
+                  required: ["muggles", "wizards"],
+                  additionalProperties: false
+                },
                 details: { type: "array", items: { type: "object", additionalProperties: true } }
               },
-              required: ["radius", "serviceCoverage", "supportedTarget", "migrationRate"]
+              required: ["radius", "serviceCoverage", "supportedTarget", "migrationRate", "outboundMigrationRate"]
             },
             buildingsStarted: { type: "array", items: { type: "string" } },
             buildingsCompleted: { type: "array", items: { type: "string" } },
