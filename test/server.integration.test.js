@@ -303,7 +303,10 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
         expected_city_version: afterCancel.city_version,
         design_id: voxelConfirmed.id,
         design_revision: voxelConfirmed.revision,
-        design_hash: voxelConfirmed.specHash
+        design_hash: voxelConfirmed.specHash,
+        // Confirmed visual designs still need an explicit v0.3 gameplay
+        // grammar when they enter the construction-order endpoint.
+        gameplay_building: { units: [{ purpose: "commercial", area: 1, magicRatio: 0 }] }
       }
     }), 201);
     assert.equal(voxelOrder.status, "completed");
@@ -315,7 +318,8 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
         expected_city_version: afterCancel.city_version,
         design_id: voxelConfirmed.id,
         design_revision: voxelConfirmed.revision,
-        design_hash: voxelConfirmed.specHash
+        design_hash: voxelConfirmed.specHash,
+        gameplay_building: { units: [{ purpose: "commercial", area: 1, magicRatio: 0 }] }
       }
     }), 201);
     assert.equal(voxelReplay.idempotent_replay, true);

@@ -62,14 +62,15 @@ export function createOpenApiDocument(baseUrl) {
         },
         BuildingDesignConstructionRequest: {
           type: "object",
-          required: ["expected_city_version", "design_id", "design_revision", "design_hash"],
+          required: ["expected_city_version", "design_id", "design_revision", "design_hash", "gameplay_building"],
           properties: {
             expected_city_version: { type: "integer", minimum: 0 },
             district_id: { type: "string", description: "Named development district this building contributes to" },
             design_id: { type: "string" },
             design_revision: { type: "integer", minimum: 1 },
             design_hash: { type: "string", description: "Exact hash returned when the design revision was confirmed" },
-            actor_note: { type: "string" }
+            actor_note: { type: "string" },
+            gameplay_building: { $ref: "#/components/schemas/GameplayGrammarContainer", description: "Canonical v0.3 functional-unit grammar remains explicit even when site/program/design are resolved from a confirmed visual design." }
           }
         },
         Site: {
