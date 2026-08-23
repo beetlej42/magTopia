@@ -68,17 +68,24 @@ test("service target is computed per residential unit before aggregation", () =>
     buildings: { high: { footprintCells: ["high"] }, low: { footprintCells: ["low"] }, service: { footprintCells: ["service"] } }
   };
   const metadata = {
-    high: { canonical: true, status: "completed", units: [{ purpose: "residential", area: 1, magicRatio: 0.75 }] },
-    low: { canonical: true, status: "completed", units: [{ purpose: "residential", area: 1, magicRatio: 0 }] },
-    service: { canonical: true, status: "completed", units: [{ purpose: "public_service", area: 1, magicRatio: 0 }] }
+    high: { canonical: true, status: "completed", units: [{ purpose: "residential", area: 2, magicRatio: 0.75 }] },
+    low: { canonical: true, status: "completed", units: [{ purpose: "residential", area: 2, magicRatio: 0 }] },
+    service: { canonical: true, status: "completed", units: [{ purpose: "public_service", area: 2, magicRatio: 0 }] }
   };
   const target = supportedPopulationTargetsForSettlement(state, metadata);
   const byBuilding = Object.fromEntries(target.service.details.map((detail) => [detail.buildingId, detail]));
   assert.equal(byBuilding.high.serviceCoverage, 1);
   assert.equal(byBuilding.low.serviceCoverage, 0);
-  assert.deepEqual(byBuilding.high.supportedTarget, { muggles: 1, wizards: 2, total: 3 });
-  assert.deepEqual(byBuilding.low.supportedTarget, { muggles: 2, wizards: 0, total: 2 });
+  assert.deepEqual(byBuilding.high.supportedTarget, { muggles: 2, wizards: 4, total: 6 });
+  assert.deepEqual(byBuilding.low.supportedTarget, { muggles: 4, wizards: 0, total: 4 });
   assert.deepEqual(target, supportedPopulationTargetsForSettlement(state, metadata), "spatial target is deterministic");
+
+  metadata.high.units[0].magicRatio = 0;
+  metadata.low.units[0].magicRatio = 0.75;
+  const reverse = supportedPopulationTargetsForSettlement(state, metadata);
+  const reverseByBuilding = Object.fromEntries(reverse.service.details.map((detail) => [detail.buildingId, detail]));
+  assert.deepEqual(reverseByBuilding.high.supportedTarget, { muggles: 6, wizards: 0, total: 6 });
+  assert.deepEqual(reverseByBuilding.low.supportedTarget, { muggles: 1, wizards: 3, total: 4 });
 });
 
 test("overlapping service units stack by functional unit, while legacy/inactive sources are ignored", () => {
