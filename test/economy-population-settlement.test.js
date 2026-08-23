@@ -7,11 +7,13 @@ import {
   incomeForCanonicalBuildings,
   incomeForSettlement,
   migratePopulationBucket,
+  publicServiceCoverageForSettlement,
+  supportedPopulationTargetsForSettlement,
   residentialCapacityForUnit,
   supportedPopulationTargets,
   systemOwnedBonusForBuilding
 } from "../src/gameplay/economy.js";
-import { runNoServiceScenario } from "../src/gameplay/simulation-harness.js";
+import { runNoServiceScenario, runPublicServiceScenario } from "../src/gameplay/simulation-harness.js";
 import { createCityState } from "../src/city/state.js";
 import { resolveTurn, settlePopulation } from "../src/gameplay/simulation.js";
 import { GAMEPLAY_SCHEMA_VERSION, normalizeGameplayResources, normalizeTurnFacts } from "../src/gameplay/schema.js";
@@ -34,6 +36,83 @@ test("joint supported targets round total housing once and use largest-remainder
   assert.deepEqual(supportedPopulationTargets({ muggles: 2, wizards: 2 }), { muggles: 1, wizards: 1, total: 2, source: "occupancy" });
   assert.deepEqual(supportedPopulationTargets({ muggles: 3, wizards: 1 }, { supportedTargetPopulation: { muggles: 3, wizards: 1 } }), { muggles: 3, wizards: 1, total: 4, source: "explicit_absolute" });
   assert.equal(supportedPopulationTargets({ muggles: 3, wizards: 1 }, { supportedTargetPopulation: { muggles: 99, wizards: 99 } }).total, 4);
+});
+
+test("public service uses Manhattan radius 5 and counts vertical functional area once", () => {
+  const state = {
+    cells: Object.fromEntries([
+      ["home", { column: 0, row: 0 }],
+      ["service-at-5", { column: 0, row: 5 }],
+      ["service-at-6", { column: 0, row: 6 }]
+    ]),
+    buildings: {
+      home: { footprintCells: ["home"] },
+      service: { footprintCells: ["service-at-5"] }
+    }
+  };
+  const metadata = {
+    home: { canonical: true, status: "completed", units: [{ purpose: "residential", area: 3, magicRatio: 0.5 }] },
+    service: { canonical: true, status: "completed", units: [{ purpose: "public_service", area: 2, magicRatio: 0 }] }
+  };
+  const covered = publicServiceCoverageForSettlement(state, metadata);
+  assert.equal(covered.radius, 5);
+  assert.equal(covered.details[0].serviceArea, 2, "two vertical service units count once, not once per footprint cell");
+  assert.equal(covered.details[0].serviceCoverage, 2 * 4 / (3 * 4));
+  state.buildings.service.footprintCells = ["service-at-6"];
+  assert.equal(publicServiceCoverageForSettlement(state, metadata).details[0].serviceCoverage, 0, "distance 6 is outside the radius");
+});
+
+test("service target is computed per residential unit before aggregation", () => {
+  const state = {
+    cells: { high: { column: 0, row: 0 }, low: { column: 10, row: 0 }, service: { column: 0, row: 5 } },
+    buildings: { high: { footprintCells: ["high"] }, low: { footprintCells: ["low"] }, service: { footprintCells: ["service"] } }
+  };
+  const metadata = {
+    high: { canonical: true, status: "completed", units: [{ purpose: "residential", area: 1, magicRatio: 0.75 }] },
+    low: { canonical: true, status: "completed", units: [{ purpose: "residential", area: 1, magicRatio: 0 }] },
+    service: { canonical: true, status: "completed", units: [{ purpose: "public_service", area: 1, magicRatio: 0 }] }
+  };
+  const target = supportedPopulationTargetsForSettlement(state, metadata);
+  const byBuilding = Object.fromEntries(target.service.details.map((detail) => [detail.buildingId, detail]));
+  assert.equal(byBuilding.high.serviceCoverage, 1);
+  assert.equal(byBuilding.low.serviceCoverage, 0);
+  assert.deepEqual(byBuilding.high.supportedTarget, { muggles: 1, wizards: 2, total: 3 });
+  assert.deepEqual(byBuilding.low.supportedTarget, { muggles: 2, wizards: 0, total: 2 });
+  assert.deepEqual(target, supportedPopulationTargetsForSettlement(state, metadata), "spatial target is deterministic");
+});
+
+test("overlapping service units stack by functional unit, while legacy/inactive sources are ignored", () => {
+  const state = {
+    cells: { home: { column: 0, row: 0 }, service: { column: 0, row: 1 } },
+    buildings: {
+      home: { footprintCells: ["home"] },
+      first: { footprintCells: ["service"] },
+      second: { footprintCells: ["service"] },
+      inactive: { footprintCells: ["service"] },
+      legacy: { footprintCells: ["service"] }
+    }
+  };
+  const metadata = {
+    home: { canonical: true, status: "completed", units: [{ purpose: "residential", area: 2, magicRatio: 0 }] },
+    first: { canonical: true, status: "completed", units: [{ purpose: "public_service", area: 1, magicRatio: 0 }] },
+    second: { canonical: true, status: "completed", units: [{ purpose: "public_service", area: 1, magicRatio: 0 }] },
+    inactive: { canonical: true, status: "inactive", units: [{ purpose: "public_service", area: 99, magicRatio: 0 }] },
+    legacy: { canonical: false, status: "completed", units: [{ purpose: "public_service", area: 99, magicRatio: 0 }], publicServiceRadius: 999 }
+  };
+  const coverage = publicServiceCoverageForSettlement(state, metadata);
+  assert.equal(coverage.details[0].serviceArea, 2);
+  assert.equal(coverage.details[0].serviceCoverage, 1);
+  assert.deepEqual(coverage.details[0].nearbyPublicServiceUnits, ["first:0", "second:0"]);
+});
+
+test("public service harness reaches a higher target and faster migration than baseline", () => {
+  const baseline = runNoServiceScenario(12);
+  const serviced = runPublicServiceScenario(12);
+  assert.ok(serviced.final.population.muggles.current + serviced.final.population.wizards.current
+    > baseline.final.population.muggles.current + baseline.final.population.wizards.current);
+  assert.equal(serviced.target.service.serviceCoverage, 0.5);
+  assert.equal(serviced.target.service.radius, 5);
+  assert.ok(serviced.turns[0].population.muggles.current >= baseline.turns[0].population.muggles.current);
 });
 
 test("population moves toward the no-service 50% target without overshoot", () => {

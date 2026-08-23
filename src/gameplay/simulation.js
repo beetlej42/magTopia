@@ -39,6 +39,8 @@ import {
   incomeForSettlement,
   migratePopulationBucket,
   supportedPopulationTargets,
+  supportedPopulationTargetsForSettlement,
+  clampRate,
   EconomyDataError,
   systemOwnedBonusForBuilding
 } from "./economy.js";
@@ -136,12 +138,18 @@ export function settleResources(state, metadataMap, options = {}) {
 }
 
 export function settlePopulation(state, metadataMap, options = {}) {
-  const capacities = capacitiesFromSettlementMetadata(metadataMap);
   const before = normalizePopulationState(state.gameplay?.population);
-  const targets = supportedPopulationTargets(capacities, options);
-  const migrationRate = options.migrationRate;
-  const muggleRate = migrationRate ?? options.muggleMigrationRate ?? ECONOMY_RULES.defaultMigrationRate;
-  const wizardRate = migrationRate ?? options.wizardMigrationRate ?? ECONOMY_RULES.defaultMigrationRate;
+  const targets = supportedPopulationTargetsForSettlement(state, metadataMap, options);
+  const capacities = capacitiesFromSettlementMetadata(metadataMap);
+  const serviceCoverage = targets.service?.serviceCoverage ?? 0;
+  const serviceRules = (options.rules ?? ECONOMY_RULES).publicService ?? ECONOMY_RULES.publicService;
+  const serviceRate = ECONOMY_RULES.defaultMigrationRate
+    + (serviceRules.servicedMigrationRate - ECONOMY_RULES.defaultMigrationRate) * serviceCoverage;
+  const muggleRate = clampRate((options.migrationRate ?? options.muggleMigrationRate ?? serviceRate) + Number(options.migrationRateBonus ?? 0));
+  const wizardRate = clampRate(
+    options.wizardMigrationRate
+      ?? (options.migrationRate ?? serviceRate) + Number(options.migrationRateBonus ?? 0)
+  );
   return {
     before,
     after: {
@@ -149,7 +157,16 @@ export function settlePopulation(state, metadataMap, options = {}) {
       wizards: { ...migratePopulationBucket(before.wizards, targets.wizards, wizardRate), capacity: capacities.wizards }
     },
     capacityDelta: capacities,
-    target: targets
+    target: targets,
+    publicService: {
+      ...targets.service,
+      supportedTarget: { muggles: targets.muggles, wizards: targets.wizards, total: targets.total },
+      migrationRate: { muggles: muggleRate, wizards: wizardRate },
+      supportedOccupancy: targets.service
+        ? (targets.baseSupportedOccupancy ?? ECONOMY_RULES.defaultSupportedOccupancy)
+          + ((targets.servicedMaxOccupancy ?? serviceRules.servicedMaxOccupancy) - (targets.baseSupportedOccupancy ?? ECONOMY_RULES.defaultSupportedOccupancy)) * (targets.service.serviceCoverage ?? 0)
+        : ECONOMY_RULES.defaultSupportedOccupancy
+    }
   };
 }
 
@@ -382,7 +399,7 @@ export function resolveTurn(state, input = {}, context = {}) {
     next.gameplay.resources = resourceSettlement.after;
     populationSettlement = settlePopulation(next, metadataMap, {
       ...options,
-      wizardMigrationRate: Number(options.wizardMigrationRate ?? ECONOMY_RULES.defaultMigrationRate) + policyEffects.wizardGrowthBonusRate
+      migrationRateBonus: policyEffects.wizardGrowthBonusRate
     });
     next.gameplay.population = populationSettlement.after;
   } catch (error) {
@@ -526,6 +543,7 @@ export function resolveTurn(state, input = {}, context = {}) {
         capacity: populationSettlement.after.wizards.capacity - populationSettlement.before.wizards.capacity
       }
     },
+    publicService: populationSettlement.publicService,
     buildingsStarted: [...(input.buildingsStarted ?? [])],
     buildingsCompleted: [...(input.buildingsCompleted ?? [])],
     exposureChanges,

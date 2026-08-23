@@ -16,6 +16,12 @@ export const ECONOMY_RULES = Object.freeze({
   initialArcaneEnergy: 0,
   residentialCapacityPerCell: 4,
   defaultSupportedOccupancy: 0.5,
+  publicService: Object.freeze({
+    serviceRadius: 5,
+    serviceCapacityPerFunctionalCell: 4,
+    servicedMaxOccupancy: 0.8,
+    servicedMigrationRate: 0.4
+  }),
   defaultMigrationRate: 0.25,
   residentialCoinsPerResident: 2,
   residentialArcaneEnergyPerWizard: 0.25,
@@ -104,6 +110,12 @@ function checkedArcane(value, label) {
   return number;
 }
 
+const FUNCTIONAL_STATUSES = new Set([null, undefined, "active", "completed"]);
+
+function isFunctionalStatus(status) {
+  return FUNCTIONAL_STATUSES.has(status);
+}
+
 export function clampRate(value, fallback = ECONOMY_RULES.defaultMigrationRate) {
   const rate = finiteNumber(value, fallback);
   return Math.min(1, Math.max(0, rate));
@@ -154,7 +166,7 @@ export function capacitiesFromCanonicalUnits(units = []) {
 
 export function capacitiesFromSettlementMetadata(metadataMap = {}) {
   const capacities = Object.values(metadataMap).reduce((capacity, metadata) => {
-    if (metadata?.canonical === true && (metadata.status == null || metadata.status === "completed") && metadata.status !== "sealed") {
+    if (metadata?.canonical === true && isFunctionalStatus(metadata.status)) {
       const current = capacitiesFromCanonicalUnits(metadata.units);
       capacity.muggles = checkedAdd(capacity.muggles, current.muggles, "muggle capacity");
       capacity.wizards = checkedAdd(capacity.wizards, current.wizards, "wizard capacity");
@@ -236,6 +248,33 @@ export function supportedPopulationTarget(capacity, bucket, options = {}) {
   return supportedPopulationTargets(capacities, options)[bucket];
 }
 
+function cellCoordinates(state, cellId) {
+  const cell = state?.cells?.[cellId];
+  const column = Number(cell?.column);
+  const row = Number(cell?.row);
+  if (!Number.isFinite(column) || !Number.isFinite(row)) return null;
+  return { column, row };
+}
+
+function geometryCells(state, building = {}) {
+  const candidates = Array.isArray(building.footprintCells) && building.footprintCells.length
+    ? building.footprintCells
+    : building.site?.lotId != null ? [building.site.lotId] : [];
+  return [...new Set(candidates.map(String))].map((id) => ({ id, coordinates: cellCoordinates(state, id) }))
+    .filter((entry) => entry.coordinates);
+}
+
+function footprintsWithinRadius(left, right, radius) {
+  return left.some((a) => right.some((b) => Math.abs(a.coordinates.column - b.coordinates.column)
+    + Math.abs(a.coordinates.row - b.coordinates.row) <= radius));
+}
+
+function checkedUnitArea(unit, label = "functional area") {
+  const area = checkedNonNegativeInteger(unit?.area, label);
+  if (area < 1) throw new EconomyDataError(`${label} must be a positive integer`);
+  return area;
+}
+
 /**
  * Move one integer bucket toward target. `ceil` means every non-zero gap
  * eventually closes, and the clamp prevents overshooting after a capacity
@@ -260,7 +299,7 @@ export function migratePopulationBucket(bucket = {}, target = 0, rate = ECONOMY_
 
 function canonicalUnits(metadata) {
   if (metadata?.canonical !== true || !Array.isArray(metadata.units)) return [];
-  if (metadata.status != null && metadata.status !== "completed") return [];
+  if (!isFunctionalStatus(metadata.status)) return [];
   // Persisted state can predate validation or be manually corrupted. Invalid
   // canonical units reject settlement rather than becoming guessed output.
   return metadata.units.filter((unit) => {
@@ -273,6 +312,110 @@ function canonicalUnits(metadata) {
       throw new EconomyDataError("canonical magicRatio is invalid");
     }
   });
+}
+
+/**
+ * Derive spatial public-service support without consulting renderer metadata.
+ * Distance is Manhattan distance on logical grid cells. A source functional
+ * unit is counted once per residential unit when any footprint cells touch its
+ * radius; a multi-floor unit therefore contributes its vertical area once,
+ * while overlapping footprint cells cannot multiply-count it.
+ */
+export function publicServiceCoverageForSettlement(state = {}, metadataMap = {}, options = {}) {
+  const rules = options.rules ?? ECONOMY_RULES;
+  const serviceRules = rules.publicService ?? ECONOMY_RULES.publicService;
+  const configuredRadius = Number(options.serviceRadius ?? serviceRules.serviceRadius);
+  const radius = Number.isFinite(configuredRadius) ? Math.max(0, Math.trunc(configuredRadius)) : serviceRules.serviceRadius;
+  const configuredCapacity = Number(options.serviceCapacityPerFunctionalCell ?? serviceRules.serviceCapacityPerFunctionalCell);
+  const capacityPerCell = Number.isFinite(configuredCapacity) ? Math.max(0, configuredCapacity) : serviceRules.serviceCapacityPerFunctionalCell;
+  const residentialUnits = [];
+  const serviceUnits = [];
+  for (const [buildingId, metadata] of Object.entries(metadataMap)) {
+    const units = canonicalUnits(metadata);
+    const footprint = geometryCells(state, state.buildings?.[buildingId] ?? {});
+    if (!footprint.length) continue;
+    units.forEach((unit, unitIndex) => {
+      if (unit.purpose === "residential") residentialUnits.push({ buildingId, unitIndex, unit, footprint });
+      if (unit.purpose === "public_service") serviceUnits.push({ buildingId, unitIndex, unit, footprint });
+    });
+  }
+  const details = residentialUnits.map((entry) => {
+    const residentialArea = checkedUnitArea(entry.unit, "residential functional area");
+    const nearby = serviceUnits.filter((service) => footprintsWithinRadius(entry.footprint, service.footprint, radius));
+    const serviceArea = nearby.reduce((total, service) => checkedAdd(total, checkedUnitArea(service.unit, "public service functional area"), "nearby public service area"), 0);
+    const residentialCapacity = checkedMultiply(residentialArea, Number(rules.residentialCapacityPerCell ?? ECONOMY_RULES.residentialCapacityPerCell), "nearby residential capacity");
+    const serviceCapacity = checkedArcane(serviceArea * capacityPerCell, "service capacity");
+    const coverage = clampOccupancy(serviceCapacity / residentialCapacity, 0);
+    return {
+      buildingId: entry.buildingId,
+      unitIndex: entry.unitIndex,
+      residentialArea,
+      residentialCapacity,
+      serviceArea,
+      serviceCapacity,
+      serviceCoverage: coverage,
+      nearbyPublicServiceUnits: nearby.map((service) => `${service.buildingId}:${service.unitIndex}`)
+    };
+  });
+  const residentialFunctionalArea = details.reduce((sum, entry) => sum + entry.residentialArea, 0);
+  const residentialCapacity = details.reduce((sum, entry) => sum + entry.residentialCapacity, 0);
+  const serviceCapacity = details.reduce((sum, entry) => sum + entry.serviceCapacity, 0);
+  const weightedCoverage = residentialCapacity > 0
+    ? details.reduce((sum, entry) => sum + entry.residentialCapacity * entry.serviceCoverage, 0) / residentialCapacity
+    : 0;
+  return {
+    radius,
+    residentialFunctionalArea,
+    residentialCapacity,
+    serviceCapacity,
+    serviceCoverage: clampOccupancy(weightedCoverage, 0),
+    details
+  };
+}
+
+/** Calculate local supported targets first, then aggregate the two buckets. */
+export function supportedPopulationTargetsForSettlement(state = {}, metadataMap = {}, options = {}) {
+  const capacities = capacitiesFromSettlementMetadata(metadataMap);
+  const spatial = publicServiceCoverageForSettlement(state, metadataMap, options);
+  const explicit = options.supportedTargetPopulation ?? options.targetPopulation;
+  if (explicit && typeof explicit === "object" && (explicit.muggles != null || explicit.wizards != null)) {
+    return { ...supportedPopulationTargets(capacities, options), service: spatial };
+  }
+  const serviceRules = (options.rules ?? ECONOMY_RULES).publicService ?? ECONOMY_RULES.publicService;
+  const base = clampOccupancy(options.baseSupportedOccupancy ?? ECONOMY_RULES.defaultSupportedOccupancy);
+  const max = clampOccupancy(options.servicedMaxOccupancy ?? serviceRules.servicedMaxOccupancy);
+  const totals = { muggles: 0, wizards: 0 };
+  for (const detail of spatial.details) {
+    const entry = metadataMap[detail.buildingId];
+    const unit = canonicalUnits(entry)[detail.unitIndex];
+    const capacity = residentialCapacityForUnit(unit);
+    const occupancy = base + (max - base) * detail.serviceCoverage;
+    const target = allocateTargetByCapacity(roundPopulationTarget(detail.residentialCapacity * occupancy), capacity);
+    detail.supportedOccupancy = occupancy;
+    detail.supportedTarget = { muggles: target.muggles, wizards: target.wizards, total: target.total };
+    totals.muggles = checkedAdd(totals.muggles, target.muggles, "supported muggle target");
+    totals.wizards = checkedAdd(totals.wizards, target.wizards, "supported wizard target");
+  }
+  // System card housing is intentionally unsited: it receives the baseline
+  // target and cannot inherit service from an unrelated footprint.
+  const unsitedMuggles = Math.max(0, capacities.muggles - spatial.details.reduce((sum, detail) => {
+    const unit = canonicalUnits(metadataMap[detail.buildingId])[detail.unitIndex];
+    return sum + residentialCapacityForUnit(unit).muggles;
+  }, 0));
+  const unsitedWizards = Math.max(0, capacities.wizards - spatial.details.reduce((sum, detail) => {
+    const unit = canonicalUnits(metadataMap[detail.buildingId])[detail.unitIndex];
+    return sum + residentialCapacityForUnit(unit).wizards;
+  }, 0));
+  totals.muggles = checkedAdd(totals.muggles, roundPopulationTarget(unsitedMuggles * base), "supported muggle target");
+  totals.wizards = checkedAdd(totals.wizards, roundPopulationTarget(unsitedWizards * base), "supported wizard target");
+  return {
+    ...totals,
+    total: checkedAdd(totals.muggles, totals.wizards, "supported population target"),
+    source: "public_service_radius",
+    service: spatial,
+    servicedMaxOccupancy: max,
+    baseSupportedOccupancy: base
+  };
 }
 
 /** Calculate this turn's canonical income from start-of-turn residents. */
