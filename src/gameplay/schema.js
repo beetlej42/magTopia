@@ -1,4 +1,4 @@
-export const GAMEPLAY_SCHEMA_VERSION = 2;
+export const GAMEPLAY_SCHEMA_VERSION = 3;
 
 // v0.3 gameplay is expressed in functional units.  Keep this contract
 // separate from GAMEPLAY_SCHEMA_VERSION, which is the persisted turn/state
@@ -337,18 +337,37 @@ export function validateGameplayBuilding(value = {}, options = {}) {
 }
 
 export function normalizeGameplayResources(value = {}) {
-  const rawCoins = Number(value.coins);
-  const rawArcaneEnergy = Number(value.arcaneEnergy ?? value.magic ?? 0);
+  const resources = value && typeof value === "object" ? value : {};
+  const hasCoins = Object.prototype.hasOwnProperty.call(resources, "coins");
+  const rawCoins = Number(resources.coins);
+  const hasCanonicalArcane = Object.prototype.hasOwnProperty.call(resources, "arcaneEnergy");
+  const hasLegacyMagic = Object.prototype.hasOwnProperty.call(resources, "magic");
+  const canonicalArcane = Number(resources.arcaneEnergy);
+  const legacyMagic = Number(resources.magic);
+  if (hasCanonicalArcane && hasLegacyMagic && canonicalArcane !== legacyMagic) {
+    const error = new Error("arcaneEnergy and legacy magic resource aliases conflict");
+    error.code = "RESOURCE_ALIAS_CONFLICT";
+    throw error;
+  }
+  const rawArcaneEnergy = hasCanonicalArcane ? canonicalArcane : hasLegacyMagic ? legacyMagic : 0;
+  if (hasCoins && (!Number.isSafeInteger(rawCoins) || rawCoins < 0)) {
+    const error = new Error("coins must be a non-negative safe integer");
+    error.code = "INVALID_COINS_LEDGER";
+    throw error;
+  }
+  if ((hasCanonicalArcane || hasLegacyMagic)
+      && (!Number.isFinite(rawArcaneEnergy) || rawArcaneEnergy < 0 || rawArcaneEnergy > Number.MAX_SAFE_INTEGER)) {
+    const error = new Error("arcaneEnergy must be finite and within the safe range");
+    error.code = "INVALID_ARCANE_ENERGY";
+    throw error;
+  }
   return {
-    // Coins are a safe integer ledger. Invalid/unsafe values are rejected to
-    // zero at the boundary rather than allowing a fractional or overflowing
-    // construction balance to enter settlement.
-    coins: Number.isSafeInteger(rawCoins) && rawCoins >= 0 ? rawCoins : 0,
+    // Coins are a safe integer ledger. Invalid/unsafe values are rejected at
+    // the boundary rather than allowing a fractional or overflowing balance.
+    coins: hasCoins ? rawCoins : 0,
     // `magic` is accepted only as a read-compatibility alias for persisted
     // pre-PR-C state. Canonical state and facts expose arcaneEnergy only.
-    arcaneEnergy: Number.isFinite(rawArcaneEnergy) && rawArcaneEnergy >= 0
-      ? Math.min(Number.MAX_SAFE_INTEGER, rawArcaneEnergy)
-      : 0
+    arcaneEnergy: hasCanonicalArcane || hasLegacyMagic ? rawArcaneEnergy : 0
   };
 }
 

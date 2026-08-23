@@ -1,5 +1,13 @@
 import { GAMEPLAY_PURPOSES, normalizeMagicRatio } from "./schema.js";
 
+export class EconomyDataError extends Error {
+  constructor(message, code = "INVALID_ECONOMY_DATA") {
+    super(message);
+    this.name = "EconomyDataError";
+    this.code = code;
+  }
+}
+
 // Phase 2 economy constants live in one module so later balancing or the
 // public-service phase can inject policy without scattering magic numbers.
 export const ECONOMY_RULES = Object.freeze({
@@ -24,6 +32,38 @@ function finiteNumber(value, fallback = 0) {
   return Number.isFinite(number) ? number : fallback;
 }
 
+function checkedNonNegativeInteger(value, label) {
+  const number = Number(value);
+  if (!Number.isSafeInteger(number) || number < 0) {
+    throw new EconomyDataError(`${label} must be a non-negative safe integer`);
+  }
+  return number;
+}
+
+function checkedAdd(left, right, label) {
+  const result = left + right;
+  if (!Number.isSafeInteger(result) || result < 0) {
+    throw new EconomyDataError(`${label} exceeds the safe integer range`);
+  }
+  return result;
+}
+
+function checkedMultiply(left, right, label) {
+  const result = left * right;
+  if (!Number.isSafeInteger(result) || result < 0) {
+    throw new EconomyDataError(`${label} exceeds the safe integer range`);
+  }
+  return result;
+}
+
+function checkedArcane(value, label) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0 || number > Number.MAX_SAFE_INTEGER) {
+    throw new EconomyDataError(`${label} must be finite and within the safe range`);
+  }
+  return number;
+}
+
 export function clampRate(value, fallback = ECONOMY_RULES.defaultMigrationRate) {
   const rate = finiteNumber(value, fallback);
   return Math.min(1, Math.max(0, rate));
@@ -38,7 +78,7 @@ export function clampOccupancy(value, fallback = ECONOMY_RULES.defaultSupportedO
 export function roundPopulationTarget(value) {
   const number = finiteNumber(value, 0);
   if (number <= 0) return 0;
-  if (!Number.isSafeInteger(Math.round(number))) return Number.MAX_SAFE_INTEGER;
+  if (!Number.isSafeInteger(Math.round(number))) throw new EconomyDataError("population target exceeds the safe integer range");
   return Math.max(0, Math.round(number));
 }
 
@@ -48,15 +88,15 @@ export function roundPopulationTarget(value) {
  */
 export function residentialCapacityForUnit(unit = {}) {
   if (unit.purpose !== "residential") return { muggles: 0, wizards: 0 };
-  const area = Number.isSafeInteger(Number(unit.area)) && Number(unit.area) > 0 ? Number(unit.area) : 0;
-  if (!area) return { muggles: 0, wizards: 0 };
+  const area = checkedNonNegativeInteger(unit.area, "residential functional area");
+  if (area < 1) throw new EconomyDataError("residential functional area must be positive");
   let ratio;
   try {
     ratio = normalizeMagicRatio(unit.magicRatio);
   } catch {
-    return { muggles: 0, wizards: 0 };
+    throw new EconomyDataError("residential magicRatio is invalid");
   }
-  const housing = area * ECONOMY_RULES.residentialCapacityPerCell;
+  const housing = checkedMultiply(area, ECONOMY_RULES.residentialCapacityPerCell, "residential capacity");
   return {
     muggles: Math.round(housing * (1 - ratio)),
     wizards: Math.round(housing * ratio)
@@ -66,44 +106,77 @@ export function residentialCapacityForUnit(unit = {}) {
 export function capacitiesFromCanonicalUnits(units = []) {
   return units.reduce((capacity, unit) => {
     const cellCapacity = residentialCapacityForUnit(unit);
-    capacity.muggles += cellCapacity.muggles;
-    capacity.wizards += cellCapacity.wizards;
+    capacity.muggles = checkedAdd(capacity.muggles, cellCapacity.muggles, "muggle capacity");
+    capacity.wizards = checkedAdd(capacity.wizards, cellCapacity.wizards, "wizard capacity");
     return capacity;
   }, { muggles: 0, wizards: 0 });
 }
 
-function configuredOccupancy(options, bucket, capacity) {
-  const configured = options.supportedOccupancy
-    ?? options.supportedTargetOccupancy
-    ?? options.supportedTarget;
+function configuredOccupancy(options, capacities) {
+  const configured = options.supportedOccupancy ?? options.supportedTargetOccupancy ?? options.supportedTarget;
   if (typeof configured === "function") {
-    return clampOccupancy(configured({ bucket, capacity }));
+    return clampOccupancy(configured({ capacities, totalCapacity: capacities.muggles + capacities.wizards }));
   }
-  if (configured && typeof configured === "object") {
-    const value = configured[bucket] ?? configured.default;
-    if (value != null) {
-      // An injected absolute target is useful to PR D, while a fraction keeps
-      // the default API compact. Values in [0, 1] are interpreted as ratios.
-      if (Number(value) >= 0 && Number(value) <= 1) return clampOccupancy(value);
-      return capacity > 0 ? clampOccupancy(Number(value) / capacity) : 0;
-    }
-  }
-  if (configured != null) {
-    if (Number(configured) >= 0 && Number(configured) <= 1) return clampOccupancy(configured);
-    return capacity > 0 ? clampOccupancy(Number(configured) / capacity) : 0;
-  }
+  if (configured && typeof configured === "object") return clampOccupancy(configured.total ?? configured.default ?? ECONOMY_RULES.defaultSupportedOccupancy);
+  if (configured != null) return clampOccupancy(configured);
   return ECONOMY_RULES.defaultSupportedOccupancy;
 }
 
-/** Resolve a deterministic integer supported target for one population bucket. */
-export function supportedPopulationTarget(capacity, bucket, options = {}) {
-  const safeCapacity = Number.isSafeInteger(Number(capacity)) && Number(capacity) > 0 ? Number(capacity) : 0;
-  const explicitTargets = options.supportedTargetPopulation ?? options.targetPopulation;
-  if (explicitTargets && typeof explicitTargets === "object" && explicitTargets[bucket] != null) {
-    return Math.min(safeCapacity, Math.max(0, roundPopulationTarget(explicitTargets[bucket])));
+function allocateTargetByCapacity(totalTarget, capacities) {
+  const totalCapacity = checkedAdd(capacities.muggles, capacities.wizards, "housing capacity");
+  const target = Math.min(totalCapacity, checkedNonNegativeInteger(totalTarget, "supported population target"));
+  if (totalCapacity === 0 || target === 0) return { muggles: 0, wizards: 0, total: target };
+  const buckets = [
+    { key: "muggles", capacity: capacities.muggles, priority: 0 },
+    { key: "wizards", capacity: capacities.wizards, priority: 1 }
+  ];
+  const allocations = Object.fromEntries(buckets.map(({ key, capacity }) => [key, Math.floor(target * capacity / totalCapacity)]));
+  let remaining = target - allocations.muggles - allocations.wizards;
+  const ranked = buckets.map((bucket) => ({
+    ...bucket,
+    remainder: target * bucket.capacity / totalCapacity - allocations[bucket.key]
+  })).sort((a, b) => b.remainder - a.remainder || a.priority - b.priority);
+  for (const bucket of ranked) {
+    if (remaining <= 0) break;
+    if (allocations[bucket.key] < bucket.capacity) {
+      allocations[bucket.key] += 1;
+      remaining -= 1;
+    }
   }
-  const occupancy = configuredOccupancy(options, bucket, safeCapacity);
-  return Math.min(safeCapacity, roundPopulationTarget(safeCapacity * occupancy));
+  return { ...allocations, total: target };
+}
+
+/**
+ * Jointly calculate supported targets. The default first rounds one total
+ * target, then uses largest remainder proportional allocation; ties prefer
+ * muggles, then wizards. Explicit bucket targets are an absolute PR-D hook,
+ * clamped per bucket and proportionally reduced if their sum exceeds housing.
+ */
+export function supportedPopulationTargets(capacities = {}, options = {}) {
+  const safeCapacities = {
+    muggles: checkedNonNegativeInteger(capacities.muggles ?? 0, "muggle capacity"),
+    wizards: checkedNonNegativeInteger(capacities.wizards ?? 0, "wizard capacity")
+  };
+  const totalCapacity = checkedAdd(safeCapacities.muggles, safeCapacities.wizards, "housing capacity");
+  const explicit = options.supportedTargetPopulation ?? options.targetPopulation;
+  if (explicit && typeof explicit === "object" && (explicit.muggles != null || explicit.wizards != null)) {
+    const requested = {
+      muggles: Math.min(safeCapacities.muggles, checkedNonNegativeInteger(explicit.muggles ?? 0, "muggle target")),
+      wizards: Math.min(safeCapacities.wizards, checkedNonNegativeInteger(explicit.wizards ?? 0, "wizard target"))
+    };
+    const sum = checkedAdd(requested.muggles, requested.wizards, "supported population target");
+    if (sum <= totalCapacity) return { ...requested, total: sum, source: "explicit_absolute" };
+    return { ...allocateTargetByCapacity(totalCapacity, requested), source: "explicit_absolute_clamped" };
+  }
+  const occupancy = configuredOccupancy(options, safeCapacities);
+  const totalTarget = roundPopulationTarget(totalCapacity * occupancy);
+  return { ...allocateTargetByCapacity(totalTarget, safeCapacities), source: "occupancy" };
+}
+
+/** Backward-compatible single-bucket view; settlement uses the joint API. */
+export function supportedPopulationTarget(capacity, bucket, options = {}) {
+  const capacities = bucket === "muggles" ? { muggles: capacity, wizards: 0 } : { muggles: 0, wizards: capacity };
+  return supportedPopulationTargets(capacities, options)[bucket];
 }
 
 /**
@@ -128,16 +201,17 @@ export function migratePopulationBucket(bucket = {}, target = 0, rate = ECONOMY_
 
 function canonicalUnits(metadata) {
   if (metadata?.canonical !== true || !Array.isArray(metadata.units)) return [];
+  if (metadata.status != null && metadata.status !== "completed") return [];
   // Persisted state can predate validation or be manually corrupted. Invalid
-  // units are unsupported rather than a source of guessed legacy output.
+  // canonical units reject settlement rather than becoming guessed output.
   return metadata.units.filter((unit) => {
-    if (!GAMEPLAY_PURPOSES.includes(unit?.purpose)) return false;
-    if (!Number.isSafeInteger(Number(unit?.area)) || Number(unit.area) < 1) return false;
+    if (!GAMEPLAY_PURPOSES.includes(unit?.purpose)) throw new EconomyDataError("canonical functional purpose is invalid");
+    if (!Number.isSafeInteger(Number(unit?.area)) || Number(unit.area) < 1) throw new EconomyDataError("canonical functional area is not a safe positive integer");
     try {
       normalizeMagicRatio(unit.magicRatio);
       return true;
     } catch {
-      return false;
+      throw new EconomyDataError("canonical magicRatio is invalid");
     }
   });
 }
@@ -150,23 +224,21 @@ export function incomeForCanonicalBuildings(metadataMap = {}, population = {}, o
   const rules = options.rules ?? ECONOMY_RULES;
   for (const metadata of Object.values(metadataMap)) {
     for (const unit of canonicalUnits(metadata)) {
-      const area = Number.isSafeInteger(Number(unit.area)) && Number(unit.area) > 0 ? Number(unit.area) : 0;
-      if (!GAMEPLAY_PURPOSES.includes(unit.purpose) || !area) continue;
+      const area = checkedNonNegativeInteger(unit.area, "functional area");
       if (unit.purpose === "residential") {
         continue;
       }
       const output = rules.functionalOutput[unit.purpose];
       if (!output) continue;
-      income.coins += area * output.coins;
-      income.arcaneEnergy += area * normalizeMagicRatio(unit.magicRatio) * output.arcaneEnergy;
+      income.coins = checkedAdd(income.coins, checkedMultiply(area, output.coins, `${unit.purpose} coin output`), "coin income");
+      const arcane = checkedArcane(area * normalizeMagicRatio(unit.magicRatio) * output.arcaneEnergy, `${unit.purpose} arcane output`);
+      income.arcaneEnergy = checkedArcane(income.arcaneEnergy + arcane, "arcane income");
     }
   }
   // Population is aggregate across residential units. Capacity normalization
   // guarantees these residents are already integer and bounded.
-  income.coins += (muggles + wizards) * rules.residentialCoinsPerResident;
-  income.arcaneEnergy += wizards * rules.residentialArcaneEnergyPerWizard;
-  // Keep coins an integer while allowing AE to accumulate as a fraction.
-  income.coins = Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Math.trunc(income.coins)));
-  income.arcaneEnergy = Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, income.arcaneEnergy));
+  const residents = checkedAdd(checkedNonNegativeInteger(muggles, "muggle population"), checkedNonNegativeInteger(wizards, "wizard population"), "resident population");
+  income.coins = checkedAdd(income.coins, checkedMultiply(residents, rules.residentialCoinsPerResident, "residential tax"), "coin income");
+  income.arcaneEnergy = checkedArcane(income.arcaneEnergy + checkedArcane(wizards * rules.residentialArcaneEnergyPerWizard, "residential arcane output"), "arcane income");
   return income;
 }

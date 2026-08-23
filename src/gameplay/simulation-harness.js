@@ -3,7 +3,7 @@ import {
   capacitiesFromCanonicalUnits,
   incomeForCanonicalBuildings,
   migratePopulationBucket,
-  supportedPopulationTarget
+  supportedPopulationTargets
 } from "./economy.js";
 
 // A deliberately small, dependency-free Phase 2 harness. It models the
@@ -34,10 +34,7 @@ export function runNoServiceScenario(turns = 12, options = {}) {
     }
   };
   const capacities = capacitiesFromCanonicalUnits(metadata.verticalResidence.units);
-  const target = {
-    muggles: supportedPopulationTarget(capacities.muggles, "muggles", options),
-    wizards: supportedPopulationTarget(capacities.wizards, "wizards", options)
-  };
+  const target = supportedPopulationTargets(capacities, options);
   let population = { muggles: { current: 0, capacity: capacities.muggles }, wizards: { current: 0, capacity: capacities.wizards } };
   let resources = { coins: ECONOMY_RULES.initialCoins, arcaneEnergy: ECONOMY_RULES.initialArcaneEnergy };
   const turnsResult = [];

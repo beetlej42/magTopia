@@ -42,7 +42,7 @@ test("legacy city state migrates coins into gameplay without losing balance on f
   legacy.resources = { coins: 123, timber: 12, stone: 12 };
   const { nextState, facts, error } = resolveTurn(legacy, {}, context());
   assert.equal(error, null);
-  assert.equal(nextState.gameplay.schemaVersion, 1);
+  assert.equal(nextState.gameplay.schemaVersion, 3);
   assert.equal(nextState.gameplay.resources.coins, 123, "legacy non-canonical buildings provide no PR-C income");
   assert.equal(nextState.resources.coins, 123, "legacy coins follow the gameplay balance");
   assert.equal(legacy.resources.coins, 123, "source state stays untouched");

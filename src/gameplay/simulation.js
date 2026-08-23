@@ -23,6 +23,7 @@ import { chance, createRoller, pick, rollDice } from "./random.js";
 import { normalizeTurnSchedule } from "./turn.js";
 import {
   deepFreeze,
+  GAMEPLAY_SCHEMA_VERSION,
   INCIDENT_TYPES,
   normalizeExposureIncident,
   normalizeGameplayResources,
@@ -37,7 +38,8 @@ import {
   capacitiesFromCanonicalUnits,
   incomeForCanonicalBuildings,
   migratePopulationBucket,
-  supportedPopulationTarget
+  supportedPopulationTargets,
+  EconomyDataError
 } from "./economy.js";
 
 // Kept as named exports for callers that used the old tuning surface. PR C
@@ -77,8 +79,8 @@ function asMap(state, field) {
       // One committed card owns an explicit legacy effect. It is migrated by
       // card id only; arbitrary old `magicOutput` fields never enter economy.
       const systemOwnedIncome = building.specialStructure?.cardId === "moonlight-herb-plot"
-        ? { arcaneEnergy: Number.isFinite(Number(building.specialStructure.effect?.magicOutput))
-          ? Math.max(0, Number(building.specialStructure.effect.magicOutput))
+        ? { arcaneEnergy: Number.isFinite(Number(building.specialStructure.effect?.arcaneEnergyOutput ?? building.specialStructure.effect?.magicOutput))
+          ? Math.max(0, Number(building.specialStructure.effect.arcaneEnergyOutput ?? building.specialStructure.effect.magicOutput))
           : 0 }
         : null;
       return {
@@ -111,11 +113,19 @@ export function settleResources(state, metadataMap, options = {}) {
   const baseArcaneEnergy = Number.isFinite(Number(options.baseArcaneEnergy ?? options.baseMagic))
     ? Math.max(0, Number(options.baseArcaneEnergy ?? options.baseMagic))
     : DEFAULT_BASE_MAGIC;
+  if (!Number.isSafeInteger(income.coins + baseCoins)) throw new EconomyDataError("coin income exceeds the safe integer range");
   income.coins += baseCoins;
+  if (!Number.isFinite(income.arcaneEnergy + baseArcaneEnergy) || income.arcaneEnergy + baseArcaneEnergy > Number.MAX_SAFE_INTEGER) {
+    throw new EconomyDataError("arcane income exceeds the safe range");
+  }
   income.arcaneEnergy += baseArcaneEnergy;
   for (const [, metadata] of Object.entries(metadataMap)) {
     if ((metadata.status == null || metadata.status === "completed") && metadata.systemOwnedIncome) {
-      income.arcaneEnergy += Math.max(0, Number(metadata.systemOwnedIncome.arcaneEnergy) || 0);
+      const systemIncome = Math.max(0, Number(metadata.systemOwnedIncome.arcaneEnergy) || 0);
+      if (!Number.isFinite(income.arcaneEnergy + systemIncome) || income.arcaneEnergy + systemIncome > Number.MAX_SAFE_INTEGER) {
+        throw new EconomyDataError("system arcane income exceeds the safe range");
+      }
+      income.arcaneEnergy += systemIncome;
     }
   }
   // Coins have one authoritative source: `state.resources.coins`, which is
@@ -124,9 +134,17 @@ export function settleResources(state, metadataMap, options = {}) {
   // `state.resources.coins` means a construction spend is never wiped out by a
   // stale gameplay ledger value.
   const gameplayBefore = normalizeGameplayResources(state.gameplay?.resources);
+  const hasOuterCoins = Object.prototype.hasOwnProperty.call(state.resources ?? {}, "coins");
   const outerCoins = Number(state.resources?.coins);
+  if (hasOuterCoins && (!Number.isSafeInteger(outerCoins) || outerCoins < 0)) {
+    throw new EconomyDataError("outer construction coins ledger is invalid", "INVALID_COINS_LEDGER");
+  }
   const spendableCoins = Number.isSafeInteger(outerCoins) && outerCoins >= 0 ? outerCoins : gameplayBefore.coins;
   const before = { ...gameplayBefore, coins: spendableCoins };
+  if (!Number.isSafeInteger(before.coins + income.coins)) throw new EconomyDataError("coin balance exceeds the safe integer range");
+  if (!Number.isFinite(before.arcaneEnergy + income.arcaneEnergy) || before.arcaneEnergy + income.arcaneEnergy > Number.MAX_SAFE_INTEGER) {
+    throw new EconomyDataError("arcane balance exceeds the safe range");
+  }
   const after = normalizeGameplayResources({ coins: before.coins + income.coins, arcaneEnergy: before.arcaneEnergy + income.arcaneEnergy });
   return { before, after, income };
 }
@@ -139,19 +157,18 @@ export function settlePopulation(state, metadataMap, options = {}) {
     return total;
   }, { muggles: 0, wizards: 0 });
   const before = normalizePopulationState(state.gameplay?.population);
-  const muggleTarget = supportedPopulationTarget(capacities.muggles, "muggles", options);
-  const wizardTarget = supportedPopulationTarget(capacities.wizards, "wizards", options);
+  const targets = supportedPopulationTargets(capacities, options);
   const migrationRate = options.migrationRate;
   const muggleRate = migrationRate ?? options.muggleMigrationRate ?? ECONOMY_RULES.defaultMigrationRate;
   const wizardRate = migrationRate ?? options.wizardMigrationRate ?? ECONOMY_RULES.defaultMigrationRate;
   return {
     before,
     after: {
-      muggles: { ...migratePopulationBucket(before.muggles, muggleTarget, muggleRate), capacity: capacities.muggles },
-      wizards: { ...migratePopulationBucket(before.wizards, wizardTarget, wizardRate), capacity: capacities.wizards }
+      muggles: { ...migratePopulationBucket(before.muggles, targets.muggles, muggleRate), capacity: capacities.muggles },
+      wizards: { ...migratePopulationBucket(before.wizards, targets.wizards, wizardRate), capacity: capacities.wizards }
     },
     capacityDelta: capacities,
-    target: { muggles: muggleTarget, wizards: wizardTarget }
+    target: targets
   };
 }
 
@@ -349,11 +366,17 @@ export function resolveTurn(state, input = {}, context = {}) {
   const createId = context.createId ?? ((prefix) => `${prefix}-${state.turn}`);
   const now = context.now ?? (() => new Date().toISOString());
   const roller = createRoller(context);
+  let normalizedResources;
+  try {
+    normalizedResources = normalizeGameplayResources(gameplay.resources);
+  } catch (error) {
+    return { nextState: state, facts: null, error: { code: error?.code ?? "INVALID_ECONOMY_DATA", message: error?.message ?? "Gameplay resources are invalid" } };
+  }
   let next = {
     ...state,
     gameplay: {
       ...gameplay,
-      resources: normalizeGameplayResources(gameplay.resources),
+      resources: normalizedResources,
       population: normalizePopulationState(gameplay.population),
       arcaneOfficers: { ...(gameplay.arcaneOfficers ?? {}) },
       incidents: { ...(gameplay.incidents ?? {}) }
@@ -369,15 +392,28 @@ export function resolveTurn(state, input = {}, context = {}) {
   next = markChoiceSkipped(next, { now });
   const policyEffects = collectPolicyEffects(next);
 
-  const metadataMap = asMap(next, "metadata");
-  const resourceSettlement = settleResources(next, metadataMap, options);
-  next.gameplay.resources = resourceSettlement.after;
-
-  const populationSettlement = settlePopulation(next, metadataMap, {
-    ...options,
-    wizardMigrationRate: Number(options.wizardMigrationRate ?? 0.1) + policyEffects.wizardGrowthBonusRate
-  });
-  next.gameplay.population = populationSettlement.after;
+  let metadataMap;
+  let resourceSettlement;
+  let populationSettlement;
+  try {
+    metadataMap = asMap(next, "metadata");
+    resourceSettlement = settleResources(next, metadataMap, options);
+    next.gameplay.resources = resourceSettlement.after;
+    populationSettlement = settlePopulation(next, metadataMap, {
+      ...options,
+      wizardMigrationRate: Number(options.wizardMigrationRate ?? ECONOMY_RULES.defaultMigrationRate) + policyEffects.wizardGrowthBonusRate
+    });
+    next.gameplay.population = populationSettlement.after;
+  } catch (error) {
+    return {
+      nextState: state,
+      facts: null,
+      error: {
+        code: error?.code ?? "INVALID_ECONOMY_DATA",
+        message: error?.message ?? "Canonical economy data is invalid"
+      }
+    };
+  }
 
   const exposureSettlement = updateExposures(next, metadataMap, {
     ...options,
@@ -571,7 +607,7 @@ function migrateGameplay(state) {
     const legacy = state.resources ?? {};
     const coins = Number.isFinite(Number(legacy.coins)) ? Number(legacy.coins) : 0;
     return {
-      schemaVersion: 1,
+      schemaVersion: GAMEPLAY_SCHEMA_VERSION,
       turnStatus: "open",
       turnOpenedAt: null,
       turnDeadlineAt: null,
@@ -593,6 +629,7 @@ function migrateGameplay(state) {
     };
   }
   const migrated = { ...existing };
+  migrated.schemaVersion = GAMEPLAY_SCHEMA_VERSION;
   // Normalize legacy `magic` on the first resolve; no legacy key is copied to
   // the canonical state. The resource normalizer below also handles old
   // persisted gameplay resources that have no explicit migration marker.

@@ -34,7 +34,10 @@ export function hireArcaneOfficer(state, input = {}, context = {}) {
     return { accepted: false, error: { code: "ARCANE_OFFICER_CAPACITY_REACHED", message: `Arcane officer roster is at its capacity of ${capacity}` } };
   }
   const cost = ARCANE_OFFICER_HIRE_COST_COINS;
-  const coins = state?.gameplay?.resources?.coins ?? 0;
+  const coins = Number(state?.resources?.coins);
+  if (!Number.isSafeInteger(coins) || coins < 0) {
+    return { accepted: false, error: { code: "INVALID_COINS_LEDGER", message: "The authoritative construction coins ledger is invalid" } };
+  }
   if (coins < cost) {
     return { accepted: false, error: { code: "INSUFFICIENT_COINS", message: `Hiring an arcane officer requires ${cost} coins but only ${coins} available` } };
   }
