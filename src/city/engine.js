@@ -2,7 +2,7 @@ import { completeAssetPrompt, normalizeConnectionRequest, normalizeConstructionP
 import { appendEvent, cloneCityState } from "./state.js";
 import { previewConnectionBetween, previewConstruction } from "./solver.js";
 import { deriveGameplayBuilding } from "../gameplay/building-metadata.js";
-import { incomeForCanonicalBuildings } from "../gameplay/economy.js";
+import { incomeForSettlement, systemOwnedBonusForBuilding } from "../gameplay/economy.js";
 
 export function createEngineContext(options = {}) {
   const sequences = new Map();
@@ -254,14 +254,20 @@ function advanceTime(currentState, input, context) {
 }
 
 export function calculateDailyIncome(state) {
-  // Compatibility preview only: authoritative resource mutation happens in
-  // gameplay.resolveTurn(). This function deliberately reads canonical units
-  // and returns the same shape as the PR-C economy, never old coinOutput or
-  // category defaults.
+  // Compatibility preview only: authoritative mutation remains resolveTurn,
+  // but both paths call the same settlement aggregator and card whitelist.
   const metadata = Object.fromEntries(Object.entries(state.buildings ?? {})
-    .filter(([, building]) => building.status === "completed" && building.gameplay?.canonical)
-    .map(([id, building]) => [id, building.gameplay]));
-  return incomeForCanonicalBuildings(metadata, state.gameplay?.population ?? {});
+    .filter(([, building]) => building.status === "completed")
+    .map(([id, building]) => [id, {
+      ...(building.gameplay?.canonical ? building.gameplay : {}),
+      canonical: building.gameplay?.canonical === true,
+      status: building.status,
+      ...(systemOwnedBonusForBuilding(building) ? {
+        systemOwnedCardId: building.specialStructure.cardId,
+        systemOwnedBonus: systemOwnedBonusForBuilding(building)
+      } : {})
+    }]));
+  return incomeForSettlement(metadata, state.gameplay?.population ?? {});
 }
 
 function applyCompletedBuilding(next, { proposal, preview, buildingId, assetId, resourcesAlreadyDebited = false }, context) {

@@ -3,10 +3,13 @@ import test from "node:test";
 import {
   ECONOMY_RULES,
   capacitiesFromCanonicalUnits,
+  capacitiesFromSettlementMetadata,
   incomeForCanonicalBuildings,
+  incomeForSettlement,
   migratePopulationBucket,
   residentialCapacityForUnit,
-  supportedPopulationTargets
+  supportedPopulationTargets,
+  systemOwnedBonusForBuilding
 } from "../src/gameplay/economy.js";
 import { runNoServiceScenario } from "../src/gameplay/simulation-harness.js";
 import { createCityState } from "../src/city/state.js";
@@ -14,6 +17,8 @@ import { resolveTurn, settlePopulation } from "../src/gameplay/simulation.js";
 import { GAMEPLAY_SCHEMA_VERSION, normalizeGameplayResources, normalizeTurnFacts } from "../src/gameplay/schema.js";
 import { executeCityCommand } from "../src/city/engine.js";
 import { getCard } from "../src/gameplay/card-catalog.js";
+import { buildReportContext, factsDigest } from "../src/gameplay/owl-report.js";
+import { calculateDailyIncome } from "../src/city/engine.js";
 
 test("residential functional cells split discrete capacity into integer buckets", () => {
   assert.deepEqual(residentialCapacityForUnit({ purpose: "residential", area: 1, magicRatio: 0.25 }), { muggles: 3, wizards: 1 });
@@ -51,6 +56,11 @@ test("capacity reductions migrate residents out and preserve signed deltas", () 
   assert.deepEqual(migratePopulationBucket({ current: 4, capacity: 4 }, 0, 0.25), { current: 3, capacity: 4 });
   const facts = normalizeTurnFacts({ populationDelta: { muggles: { current: -1, capacity: -2 }, wizards: {} } });
   assert.deepEqual(facts.populationDelta.muggles, { current: -1, capacity: -2 });
+});
+
+test("zero migration rate leaves both inbound and outbound population unchanged", () => {
+  assert.deepEqual(migratePopulationBucket({ current: 0, capacity: 4 }, 4, 0), { current: 0, capacity: 4 });
+  assert.deepEqual(migratePopulationBucket({ current: 4, capacity: 4 }, 0, 0), { current: 4, capacity: 4 });
 });
 
 test("canonical income uses start-of-turn residents and preserves AE fractions", () => {
@@ -193,4 +203,71 @@ test("Moonlight Herb Plot uses arcaneEnergyOutput and only persisted card ids re
   const settled = resolveTurn(state, {}, { seed: "moonlight-compat", now: () => "2026-08-23T00:00:00.000Z" });
   assert.equal(settled.error, null);
   assert.deepEqual(settled.facts.resourceDelta, { coins: 0, arcaneEnergy: 6 });
+});
+
+test("whitelisted system cards retain catalog economy bonuses and join the housing target", () => {
+  assert.deepEqual(systemOwnedBonusForBuilding({ status: "completed", specialStructure: { cardId: "owl-tower", effect: { coinOutput: 999, wizardCapacity: 999 } } }), { coins: 4, arcaneEnergy: 0, wizardCapacity: 3 });
+  assert.deepEqual(systemOwnedBonusForBuilding({ status: "completed", specialStructure: { cardId: "floo-fireplace-station" } }), { coins: 5, arcaneEnergy: 0, wizardCapacity: 2 });
+  assert.deepEqual(systemOwnedBonusForBuilding({ status: "completed", specialStructure: { cardId: "moonlight-herb-plot", effect: { magicOutput: 6 } } }), { coins: 0, arcaneEnergy: 6, wizardCapacity: 0 });
+  assert.equal(systemOwnedBonusForBuilding({ status: "sealed", specialStructure: { cardId: "owl-tower" } }), null);
+  assert.equal(systemOwnedBonusForBuilding({ status: "completed", specialStructure: { cardId: "fake-owl-tower", effect: { coinOutput: 999, wizardCapacity: 999 } } }), null);
+
+  const metadata = {
+    owl: { canonical: false, status: "completed", systemOwnedCardId: "owl-tower", systemOwnedBonus: { coins: 4, arcaneEnergy: 0, wizardCapacity: 3 } },
+    floo: { canonical: false, status: "completed", systemOwnedCardId: "floo-fireplace-station", systemOwnedBonus: { coins: 5, arcaneEnergy: 0, wizardCapacity: 2 } },
+    moon: { canonical: false, status: "completed", systemOwnedCardId: "moonlight-herb-plot", systemOwnedBonus: { coins: 0, arcaneEnergy: 6, wizardCapacity: 0 } }
+  };
+  assert.deepEqual(capacitiesFromSettlementMetadata(metadata), { muggles: 0, wizards: 5 });
+  assert.deepEqual(incomeForSettlement(metadata, {}), { coins: 9, arcaneEnergy: 6 });
+  assert.deepEqual(incomeForSettlement({ forged: { canonical: false, status: "completed", systemOwnedBonus: { coins: 999, arcaneEnergy: 999, wizardCapacity: 999 } } }, {}), { coins: 0, arcaneEnergy: 0 });
+  assert.deepEqual(incomeForSettlement({ sealed: { ...metadata.owl, status: "sealed" } }, {}), { coins: 0, arcaneEnergy: 0 });
+});
+
+test("daily income preview has parity with resolveTurn for canonical residents, units, and system cards", () => {
+  const state = createCityState({ mapId: "daily-parity", grid: { columns: 2, rows: 2, cells: [
+    { id: "cell-0-0", column: 0, row: 0, buildable: true },
+    { id: "cell-1-0", column: 1, row: 0, buildable: true },
+    { id: "cell-0-1", column: 0, row: 1, buildable: true },
+    { id: "cell-1-1", column: 1, row: 1, buildable: true }
+  ] } });
+  state.gameplay.population = { muggles: { current: 1, capacity: 4 }, wizards: { current: 2, capacity: 4 } };
+  state.buildings.market = { id: "market", status: "completed", gameplay: { canonical: true, units: [{ purpose: "commercial", area: 1, magicRatio: 0.5 }] } };
+  state.buildings.owl = { id: "owl", status: "completed", specialStructure: { cardId: "owl-tower", effect: { coinOutput: 999 } } };
+  state.buildings.floo = { id: "floo", status: "completed", specialStructure: { cardId: "floo-fireplace-station", effect: { wizardCapacity: 999 } } };
+  state.buildings.moon = { id: "moon", status: "completed", specialStructure: { cardId: "moonlight-herb-plot", effect: { arcaneEnergyOutput: 6 } } };
+  const preview = calculateDailyIncome(state);
+  const settled = resolveTurn(state, {}, { seed: "daily-parity", now: () => "2026-08-23T00:00:00.000Z" });
+  assert.equal(settled.error, null);
+  assert.deepEqual(preview, settled.facts.resourceDelta);
+});
+
+test("legacy frozen facts project canonically without changing their content or digest", () => {
+  const facts = { turn: 7, resourceDelta: { coins: 12, magic: 3 }, populationDelta: { muggles: {}, wizards: {} } };
+  const before = structuredClone(facts);
+  const digest = factsDigest(facts);
+  const first = buildReportContext({ cityId: "legacy-facts", facts });
+  const second = buildReportContext({ cityId: "legacy-facts", facts });
+  assert.deepEqual(facts, before);
+  assert.equal(factsDigest(facts), digest);
+  assert.deepEqual(first.resourceDelta, { factRef: "fact-resource-delta", coins: 12, arcaneEnergy: 3 });
+  assert.equal("magic" in first.resourceDelta, false);
+  assert.deepEqual(second.resourceDelta, first.resourceDelta);
+});
+
+test("resolve migrates legacy gameplay resources while preserving old frozen facts", () => {
+  const state = createCityState({ mapId: "legacy-resolve", grid: { columns: 1, rows: 1, cells: [{ id: "cell-0-0", column: 0, row: 0, buildable: true }] } });
+  const oldFacts = { turn: 0, resourceDelta: { coins: 1, magic: 2 }, populationDelta: { muggles: {}, wizards: {} } };
+  const oldDigest = factsDigest(oldFacts);
+  state.gameplay.schemaVersion = 2;
+  state.gameplay.resources = { coins: 600, magic: 2 };
+  state.gameplay.turnFacts = { 0: oldFacts };
+  state.gameplay.lastTurnFacts = oldFacts;
+  const result = resolveTurn(state, {}, { seed: "legacy-resolve", now: () => "2026-08-23T00:00:00.000Z" });
+  assert.equal(result.error, null);
+  assert.equal(result.nextState.gameplay.schemaVersion, GAMEPLAY_SCHEMA_VERSION);
+  assert.deepEqual(result.nextState.gameplay.resources, { coins: 600, arcaneEnergy: 2 });
+  assert.deepEqual(result.facts.resourceDelta, { coins: 0, arcaneEnergy: 0 });
+  assert.deepEqual(result.nextState.gameplay.turnFacts[0], oldFacts);
+  assert.equal(factsDigest(result.nextState.gameplay.turnFacts[0]), oldDigest);
+  assert.equal("magic" in result.nextState.gameplay.resources, false);
 });

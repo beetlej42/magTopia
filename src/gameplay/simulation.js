@@ -35,11 +35,12 @@ import {
 } from "./schema.js";
 import {
   ECONOMY_RULES,
-  capacitiesFromCanonicalUnits,
-  incomeForCanonicalBuildings,
+  capacitiesFromSettlementMetadata,
+  incomeForSettlement,
   migratePopulationBucket,
   supportedPopulationTargets,
-  EconomyDataError
+  EconomyDataError,
+  systemOwnedBonusForBuilding
 } from "./economy.js";
 
 // Kept as named exports for callers that used the old tuning surface. PR C
@@ -76,19 +77,13 @@ function asMap(state, field) {
     (() => {
       const persisted = building.metadata ?? (building.gameplay?.canonical ? building.gameplay : null);
       const metadata = persisted ?? deriveGameplayBuilding(building);
-      // One committed card owns an explicit legacy effect. It is migrated by
-      // card id only; arbitrary old `magicOutput` fields never enter economy.
-      const systemOwnedIncome = building.specialStructure?.cardId === "moonlight-herb-plot"
-        ? { arcaneEnergy: Number.isFinite(Number(building.specialStructure.effect?.arcaneEnergyOutput ?? building.specialStructure.effect?.magicOutput))
-          ? Math.max(0, Number(building.specialStructure.effect.arcaneEnergyOutput ?? building.specialStructure.effect.magicOutput))
-          : 0 }
-        : null;
+      const systemOwnedBonus = systemOwnedBonusForBuilding(building);
       return {
         ...metadata,
         canonical: metadata.canonical === true,
         status: building.status ?? metadata.status ?? "active",
         exposure: Number.isFinite(Number(building.exposure)) ? Number(building.exposure) : (metadata.exposure ?? 0),
-        ...(systemOwnedIncome ? { systemOwnedIncome } : {})
+        ...(systemOwnedBonus ? { systemOwnedCardId: building.specialStructure.cardId, systemOwnedBonus } : {})
       };
     })()
   ]));
@@ -102,7 +97,7 @@ export function effectiveBuildings(metadataMap) {
 
 export function settleResources(state, metadataMap, options = {}) {
   const population = normalizePopulationState(state.gameplay?.population);
-  const income = incomeForCanonicalBuildings(Object.fromEntries(effectiveBuildings(metadataMap)), population, {
+  const income = incomeForSettlement(metadataMap, population, {
     rules: options.economyRules ?? ECONOMY_RULES
   });
   // Optional baseCoins is an explicit harness hook only; the PR-C default is
@@ -119,15 +114,6 @@ export function settleResources(state, metadataMap, options = {}) {
     throw new EconomyDataError("arcane income exceeds the safe range");
   }
   income.arcaneEnergy += baseArcaneEnergy;
-  for (const [, metadata] of Object.entries(metadataMap)) {
-    if ((metadata.status == null || metadata.status === "completed") && metadata.systemOwnedIncome) {
-      const systemIncome = Math.max(0, Number(metadata.systemOwnedIncome.arcaneEnergy) || 0);
-      if (!Number.isFinite(income.arcaneEnergy + systemIncome) || income.arcaneEnergy + systemIncome > Number.MAX_SAFE_INTEGER) {
-        throw new EconomyDataError("system arcane income exceeds the safe range");
-      }
-      income.arcaneEnergy += systemIncome;
-    }
-  }
   // Coins have one authoritative source: `state.resources.coins`, which is
   // debited by construction/road/reservation mutations and credited by card
   // grants. `gameplay.resources` mirrors it at settlement. Basing the settle on
@@ -150,12 +136,7 @@ export function settleResources(state, metadataMap, options = {}) {
 }
 
 export function settlePopulation(state, metadataMap, options = {}) {
-  const capacities = effectiveBuildings(metadataMap).reduce((total, [, metadata]) => {
-    const current = capacitiesFromCanonicalUnits(metadata.units);
-    total.muggles += current.muggles;
-    total.wizards += current.wizards;
-    return total;
-  }, { muggles: 0, wizards: 0 });
+  const capacities = capacitiesFromSettlementMetadata(metadataMap);
   const before = normalizePopulationState(state.gameplay?.population);
   const targets = supportedPopulationTargets(capacities, options);
   const migrationRate = options.migrationRate;

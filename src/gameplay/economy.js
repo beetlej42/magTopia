@@ -1,4 +1,5 @@
 import { GAMEPLAY_PURPOSES, normalizeMagicRatio } from "./schema.js";
+import { getCard } from "./card-catalog.js";
 
 export class EconomyDataError extends Error {
   constructor(message, code = "INVALID_ECONOMY_DATA") {
@@ -26,6 +27,48 @@ export const ECONOMY_RULES = Object.freeze({
     greenhouse: Object.freeze({ coins: 12, arcaneEnergy: 6 })
   })
 });
+
+// These are the only special-structure effects that participate in the PR-C
+// economy. Values come from the system-owned card catalog; a building or
+// Agent cannot author an arbitrary effect by copying old metadata fields.
+const SYSTEM_OWNED_ECONOMY_CARDS = Object.freeze(new Set([
+  "owl-tower",
+  "floo-fireplace-station",
+  "moonlight-herb-plot"
+]));
+
+export function systemOwnedBonusForBuilding(building = {}) {
+  const cardId = building?.specialStructure?.cardId;
+  if (!SYSTEM_OWNED_ECONOMY_CARDS.has(cardId) || building.status !== "completed") {
+    return null;
+  }
+  const definition = getCard(cardId);
+  const catalogEffect = definition?.effect ?? {};
+  const persistedEffect = building.specialStructure?.effect ?? {};
+  if (cardId === "owl-tower") {
+    return { coins: Number(catalogEffect.coinOutput), arcaneEnergy: 0, wizardCapacity: Number(catalogEffect.wizardCapacity) };
+  }
+  if (cardId === "floo-fireplace-station") {
+    return { coins: Number(catalogEffect.coinOutput), arcaneEnergy: 0, wizardCapacity: Number(catalogEffect.wizardCapacity) };
+  }
+  // `magicOutput` is accepted only for an already-persisted Moonlight card;
+  // new catalog/persisted effects use arcaneEnergyOutput. The card id remains
+  // the authority, so unrelated legacy metadata cannot create income.
+  const arcaneEnergy = persistedEffect.arcaneEnergyOutput ?? persistedEffect.magicOutput ?? catalogEffect.arcaneEnergyOutput;
+  return { coins: 0, arcaneEnergy: Number(arcaneEnergy), wizardCapacity: 0 };
+}
+
+function systemOwnedBonusForMetadata(metadata = {}) {
+  const cardId = metadata.systemOwnedCardId;
+  if (!SYSTEM_OWNED_ECONOMY_CARDS.has(cardId) || metadata.status !== "completed") return null;
+  const effect = getCard(cardId)?.effect ?? {};
+  if (cardId === "moonlight-herb-plot") return metadata.systemOwnedBonus ?? { coins: 0, arcaneEnergy: Number(effect.arcaneEnergyOutput), wizardCapacity: 0 };
+  return {
+    coins: Number(effect.coinOutput),
+    arcaneEnergy: 0,
+    wizardCapacity: Number(effect.wizardCapacity)
+  };
+}
 
 function finiteNumber(value, fallback = 0) {
   const number = Number(value);
@@ -112,6 +155,23 @@ export function capacitiesFromCanonicalUnits(units = []) {
   }, { muggles: 0, wizards: 0 });
 }
 
+export function capacitiesFromSettlementMetadata(metadataMap = {}) {
+  const capacities = Object.values(metadataMap).reduce((capacity, metadata) => {
+    if (metadata?.canonical === true && (metadata.status == null || metadata.status === "completed") && metadata.status !== "sealed") {
+      const current = capacitiesFromCanonicalUnits(metadata.units);
+      capacity.muggles = checkedAdd(capacity.muggles, current.muggles, "muggle capacity");
+      capacity.wizards = checkedAdd(capacity.wizards, current.wizards, "wizard capacity");
+    }
+    const systemBonus = systemOwnedBonusForMetadata(metadata);
+    if (systemBonus) {
+      const bonus = checkedNonNegativeInteger(systemBonus.wizardCapacity ?? 0, "system wizard capacity");
+      capacity.wizards = checkedAdd(capacity.wizards, bonus, "wizard capacity");
+    }
+    return capacity;
+  }, { muggles: 0, wizards: 0 });
+  return capacities;
+}
+
 function configuredOccupancy(options, capacities) {
   const configured = options.supportedOccupancy ?? options.supportedTargetOccupancy ?? options.supportedTarget;
   if (typeof configured === "function") {
@@ -189,7 +249,9 @@ export function migratePopulationBucket(bucket = {}, target = 0, rate = ECONOMY_
   const safeTarget = Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Math.trunc(finiteNumber(target, 0))));
   const gap = safeTarget - current;
   if (gap === 0) return { current, capacity: Math.max(0, Math.trunc(finiteNumber(bucket.capacity, 0))) };
-  const step = Math.max(1, Math.ceil(Math.abs(gap) * clampRate(rate)));
+  const normalizedRate = clampRate(rate);
+  if (normalizedRate === 0) return { current, capacity: Math.max(0, Math.trunc(finiteNumber(bucket.capacity, 0))) };
+  const step = Math.max(1, Math.ceil(Math.abs(gap) * normalizedRate));
   const nextCurrent = gap > 0
     ? Math.min(safeTarget, current + step)
     : Math.max(safeTarget, current - step);
@@ -240,5 +302,19 @@ export function incomeForCanonicalBuildings(metadataMap = {}, population = {}, o
   const residents = checkedAdd(checkedNonNegativeInteger(muggles, "muggle population"), checkedNonNegativeInteger(wizards, "wizard population"), "resident population");
   income.coins = checkedAdd(income.coins, checkedMultiply(residents, rules.residentialCoinsPerResident, "residential tax"), "coin income");
   income.arcaneEnergy = checkedArcane(income.arcaneEnergy + checkedArcane(wizards * rules.residentialArcaneEnergyPerWizard, "residential arcane output"), "arcane income");
+  return income;
+}
+
+/** Shared settlement/preview aggregation, including whitelisted system cards. */
+export function incomeForSettlement(metadataMap = {}, population = {}, options = {}) {
+  const income = incomeForCanonicalBuildings(metadataMap, population, options);
+  for (const metadata of Object.values(metadataMap)) {
+    const systemBonus = systemOwnedBonusForMetadata(metadata);
+    if (!systemBonus) continue;
+    const coins = checkedNonNegativeInteger(systemBonus.coins ?? 0, "system coin output");
+    const arcaneEnergy = checkedArcane(systemBonus.arcaneEnergy ?? 0, "system arcane output");
+    income.coins = checkedAdd(income.coins, coins, "coin income");
+    income.arcaneEnergy = checkedArcane(income.arcaneEnergy + arcaneEnergy, "arcane income");
+  }
   return income;
 }
