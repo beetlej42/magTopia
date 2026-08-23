@@ -32,8 +32,18 @@ import {
   normalizeTurnFacts,
   SEALED_EXPOSURE_THRESHOLD
 } from "./schema.js";
+import {
+  ECONOMY_RULES,
+  capacitiesFromCanonicalUnits,
+  incomeForCanonicalBuildings,
+  migratePopulationBucket,
+  supportedPopulationTarget
+} from "./economy.js";
 
-export const DEFAULT_BASE_COINS = 24;
+// Kept as named exports for callers that used the old tuning surface. PR C
+// deliberately has no unconditional base income; all canonical income comes
+// from residents or functional cells.
+export const DEFAULT_BASE_COINS = 0;
 export const DEFAULT_BASE_MAGIC = 0;
 
 // How many resolved turns keep their frozen facts available for backfilled Owl
@@ -57,58 +67,91 @@ export function appendTurnFacts(history = {}, facts) {
 function asMap(state, field) {
   return Object.fromEntries(Object.entries(state?.buildings ?? {}).map(([id, building]) => [
     id,
-    // Completed canonical buildings persist the system-derived metadata next
-    // to the original request grammar. Use that sealed metadata directly so
-    // the two storage representations are not mistaken for an ambiguous
-    // client grammar during later settlement.
-    building.metadata ?? (building.gameplay?.canonical ? building.gameplay : deriveGameplayBuilding(building))
+    // Completed canonical buildings persist system-derived units next to the
+    // original request grammar. Legacy category metadata is still derived for
+    // exposure compatibility, but is explicitly marked non-canonical and is
+    // never eligible for PR C economy/capacity.
+    (() => {
+      const persisted = building.metadata ?? (building.gameplay?.canonical ? building.gameplay : null);
+      const metadata = persisted ?? deriveGameplayBuilding(building);
+      // One committed card owns an explicit legacy effect. It is migrated by
+      // card id only; arbitrary old `magicOutput` fields never enter economy.
+      const systemOwnedIncome = building.specialStructure?.cardId === "moonlight-herb-plot"
+        ? { arcaneEnergy: Number.isFinite(Number(building.specialStructure.effect?.magicOutput))
+          ? Math.max(0, Number(building.specialStructure.effect.magicOutput))
+          : 0 }
+        : null;
+      return {
+        ...metadata,
+        canonical: metadata.canonical === true,
+        status: building.status ?? metadata.status ?? "active",
+        exposure: Number.isFinite(Number(building.exposure)) ? Number(building.exposure) : (metadata.exposure ?? 0),
+        ...(systemOwnedIncome ? { systemOwnedIncome } : {})
+      };
+    })()
   ]));
 }
 
 export function effectiveBuildings(metadataMap) {
-  return Object.entries(metadataMap).filter(([, metadata]) => metadata.status !== "sealed");
+  return Object.entries(metadataMap).filter(([, metadata]) => metadata.canonical === true
+    && (metadata.status == null || metadata.status === "completed")
+    && metadata.status !== "sealed");
 }
 
 export function settleResources(state, metadataMap, options = {}) {
-  const baseCoins = Number(options.baseCoins ?? DEFAULT_BASE_COINS);
-  const baseMagic = Number(options.baseMagic ?? DEFAULT_BASE_MAGIC);
-  const income = effectiveBuildings(metadataMap).reduce((acc, [, metadata]) => {
-    acc.coins += Number(metadata.coinOutput ?? 0);
-    acc.magic += Number(metadata.magicOutput ?? 0);
-    return acc;
-  }, { coins: baseCoins, magic: baseMagic });
+  const population = normalizePopulationState(state.gameplay?.population);
+  const income = incomeForCanonicalBuildings(Object.fromEntries(effectiveBuildings(metadataMap)), population, {
+    rules: options.economyRules ?? ECONOMY_RULES
+  });
+  // Optional baseCoins is an explicit harness hook only; the PR-C default is
+  // zero and no legacy coinOutput/magicOutput field is read.
+  const baseCoins = Number.isSafeInteger(Number(options.baseCoins)) && Number(options.baseCoins) >= 0
+    ? Number(options.baseCoins)
+    : DEFAULT_BASE_COINS;
+  const baseArcaneEnergy = Number.isFinite(Number(options.baseArcaneEnergy ?? options.baseMagic))
+    ? Math.max(0, Number(options.baseArcaneEnergy ?? options.baseMagic))
+    : DEFAULT_BASE_MAGIC;
+  income.coins += baseCoins;
+  income.arcaneEnergy += baseArcaneEnergy;
+  for (const [, metadata] of Object.entries(metadataMap)) {
+    if ((metadata.status == null || metadata.status === "completed") && metadata.systemOwnedIncome) {
+      income.arcaneEnergy += Math.max(0, Number(metadata.systemOwnedIncome.arcaneEnergy) || 0);
+    }
+  }
   // Coins have one authoritative source: `state.resources.coins`, which is
   // debited by construction/road/reservation mutations and credited by card
   // grants. `gameplay.resources` mirrors it at settlement. Basing the settle on
   // `state.resources.coins` means a construction spend is never wiped out by a
   // stale gameplay ledger value.
   const gameplayBefore = normalizeGameplayResources(state.gameplay?.resources);
-  const spendableCoins = Number.isFinite(Number(state.resources?.coins)) ? Number(state.resources.coins) : gameplayBefore.coins;
+  const outerCoins = Number(state.resources?.coins);
+  const spendableCoins = Number.isSafeInteger(outerCoins) && outerCoins >= 0 ? outerCoins : gameplayBefore.coins;
   const before = { ...gameplayBefore, coins: spendableCoins };
-  const after = normalizeGameplayResources({ coins: before.coins + income.coins, magic: before.magic + income.magic });
+  const after = normalizeGameplayResources({ coins: before.coins + income.coins, arcaneEnergy: before.arcaneEnergy + income.arcaneEnergy });
   return { before, after, income };
 }
 
 export function settlePopulation(state, metadataMap, options = {}) {
-  const capacities = { muggles: 0, wizards: 0 };
-  for (const [, metadata] of effectiveBuildings(metadataMap)) {
-    capacities.muggles += Number(metadata.muggleCapacity ?? 0);
-    capacities.wizards += Number(metadata.wizardCapacity ?? 0);
-  }
+  const capacities = effectiveBuildings(metadataMap).reduce((total, [, metadata]) => {
+    const current = capacitiesFromCanonicalUnits(metadata.units);
+    total.muggles += current.muggles;
+    total.wizards += current.wizards;
+    return total;
+  }, { muggles: 0, wizards: 0 });
   const before = normalizePopulationState(state.gameplay?.population);
-  const migrate = (bucket, capacity, rate) => {
-    const target = Math.min(capacity, bucket.current + Math.ceil(Math.max(0, capacity - bucket.current) * rate));
-    return { current: target, capacity };
-  };
-  const muggleRate = Number(options.muggleMigrationRate ?? 0.1);
-  const wizardRate = Number(options.wizardMigrationRate ?? 0.1);
+  const muggleTarget = supportedPopulationTarget(capacities.muggles, "muggles", options);
+  const wizardTarget = supportedPopulationTarget(capacities.wizards, "wizards", options);
+  const migrationRate = options.migrationRate;
+  const muggleRate = migrationRate ?? options.muggleMigrationRate ?? ECONOMY_RULES.defaultMigrationRate;
+  const wizardRate = migrationRate ?? options.wizardMigrationRate ?? ECONOMY_RULES.defaultMigrationRate;
   return {
     before,
     after: {
-      muggles: migrate(before.muggles, capacities.muggles, muggleRate),
-      wizards: migrate(before.wizards, capacities.wizards, wizardRate)
+      muggles: { ...migratePopulationBucket(before.muggles, muggleTarget, muggleRate), capacity: capacities.muggles },
+      wizards: { ...migratePopulationBucket(before.wizards, wizardTarget, wizardRate), capacity: capacities.wizards }
     },
-    capacityDelta: capacities
+    capacityDelta: capacities,
+    target: { muggles: muggleTarget, wizards: wizardTarget }
   };
 }
 
@@ -454,7 +497,7 @@ export function resolveTurn(state, input = {}, context = {}) {
     },
     resourceDelta: {
       coins: resourceSettlement.income.coins,
-      magic: resourceSettlement.income.magic
+      arcaneEnergy: resourceSettlement.income.arcaneEnergy
     },
     populationDelta: {
       muggles: {
@@ -501,7 +544,10 @@ export function resolveTurn(state, input = {}, context = {}) {
     resolvedAt,
     settledBy
   });
-  next.resources = { ...next.resources, coins: resourceSettlement.after.coins, magic: resourceSettlement.after.magic };
+  // Construction owns the outer coins ledger. Gameplay owns Arcane Energy;
+  // do not mirror it into construction resources or retain the legacy `magic`
+  // key as a second account.
+  next.resources = { coins: resourceSettlement.after.coins };
   next.turn = state.turn + 1;
   next.version = (next.version ?? 0) + 1;
 
@@ -531,7 +577,7 @@ function migrateGameplay(state) {
       turnDeadlineAt: null,
       nextTurnUnlockAt: null,
       scheduler: null,
-      resources: { coins, magic: 0 },
+      resources: { coins, arcaneEnergy: 0 },
       population: { muggles: { current: 0, capacity: 0 }, wizards: { current: 0, capacity: 0 } },
       arcaneOfficers: {},
       incidents: {},
@@ -547,6 +593,9 @@ function migrateGameplay(state) {
     };
   }
   const migrated = { ...existing };
+  // Normalize legacy `magic` on the first resolve; no legacy key is copied to
+  // the canonical state. The resource normalizer below also handles old
+  // persisted gameplay resources that have no explicit migration marker.
   const legacyRoster = migrated.wardens != null && Object.keys(migrated.wardens).length > 0;
   const newRoster = migrated.arcaneOfficers != null && Object.keys(migrated.arcaneOfficers).length > 0;
   if (legacyRoster && !newRoster) {

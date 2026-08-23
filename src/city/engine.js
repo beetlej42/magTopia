@@ -2,6 +2,7 @@ import { completeAssetPrompt, normalizeConnectionRequest, normalizeConstructionP
 import { appendEvent, cloneCityState } from "./state.js";
 import { previewConnectionBetween, previewConstruction } from "./solver.js";
 import { deriveGameplayBuilding } from "../gameplay/building-metadata.js";
+import { incomeForCanonicalBuildings } from "../gameplay/economy.js";
 
 export function createEngineContext(options = {}) {
   const sequences = new Map();
@@ -253,20 +254,14 @@ function advanceTime(currentState, input, context) {
 }
 
 export function calculateDailyIncome(state) {
-  // Coins-only authoritative economy. The legacy timber/stone production
-  // ledger was consolidated away; only coins feed construction and gameplay.
-  const income = { coins: 24 };
-  for (const building of Object.values(state.buildings)) {
-    const attributes = building.program?.attributes ?? {};
-    income.coins += Number(attributes.coinOutput ?? defaultCoinOutput(building.program?.purpose));
-  }
-  return income;
-}
-
-function defaultCoinOutput(purpose) {
-  if (purpose === "residential") return 6;
-  if (["workshop", "visitor_service", "commercial"].includes(purpose)) return 12;
-  return 4;
+  // Compatibility preview only: authoritative resource mutation happens in
+  // gameplay.resolveTurn(). This function deliberately reads canonical units
+  // and returns the same shape as the PR-C economy, never old coinOutput or
+  // category defaults.
+  const metadata = Object.fromEntries(Object.entries(state.buildings ?? {})
+    .filter(([, building]) => building.status === "completed" && building.gameplay?.canonical)
+    .map(([id, building]) => [id, building.gameplay]));
+  return incomeForCanonicalBuildings(metadata, state.gameplay?.population ?? {});
 }
 
 function applyCompletedBuilding(next, { proposal, preview, buildingId, assetId, resourcesAlreadyDebited = false }, context) {

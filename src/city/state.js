@@ -38,7 +38,7 @@ export function createCityState(worldContract, options = {}) {
       turnDeadlineAt: null,
       nextTurnUnlockAt: null,
       scheduler: null,
-      resources: { coins: (options.resources?.coins ?? 600), magic: 0 },
+      resources: { coins: (options.resources?.coins ?? 600), arcaneEnergy: 0 },
       population: {
         muggles: { current: 0, capacity: 0 },
         wizards: { current: 0, capacity: 0 }

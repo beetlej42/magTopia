@@ -572,7 +572,7 @@ export function createOpenApiDocument(baseUrl) {
           properties: {
             turn: { type: "integer" },
             wallClock: { type: "object", nullable: true, additionalProperties: true },
-            resourceDelta: { type: "object", additionalProperties: true },
+            resourceDelta: { type: "object", properties: { coins: { type: "integer", minimum: 0 }, arcaneEnergy: { type: "number", minimum: 0 } }, required: ["coins", "arcaneEnergy"], additionalProperties: false },
             populationDelta: { type: "object", additionalProperties: true },
             buildingsStarted: { type: "array", items: { type: "string" } },
             buildingsCompleted: { type: "array", items: { type: "string" } },
@@ -683,7 +683,7 @@ export function createOpenApiDocument(baseUrl) {
                 nextTurnUnlockAt: { type: ["string", "null"] }
               }
             },
-            resourceDelta: { type: "object", properties: { factRef: { type: "string" }, coins: { type: "number" }, magic: { type: "number" } } },
+            resourceDelta: { type: "object", properties: { factRef: { type: "string" }, coins: { type: "integer", minimum: 0 }, arcaneEnergy: { type: "number", minimum: 0 } }, required: ["coins", "arcaneEnergy"] },
             populationDelta: { type: "object", additionalProperties: true },
             buildingsStarted: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, buildingId: { type: "string" }, name: { type: "string" }, archetype: { type: ["string", "null"] }, purpose: { type: ["string", "null"] } } } },
             buildingsCompleted: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, buildingId: { type: "string" }, name: { type: "string" }, archetype: { type: ["string", "null"] }, purpose: { type: ["string", "null"] } } } },

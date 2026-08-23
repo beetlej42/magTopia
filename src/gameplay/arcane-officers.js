@@ -60,6 +60,7 @@ export function hireArcaneOfficer(state, input = {}, context = {}) {
   });
   const nextState = {
     ...state,
+    resources: { ...(state.resources ?? {}), coins: coins - cost },
     gameplay: {
       ...state.gameplay,
       resources: { ...state.gameplay.resources, coins: coins - cost },
