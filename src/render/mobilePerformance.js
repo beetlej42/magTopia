@@ -24,7 +24,7 @@ export function detectMobileRenderProfile({
     pixelBudget,
     minPixelRatio,
     maxPixelRatio: Number(maxPixelRatio.toFixed(2)),
-    initialPixelRatio: Number(Math.min(maxPixelRatio, mobile ? 1.85 : 1.75).toFixed(2))
+    initialPixelRatio: Number(Math.min(maxPixelRatio, mobile ? 2 : 1.75).toFixed(2))
   };
 }
 
