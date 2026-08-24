@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { Pass, FullScreenQuad } from "three/examples/jsm/postprocessing/Pass.js";
+import { SMAAPass } from "three/examples/jsm/postprocessing/SMAAPass.js";
 
 export const STORYBOOK_LUT_SIZE = 32;
 
@@ -34,6 +35,17 @@ export class StorybookColorPass extends Pass {
   constructor({ strength = 0.78, lutSize = STORYBOOK_LUT_SIZE } = {}) {
     super();
     this.name = "StorybookColorPass";
+    this._gradeEnabled = true;
+    this._gradeStrength = strength;
+    Object.defineProperty(this, "enabled", {
+      configurable: true,
+      enumerable: true,
+      get: () => true,
+      set: (value) => {
+        this._gradeEnabled = Boolean(value);
+      }
+    });
+
     this.lutDay = createStorybookLut(lutSize, 0);
     this.lutNight = createStorybookLut(lutSize, 1);
     this.uniforms = {
@@ -75,27 +87,49 @@ export class StorybookColorPass extends Pass {
       depthWrite: false
     });
     this.fsQuad = new FullScreenQuad(this.material);
+    this.gradeTarget = new THREE.WebGLRenderTarget(1, 1, {
+      type: THREE.UnsignedByteType,
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      depthBuffer: false,
+      stencilBuffer: false
+    });
+    this.gradeTarget.texture.name = "StorybookColorPass.graded";
+    this.smaaPass = new SMAAPass(1, 1);
   }
 
   setStyle(style = {}, options = {}) {
     const state = calculateStorybookGradeState({
-      enabled: options.enabled ?? this.enabled,
-      strength: options.strength ?? this.uniforms.strength.value,
+      enabled: options.enabled ?? this._gradeEnabled,
+      strength: options.strength ?? this._gradeStrength,
       daylight: style.daylightFactor,
       night: style.nightFactor,
       twilight: style.twilightFactor
     });
-    this.enabled = state.enabled;
-    this.uniforms.strength.value = state.strength;
+    this._gradeEnabled = state.enabled;
+    this._gradeStrength = state.strength;
+    this.uniforms.strength.value = this._gradeEnabled ? this._gradeStrength : 0;
     this.uniforms.nightBlend.value = state.nightBlend;
     return state;
   }
 
-  render(renderer, writeBuffer, readBuffer) {
+  setSize(width, height) {
+    const resolvedWidth = Math.max(1, Math.round(width));
+    const resolvedHeight = Math.max(1, Math.round(height));
+    this.gradeTarget.setSize(resolvedWidth, resolvedHeight);
+    this.smaaPass.setSize(resolvedWidth, resolvedHeight);
+  }
+
+  render(renderer, writeBuffer, readBuffer, deltaTime, maskActive) {
     this.uniforms.tDiffuse.value = readBuffer.texture;
-    renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
-    if (this.clear) renderer.clear();
+    this.uniforms.strength.value = this._gradeEnabled ? this._gradeStrength : 0;
+    renderer.setRenderTarget(this.gradeTarget);
+    renderer.clear();
     this.fsQuad.render(renderer);
+
+    this.smaaPass.renderToScreen = this.renderToScreen;
+    this.smaaPass.clear = this.clear;
+    this.smaaPass.render(renderer, writeBuffer, this.gradeTarget, deltaTime, maskActive);
   }
 
   dispose() {
@@ -103,6 +137,8 @@ export class StorybookColorPass extends Pass {
     this.lutNight.dispose();
     this.material.dispose();
     this.fsQuad.dispose();
+    this.gradeTarget.dispose();
+    this.smaaPass.dispose();
   }
 }
 

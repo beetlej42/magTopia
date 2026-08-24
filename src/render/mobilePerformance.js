@@ -15,7 +15,7 @@ export function detectMobileRenderProfile({
   const pixelBudget = iosSafari ? 1_550_000 : mobile ? 1_650_000 : 3_200_000;
   const budgetRatio = Math.sqrt(pixelBudget / Math.max(1, width * height));
   const minPixelRatio = mobile ? 1.2 : 1;
-  const maxPixelRatio = Math.max(minPixelRatio, Math.min(devicePixelRatio, mobile ? 2 : 2, budgetRatio));
+  const maxPixelRatio = Math.max(minPixelRatio, Math.min(devicePixelRatio, 2, budgetRatio));
 
   return {
     mobile,
@@ -42,24 +42,28 @@ export function chooseAdaptiveQuality({
   bokehQuality = 1,
   bokehEnabled = true
 }) {
+  const highPixelRatio = Number(Math.min(maxPixelRatio, 2).toFixed(2));
+  const balancedPixelRatio = Number(Math.max(
+    minPixelRatio,
+    Math.min(highPixelRatio, 1.8)
+  ).toFixed(2));
+
+  // Keep the first quality experiment deliberately simple: SMAA, full-quality
+  // Bokeh and high-detail LOD stay fixed while DPR switches between two tiers.
+  // This lets device testing measure the visual/performance tradeoff directly.
   let nextPixelRatio = pixelRatio;
-  let nextBokehQuality = bokehQuality;
-  if (averageFrameMs > 22) {
-    if (bokehEnabled && nextBokehQuality > 0.75) nextBokehQuality = 0.5;
-    else nextPixelRatio -= 0.1;
-  } else if (averageFrameMs > 18.2) {
-    if (bokehEnabled && nextBokehQuality > 0.75) nextBokehQuality = 0.5;
-    else nextPixelRatio -= 0.05;
+  if (averageFrameMs > 18.2) {
+    nextPixelRatio = balancedPixelRatio;
   } else if (averageFrameMs < 15.5) {
-    if (bokehEnabled && nextBokehQuality < 0.75) nextBokehQuality = 1;
-    else nextPixelRatio += 0.05;
+    nextPixelRatio = highPixelRatio;
   }
-  nextPixelRatio = Math.max(minPixelRatio, Math.min(maxPixelRatio, Number(nextPixelRatio.toFixed(2))));
+
+  nextPixelRatio = Math.max(minPixelRatio, Math.min(maxPixelRatio, nextPixelRatio));
 
   return {
-    pixelRatio: nextPixelRatio,
+    pixelRatio: Number(nextPixelRatio.toFixed(2)),
     depthOfFieldScale: bokehEnabled ? 1 : 0,
-    bokehQuality: nextBokehQuality,
-    lodQualityScale: averageFrameMs > 24 ? 1.2 : averageFrameMs > 20 ? 1.1 : 1
+    bokehQuality: bokehEnabled ? 1 : bokehQuality,
+    lodQualityScale: 1
   };
 }

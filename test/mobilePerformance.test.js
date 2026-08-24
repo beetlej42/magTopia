@@ -26,37 +26,41 @@ test("Bokeh is on by default on mobile and remains explicitly controllable", () 
   assert.equal(shouldEnableBokeh({ requestedValue: "0", mobile: false }), false);
 });
 
-test("adaptive quality protects 60fps before restoring resolution", () => {
+test("adaptive quality uses high and balanced DPR tiers without degrading Bokeh or LOD", () => {
   assert.deepEqual(chooseAdaptiveQuality({
-    averageFrameMs: 23,
-    pixelRatio: 1.7,
-    minPixelRatio: 1,
-    maxPixelRatio: 1.8,
+    averageFrameMs: 19,
+    pixelRatio: 2,
+    minPixelRatio: 1.2,
+    maxPixelRatio: 2,
     bokehQuality: 1
   }), {
-    pixelRatio: 1.7,
+    pixelRatio: 1.8,
     depthOfFieldScale: 1,
-    bokehQuality: 0.5,
-    lodQualityScale: 1.1
+    bokehQuality: 1,
+    lodQualityScale: 1
   });
-  assert.deepEqual(chooseAdaptiveQuality({
-    averageFrameMs: 23,
-    pixelRatio: 1.7,
-    minPixelRatio: 1,
-    maxPixelRatio: 1.8,
-    bokehQuality: 0.5
-  }), {
-    pixelRatio: 1.6,
-    depthOfFieldScale: 1,
-    bokehQuality: 0.5,
-    lodQualityScale: 1.1
-  });
+
   assert.deepEqual(chooseAdaptiveQuality({
     averageFrameMs: 14,
+    pixelRatio: 1.8,
+    minPixelRatio: 1.2,
+    maxPixelRatio: 2,
+    bokehQuality: 1
+  }), {
+    pixelRatio: 2,
+    depthOfFieldScale: 1,
+    bokehQuality: 1,
+    lodQualityScale: 1
+  });
+});
+
+test("balanced tier respects device pixel-ratio caps", () => {
+  assert.deepEqual(chooseAdaptiveQuality({
+    averageFrameMs: 20,
     pixelRatio: 1.7,
-    minPixelRatio: 1,
-    maxPixelRatio: 1.8,
-    bokehQuality: 0.5
+    minPixelRatio: 1.2,
+    maxPixelRatio: 1.7,
+    bokehQuality: 1
   }), {
     pixelRatio: 1.7,
     depthOfFieldScale: 1,
@@ -65,35 +69,19 @@ test("adaptive quality protects 60fps before restoring resolution", () => {
   });
 });
 
-test("adaptive quality skips disabled Bokeh and reduces scene resolution immediately", () => {
+test("adaptive quality keeps Bokeh disabled when explicitly requested", () => {
   assert.deepEqual(chooseAdaptiveQuality({
-    averageFrameMs: 23,
-    pixelRatio: 1.7,
-    minPixelRatio: 1,
-    maxPixelRatio: 1.8,
+    averageFrameMs: 19,
+    pixelRatio: 2,
+    minPixelRatio: 1.2,
+    maxPixelRatio: 2,
     bokehQuality: 1,
     bokehEnabled: false
   }), {
-    pixelRatio: 1.6,
+    pixelRatio: 1.8,
     depthOfFieldScale: 0,
     bokehQuality: 1,
-    lodQualityScale: 1.1
-  });
-});
-
-test("adaptive quality keeps low-cost Bokeh active during severe frame pressure", () => {
-  assert.deepEqual(chooseAdaptiveQuality({
-    averageFrameMs: 34,
-    pixelRatio: 1.4,
-    minPixelRatio: 1,
-    maxPixelRatio: 1.8,
-    bokehQuality: 0.5,
-    bokehEnabled: true
-  }), {
-    pixelRatio: 1.3,
-    depthOfFieldScale: 1,
-    bokehQuality: 0.5,
-    lodQualityScale: 1.2
+    lodQualityScale: 1
   });
 });
 
