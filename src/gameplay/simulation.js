@@ -57,6 +57,12 @@ export const DEFAULT_BASE_MAGIC = 0;
 // this history.
 export const MAX_TURN_FACTS_HISTORY = 200;
 
+export function normalizeMaxRisks(value = 5) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 5;
+  return Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(number)));
+}
+
 // Records a freshly frozen settlement into the per-turn history, keeping the
 // most recent MAX_TURN_FACTS_HISTORY entries.
 export function appendTurnFacts(history = {}, facts) {
@@ -506,7 +512,7 @@ function resolveTurnInternal(state, input = {}, context = {}, profile = "product
   const legacyNextRisks = Object.entries(exposureChanges)
     .filter(([, change]) => change.to > 0)
     .sort((a, b) => b[1].pressure - a[1].pressure)
-    .slice(0, Number(options.maxRisks ?? 5))
+    .slice(0, normalizeMaxRisks(options.maxRisks))
     .map(([buildingId, change]) => ({ buildingId, exposure: change.to, pressure: change.pressure, concealment: change.concealment }));
 
   // PR-E risk inspection is an observable production projection, but does
@@ -516,7 +522,7 @@ function resolveTurnInternal(state, input = {}, context = {}, profile = "product
     metadataOf: (building) => metadataMap[building.id],
     typeIntensityResolver: options.typeIntensityResolver
   })
-    .filter((risk) => risk.authoritative && risk.magicLoad > 0 && !["sealed", "inactive"].includes(metadataMap[risk.buildingId]?.status))
+    .filter((risk) => risk.authoritative && risk.eligible && risk.magicLoad > 0)
     .map((risk) => ({
       ...risk,
       // Preserve the legacy projection fields for consumers that already
@@ -527,7 +533,7 @@ function resolveTurnInternal(state, input = {}, context = {}, profile = "product
       concealment: exposureChanges[risk.buildingId]?.concealment ?? 0
     }))
     .sort((a, b) => b.finalIncidentChance - a.finalIncidentChance || a.buildingId.localeCompare(b.buildingId))
-    .slice(0, Number(options.maxRisks ?? 5));
+    .slice(0, normalizeMaxRisks(options.maxRisks));
   // Legacy-only states retain their historical nextRisks shape for API
   // compatibility. As soon as canonical buildings exist, the projection is
   // exclusively the authoritative PR-E snapshot.
@@ -609,7 +615,6 @@ function resolveTurnInternal(state, input = {}, context = {}, profile = "product
     outcomes: assignmentSettlement.outcomes,
     sealedBuildings,
     nextRisks,
-    spatialRisks: spatialRiskSnapshot,
     cardOfferId: cardStateFacts.cardOfferId,
     offeredCardIds: cardStateFacts.offeredCardIds,
     selectedCardId: cardStateFacts.selectedCardId,

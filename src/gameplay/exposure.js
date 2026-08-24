@@ -93,6 +93,14 @@ function canonicalMetadataFor(building, options = {}) {
   return null;
 }
 
+function lifecycleStatus(building, metadata) {
+  return String(building?.status ?? metadata?.status ?? "active").toLowerCase();
+}
+
+function isEligibleLifecycle(status) {
+  return status === "active" || status === "completed";
+}
+
 function stateBuildings(state) {
   return Object.entries(state?.buildings ?? {}).map(([id, building]) => ({
     ...building,
@@ -185,7 +193,7 @@ function sourceArea(metadata, building, state) {
  */
 export function calculateLocalMagicRatio(state, building, options = {}) {
   const targetMetadata = canonicalMetadataFor(building, options);
-  if (!targetMetadata) return 0;
+  if (!targetMetadata || !isEligibleLifecycle(lifecycleStatus(building, targetMetadata))) return 0;
   const contributions = contributionDetails(state, building, options);
   const weightedArea = contributions.reduce((total, entry) => total + entry.weightedArea, 0);
   const weightedMagicArea = contributions.reduce((total, entry) => total + entry.weightedMagicArea, 0);
@@ -224,7 +232,7 @@ function contributionDetails(state, building, options = {}) {
     : [building, ...buildings];
   for (const candidate of candidates) {
     const metadata = canonicalMetadataFor(candidate, options);
-    if (!metadata || metadata.status === "sealed" || candidate.status === "sealed") continue;
+    if (!metadata || !isEligibleLifecycle(lifecycleStatus(candidate, metadata))) continue;
     const area = sourceArea(metadata, candidate, state);
     if (!(area > 0)) continue;
     const distance = footprintDistance(building, candidate, state);
@@ -258,19 +266,23 @@ export function inspectBuildingRisk(state, buildingOrId, options = {}) {
     : buildingOrId;
   const buildingId = String(building?.id ?? buildingOrId ?? "");
   const metadata = canonicalMetadataFor(building, options);
+  const lifecycle = lifecycleStatus(building, metadata);
+  const eligible = isEligibleLifecycle(lifecycle);
   const details = magicLoadDetails(metadata, options, { state, building });
-  const contributions = metadata ? contributionDetails(state, building, options) : [];
+  const contributions = metadata && eligible ? contributionDetails(state, building, options) : [];
   const weightedArea = contributions.reduce((total, entry) => total + entry.weightedArea, 0);
   const weightedMagicArea = contributions.reduce((total, entry) => total + entry.weightedMagicArea, 0);
   const finiteTotals = Number.isFinite(weightedArea) && Number.isFinite(weightedMagicArea);
   const localRatio = finiteTotals && weightedArea > 0 ? weightedMagicArea / weightedArea : 0;
   const tier = riskTierForLoad(details);
-  const baseRisk = baseRiskForMagicLoad(details);
+  const baseRisk = eligible ? baseRiskForMagicLoad(details) : 0;
   const modifier = spatialRiskModifier(localRatio);
   return {
     buildingId,
     authoritative: Boolean(metadata),
-    status: metadata ? "ok" : "UNSUPPORTED_LEGACY_METADATA",
+    status: eligible ? (metadata ? "ok" : "UNSUPPORTED_LEGACY_METADATA") : lifecycle,
+    eligible,
+    skipReason: eligible ? null : "BUILDING_LIFECYCLE_NOT_ELIGIBLE",
     radius: options.radius ?? EXPOSURE_RADIUS,
     magicLoad: details.magicLoad,
     magicLoadBreakdown: details.units,
@@ -281,8 +293,8 @@ export function inspectBuildingRisk(state, buildingOrId, options = {}) {
     baseRiskPercent: baseRisk * 100,
     localMagicRatio: localRatio,
     spatialModifier: modifier,
-    finalIncidentChance: baseRisk * modifier,
-    finalIncidentChancePercent: baseRisk * modifier * 100,
+    finalIncidentChance: eligible ? baseRisk * modifier : 0,
+    finalIncidentChancePercent: eligible ? baseRisk * modifier * 100 : 0,
     weightedArea: finiteTotals ? weightedArea : 0,
     weightedMagicArea: finiteTotals ? weightedMagicArea : 0,
     contributions

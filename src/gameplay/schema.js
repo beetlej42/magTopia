@@ -626,8 +626,15 @@ export function normalizeTurnFacts(value = {}) {
     rolls: [...(value.rolls ?? [])].map(normalizeRollRecord),
     outcomes: [...(value.outcomes ?? [])].map((entry) => ({ ...entry })),
     sealedBuildings: [...(value.sealedBuildings ?? [])],
-    nextRisks: [...(value.nextRisks ?? [])].map((entry) => ({ ...entry })),
-    spatialRisks: [...(value.spatialRisks ?? [])].map((entry) => ({ ...entry })),
+    nextRisks: [...(value.nextRisks ?? [])].map((entry) => ({
+      ...entry,
+      ...(Array.isArray(entry.magicLoadBreakdown)
+        ? { magicLoadBreakdown: entry.magicLoadBreakdown.map((unit) => ({ ...unit })) }
+        : {}),
+      ...(Array.isArray(entry.contributions)
+        ? { contributions: entry.contributions.map((contribution) => ({ ...contribution })) }
+        : {})
+    })),
     cardOfferId: value.cardOfferId == null ? null : String(value.cardOfferId),
     offeredCardIds: [...(value.offeredCardIds ?? [])].map(String),
     selectedCardId: value.selectedCardId == null ? null : String(value.selectedCardId),

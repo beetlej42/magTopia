@@ -10,8 +10,8 @@ import {
   neighborhoodConcealment,
   spatialDistanceWeight
 } from "../src/gameplay/exposure.js";
-import { resolveTurn } from "../src/gameplay/simulation.js";
-import { normalizeGameplayBuilding } from "../src/gameplay/schema.js";
+import { normalizeMaxRisks, resolveTurn } from "../src/gameplay/simulation.js";
+import { deepFreeze, normalizeGameplayBuilding, normalizeTurnFacts } from "../src/gameplay/schema.js";
 
 function building(id, cells, extra = {}) {
   return { id, footprintCells: cells, status: "completed", ...extra };
@@ -196,13 +196,72 @@ test("production TurnFacts expose canonical spatial risks and ordinary cover low
   }
   assert.ok(diluted.localMagicRatio < bare.localMagicRatio);
   assert.ok(diluted.finalIncidentChance < bare.finalIncidentChance);
-  assert.deepEqual(alone.facts.spatialRisks, alone.facts.nextRisks);
+  assert.equal("spatialRisks" in alone.facts, false);
 
   const relabeled = productionState(true);
   relabeled.districtId = "different-district";
   relabeled.buildings.greenhouse.blockId = "different-block";
   const relabeledResult = resolveTurn(relabeled, {}, productionContext());
   assert.equal(relabeledResult.facts.nextRisks.find((risk) => risk.buildingId === "greenhouse").finalIncidentChance, diluted.finalIncidentChance);
+});
+
+test("sealed and inactive canonical buildings are omitted from production risk projection", () => {
+  for (const status of ["sealed", "inactive"]) {
+    const state = productionState();
+    state.buildings.greenhouse.status = status;
+    const inspected = inspectBuildingRisk(state, "greenhouse", {
+      metadataOf: (candidate) => candidate.gameplay
+    });
+    assert.equal(inspected.eligible, false);
+    assert.equal(inspected.finalIncidentChance, 0);
+    const result = resolveTurn(state, {}, productionContext());
+    assert.equal(result.error, null);
+    assert.equal(result.facts.nextRisks.some((risk) => risk.buildingId === "greenhouse"), false);
+  }
+});
+
+test("a canonical building sealed during settlement is omitted from next risks", () => {
+  const state = productionState();
+  state.buildings.greenhouse.exposure = 99;
+  const result = resolveTurn(state, {}, {
+    ...productionContext(),
+    options: { modifier: 1 }
+  });
+  assert.equal(result.error, null);
+  assert.equal(result.nextState.buildings.greenhouse.status, "sealed");
+  assert.equal(result.facts.nextRisks.some((risk) => risk.buildingId === "greenhouse"), false);
+});
+
+test("maxRisks is a stable non-negative integer boundary", () => {
+  assert.equal(normalizeMaxRisks(), 5);
+  assert.equal(normalizeMaxRisks(Number.NaN), 5);
+  assert.equal(normalizeMaxRisks(-2), 0);
+  assert.equal(normalizeMaxRisks(2.9), 2);
+  const result = resolveTurn(productionState(true), {}, {
+    ...productionContext(),
+    options: { maxRisks: -1 }
+  });
+  assert.equal(result.error, null);
+  assert.deepEqual(result.facts.nextRisks, []);
+});
+
+test("turn-fact risk normalization owns nested audit records", () => {
+  const input = {
+    nextRisks: [{
+      buildingId: "greenhouse",
+      magicLoadBreakdown: [{ purpose: "greenhouse", magicLoad: 4 }],
+      contributions: [{ buildingId: "greenhouse", weightedArea: 1 }]
+    }]
+  };
+  const normalized = normalizeTurnFacts(input);
+  assert.notEqual(normalized.nextRisks[0], input.nextRisks[0]);
+  assert.notEqual(normalized.nextRisks[0].magicLoadBreakdown, input.nextRisks[0].magicLoadBreakdown);
+  assert.notEqual(normalized.nextRisks[0].magicLoadBreakdown[0], input.nextRisks[0].magicLoadBreakdown[0]);
+  assert.notEqual(normalized.nextRisks[0].contributions, input.nextRisks[0].contributions);
+  assert.notEqual(normalized.nextRisks[0].contributions[0], input.nextRisks[0].contributions[0]);
+  deepFreeze(normalized);
+  assert.equal(Object.isFrozen(input.nextRisks[0].magicLoadBreakdown[0]), false);
+  assert.equal(Object.isFrozen(input.nextRisks[0].contributions[0]), false);
 });
 
 test("legacy category metadata is never promoted to authoritative PR-E load", () => {
