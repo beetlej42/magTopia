@@ -28,6 +28,7 @@ const SMOOTH_BOKEH_SHADER = {
     depthPacking: { value: 1 },
     quality: { value: 1 },
     bokehAmount: { value: 1 },
+    minimumBlurRadius: { value: 0 },
     direction: { value: new Vector2(1, 0) }
   },
   vertexShader: /* glsl */`
@@ -54,6 +55,7 @@ const SMOOTH_BOKEH_SHADER = {
     uniform float depthPacking;
     uniform float quality;
     uniform float bokehAmount;
+    uniform float minimumBlurRadius;
     uniform vec2 direction;
 
     float readSceneDepth(vec2 uv) {
@@ -95,7 +97,11 @@ const SMOOTH_BOKEH_SHADER = {
 
       float centerDistance = -viewZ;
       vec2 axis = vec2(direction.x, direction.y * aspect);
-      vec2 stepUv = axis * circleOfConfusion / 3.23076923;
+      // The first pass writes straight into a reduced-resolution target. Keep
+      // its sampling footprint at least one source texel wide so sub-pixel
+      // edges are low-pass filtered before they can alias into that grid.
+      float effectiveBlurRadius = max(circleOfConfusion, minimumBlurRadius);
+      vec2 stepUv = axis * effectiveBlurRadius / 3.23076923;
       float centerWeight = 0.22702703;
       float innerWeight = 0.31621622;
       float outerWeight = quality > 0.75 ? 0.07027027 : 0.0;
@@ -337,12 +343,14 @@ export class AdaptiveBokehPass extends Pass {
     this.uniforms.depthPacking.value = sharedDepthTexture ? 0 : 1;
     this.uniforms.nearClip.value = this.camera.near;
     this.uniforms.farClip.value = this.camera.far;
+    this.uniforms.minimumBlurRadius.value = 1 / Math.max(1, readBuffer.width);
     this.uniforms.direction.value.set(1, 0);
     renderer.setRenderTarget(this.blurTarget);
     renderer.clear();
     this.quad.render(renderer);
 
     this.uniforms.tColor.value = this.blurTarget.texture;
+    this.uniforms.minimumBlurRadius.value = 0;
     this.uniforms.direction.value.set(0, 1);
     renderer.setRenderTarget(this.bokehTarget);
     renderer.clear();
