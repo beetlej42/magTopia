@@ -14,8 +14,8 @@ test("iPhone Safari uses the largest DPR inside its post-processing pixel budget
 
   assert.equal(profile.iosSafari, true);
   assert.equal(profile.mobile, true);
-  assert.equal(profile.initialPixelRatio, 1.7);
-  assert.equal(profile.maxPixelRatio, 1.79);
+  assert.equal(profile.initialPixelRatio, 1.85);
+  assert.equal(profile.maxPixelRatio, 2);
   assert.ok(390 * 844 * profile.maxPixelRatio ** 2 <= profile.pixelBudget * 1.01);
 });
 
