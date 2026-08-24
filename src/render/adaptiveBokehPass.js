@@ -29,6 +29,8 @@ const SMOOTH_BOKEH_SHADER = {
     quality: { value: 1 },
     bokehAmount: { value: 1 },
     minimumBlurRadius: { value: 0 },
+    sourceTexelSize: { value: new Vector2(0, 0) },
+    downsamplePrefilter: { value: 0 },
     direction: { value: new Vector2(1, 0) }
   },
   vertexShader: /* glsl */`
@@ -56,6 +58,8 @@ const SMOOTH_BOKEH_SHADER = {
     uniform float quality;
     uniform float bokehAmount;
     uniform float minimumBlurRadius;
+    uniform vec2 sourceTexelSize;
+    uniform float downsamplePrefilter;
     uniform vec2 direction;
 
     float readSceneDepth(vec2 uv) {
@@ -80,6 +84,25 @@ const SMOOTH_BOKEH_SHADER = {
       return 1.0 - smoothstep(rejectStart, rejectEnd, closerDepthDelta);
     }
 
+    float colorLuma(vec3 color) {
+      return dot(color, vec3(0.2126, 0.7152, 0.0722));
+    }
+
+    vec4 prefilterDownsample(vec4 centerColor) {
+      if (downsamplePrefilter <= 0.0 || sourceTexelSize.y <= 0.0) return centerColor;
+      vec2 verticalOffset = vec2(0.0, sourceTexelSize.y * 0.75);
+      vec4 upperColor = texture2D(tColor, clamp(vUv + verticalOffset, vec2(0.001), vec2(0.999)));
+      vec4 lowerColor = texture2D(tColor, clamp(vUv - verticalOffset, vec2(0.001), vec2(0.999)));
+      float centerLuma = colorLuma(centerColor.rgb);
+      float localContrast = max(
+        abs(colorLuma(upperColor.rgb) - centerLuma),
+        abs(colorLuma(lowerColor.rgb) - centerLuma)
+      );
+      float edgeAmount = smoothstep(0.025, 0.14, localContrast) * downsamplePrefilter;
+      vec4 verticalAverage = centerColor * 0.5 + (upperColor + lowerColor) * 0.25;
+      return mix(centerColor, verticalAverage, edgeAmount * 0.8);
+    }
+
     void main() {
       float depth = readSceneDepth(vUv);
       if (maxblur <= 0.000001 || bokehAmount <= 0.000001) {
@@ -94,12 +117,14 @@ const SMOOTH_BOKEH_SHADER = {
         gl_FragColor = centerColor;
         return;
       }
+      centerColor = prefilterDownsample(centerColor);
 
       float centerDistance = -viewZ;
       vec2 axis = vec2(direction.x, direction.y * aspect);
       // The first pass writes straight into a reduced-resolution target. Keep
-      // its sampling footprint at least one source texel wide so sub-pixel
-      // edges are low-pass filtered before they can alias into that grid.
+      // its horizontal sampling footprint at least one source texel wide, then
+      // use the edge-aware vertical prefilter above so both axes are band-limited
+      // before high-frequency edges enter the reduced-resolution grid.
       float effectiveBlurRadius = max(circleOfConfusion, minimumBlurRadius);
       vec2 stepUv = axis * effectiveBlurRadius / 3.23076923;
       float centerWeight = 0.22702703;
@@ -344,6 +369,11 @@ export class AdaptiveBokehPass extends Pass {
     this.uniforms.nearClip.value = this.camera.near;
     this.uniforms.farClip.value = this.camera.far;
     this.uniforms.minimumBlurRadius.value = 1 / Math.max(1, readBuffer.width);
+    this.uniforms.sourceTexelSize.value.set(
+      1 / Math.max(1, readBuffer.width),
+      1 / Math.max(1, readBuffer.height)
+    );
+    this.uniforms.downsamplePrefilter.value = 1;
     this.uniforms.direction.value.set(1, 0);
     renderer.setRenderTarget(this.blurTarget);
     renderer.clear();
@@ -351,6 +381,8 @@ export class AdaptiveBokehPass extends Pass {
 
     this.uniforms.tColor.value = this.blurTarget.texture;
     this.uniforms.minimumBlurRadius.value = 0;
+    this.uniforms.sourceTexelSize.value.set(0, 0);
+    this.uniforms.downsamplePrefilter.value = 0;
     this.uniforms.direction.value.set(0, 1);
     renderer.setRenderTarget(this.bokehTarget);
     renderer.clear();
@@ -380,7 +412,7 @@ export class AdaptiveBokehPass extends Pass {
       focusRange: this.uniforms.focusRange.value,
       amount: this.uniforms.bokehAmount.value,
       effectScale: this.quality >= 0.75 ? 0.5 : 0.32,
-      filter: "separable-gaussian",
+      filter: "edge-aware-downsample+separable-gaussian",
       samplesPerAxis: this.quality >= 0.75 ? 5 : 3
     };
   }
