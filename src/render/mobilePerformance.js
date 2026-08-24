@@ -9,10 +9,13 @@ export function detectMobileRenderProfile({
 } = {}) {
   const iosSafari = IOS_WEBKIT_PATTERN.test(userAgent) && /WebKit/i.test(userAgent) && !/(?:CriOS|FxiOS|EdgiOS)/i.test(userAgent);
   const mobile = coarsePointer || Math.min(width, height) <= 820;
-  const pixelBudget = iosSafari ? 1_050_000 : mobile ? 1_150_000 : 3_200_000;
+
+  // Spend more of the recovered mobile GPU budget on edge clarity while
+  // retaining adaptive quality as the safety valve for sustained slow frames.
+  const pixelBudget = iosSafari ? 1_550_000 : mobile ? 1_650_000 : 3_200_000;
   const budgetRatio = Math.sqrt(pixelBudget / Math.max(1, width * height));
-  const minPixelRatio = 1;
-  const maxPixelRatio = Math.max(minPixelRatio, Math.min(devicePixelRatio, mobile ? 1.8 : 2, budgetRatio));
+  const minPixelRatio = mobile ? 1.2 : 1;
+  const maxPixelRatio = Math.max(minPixelRatio, Math.min(devicePixelRatio, mobile ? 2 : 2, budgetRatio));
 
   return {
     mobile,
@@ -21,7 +24,7 @@ export function detectMobileRenderProfile({
     pixelBudget,
     minPixelRatio,
     maxPixelRatio: Number(maxPixelRatio.toFixed(2)),
-    initialPixelRatio: Number(Math.min(maxPixelRatio, mobile ? 1.7 : 1.75).toFixed(2))
+    initialPixelRatio: Number(Math.min(maxPixelRatio, mobile ? 1.85 : 1.75).toFixed(2))
   };
 }
 
