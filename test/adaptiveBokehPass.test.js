@@ -33,7 +33,7 @@ test("adaptive bokeh reports main-pass depth reuse before any fallback depth ren
     focusRange: 4,
     amount: 1,
     effectScale: 0.5,
-    filter: "edge-aware-downsample+separable-gaussian",
+    filter: "separable-gaussian",
     samplesPerAxis: 5
   });
   assert.equal(pass.uniforms.depthPacking.value, 1);
