@@ -287,7 +287,9 @@ export function generateIncidents(state, metadataMap, roller, options = {}) {
       magicLoad: risk.magicLoad,
       baseRisk: risk.baseRisk,
       spatialModifier: risk.spatialModifier,
-      historicalRisk: Number(state.buildings?.[risk.buildingId]?.historicalRisk ?? 0)
+      historicalRisk: Number(state.buildings?.[risk.buildingId]?.historicalRisk ?? 0),
+      sourcePurpose: sourcePurposeForRisk(risk),
+      purposeWeights: purposeWeightsForRisk(risk)
     });
     if (!hit) continue;
     const id = risk.buildingId;
@@ -437,7 +439,7 @@ export function settleAssignments(state, incidents, assignments = [], roller, op
     const riskDelta = result.outcome === "critical_failure" ? 2 : result.outcome === "failure" ? 1 : 0;
     const afterRisk = Math.min(4, beforeRisk + riskDelta);
     normalized.push({ incidentId, arcaneOfficerId: officerId, ...(assignment.rationale != null ? { rationale: String(assignment.rationale) } : {}) });
-    rolls.push(normalizeRollRecord({ ...result, incidentId, arcaneOfficerId: officerId, historicalRiskBefore: beforeRisk, historicalRiskAfter: afterRisk, sealed: afterRisk >= 4 }));
+    rolls.push(normalizeRollRecord({ ...result, incidentId, arcaneOfficerId: officerId, historicalRiskBefore: beforeRisk, historicalRiskAfter: afterRisk, historicalRiskDelta: afterRisk - beforeRisk, sealed: afterRisk >= 4 }));
     outcomes.push({
       incidentId,
       buildingId: incident.buildingId,

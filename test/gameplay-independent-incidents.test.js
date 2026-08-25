@@ -44,6 +44,10 @@ test("all threshold rolls are consumed before any type roll", () => {
   generateIncidents(state, metadataFor(state), roller([0.01, 0.5, 0, 0, 0]), { incidentRolls: audit });
   assert.deepEqual(audit.map((entry) => entry.thresholdRoll), [0.01, 0.5]);
   assert.equal(audit[1].hit, false);
+  for (const entry of audit) {
+    assert.equal(entry.sourcePurpose, "greenhouse");
+    assert.deepEqual(entry.purposeWeights, { greenhouse: 1 });
+  }
 });
 
 test("fixed seed reproduces every incident and historical fact across multiple turns", () => {
@@ -114,7 +118,11 @@ test("building map insertion order does not affect seeded incidents or threshold
   const second = { ...first, buildings: Object.fromEntries(Object.entries(first.buildings).reverse()) };
   const metadataA = metadataFor(first);
   const metadataB = metadataFor(second);
-  const run = (state, metadata) => generateIncidents(state, metadata, roller([0.02, 0.04, 0.06, ...Array(12).fill(0.2)]), { createId: (prefix) => `${prefix}` });
+  const run = (state, metadata) => {
+    const incidentRolls = [];
+    const incidents = generateIncidents(state, metadata, roller([0.02, 0.04, 0.06, ...Array(12).fill(0.2)]), { createId: (prefix) => `${prefix}`, incidentRolls });
+    return { incidentRolls, incidents };
+  };
   assert.deepEqual(run(first, metadataA), run(second, metadataB));
 });
 
@@ -164,16 +172,26 @@ test("turn facts audit unaddressed failure exactly once and seal at risk four", 
 });
 
 test("a sealed building contributes no economy, housing/service capacity, or incident roll next turn", () => {
-  const state = stateWithBuildings(["magic", "house"]);
-  state.buildings.magic.historicalRisk = 4;
+  const state = stateWithBuildings(["magic", "house", "service"]);
+  state.buildings.magic.historicalRisk = 3;
   state.buildings.magic.gameplay = { canonical: true, units: [{ purpose: "residential", area: 10, magicRatio: 1 }] };
   state.buildings.house.gameplay = { canonical: true, units: [{ purpose: "residential", area: 10, magicRatio: 0 }] };
-  const result = resolveTurn(state, { force: true }, { roller: () => 1, now: () => "2026-01-01T00:00:00.000Z" });
+  state.buildings.service.gameplay = { canonical: true, units: [{ purpose: "public_service", area: 10, magicRatio: 0 }] };
+  state.gameplay.incidents.existing = { id: "existing", buildingId: "magic", type: "investigation", dc: 10, status: "open" };
+  const first = resolveTurn(state, { force: true }, { roller: () => 1, now: () => "2026-01-01T00:00:00.000Z" });
+  assert.equal(first.error, null);
+  assert.equal(first.nextState.buildings.magic.historicalRisk, 4);
+  assert.equal(first.nextState.buildings.magic.status, "sealed");
+  const result = resolveTurn(first.nextState, { force: true }, { roller: () => 1, now: () => "2026-01-01T00:00:00.000Z" });
   assert.equal(result.error, null);
-  assert.equal(result.nextState.buildings.magic.status, "sealed");
   assert.equal(result.facts.incidentRolls.some((entry) => entry.buildingId === "magic"), false);
-  assert.equal(result.facts.resourceDelta.coins, 0);
-  assert.equal(result.facts.populationDelta.muggles.capacity, 40);
+  const control = structuredClone(first.nextState);
+  delete control.buildings.magic;
+  control.cells["cell-0-0"].occupancy = null;
+  const controlResult = resolveTurn(control, { force: true }, { roller: () => 1, now: () => "2026-01-01T00:00:00.000Z" });
+  assert.deepEqual(result.facts.resourceDelta, controlResult.facts.resourceDelta);
+  assert.deepEqual(result.facts.populationDelta, controlResult.facts.populationDelta);
+  assert.equal(result.facts.publicService.details.some((entry) => entry.buildingId === "magic"), false);
 });
 
 test("system-field assignment injection rejects without changing the state digest", () => {
@@ -203,6 +221,7 @@ test("assigned failure and critical failure add one and two risk, including mult
   ] }, { roller: (() => { const rolls = [1, 0.6, 0]; return () => rolls.shift() ?? 0; })(), now: () => "2026-01-01T00:00:00.000Z" });
   assert.equal(result.error, null);
   assert.deepEqual(result.facts.rolls.map((roll) => roll.outcome), ["failure", "critical_failure"]);
+  assert.deepEqual(result.facts.rolls.map((roll) => roll.historicalRiskDelta), [1, 2]);
   assert.equal(result.nextState.buildings.a.historicalRisk, 3);
   assert.equal(result.facts.historicalRiskChanges.a.delta, 3);
   assert.deepEqual(result.facts.historicalRiskChanges.a.incidentIds, ["failure", "critical"]);

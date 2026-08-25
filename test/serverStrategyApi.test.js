@@ -496,6 +496,18 @@ test("OpenAPI advertises the strategy endpoints and schemas", async () => {
     for (const schema of ["StrategyIncident", "ArcaneOfficer", "StrategyAssignment", "StrategyAssignmentsRequest", "StrategyResolveRequest", "TurnFacts", "StrategyContext"]) {
       assert.ok(openapi.components.schemas[schema], `missing schema ${schema}`);
     }
+    const turnFacts = openapi.components.schemas.TurnFacts;
+    for (const field of ["incidentRolls", "historicalRiskChanges"]) assert.ok(turnFacts.properties[field], `TurnFacts missing ${field}`);
+    for (const field of ["incidentRolls", "historicalRiskChanges"]) assert.ok(turnFacts.required.includes(field), `TurnFacts must require ${field}`);
+    for (const field of ["historicalRiskBefore", "historicalRiskAfter", "historicalRiskDelta", "sealed"]) assert.ok(turnFacts.properties.rolls.items.properties[field], `rolls missing ${field}`);
+    for (const field of ["historicalRiskBefore", "historicalRiskAfter", "historicalRiskDelta", "sealed", "resolution"]) assert.ok(turnFacts.properties.outcomes.items.properties[field], `outcomes missing ${field}`);
+    const incidentRolls = turnFacts.properties.incidentRolls.items;
+    for (const field of ["sourcePurpose", "purposeWeights"]) {
+      assert.ok(incidentRolls.properties[field], `incidentRolls missing ${field}`);
+      assert.ok(incidentRolls.required.includes(field), `incidentRolls must require ${field}`);
+    }
+    const reportContext = openapi.components.schemas.ReportContext;
+    assert.ok(reportContext.properties.incidentRolls && reportContext.properties.historicalRiskChanges);
   } finally {
     await app.close();
   }

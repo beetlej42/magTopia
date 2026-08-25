@@ -560,6 +560,7 @@ export function normalizeRollRecord(value = {}) {
     total: clampNumber(value.total, 0, -100, 200),
     dc: [10, 14, 18].includes(dc) ? dc : 10,
     margin: clampNumber(value.margin, 0, -200, 200),
+    historicalRiskDelta: clampNumber(value.historicalRiskDelta, 0, -4, 4),
     outcome: String(value.outcome ?? "pending"),
     historicalRiskBefore: clampNumber(value.historicalRiskBefore, 0, 0, 4),
     historicalRiskAfter: clampNumber(value.historicalRiskAfter, 0, 0, 4),
