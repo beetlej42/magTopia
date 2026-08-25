@@ -17,6 +17,7 @@ import {
 } from "./exposure.js";
 import { incidentAttribute, incidentDefinition } from "./incidents.js";
 import { createRoller, pick, rollDice } from "./random.js";
+import { maintenanceForRoster, normalizeRecruitmentState } from "./arcane-officers.js";
 import { normalizeTurnSchedule } from "./turn.js";
 import {
   deepFreeze,
@@ -115,6 +116,9 @@ export function settleResources(state, metadataMap, options = {}) {
     : DEFAULT_BASE_MAGIC;
   if (!Number.isSafeInteger(income.coins + baseCoins)) throw new EconomyDataError("coin income exceeds the safe integer range");
   income.coins += baseCoins;
+  const maintenance = options.chargeOfficerMaintenance === true ? maintenanceForRoster(state, options) : { count: 0, rate: 0, total: 0 };
+  const maintenanceCharged = Math.min(beforeSafeCoins(state), maintenance.total);
+  const netIncome = { ...income, coins: income.coins - maintenanceCharged };
   if (!Number.isFinite(income.arcaneEnergy + baseArcaneEnergy) || income.arcaneEnergy + baseArcaneEnergy > Number.MAX_SAFE_INTEGER) {
     throw new EconomyDataError("arcane income exceeds the safe range");
   }
@@ -132,12 +136,17 @@ export function settleResources(state, metadataMap, options = {}) {
   }
   const spendableCoins = Number.isSafeInteger(outerCoins) && outerCoins >= 0 ? outerCoins : gameplayBefore.coins;
   const before = { ...gameplayBefore, coins: spendableCoins };
-  if (!Number.isSafeInteger(before.coins + income.coins)) throw new EconomyDataError("coin balance exceeds the safe integer range");
+  if (!Number.isSafeInteger(before.coins + netIncome.coins)) throw new EconomyDataError("coin balance exceeds the safe integer range");
   if (!Number.isFinite(before.arcaneEnergy + income.arcaneEnergy) || before.arcaneEnergy + income.arcaneEnergy > Number.MAX_SAFE_INTEGER) {
     throw new EconomyDataError("arcane balance exceeds the safe range");
   }
-  const after = normalizeGameplayResources({ coins: before.coins + income.coins, arcaneEnergy: before.arcaneEnergy + income.arcaneEnergy });
-  return { before, after, income };
+  const after = normalizeGameplayResources({ coins: Math.max(0, before.coins + netIncome.coins), arcaneEnergy: before.arcaneEnergy + netIncome.arcaneEnergy });
+  return { before, after, income, netIncome, maintenance: { ...maintenance, charged: maintenanceCharged, unpaid: maintenance.total - maintenanceCharged } };
+}
+
+function beforeSafeCoins(state) {
+  const value = Number(state?.resources?.coins);
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0;
 }
 
 export function settlePopulation(state, metadataMap, options = {}) {
@@ -351,9 +360,14 @@ export function resolveIncidentRoll({ incident, officer, modifier = 0, roller, o
   const definition = incidentDefinition(incident.type);
   const attribute = definition.attribute;
   const attributeValue = Number(officer?.[attribute] ?? 0);
-  const specialtyBonus = (officer?.specialties ?? []).includes(definition.specialty)
-    ? Number(options.specialtyBonus ?? 2)
-    : 0;
+  // New identities specialize in a building purpose. Legacy type-specialty
+  // archives remain readable, but cannot receive a purpose bonus when the
+  // incident carries the authoritative sourcePurpose.
+  const sourcePurpose = incident?.sourcePurpose == null ? null : String(incident.sourcePurpose);
+  const purposeSpecialty = officer?.specialty ?? ((officer?.specialties ?? []).length === 1 && ["residential", "commercial", "public_service", "production", "greenhouse"].includes(officer.specialties[0]) ? officer.specialties[0] : null);
+  const specialtyBonus = sourcePurpose != null
+    ? (purposeSpecialty === sourcePurpose ? Number(options.specialtyBonus ?? 2) : 0)
+    : ((officer?.specialties ?? []).includes(definition.specialty) ? Number(options.specialtyBonus ?? 2) : 0);
   const roll = rollDice(roller, 20);
   const dc = Number(incident.dc ?? incident.difficulty ?? 10);
   const modifierValue = Number(modifier ?? 0);
@@ -434,6 +448,12 @@ export function settleAssignments(state, incidents, assignments = [], roller, op
     if (!incident || !officer) continue;
     const result = resolveIncidentRoll({ incident, officer, modifier, roller, options });
     const outcome = applyOutcome(result.outcome, options);
+    const growthChance = result.outcome === "critical_success" ? Number(options.criticalGrowthChance ?? 0.2) : Number(options.growthChance ?? 0.08);
+    const growthRoll = roller.next();
+    const canGrow = ["success", "critical_success"].includes(result.outcome) && Number(officer?.[result.attribute] ?? 0) < Number(options.attributeCap ?? 5);
+    const gained = canGrow && growthRoll < growthChance ? 1 : 0;
+    const attributeBefore = Number(officer?.[result.attribute] ?? 0);
+    const attributeAfter = Math.min(Number(options.attributeCap ?? 5), attributeBefore + gained);
     const building = state.buildings?.[incident.buildingId] ?? {};
     const beforeRisk = Math.max(0, Math.min(4, Number(building.historicalRisk ?? 0)));
     const riskDelta = result.outcome === "critical_failure" ? 2 : result.outcome === "failure" ? 1 : 0;
@@ -454,6 +474,22 @@ export function settleAssignments(state, incidents, assignments = [], roller, op
       sealed: afterRisk >= 4,
       resolution: "assigned"
     });
+    const historyEntry = {
+      turn: state.turn,
+      incident: incident.id,
+      incidentId: incident.id,
+      building: incident.buildingId,
+      buildingId: incident.buildingId,
+      sourcePurpose: incident.sourcePurpose ?? null,
+      attribute: result.attribute,
+      outcome: result.outcome,
+      growthRoll,
+      growthChance,
+      before: attributeBefore,
+      after: attributeAfter,
+      gained
+    };
+    outcomes.at(-1).growth = { attribute: result.attribute, roll: growthRoll, chance: growthChance, before: attributeBefore, after: attributeAfter, gained };
     historicalRiskChanges[incident.buildingId] = {
       buildingId: incident.buildingId,
       before: historicalRiskChanges[incident.buildingId]?.before ?? beforeRisk,
@@ -463,7 +499,7 @@ export function settleAssignments(state, incidents, assignments = [], roller, op
       sealed: afterRisk >= 4
     };
     if (state.gameplay?.incidents?.[incidentId]) state.gameplay.incidents[incidentId] = { ...incident, status: outcome.incidentStatus };
-    if (state.gameplay?.arcaneOfficers?.[officerId]) state.gameplay.arcaneOfficers[officerId] = { ...officer, status: outcome.arcaneOfficerStatus };
+    if (state.gameplay?.arcaneOfficers?.[officerId]) state.gameplay.arcaneOfficers[officerId] = normalizeArcaneOfficer({ ...officer, status: outcome.arcaneOfficerStatus, [result.attribute]: attributeAfter, history: [...(officer.history ?? []), historyEntry] });
     if (state.buildings?.[incident.buildingId]) state.buildings[incident.buildingId] = {
       ...state.buildings[incident.buildingId], historicalRisk: afterRisk, ...(afterRisk >= 4 ? { status: "sealed" } : {})
     };
@@ -539,6 +575,7 @@ function resolveTurnInternal(state, input = {}, context = {}, profile = "product
       resources: normalizedResources,
       population: normalizePopulationState(gameplay.population),
       arcaneOfficers: Object.fromEntries(Object.entries(gameplay.arcaneOfficers ?? {}).map(([id, officer]) => [id, normalizeArcaneOfficer(officer)])),
+      arcaneOfficerRecruitment: normalizeRecruitmentState(gameplay.arcaneOfficerRecruitment),
       incidents: Object.fromEntries(Object.entries(gameplay.incidents ?? {}).map(([id, incident]) => [id, normalizeExposureIncident(incident)]))
     }
   };
@@ -565,7 +602,7 @@ function resolveTurnInternal(state, input = {}, context = {}, profile = "product
   let populationSettlement;
   try {
     metadataMap = asMap(next, "metadata");
-    resourceSettlement = settleResources(next, metadataMap, options);
+    resourceSettlement = settleResources(next, metadataMap, { ...options, chargeOfficerMaintenance: enableCards || profile === "production" });
     next.gameplay.resources = resourceSettlement.after;
     populationSettlement = settlePopulation(next, metadataMap, {
       ...options,
@@ -772,6 +809,7 @@ function resolveTurnInternal(state, input = {}, context = {}, profile = "product
       coins: resourceSettlement.income.coins,
       arcaneEnergy: resourceSettlement.income.arcaneEnergy
     },
+    officerMaintenance: resourceSettlement.maintenance,
     populationDelta: {
       muggles: {
         current: populationSettlement.after.muggles.current - populationSettlement.before.muggles.current,
@@ -856,6 +894,7 @@ function migrateGameplay(state) {
       resources: { coins, arcaneEnergy: 0 },
       population: { muggles: { current: 0, capacity: 0 }, wizards: { current: 0, capacity: 0 } },
       arcaneOfficers: {},
+      arcaneOfficerRecruitment: { schemaVersion: 1, window: null, candidates: {} },
       incidents: {},
       turnFacts: {},
       lastTurnFacts: null,
@@ -880,6 +919,7 @@ function migrateGameplay(state) {
   }
   delete migrated.wardens;
   if (migrated.turnFacts == null) migrated.turnFacts = {};
+  if (migrated.arcaneOfficerRecruitment == null) migrated.arcaneOfficerRecruitment = { schemaVersion: 1, window: null, candidates: {} };
   if (migrated.cardState == null) {
     migrated.cardState = {
       offer: null,

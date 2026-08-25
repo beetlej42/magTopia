@@ -478,20 +478,27 @@ export function normalizeArcaneOfficer(value = {}) {
   // suppression / coverUp vocabulary.
   const suppression = value.suppression ?? value.containment;
   const coverUp = value.coverUp ?? value.cover_up ?? value.concealment;
+  const rawSpecialty = value.specialty ?? (Array.isArray(value.specialties) && value.specialties.length === 1 ? value.specialties[0] : null);
+  const specialty = rawSpecialty == null ? null : rawSpecialty === "containment" ? "suppression" : rawSpecialty === "concealment" ? "cover_up" : String(rawSpecialty);
+  const specialties = Array.isArray(value.specialties) ? [...value.specialties].map((entry) => {
+    if (entry === "containment") return "suppression";
+    if (entry === "concealment") return "cover_up";
+    return String(entry);
+  }) : (specialty ? [specialty] : []);
   return {
     id: String(value.id ?? ""),
     name: String(value.name ?? ""),
     archetype: String(value.archetype ?? "trainee"),
+    appearanceSeed: value.appearanceSeed == null ? null : String(value.appearanceSeed),
+    visualRef: value.visualRef == null ? null : String(value.visualRef),
     investigation: clampNumber(value.investigation, 0, 0, 5),
     suppression: clampNumber(suppression, 0, 0, 5),
     coverUp: clampNumber(coverUp, 0, 0, 5),
-    specialties: Array.isArray(value.specialties) ? [...value.specialties].map((specialty) => {
-      if (specialty === "containment") return "suppression";
-      if (specialty === "concealment") return "cover_up";
-      return String(specialty);
-    }) : [],
+    specialty,
+    specialties,
     status,
-    hiredAtTurn: clampNumber(value.hiredAtTurn, 0, 0, Number.MAX_SAFE_INTEGER)
+    hiredAtTurn: clampNumber(value.hiredAtTurn, 0, 0, Number.MAX_SAFE_INTEGER),
+    history: Array.isArray(value.history) ? value.history.map(cloneAuditValue) : []
   };
 }
 
@@ -657,6 +664,7 @@ export function normalizeTurnFacts(value = {}) {
     turn: clampNumber(value.turn, 0, 0, Number.MAX_SAFE_INTEGER),
     wallClock: value.wallClock ? { ...value.wallClock } : null,
     resourceDelta: normalizeGameplayResources(value.resourceDelta),
+    officerMaintenance: value.officerMaintenance ? { count: clampNumber(value.officerMaintenance.count, 0, 0, Number.MAX_SAFE_INTEGER), rate: clampNumber(value.officerMaintenance.rate, 0, 0, Number.MAX_SAFE_INTEGER), total: clampNumber(value.officerMaintenance.total, 0, 0, Number.MAX_SAFE_INTEGER), charged: clampNumber(value.officerMaintenance.charged, 0, 0, Number.MAX_SAFE_INTEGER), unpaid: clampNumber(value.officerMaintenance.unpaid, 0, 0, Number.MAX_SAFE_INTEGER) } : { count: 0, rate: 0, total: 0, charged: 0, unpaid: 0 },
     populationDelta: normalizePopulationState(value.populationDelta, { allowSignedCurrent: true, allowSignedCapacity: true }),
     publicService: normalizePublicServiceFacts(value.publicService),
     buildingsStarted: [...(value.buildingsStarted ?? [])],

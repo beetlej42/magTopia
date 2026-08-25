@@ -530,18 +530,25 @@ export function createOpenApiDocument(baseUrl) {
         },
         ArcaneOfficer: {
           type: "object",
-            required: ["id", "name", "archetype", "investigation", "suppression", "cover_up", "specialties", "status"],
+            required: ["id", "name", "investigation", "suppression", "cover_up", "specialty", "specialties", "status"],
           properties: {
             id: { type: "string" },
             name: { type: "string" },
+            appearance_seed: { type: ["string", "null"] },
+            visual_ref: { type: ["string", "null"] },
             archetype: { type: "string" },
             investigation: { type: "integer", minimum: 0, maximum: 5 },
             suppression: { type: "integer", minimum: 0, maximum: 5 },
             cover_up: { type: "integer", minimum: 0, maximum: 5 },
+            specialty: { enum: ["residential", "commercial", "public_service", "production", "greenhouse", null] },
             specialties: { type: "array", items: { type: "string" } },
             status: { enum: ["available", "assigned", "unavailable"] },
             hired_at_turn: { type: "integer" }
           }
+        },
+        OfficerRecruitmentRequest: {
+          type: "object", additionalProperties: false, required: ["candidate_id", "expected_city_version"],
+          properties: { candidate_id: { type: "string", minLength: 1 }, expected_city_version: { type: "integer", minimum: 0 }, actor_note: { type: "string" } }
         },
         StrategyAssignment: {
           type: "object",
@@ -675,10 +682,11 @@ export function createOpenApiDocument(baseUrl) {
             playbook_url: { type: "string", description: "Stable URL of the authoritative MAGTOPIA Agent Playbook." },
             strategy: {
               type: "object",
-              required: ["incidents", "arcane_officers", "pending_assignments", "cards"],
+              required: ["incidents", "arcane_officers", "arcane_officer_recruitment", "pending_assignments", "cards"],
               properties: {
                 incidents: { type: "array", items: { $ref: "#/components/schemas/StrategyIncident" } },
                 arcane_officers: { type: "array", items: { $ref: "#/components/schemas/ArcaneOfficer" } },
+                arcane_officer_recruitment: { type: "object", additionalProperties: true },
                 pending_assignments: { type: "array", items: { type: "object", properties: { incident_id: { type: "string" }, arcane_officer_id: { type: "string" }, rationale: { type: ["string", "null"] } } } },
                 cards: { $ref: "#/components/schemas/StrategyCards" }
               }
@@ -991,6 +999,7 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}/strategy": { get: operation("Read the strategy context: open incidents, Arcane Officers, player card state, and the last frozen settlement facts", "strategy", null, { $ref: "#/components/schemas/StrategyContext" }) },
       "/cities/{city_id}/strategy/assignments": { post: commandOperation("Submit the Arcane Officer dispatch plan for the strategy phase", "strategy", { $ref: "#/components/schemas/StrategyAssignmentsRequest" }) },
       "/cities/{city_id}/strategy/resolve": { post: commandOperation("Request the single authoritative system settlement of the strategy phase", "strategy", { $ref: "#/components/schemas/StrategyResolveRequest" }) },
+      "/cities/{city_id}/strategy/recruit-officer": { post: commandOperation("Recruit one current system-generated Arcane Officer candidate", "strategy", { $ref: "#/components/schemas/OfficerRecruitmentRequest" }) },
       "/cards": { get: operation("Read the system-owned 12-card daily catalog", "cards", null, { type: "object", properties: { data: { type: "array", items: { $ref: "#/components/schemas/CardDefinition" } } } }) },
       "/cities/{city_id}/cards/current": { get: operation("Read the canonical three-card offer for the current turn", "cards", null, { type: "object", properties: { city_id: { type: "string" }, city_version: { type: "integer" }, turn: { type: "integer" }, turn_status: { type: "string" }, offer: { $ref: "#/components/schemas/CardOffer" }, choice: { $ref: "#/components/schemas/CardChoice" } } }) },
       "/cities/{city_id}/cards/select": { post: commandOperation("The player selects exactly one offered card for this turn", "cards", { $ref: "#/components/schemas/CardSelectRequest" }, { $ref: "#/components/schemas/CardSelectResponse" }) },

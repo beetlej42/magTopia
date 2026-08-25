@@ -45,6 +45,7 @@ export function createCityState(worldContract, options = {}) {
         wizards: { current: 0, capacity: 0 }
       },
       arcaneOfficers: {},
+      arcaneOfficerRecruitment: { schemaVersion: 1, window: null, candidates: {} },
       incidents: {},
       // Bounded per-turn history of the frozen settlement facts. Every resolved
       // turn keeps its facts here so an Agent can write a backfilled Owl Daily
