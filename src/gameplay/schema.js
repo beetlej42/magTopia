@@ -12,6 +12,17 @@ export const GAMEPLAY_PURPOSES = Object.freeze([
   "greenhouse"
 ]);
 export const MAGIC_RATIOS = Object.freeze([0, 0.25, 0.5, 0.75, 1]);
+// Authoritative intensity multipliers used by the unified spatial exposure
+// model. Gameplay grammar carries only purpose and discrete magicRatio. Any
+// prefab-specific override must come from a trusted system resolver at
+// inspection time; it is never persisted in a client-authored unit.
+export const FUNCTIONAL_TYPE_INTENSITY = Object.freeze({
+  residential: 1,
+  commercial: 2,
+  public_service: 3,
+  production: 4,
+  greenhouse: 4
+});
 export const GAMEPLAY_GRAMMAR_FIELDS = Object.freeze([
   "units",
   "functionalUnits",
@@ -615,7 +626,15 @@ export function normalizeTurnFacts(value = {}) {
     rolls: [...(value.rolls ?? [])].map(normalizeRollRecord),
     outcomes: [...(value.outcomes ?? [])].map((entry) => ({ ...entry })),
     sealedBuildings: [...(value.sealedBuildings ?? [])],
-    nextRisks: [...(value.nextRisks ?? [])].map((entry) => ({ ...entry })),
+    nextRisks: [...(value.nextRisks ?? [])].map((entry) => ({
+      ...entry,
+      ...(Array.isArray(entry.magicLoadBreakdown)
+        ? { magicLoadBreakdown: entry.magicLoadBreakdown.map((unit) => ({ ...unit })) }
+        : {}),
+      ...(Array.isArray(entry.contributions)
+        ? { contributions: entry.contributions.map((contribution) => ({ ...contribution })) }
+        : {})
+    })),
     cardOfferId: value.cardOfferId == null ? null : String(value.cardOfferId),
     offeredCardIds: [...(value.offeredCardIds ?? [])].map(String),
     selectedCardId: value.selectedCardId == null ? null : String(value.selectedCardId),
