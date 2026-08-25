@@ -51,12 +51,12 @@ test("a caller cannot hire the veteran archetype directly", () => {
 
 test("a veteran profile is only reachable through a trusted context profile", () => {
   const state = stateWithWizardPopulation(20);
-  const ctx = { ...context(), profile: { archetype: "veteran", label: "Veteran", investigation: 3, containment: 3, concealment: 3, specialties: ["investigation", "containment", "concealment"] } };
+  const ctx = { ...context(), profile: { archetype: "veteran", label: "Veteran", investigation: 3, suppression: 3, coverUp: 3, specialties: ["investigation", "suppression", "cover_up"] } };
   const result = hireArcaneOfficer(state, { id: "officer-1", name: "Cassian" }, ctx);
   assert.equal(result.accepted, true);
   assert.equal(result.nextState.gameplay.arcaneOfficers["officer-1"].archetype, "veteran");
   assert.equal(result.nextState.gameplay.arcaneOfficers["officer-1"].investigation, 3);
-  assert.deepEqual(result.nextState.gameplay.arcaneOfficers["officer-1"].specialties, ["investigation", "containment", "concealment"]);
+  assert.deepEqual(result.nextState.gameplay.arcaneOfficers["officer-1"].specialties, ["investigation", "suppression", "cover_up"]);
 });
 
 test("a caller cannot raise officer attributes through the hire input", () => {
@@ -65,21 +65,21 @@ test("a caller cannot raise officer attributes through the hire input", () => {
     id: "officer-1",
     name: "Would-Be Elite",
     investigation: 5,
-    containment: 5,
-    concealment: 5,
-    specialties: ["investigation", "containment", "concealment"]
+    suppression: 5,
+    coverUp: 5,
+    specialties: ["investigation", "suppression", "cover_up"]
   }, context());
   assert.equal(result.accepted, true);
   const officer = result.nextState.gameplay.arcaneOfficers["officer-1"];
   assert.equal(officer.investigation, 1, "trainee default, not the injected 5");
-  assert.equal(officer.containment, 1);
-  assert.equal(officer.concealment, 1);
+  assert.equal(officer.suppression, 1);
+  assert.equal(officer.coverUp, 1);
   assert.deepEqual(officer.specialties, []);
 });
 
 test("a trusted context profile can define a system-approved officer", () => {
   const state = stateWithWizardPopulation(20);
-  const ctx = { ...context(), profile: { label: "Field Marshal", investigation: 4, containment: 4, concealment: 4, specialties: ["investigation"] } };
+  const ctx = { ...context(), profile: { label: "Field Marshal", investigation: 4, suppression: 4, coverUp: 4, specialties: ["investigation"] } };
   const result = hireArcaneOfficer(state, { id: "officer-1", name: "Mira" }, ctx);
   assert.equal(result.accepted, true);
   assert.equal(result.nextState.gameplay.arcaneOfficers["officer-1"].investigation, 4);

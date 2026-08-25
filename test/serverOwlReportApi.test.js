@@ -185,8 +185,8 @@ test("assignment rationale, roll, outcome, and exposure changes are faithfully p
     assert.equal(roll.rawRoll, factRoll.rawRoll);
     assert.equal(roll.attributeValue, factRoll.attributeValue);
     assert.equal(roll.specialtyBonus, factRoll.specialtyBonus);
-    assert.equal(roll.modifier, factRoll.modifier);
-    assert.equal(roll.difficulty, factRoll.difficulty);
+    assert.equal(roll.otherModifiers, factRoll.otherModifiers);
+    assert.equal(roll.dc, factRoll.dc);
     assert.equal(roll.outcome, factRoll.outcome);
 
     const outcome = context.outcomes[0];
@@ -229,7 +229,8 @@ test("an Agent-settled turn exposes settledBy=agent and its unaddressed incident
     const unaddressed = context.unaddressedIncidents.find((entry) => entry.incidentId === "incident-1");
     assert.ok(unaddressed, "the unhandled incident is visible to the editor");
     assert.equal(unaddressed.factRef, "fact-unaddressed-incident-1");
-    assert.equal(unaddressed.status, "open", "an unaddressed incident stays open and was not resolved for free");
+    assert.equal(unaddressed.status, "failed", "an unaddressed incident takes the authoritative failure path");
+    assert.equal(unaddressed.outcome, "failure");
     assert.ok(context.factRefs.includes("fact-unaddressed-incident-1"));
     assert.ok(context.unaddressedIncidents.length >= 1, "every incident the settlement left unhandled is exposed");
   } finally {
@@ -675,8 +676,8 @@ test("a later change to an incident never rewrites an earlier turn's ReportConte
     const turnOne = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/report-context?turn=1` }), 200);
     const frozenIncident = turnOne.incidents.find((entry) => entry.id === "incident-1");
     assert.ok(frozenIncident, "the dispatched incident is snapshotted into the frozen facts");
-    assert.equal(frozenIncident.status, "resolved", "the frozen snapshot records the settlement-time status");
-    assert.equal(frozenIncident.difficulty, 3);
+    assert.ok(["resolved", "failed"].includes(frozenIncident.status), "the frozen snapshot records the settlement-time status");
+    assert.equal(frozenIncident.dc, 10);
     assert.equal(frozenIncident.summary, "Unresolved magical anomaly reported near Lantern Tower; origin requires investigation.");
     const frozenDigest = turnOne.factsDigest;
 

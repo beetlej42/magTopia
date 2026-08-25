@@ -68,6 +68,12 @@ function clampNumber(value, fallback, min, max) {
   return Math.min(max, Math.max(min, number));
 }
 
+function cloneAuditValue(value) {
+  if (Array.isArray(value)) return value.map(cloneAuditValue);
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, cloneAuditValue(entry)]));
+  return value;
+}
+
 /**
  * Normalize a v0.3 gameplay purpose.  Purpose aliases from the old
  * category model are deliberately not accepted here: callers must migrate
@@ -508,23 +514,33 @@ export function normalizeExposureIncident(value = {}) {
   if (!INCIDENT_TYPES.includes(type)) throw new Error(`Unsupported incident type: ${type}`);
   const status = String(value.status ?? "open");
   if (!INCIDENT_STATUSES.includes(status)) throw new Error(`Unsupported incident status: ${status}`);
+  const dc = [10, 14, 18].includes(Number(value.dc))
+    ? Number(value.dc)
+    : [10, 14, 18].includes(Number(value.difficulty)) ? Number(value.difficulty) : 10;
+  const difficultyTier = ({ 10: "normal", 14: "hard", 18: "severe" })[dc];
+  if (value.difficultyTier != null && !["normal", "hard", "severe"].includes(String(value.difficultyTier))) {
+    throw new Error(`Unsupported incident difficulty tier: ${String(value.difficultyTier)}`);
+  }
+  if (value.difficultyTier != null && String(value.difficultyTier) !== difficultyTier) {
+    throw new Error(`Incident difficulty tier ${String(value.difficultyTier)} does not match DC ${dc}`);
+  }
   return {
     id: String(value.id ?? ""),
     buildingId: String(value.buildingId ?? ""),
     type,
     attribute: type === "cover_up" ? "coverUp" : type,
-    dc: [10, 14, 18].includes(Number(value.dc ?? value.difficulty)) ? Number(value.dc ?? value.difficulty) : 10,
-    difficultyTier: [10, 14, 18].includes(Number(value.dc ?? value.difficulty))
-      ? ({ 10: "normal", 14: "hard", 18: "severe" }[Number(value.dc ?? value.difficulty)])
-      : String(value.difficultyTier ?? "normal"),
+    dc,
+    difficultyTier,
     severity: clampNumber(value.severity, 2, 1, 5),
     exposureAtCreation: clampNumber(value.exposureAtCreation, 0, 0, SEALED_EXPOSURE_THRESHOLD),
     historicalRiskAtCreation: clampNumber(value.historicalRiskAtCreation, 0, 0, 4),
-    sourceRisk: value.sourceRisk ? { ...value.sourceRisk } : null,
+    sourceRisk: value.sourceRisk ? cloneAuditValue(value.sourceRisk) : null,
+    sourcePurpose: value.sourcePurpose == null ? null : String(value.sourcePurpose),
+    purposeWeights: value.purposeWeights ? cloneAuditValue(value.purposeWeights) : null,
     typeRoll: value.typeRoll == null ? null : clampNumber(value.typeRoll, 0, 0, 1),
-    typeWeights: value.typeWeights ? { ...value.typeWeights } : null,
+    typeWeights: value.typeWeights ? cloneAuditValue(value.typeWeights) : null,
     dcRoll: value.dcRoll == null ? null : clampNumber(value.dcRoll, 0, 0, 1),
-    dcWeights: value.dcWeights ? { ...value.dcWeights } : null,
+    dcWeights: value.dcWeights ? cloneAuditValue(value.dcWeights) : null,
     summary: String(value.summary ?? ""),
     status,
     createdAtTurn: clampNumber(value.createdAtTurn, 0, 0, Number.MAX_SAFE_INTEGER)
@@ -537,7 +553,7 @@ export function normalizeRollRecord(value = {}) {
     incidentId: String(value.incidentId ?? ""),
     arcaneOfficerId: String(value.arcaneOfficerId ?? ""),
     attribute: String(value.attribute ?? ""),
-    rawRoll: clampNumber(value.rawRoll ?? value.roll, 0, 0, 20),
+    rawRoll: clampNumber(value.rawRoll ?? value.roll, 1, 1, 20),
     attributeValue: clampNumber(value.attributeValue, 0, 0, 5),
     specialtyBonus: clampNumber(value.specialtyBonus, 0, 0, 5),
     otherModifiers: clampNumber(value.otherModifiers ?? value.modifier, 0, -100, 100),
@@ -646,12 +662,12 @@ export function normalizeTurnFacts(value = {}) {
     buildingsCompleted: [...(value.buildingsCompleted ?? [])],
     exposureChanges: Object.fromEntries(Object.entries(value.exposureChanges ?? {}).map(([id, change]) => [id, { ...change }])),
     incidents: [...(value.incidents ?? [])].map(normalizeExposureIncident),
-    incidentRolls: [...(value.incidentRolls ?? [])].map((entry) => ({ ...entry })),
+    incidentRolls: [...(value.incidentRolls ?? [])].map(cloneAuditValue),
     unaddressedIncidents: [...(value.unaddressedIncidents ?? [])].map((entry) => ({ ...entry })),
     assignments: [...(value.assignments ?? [])].map((entry) => ({ ...entry })),
     rolls: [...(value.rolls ?? [])].map(normalizeRollRecord),
     outcomes: [...(value.outcomes ?? [])].map((entry) => ({ ...entry })),
-    historicalRiskChanges: Object.fromEntries(Object.entries(value.historicalRiskChanges ?? {}).map(([id, change]) => [id, { ...change }])),
+    historicalRiskChanges: Object.fromEntries(Object.entries(value.historicalRiskChanges ?? {}).map(([id, change]) => [id, cloneAuditValue(change)])),
     sealedBuildings: [...(value.sealedBuildings ?? [])],
     nextRisks: [...(value.nextRisks ?? [])].map((entry) => ({
       ...entry,

@@ -218,11 +218,26 @@ function weightedChoice(roller, weights) {
   return { value: Object.keys(weights).at(-1), roll };
 }
 
+function purposeWeightsForRisk(risk) {
+  const weights = {};
+  for (const unit of risk.magicLoadBreakdown ?? []) {
+    const purpose = String(unit.purpose ?? "");
+    const contribution = Math.max(0, Number(unit.magicLoad) || 0) || Math.max(0, Number(unit.area) || 0);
+    if (!purpose || contribution <= 0) continue;
+    weights[purpose] = (weights[purpose] ?? 0) + contribution;
+  }
+  const total = Object.values(weights).reduce((sum, value) => sum + value, 0);
+  if (!(total > 0)) return {};
+  return Object.fromEntries(Object.entries(weights).sort(([a], [b]) => a.localeCompare(b)).map(([purpose, value]) => [purpose, value / total]));
+}
+
 function incidentTypeWeights(risk) {
-  const purpose = risk.magicLoadBreakdown?.[0]?.purpose;
+  const purposeWeights = purposeWeightsForRisk(risk);
   const ratio = clampUnit(risk.localMagicRatio);
   const weights = Object.fromEntries(INCIDENT_TYPES.map((type) => [type, 1]));
-  for (const type of INCIDENT_TYPES) weights[type] += INCIDENT_PURPOSES[type][purpose] ?? 1;
+  for (const type of INCIDENT_TYPES) {
+    weights[type] += Object.entries(purposeWeights).reduce((sum, [purpose, share]) => sum + (INCIDENT_PURPOSES[type][purpose] ?? 1) * share, 0);
+  }
   // A high magic ratio makes active suppression somewhat more likely, while
   // a low ratio leaves ambiguity/cover-up relatively more likely. These are
   // weights only: no purpose is hard-bound to one incident type.
@@ -230,6 +245,11 @@ function incidentTypeWeights(risk) {
   weights.investigation += (1 - ratio);
   weights.cover_up += (1 - ratio) * 0.5;
   return weights;
+}
+
+function sourcePurposeForRisk(risk) {
+  const purposeWeights = purposeWeightsForRisk(risk);
+  return Object.entries(purposeWeights).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? null;
 }
 
 function difficultyWeights(risk, historicalRisk) {
@@ -293,11 +313,15 @@ export function generateIncidents(state, metadataMap, roller, options = {}) {
         spatialModifier: risk.spatialModifier,
         localMagicRatio: risk.localMagicRatio,
         magicLoad: risk.magicLoad,
+        sourcePurpose: sourcePurposeForRisk(risk),
+        purposeWeights: purposeWeightsForRisk(risk),
         thresholdRoll,
         typeWeights: incidentTypeWeights(risk),
         difficultyWeights: difficultyWeights(risk, historicalRisk)
       },
       typeRoll: typeChoice.roll,
+      sourcePurpose: sourcePurposeForRisk(risk),
+      purposeWeights: purposeWeightsForRisk(risk),
       typeWeights: incidentTypeWeights(risk),
       dcRoll: dcChoice.roll,
       dcWeights: difficultyWeights(risk, historicalRisk),
@@ -588,7 +612,7 @@ function resolveTurnInternal(state, input = {}, context = {}, profile = "product
       buildingId: incident.buildingId,
       type: incident.type,
       severity: incident.severity,
-      status: "open",
+      status: "failed",
       createdAtTurn: incident.createdAtTurn
     }));
   const historicalRiskChanges = { ...assignmentSettlement.historicalRiskChanges };
@@ -600,6 +624,12 @@ function resolveTurnInternal(state, input = {}, context = {}, profile = "product
     const beforeRisk = Math.max(0, Math.min(4, Number(building?.historicalRisk ?? 0)));
     const riskDelta = beforeRisk >= 4 ? 0 : 1;
     const afterRisk = Math.min(4, beforeRisk + riskDelta);
+    entry.historicalRiskBefore = beforeRisk;
+    entry.historicalRiskAfter = afterRisk;
+    entry.historicalRiskDelta = riskDelta;
+    entry.outcome = "failure";
+    entry.resolution = "unaddressed";
+    entry.sealed = afterRisk >= 4;
     const change = historicalRiskChanges[entry.buildingId] ?? {
       buildingId: entry.buildingId,
       before: beforeRisk,
@@ -690,17 +720,17 @@ function resolveTurnInternal(state, input = {}, context = {}, profile = "product
   // never rewrite an earlier turn's ReportContext.
   const factsIncidentsById = new Map();
   for (const incident of incidents) {
-    factsIncidentsById.set(incident.id, next.gameplay.incidents[incident.id] ?? incident);
+    factsIncidentsById.set(incident.id, normalizeExposureIncident(next.gameplay.incidents[incident.id] ?? incident));
   }
   for (const outcome of assignmentSettlement.outcomes) {
     if (factsIncidentsById.has(outcome.incidentId)) continue;
     const full = next.gameplay.incidents[outcome.incidentId];
-    if (full) factsIncidentsById.set(outcome.incidentId, full);
+    if (full) factsIncidentsById.set(outcome.incidentId, normalizeExposureIncident(full));
   }
   for (const entry of unaddressed) {
     if (factsIncidentsById.has(entry.incidentId)) continue;
     const full = next.gameplay.incidents[entry.incidentId];
-    if (full) factsIncidentsById.set(entry.incidentId, full);
+    if (full) factsIncidentsById.set(entry.incidentId, normalizeExposureIncident(full));
   }
   const factsIncidents = [...factsIncidentsById.values()].sort((a, b) => String(a.id).localeCompare(String(b.id)));
 

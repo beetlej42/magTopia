@@ -220,9 +220,9 @@ test("sealed and inactive canonical buildings are omitted from production risk p
   }
 });
 
-test("a canonical building sealed during settlement is omitted from next risks", () => {
+test("a canonical building sealed by historical risk is omitted from next risks", () => {
   const state = productionState();
-  state.buildings.greenhouse.exposure = 99;
+  state.buildings.greenhouse.historicalRisk = 4;
   const result = resolveTurn(state, {}, {
     ...productionContext(),
     options: { modifier: 1 }

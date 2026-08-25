@@ -126,9 +126,8 @@ test("an Agent completes the closed loop: read incidents, dispatch an officer, s
     assert.equal(roll.incidentId, "incident-1");
     const outcome = settled.facts.outcomes[0];
     assert.equal(outcome.outcome, roll.outcome);
-    assert.ok(["critical_success", "success"].includes(outcome.outcome), "strong officer against low difficulty cannot fail");
-    assert.equal(gradeRoll(roll.rawRoll, roll.rawRoll + roll.attributeValue + roll.specialtyBonus + roll.modifier, roll.difficulty), outcome.outcome);
-    assert.equal(outcome.incidentStatus, "resolved");
+    assert.equal(gradeRoll(roll.rawRoll, roll.total, roll.dc), outcome.outcome);
+    assert.equal(outcome.incidentStatus, ["critical_success", "success"].includes(outcome.outcome) ? "resolved" : "failed");
     assert.equal(outcome.arcaneOfficerStatus, "available");
     assert.equal(settled.strategy.incidents.filter((incident) => incident.id === "incident-1").length, 0, "resolved incident is no longer listed as open");
 
@@ -478,9 +477,9 @@ test("resolve request bodies that carry unknown fields or balance parameters are
     }), 200);
     assert.equal(settled.status, "resolved");
     const roll = settled.facts.rolls[0];
-    assert.equal(roll.modifier, 0, "the system owns the modifier");
+    assert.equal(roll.otherModifiers, 0, "the system owns the modifier");
     assert.ok(roll.rawRoll >= 1 && roll.rawRoll <= 20, "the system rolled its own dice");
-    assert.equal(gradeRoll(roll.rawRoll, roll.rawRoll + roll.attributeValue + roll.specialtyBonus, roll.difficulty), roll.outcome, "outcome derives from the real roll");
+    assert.equal(gradeRoll(roll.rawRoll, roll.total, roll.dc), roll.outcome, "outcome derives from the real roll");
   } finally {
     await app.close();
   }

@@ -398,6 +398,9 @@ export function createOpenApiDocument(baseUrl) {
             difficulty_tier: { enum: ["normal", "hard", "severe"] },
             severity: { type: "integer", minimum: 1, maximum: 5 },
             exposure_at_creation: { type: "number" },
+            historical_risk_at_creation: { type: "integer", minimum: 0, maximum: 4 },
+            historical_risk: { type: "integer", minimum: 0, maximum: 4 },
+            source_risk: { type: ["object", "null"], additionalProperties: true },
             summary: { type: "string" },
             status: { enum: ["open", "assigned", "resolved", "failed", "escalated"] },
             created_at_turn: { type: "integer" }
@@ -570,7 +573,7 @@ export function createOpenApiDocument(baseUrl) {
         TurnFacts: {
           type: "object",
           description: "Immutable system-generated settlement record. Agents read rolls, outcomes, and state changes here; they never author them.",
-          required: ["turn", "resourceDelta", "populationDelta", "publicService", "exposureChanges", "incidents", "assignments", "rolls", "outcomes", "sealedBuildings", "nextRisks"],
+          required: ["turn", "resourceDelta", "populationDelta", "publicService", "exposureChanges", "incidents", "incidentRolls", "unaddressedIncidents", "historicalRiskChanges", "assignments", "rolls", "outcomes", "sealedBuildings", "nextRisks"],
           properties: {
             turn: { type: "integer" },
             wallClock: { type: "object", nullable: true, additionalProperties: true },
@@ -606,7 +609,8 @@ export function createOpenApiDocument(baseUrl) {
             exposureChanges: { type: "object", additionalProperties: true },
             incidents: { type: "array", items: { $ref: "#/components/schemas/StrategyIncident" } },
             incidentRolls: { type: "array", description: "System-owned independent threshold roll for every eligible canonical MagicLoad building.", items: { type: "object", properties: { buildingId: { type: "string" }, finalIncidentChance: { type: "number" }, thresholdRoll: { type: "number" }, hit: { type: "boolean" }, magicLoad: { type: "number" }, baseRisk: { type: "number" }, spatialModifier: { type: "number" }, historicalRisk: { type: "integer" } } } },
-            unaddressedIncidents: { type: "array", items: { type: "object", properties: { incidentId: { type: "string" }, buildingId: { type: "string" }, type: { type: "string" }, severity: { type: "number" }, status: { type: "string" }, createdAtTurn: { type: "number" } } }, description: "Open incidents that were not assigned this turn; they take the uniform conservative unaddressed path." },
+            historicalRiskChanges: { type: "object", additionalProperties: { type: "object", properties: { buildingId: { type: "string" }, before: { type: "integer" }, after: { type: "integer" }, delta: { type: "integer" }, incidentIds: { type: "array", items: { type: "string" } }, sealed: { type: "boolean" } } } },
+            unaddressedIncidents: { type: "array", items: { type: "object", properties: { incidentId: { type: "string" }, buildingId: { type: "string" }, type: { type: "string" }, severity: { type: "number" }, status: { const: "failed" }, outcome: { const: "failure" }, resolution: { const: "unaddressed" }, historicalRiskBefore: { type: "integer" }, historicalRiskAfter: { type: "integer" }, historicalRiskDelta: { type: "integer" }, sealed: { type: "boolean" }, createdAtTurn: { type: "number" } } }, description: "Incidents left unassigned are settled once through the conservative failure path and recorded as failed." },
             assignments: { type: "array", items: { type: "object", properties: { incidentId: { type: "string" }, arcaneOfficerId: { type: "string" } } } },
             rolls: {
               type: "array",

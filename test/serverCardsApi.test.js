@@ -372,7 +372,7 @@ test("the officer card cannot inject stats or specialties and generates a named 
   assert.ok(officer, "recruited officer is stored on the roster");
   assert.ok(officer.name && !/^officer-\d+$/.test(officer.name), `officer has a real player-facing name, got ${officer.name}`);
   assert.ok(officer.archetype);
-  assert.ok(Number.isInteger(officer.investigation) && Number.isInteger(officer.containment) && Number.isInteger(officer.concealment));
+  assert.ok(Number.isInteger(officer.investigation) && Number.isInteger(officer.suppression) && Number.isInteger(officer.coverUp));
   assert.ok(officer.specialties.length <= 3, "specialties come from the system-owned archetype, not the client");
   assert.equal(officer.status, "available");
   assert.equal(selected.cardEffects.recruit.officer_name, officer.name);
@@ -915,8 +915,8 @@ test("Arcane Officer Special Duty Order adds a response slot without touching th
   const rollerB = createRoller({ seed: 42 });
   const baseRoll = settleAssignments(selected.nextState, [], [{ incidentId: "incident-1", arcaneOfficerId: "officer-vesper" }], rollerA, {});
   const policyRoll = settleAssignments(selected.nextState, [], [{ incidentId: "incident-1", arcaneOfficerId: "officer-vesper" }], rollerB, {});
-  assert.equal(baseRoll.rolls[0].modifier, 0, "no dice modifier without the policy");
-  assert.equal(policyRoll.rolls[0].modifier, 0, "the policy is a capacity increase, never a dice modifier");
+  assert.equal(baseRoll.rolls[0].otherModifiers, 0, "no dice modifier without the policy");
+  assert.equal(policyRoll.rolls[0].otherModifiers, 0, "the policy is a capacity increase, never a dice modifier");
   assert.equal(policyRoll.rolls[0].rawRoll, baseRoll.rolls[0].rawRoll, "the roll itself is unchanged by the policy");
   assert.equal(policyRoll.rolls[0].outcome, baseRoll.rolls[0].outcome);
 });

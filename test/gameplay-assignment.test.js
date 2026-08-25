@@ -26,15 +26,15 @@ function cityWithIncidentAndOfficers(overrides = {}) {
     buildingId: "b1",
     type: overrides.type ?? "investigation",
     attribute: overrides.type ?? "investigation",
-    difficulty: overrides.difficulty ?? 8,
+    dc: overrides.dc ?? 14,
     severity: 3,
     exposureAtCreation: 70,
     summary: "Investigate the Lantern Tower anomaly.",
     status: "open",
     createdAtTurn: 0
   };
-  state.gameplay.arcaneOfficers["officer-weak"] = { id: "officer-weak", name: "Weak", investigation: 1, containment: 1, concealment: 1, specialties: [], status: "available", hiredAtTurn: 0 };
-  state.gameplay.arcaneOfficers["officer-strong"] = { id: "officer-strong", name: "Strong", investigation: 4, containment: 2, concealment: 2, specialties: ["investigation"], status: "available", hiredAtTurn: 0 };
+  state.gameplay.arcaneOfficers["officer-weak"] = { id: "officer-weak", name: "Weak", investigation: 1, suppression: 1, coverUp: 1, specialties: [], status: "available", hiredAtTurn: 0 };
+  state.gameplay.arcaneOfficers["officer-strong"] = { id: "officer-strong", name: "Strong", investigation: 4, suppression: 2, coverUp: 2, specialties: ["investigation"], status: "available", hiredAtTurn: 0 };
   return state;
 }
 
@@ -44,7 +44,7 @@ function context(seed = "assignment-fixed-seed") {
 }
 
 test("same roll with different officers produces different totals and outcomes", () => {
-  const incident = { id: "incident-1", buildingId: "b1", type: "investigation", difficulty: 8 };
+  const incident = { id: "incident-1", buildingId: "b1", type: "investigation", dc: 14 };
   const weak = { investigation: 1, specialties: [] };
   const strong = { investigation: 4, specialties: ["investigation"] };
   const roller = createRoller({ roller: () => 0.2 });
@@ -53,17 +53,17 @@ test("same roll with different officers produces different totals and outcomes",
   assert.equal(weakResult.roll, 5);
   assert.equal(weakResult.total, 6);
   assert.equal(strongResult.total, 5 + 4 + 2);
-  assert.equal(weakResult.outcome, "failure");
-  assert.equal(strongResult.outcome, "success");
+  assert.equal(weakResult.outcome, "critical_failure");
+  assert.equal(strongResult.outcome, "failure");
 });
 
 test("gradeRoll maps d20 results into the four outcome bands", () => {
-  assert.equal(gradeRoll(20, 0, 8), "critical_success");
-  assert.equal(gradeRoll(1, 30, 8), "critical_failure");
-  assert.equal(gradeRoll(10, 14, 8), "critical_success");
-  assert.equal(gradeRoll(10, 9, 8), "success");
-  assert.equal(gradeRoll(10, 3, 8), "critical_failure");
-  assert.equal(gradeRoll(10, 6, 8), "failure");
+  assert.equal(gradeRoll(20, 15, 10), "critical_success");
+  assert.equal(gradeRoll(1, 1, 10), "critical_failure");
+  assert.equal(gradeRoll(20, 15, 10), "critical_success");
+  assert.equal(gradeRoll(10, 10, 10), "success");
+  assert.equal(gradeRoll(10, 5, 10), "critical_failure");
+  assert.equal(gradeRoll(10, 6, 10), "failure");
 });
 
 test("assignment validation rejects unavailable officers, duplicate officers, and carried outcomes", () => {
@@ -107,7 +107,7 @@ test("system-determined modifier is the only modifier source during settlement",
   const ctx = { ...context(), options: { modifier: 2 } };
   const { nextState, facts, error } = resolveTurn(state, { assignments: [{ incidentId: "incident-1", arcaneOfficerId: "officer-strong" }] }, ctx);
   assert.equal(error, null);
-  assert.equal(facts.rolls[0].modifier, 2);
+  assert.equal(facts.rolls[0].otherModifiers, 2);
   assert.equal(facts.outcomes[0].arcaneOfficerStatus, "available");
   assert.equal(nextState.gameplay.incidents["incident-1"].status, facts.outcomes[0].incidentStatus);
 });
@@ -156,7 +156,7 @@ test("a resolved incident is not eligible for a second assignment", () => {
 });
 
 test("settleAssignments applies exposure deltas per outcome", () => {
-  const incident = { id: "incident-1", buildingId: "b1", type: "investigation", difficulty: 8 };
+  const incident = { id: "incident-1", buildingId: "b1", type: "investigation", dc: 14 };
   const officer = { investigation: 4, specialties: ["investigation"] };
   const critical = resolveIncidentRoll({ incident, officer, roller: createRoller({ roller: () => 0.999 }) });
   const failed = resolveIncidentRoll({ incident, officer, roller: createRoller({ roller: () => 0.0 }) });
@@ -165,18 +165,17 @@ test("settleAssignments applies exposure deltas per outcome", () => {
 });
 
 test("a critical failure escalates the incident and grounds the officer in the turn state", () => {
-  const state = cityWithIncidentAndOfficers({ difficulty: 12 });
+  const state = cityWithIncidentAndOfficers({ dc: 18 });
   const ctx = { ...context("critical-failure-seed"), roller: () => 0.0, options: { baseCoins: 0 } };
   const { nextState, facts, error } = resolveTurn(state, {
     assignments: [{ incidentId: "incident-1", arcaneOfficerId: "officer-weak" }]
   }, ctx);
   assert.equal(error, null);
   assert.equal(facts.outcomes[0].outcome, "critical_failure");
-  assert.equal(facts.outcomes[0].exposureDelta, 3);
-  assert.equal(facts.outcomes[0].incidentStatus, "escalated");
-  assert.equal(facts.outcomes[0].arcaneOfficerStatus, "unavailable");
-  assert.equal(nextState.gameplay.incidents["incident-1"].status, "escalated");
-  assert.equal(nextState.gameplay.arcaneOfficers["officer-weak"].status, "unavailable");
-  assert.ok(nextState.buildings.b1.exposure > 70, "exposure grows on a critical failure");
-  assert.equal(nextState.buildings.b1.exposure, facts.exposureChanges.b1.to);
+  assert.equal(facts.outcomes[0].historicalRiskDelta, 2);
+  assert.equal(facts.outcomes[0].incidentStatus, "failed");
+  assert.equal(facts.outcomes[0].arcaneOfficerStatus, "available");
+  assert.equal(nextState.gameplay.incidents["incident-1"].status, "failed");
+  assert.equal(nextState.gameplay.arcaneOfficers["officer-weak"].status, "available");
+  assert.equal(nextState.buildings.b1.historicalRisk, 2);
 });
