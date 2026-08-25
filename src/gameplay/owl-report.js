@@ -133,6 +133,9 @@ export function buildReportContext({ cityId = null, state = {}, facts, options =
     return { ...entry, factRef: factRef("outcome", entry.incidentId), arcaneOfficerName: officerName(entry.arcaneOfficerId) };
   });
 
+  const incidentRolls = (facts.incidentRolls ?? []).map((entry) => ({ ...entry }));
+  const historicalRiskChanges = Object.fromEntries(Object.entries(facts.historicalRiskChanges ?? {}).map(([id, change]) => [id, { ...change, incidentIds: [...(change.incidentIds ?? [])] }]));
+
   const sealedBuildings = (facts.sealedBuildings ?? []).map((buildingId) => {
     const id = String(buildingId);
     refs.add(factRef("building", id));
@@ -204,6 +207,8 @@ export function buildReportContext({ cityId = null, state = {}, facts, options =
     assignments,
     rolls,
     outcomes,
+    incidentRolls,
+    historicalRiskChanges,
     sealedBuildings,
     nextRisks,
     card: {

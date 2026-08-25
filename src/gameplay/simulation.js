@@ -222,7 +222,9 @@ function purposeWeightsForRisk(risk) {
   const weights = {};
   for (const unit of risk.magicLoadBreakdown ?? []) {
     const purpose = String(unit.purpose ?? "");
-    const contribution = Math.max(0, Number(unit.magicLoad) || 0) || Math.max(0, Number(unit.area) || 0);
+    // Ordinary zero-load units dilute LocalMagicRatio, but are not an
+    // incident source. Source-purpose weights therefore use MagicLoad only.
+    const contribution = Math.max(0, Number(unit.magicLoad) || 0);
     if (!purpose || contribution <= 0) continue;
     weights[purpose] = (weights[purpose] ?? 0) + contribution;
   }
@@ -333,7 +335,9 @@ export function generateIncidents(state, metadataMap, roller, options = {}) {
   return incidents.sort((a, b) => a.buildingId.localeCompare(b.buildingId) || a.id.localeCompare(b.id));
 }
 
-export function gradeRoll(roll, total, dc) {
+// The first parameter remains for callers of the old helper signature; it is
+// deliberately ignored. Outcome is a pure function of total - DC margin.
+export function gradeRoll(_roll, total, dc) {
   const margin = Number(total) - Number(dc);
   if (margin >= 5) return "critical_success";
   if (margin >= 0) return "success";

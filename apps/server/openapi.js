@@ -608,7 +608,7 @@ export function createOpenApiDocument(baseUrl) {
             buildingsCompleted: { type: "array", items: { type: "string" } },
             exposureChanges: { type: "object", additionalProperties: true },
             incidents: { type: "array", items: { $ref: "#/components/schemas/StrategyIncident" } },
-            incidentRolls: { type: "array", description: "System-owned independent threshold roll for every eligible canonical MagicLoad building.", items: { type: "object", properties: { buildingId: { type: "string" }, finalIncidentChance: { type: "number" }, thresholdRoll: { type: "number" }, hit: { type: "boolean" }, magicLoad: { type: "number" }, baseRisk: { type: "number" }, spatialModifier: { type: "number" }, historicalRisk: { type: "integer" } } } },
+            incidentRolls: { type: "array", description: "System-owned independent threshold roll for every eligible canonical MagicLoad building.", items: { type: "object", required: ["buildingId", "finalIncidentChance", "thresholdRoll", "hit", "sourcePurpose", "purposeWeights"], properties: { buildingId: { type: "string" }, finalIncidentChance: { type: "number" }, thresholdRoll: { type: "number" }, hit: { type: "boolean" }, magicLoad: { type: "number" }, baseRisk: { type: "number" }, spatialModifier: { type: "number" }, historicalRisk: { type: "integer" }, sourcePurpose: { type: ["string", "null"] }, purposeWeights: { type: "object", additionalProperties: { type: "number" } } } } },
             historicalRiskChanges: { type: "object", additionalProperties: { type: "object", properties: { buildingId: { type: "string" }, before: { type: "integer" }, after: { type: "integer" }, delta: { type: "integer" }, incidentIds: { type: "array", items: { type: "string" } }, sealed: { type: "boolean" } } } },
             unaddressedIncidents: { type: "array", items: { type: "object", properties: { incidentId: { type: "string" }, buildingId: { type: "string" }, type: { type: "string" }, severity: { type: "number" }, status: { const: "failed" }, outcome: { const: "failure" }, resolution: { const: "unaddressed" }, historicalRiskBefore: { type: "integer" }, historicalRiskAfter: { type: "integer" }, historicalRiskDelta: { type: "integer" }, sealed: { type: "boolean" }, createdAtTurn: { type: "number" } } }, description: "Incidents left unassigned are settled once through the conservative failure path and recorded as failed." },
             assignments: { type: "array", items: { type: "object", properties: { incidentId: { type: "string" }, arcaneOfficerId: { type: "string" } } } },
@@ -627,7 +627,11 @@ export function createOpenApiDocument(baseUrl) {
                   total: { type: "integer" },
                   dc: { type: "integer", enum: [10, 14, 18] },
                   margin: { type: "integer" },
-                  outcome: { enum: ["critical_success", "success", "failure", "critical_failure"] }
+                  outcome: { enum: ["critical_success", "success", "failure", "critical_failure"] },
+                  historicalRiskBefore: { type: "integer" },
+                  historicalRiskAfter: { type: "integer" },
+                  historicalRiskDelta: { type: "integer" },
+                  sealed: { type: "boolean" }
                 }
               }
             },
@@ -641,6 +645,11 @@ export function createOpenApiDocument(baseUrl) {
                   arcaneOfficerId: { type: "string" },
                   outcome: { enum: ["critical_success", "success", "failure", "critical_failure"] },
                   exposureDelta: { type: "number" },
+                  historicalRiskBefore: { type: "integer" },
+                  historicalRiskAfter: { type: "integer" },
+                  historicalRiskDelta: { type: "integer" },
+                  sealed: { type: "boolean" },
+                  resolution: { enum: ["assigned", "unaddressed"] },
                   incidentStatus: { type: "string" },
                   arcaneOfficerStatus: { type: "string" }
                 }
@@ -700,7 +709,7 @@ export function createOpenApiDocument(baseUrl) {
         ReportContext: {
           type: "object",
           description: "SYSTEM-owned immutable newspaper source for one resolved turn. A deterministic projection of the frozen TurnFacts plus read-only city metadata. Never contains prose and never recomputes gameplay. The Agent edits an OwlReport from it and references facts through factRefs.",
-          required: ["schemaVersion", "cityId", "turn", "worldDay", "factsDigest", "settlement", "resourceDelta", "populationDelta", "publicService", "incidents", "factRefs"],
+          required: ["schemaVersion", "cityId", "turn", "worldDay", "factsDigest", "settlement", "resourceDelta", "populationDelta", "publicService", "incidents", "incidentRolls", "historicalRiskChanges", "factRefs"],
           properties: {
             schemaVersion: { type: "integer" },
             cityId: { type: "string" },
@@ -724,11 +733,13 @@ export function createOpenApiDocument(baseUrl) {
             buildingsCompleted: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, buildingId: { type: "string" }, name: { type: "string" }, archetype: { type: ["string", "null"] }, purpose: { type: ["string", "null"] } } } },
             exposureChanges: { type: "object", additionalProperties: { type: "object", properties: { factRef: { type: "string" }, buildingId: { type: "string" }, name: { type: "string" }, from: { type: "number" }, to: { type: "number" }, delta: { type: "number" }, pressure: { type: "number" }, concealment: { type: "number" }, sealed: { type: "boolean" } } } },
             incidents: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, id: { type: "string" }, buildingId: { type: "string" }, buildingName: { type: "string" }, type: { type: "string" }, dc: { type: "number", enum: [10, 14, 18] }, severity: { type: "number" }, summary: { type: "string" }, status: { type: "string" }, createdAtTurn: { type: "number" } } } },
+            incidentRolls: { type: "array", items: { type: "object", properties: { buildingId: { type: "string" }, finalIncidentChance: { type: "number" }, thresholdRoll: { type: "number" }, hit: { type: "boolean" }, sourcePurpose: { type: ["string", "null"] }, purposeWeights: { type: "object", additionalProperties: { type: "number" } } } } },
+            historicalRiskChanges: { type: "object", additionalProperties: { type: "object", properties: { buildingId: { type: "string" }, before: { type: "integer" }, after: { type: "integer" }, delta: { type: "integer" }, incidentIds: { type: "array", items: { type: "string" } }, sealed: { type: "boolean" } } } },
             unresolvedIncidents: { type: "array", items: { type: "object" } },
-            unaddressedIncidents: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, incidentId: { type: "string" }, buildingId: { type: "string" }, buildingName: { type: "string" }, type: { type: "string" }, severity: { type: "number" }, status: { type: "string" }, createdAtTurn: { type: "number" } } } },
+            unaddressedIncidents: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, incidentId: { type: "string" }, buildingId: { type: "string" }, buildingName: { type: "string" }, type: { type: "string" }, severity: { type: "number" }, status: { const: "failed" }, outcome: { const: "failure" }, historicalRiskBefore: { type: "integer" }, historicalRiskAfter: { type: "integer" }, historicalRiskDelta: { type: "integer" }, sealed: { type: "boolean" }, createdAtTurn: { type: "number" } } } },
             assignments: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, incidentId: { type: "string" }, arcaneOfficerId: { type: "string" }, arcaneOfficerName: { type: "string" }, rationale: { type: ["string", "null"] } } } },
-            rolls: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, incidentId: { type: "string" }, arcaneOfficerId: { type: "string" }, arcaneOfficerName: { type: "string" }, attribute: { type: "string" }, rawRoll: { type: "integer" }, attributeValue: { type: "integer" }, specialtyBonus: { type: "integer" }, otherModifiers: { type: "integer" }, total: { type: "integer" }, dc: { type: "integer", enum: [10, 14, 18] }, margin: { type: "integer" }, outcome: { type: "string" } } } },
-            outcomes: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, incidentId: { type: "string" }, buildingId: { type: "string" }, arcaneOfficerId: { type: "string" }, arcaneOfficerName: { type: "string" }, outcome: { type: "string" }, exposureDelta: { type: "number" }, incidentStatus: { type: "string" }, arcaneOfficerStatus: { type: "string" } } } },
+            rolls: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, incidentId: { type: "string" }, arcaneOfficerId: { type: "string" }, arcaneOfficerName: { type: "string" }, attribute: { type: "string" }, rawRoll: { type: "integer", minimum: 1, maximum: 20 }, attributeValue: { type: "integer" }, specialtyBonus: { type: "integer" }, otherModifiers: { type: "integer" }, total: { type: "integer" }, dc: { type: "integer", enum: [10, 14, 18] }, margin: { type: "integer" }, outcome: { type: "string" }, historicalRiskBefore: { type: "integer" }, historicalRiskAfter: { type: "integer" }, historicalRiskDelta: { type: "integer" }, sealed: { type: "boolean" } } } },
+            outcomes: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, incidentId: { type: "string" }, buildingId: { type: "string" }, arcaneOfficerId: { type: "string" }, arcaneOfficerName: { type: "string" }, outcome: { type: "string" }, exposureDelta: { type: "number" }, historicalRiskBefore: { type: "integer" }, historicalRiskAfter: { type: "integer" }, historicalRiskDelta: { type: "integer" }, sealed: { type: "boolean" }, resolution: { enum: ["assigned", "unaddressed"] }, incidentStatus: { type: "string" }, arcaneOfficerStatus: { type: "string" } } } },
             sealedBuildings: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, buildingId: { type: "string" }, name: { type: "string" } } } },
             nextRisks: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, buildingId: { type: "string" }, name: { type: "string" }, exposure: { type: "number" }, pressure: { type: "number" }, concealment: { type: "number" } } } },
             card: {

@@ -98,11 +98,42 @@ test("mixed-use type weights aggregate all units, independent of unit insertion 
   assert.equal(a.sourcePurpose, "production");
 });
 
+test("zero-load ordinary area never becomes the source of a magical incident", () => {
+  const state = stateWithBuildings(["a"]);
+  const metadata = { a: { canonical: true, units: [
+    { purpose: "residential", area: 100, magicRatio: 0 },
+    { purpose: "production", area: 1, magicRatio: 1 }
+  ] } };
+  const incident = generateIncidents(state, metadata, roller([0, 0.2, 0.2]), { createId: () => "i" })[0];
+  assert.equal(incident.sourcePurpose, "production");
+  assert.deepEqual(incident.purposeWeights, { production: 1 });
+});
+
+test("building map insertion order does not affect seeded incidents or threshold audit", () => {
+  const first = stateWithBuildings(["a", "b", "c"]);
+  const second = { ...first, buildings: Object.fromEntries(Object.entries(first.buildings).reverse()) };
+  const metadataA = metadataFor(first);
+  const metadataB = metadataFor(second);
+  const run = (state, metadata) => generateIncidents(state, metadata, roller([0.02, 0.04, 0.06, ...Array(12).fill(0.2)]), { createId: (prefix) => `${prefix}` });
+  assert.deepEqual(run(first, metadataA), run(second, metadataB));
+});
+
+test("the same threshold fixture proves ordinary cover changes event occurrence", () => {
+  const bare = stateWithBuildings(["a"]);
+  const covered = stateWithBuildings(["a", "cover"]);
+  covered.buildings.cover.gameplay = { canonical: true, units: [{ purpose: "residential", area: 20, magicRatio: 0 }] };
+  const bareIncident = generateIncidents(bare, metadataFor(bare), roller([0.05, 0, 0]), { createId: () => "bare" });
+  const coveredIncident = generateIncidents(covered, metadataFor(covered), roller([0.05, 0, 0]), { createId: () => "covered" });
+  assert.equal(bareIncident.length, 1);
+  assert.equal(coveredIncident.length, 0);
+});
+
 test("only the three DCs and four margin bands are authoritative", () => {
   assert.deepEqual([10, 14, 18].map((dc) => normalizeExposureIncident({ type: "investigation", dc }).dc), [10, 14, 18]);
   assert.deepEqual([
-    gradeRoll(20, 15, 10), gradeRoll(1, 1, 10), gradeRoll(8, 15, 10), gradeRoll(8, 9, 10), gradeRoll(8, 5, 10)
-  ], ["critical_success", "critical_failure", "critical_success", "failure", "critical_failure"]);
+    gradeRoll(20, 15, 10), gradeRoll(1, 1, 10), gradeRoll(8, 15, 10), gradeRoll(8, 9, 10), gradeRoll(8, 5, 10),
+    gradeRoll(20, 9, 10), gradeRoll(1, 12, 10)
+  ], ["critical_success", "critical_failure", "critical_success", "failure", "critical_failure", "failure", "success"]);
   assert.throws(() => normalizeExposureIncident({ type: "investigation", dc: 10, difficultyTier: "bogus" }));
 });
 
@@ -130,6 +161,30 @@ test("turn facts audit unaddressed failure exactly once and seal at risk four", 
   assert.equal(second.error, null);
   assert.equal(second.facts.incidentRolls.some((entry) => entry.buildingId === "a"), false);
   assert.equal(second.nextState.buildings.a.historicalRisk, 4);
+});
+
+test("a sealed building contributes no economy, housing/service capacity, or incident roll next turn", () => {
+  const state = stateWithBuildings(["magic", "house"]);
+  state.buildings.magic.historicalRisk = 4;
+  state.buildings.magic.gameplay = { canonical: true, units: [{ purpose: "residential", area: 10, magicRatio: 1 }] };
+  state.buildings.house.gameplay = { canonical: true, units: [{ purpose: "residential", area: 10, magicRatio: 0 }] };
+  const result = resolveTurn(state, { force: true }, { roller: () => 1, now: () => "2026-01-01T00:00:00.000Z" });
+  assert.equal(result.error, null);
+  assert.equal(result.nextState.buildings.magic.status, "sealed");
+  assert.equal(result.facts.incidentRolls.some((entry) => entry.buildingId === "magic"), false);
+  assert.equal(result.facts.resourceDelta.coins, 0);
+  assert.equal(result.facts.populationDelta.muggles.capacity, 40);
+});
+
+test("system-field assignment injection rejects without changing the state digest", () => {
+  const state = stateWithBuildings(["a"]);
+  state.gameplay.incidents.i = { id: "i", buildingId: "a", type: "investigation", dc: 10, status: "open" };
+  state.gameplay.arcaneOfficers.o = { id: "o", name: "O", investigation: 1, suppression: 1, coverUp: 1, specialties: [], status: "available" };
+  const before = JSON.stringify(state);
+  const result = resolveTurn(state, { assignments: [{ incidentId: "i", arcaneOfficerId: "o", rawRoll: 20, dc: 18, modifier: 99, outcome: "critical_success" }] }, { roller: () => 0 });
+  assert.equal(result.error.code, "INVALID_ASSIGNMENT");
+  assert.equal(JSON.stringify(state), before);
+  assert.equal(result.nextState, state);
 });
 
 test("assigned failure and critical failure add one and two risk, including multiple incidents in one building", () => {
