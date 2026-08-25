@@ -33,6 +33,21 @@ test("candidate pool is deterministic, bounded, identity-complete, and refreshes
   const beforeBoundary = currentOfficerCandidates(state({ turn: ARCANE_OFFICER_CONFIG.refreshIntervalTurns - 1 }), "same-city");
   const atBoundary = currentOfficerCandidates(state({ turn: ARCANE_OFFICER_CONFIG.refreshIntervalTurns }), "same-city");
   assert.notDeepEqual(beforeBoundary.candidates.map((entry) => entry.candidateId), atBoundary.candidates.map((entry) => entry.candidateId));
+  for (let city = 0; city < 100; city += 1) {
+    for (let turn = 0; turn < 30; turn += ARCANE_OFFICER_CONFIG.refreshIntervalTurns) {
+      const sweep = currentOfficerCandidates(state({ turn }), `sweep-${city}`);
+      assert.equal(new Set(sweep.candidates.map((entry) => entry.identity.name)).size, sweep.candidates.length);
+    }
+  }
+});
+
+test("candidate pool removes extra persisted candidates", () => {
+  const source = state();
+  const pool = currentOfficerCandidates(source, source.cityId);
+  const forged = { ...pool.state, gameplay: { ...pool.state.gameplay, arcaneOfficerRecruitment: { ...pool.state.gameplay.arcaneOfficerRecruitment, candidates: { ...pool.state.gameplay.arcaneOfficerRecruitment.candidates, forged: pool.candidates[0] } } } };
+  const repaired = currentOfficerCandidates(forged, source.cityId);
+  assert.equal(repaired.candidates.some((entry) => entry.candidateId === "forged"), false);
+  assert.equal(hireArcaneOfficerCandidate(repaired.state, { candidate_id: "forged" }, { cityId: source.cityId }).error.code, "ARCANE_OFFICER_CANDIDATE_INVALID");
 });
 
 test("governance unlock is exact and locked state has no candidates", () => {
@@ -100,6 +115,9 @@ test("growth is deterministic, outcome-gated, capped, and audited", () => {
   const capped = structuredClone(base); capped.gameplay.arcaneOfficers.officer.investigation = 5;
   const capResult = settleAssignments(capped, [incident], [{ incidentId: "incident", arcaneOfficerId: "officer" }], createRoller({ roller: () => 0.5 }), { growthChance: 1 });
   assert.equal(capResult.outcomes[0].growth.chance, 0);
+  const lowerCap = structuredClone(base); lowerCap.gameplay.arcaneOfficers.officer.investigation = 5;
+  const lowerCapResult = settleAssignments(lowerCap, [incident], [{ incidentId: "incident", arcaneOfficerId: "officer" }], createRoller({ roller: () => 0.5 }), { attributeCap: 3, growthChance: 1 });
+  assert.equal(lowerCapResult.outcomes[0].growth.after, 5);
 });
 
 test("maintenance charges from opening plus gross income and never Arcane Energy", () => {
@@ -141,8 +159,10 @@ test("growth uses an independent roller so two assignment d20 results replay unc
   const run = (growthChance) => settleAssignments(structuredClone(base), incidents, assignments, { next: () => 0.5 }, { growthChance, growthRoller: { next: () => 0 } });
   const noGrowth = run(0);
   const growth = run(1);
+  const replay = run(1);
   assert.deepEqual(growth.rolls.map((roll) => roll.roll), noGrowth.rolls.map((roll) => roll.roll));
-  assert.deepEqual(growth.rolls.map((roll) => roll.roll), noGrowth.rolls.map((roll) => roll.roll));
+  assert.deepEqual(replay.rolls, growth.rolls);
+  assert.deepEqual(replay.outcomes, growth.outcomes);
   assert.equal(growth.outcomes[0].growth.gained, 1);
   assert.equal(growth.outcomes[1].growth.gained, 1);
 });

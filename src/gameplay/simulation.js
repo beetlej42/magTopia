@@ -452,7 +452,7 @@ export function settleAssignments(state, incidents, assignments = [], roller, op
     const canGrow = eligibleForGrowth && !atCap;
     const gained = canGrow && growthRoll < growthChance ? 1 : 0;
     const attributeBefore = Number(officer?.[result.attribute] ?? 0);
-    const attributeAfter = Math.min(Number(options.attributeCap ?? 5), attributeBefore + gained);
+    const attributeAfter = attributeBefore + (gained && attributeBefore < Number(options.attributeCap ?? 5) ? 1 : 0);
     const building = state.buildings?.[incident.buildingId] ?? {};
     const beforeRisk = Math.max(0, Math.min(4, Number(building.historicalRisk ?? 0)));
     const riskDelta = result.outcome === "critical_failure" ? 2 : result.outcome === "failure" ? 1 : 0;

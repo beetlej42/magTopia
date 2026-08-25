@@ -65,23 +65,43 @@ export function setArcaneOfficerStatus(state, officerId, status) {
 
 const IDENTITY_NAMES = Object.freeze(["Vesper Lark", "Rowan Featherstone", "Mira Holler", "Cassian Dusk", "Ivy Thornbush", "Silas Moonshadow", "Elowen Reed", "Cormac Whistler", "Seraphine Vale", "Bram Bramble", "Isolde Nightingale", "Percival Ashcroft"]);
 function generatedProfile(seed) {
-  const roller = createRoller({ seed: hashSeed(`${seed}:profile`) }); const total = 7 + Math.floor(roller.next() * 3); const values = [1, 1, 1]; let remaining = total - 3;
-  while (remaining > 0) { const slot = Math.floor(roller.next() * 3); if (values[slot] < 5) { values[slot] += 1; remaining -= 1; } }
+  const roller = createRoller({ seed: hashSeed(`${seed}:profile`) });
+  const total = 7 + Math.floor(roller.next() * 3);
+  const values = [1, 1, 1];
+  let remaining = total - 3;
+  while (remaining > 0) {
+    const slot = Math.floor(roller.next() * values.length);
+    if (values[slot] < 5) {
+      values[slot] += 1;
+      remaining -= 1;
+    }
+  }
   return { investigation: values[0], suppression: values[1], coverUp: values[2], specialty: ARCANE_OFFICER_PURPOSES[Math.floor(roller.next() * ARCANE_OFFICER_PURPOSES.length)] };
 }
 export function generateArcaneOfficerIdentity({ seed = "arcane-officer", id, hiredAtTurn = 0, nameIndex = 0, profile } = {}) {
-  const identitySeed = String(seed); const roller = createRoller({ seed: hashSeed(`${identitySeed}:identity`) }); const generated = profile ?? generatedProfile(identitySeed); const name = IDENTITY_NAMES[(nameIndex + Math.floor(roller.next() * IDENTITY_NAMES.length)) % IDENTITY_NAMES.length];
+  const identitySeed = String(seed);
+  const generated = profile ?? generatedProfile(identitySeed);
+  const nameStart = hashSeed(`${identitySeed}:name`) % IDENTITY_NAMES.length;
+  const name = IDENTITY_NAMES[(nameStart + nameIndex) % IDENTITY_NAMES.length];
   const values = [generated.investigation, generated.suppression, generated.coverUp].map(Number);
   if (!values.every((value) => Number.isSafeInteger(value) && value >= 0 && value <= 5) || values.reduce((sum, value) => sum + value, 0) < 7 || values.reduce((sum, value) => sum + value, 0) > 9 || !ARCANE_OFFICER_PURPOSES.includes(generated.specialty)) throw new Error("Arcane Officer identity profile must contain integer 0..5 attributes totaling 7..9 and one purpose specialty");
   return normalizeArcaneOfficer({ id: String(id ?? `arcane-officer-${hashSeed(identitySeed).toString(16)}`), name, archetype: "purpose_specialist", appearanceSeed: hashSeed(`${identitySeed}:appearance`), visualRef: `arcane-officer-${hashSeed(`${identitySeed}:visual`).toString(16)}`, investigation: generated.investigation, suppression: generated.suppression, coverUp: generated.coverUp, specialty: generated.specialty, specialties: [generated.specialty], status: "available", hiredAtTurn, history: [] });
 }
-function governanceStructureId(building) { return String(building?.specialStructure?.id ?? building?.specialStructure?.structureId ?? building?.specialStructure?.cardId ?? "").toLowerCase(); }
+function governanceStructureId(building) {
+  return String(building?.specialStructure?.id
+    ?? building?.specialStructure?.structureId
+    ?? building?.specialStructure?.cardId
+    ?? "").toLowerCase();
+}
 export function isGovernanceFacility(building, options = {}) {
   if (!building || building.status === "sealed" || (building.status && !["completed", "active"].includes(building.status))) return false;
   const ids = new Set(options.governanceStructureIds ?? ["ministry-of-magic", "ministry_of_magic", "ministry-of-magic-hq"]); const programs = new Set(options.governancePrograms ?? ["ministry_of_magic", "ministry-of-magic", "magical_governance"]); const structure = governanceStructureId(building); const structureName = String(building.specialStructure?.name ?? "").toLowerCase(); const program = String(building.program?.canonicalProgram ?? building.program?.programId ?? building.metadata?.canonicalProgram ?? building.metadata?.programId ?? "").toLowerCase(); const programName = String(building.program?.canonicalName ?? building.program?.name ?? building.metadata?.canonicalName ?? "").toLowerCase(); const tags = [...(building.tags ?? []), ...(building.program?.tags ?? []), ...(building.metadata?.tags ?? [])].map((tag) => String(tag).toLowerCase());
   return ids.has(structure) || ["ministry of magic", "ministry of magic headquarters"].includes(structureName) || programs.has(program) || ["ministry of magic", "ministry of magic headquarters"].includes(programName) || tags.includes("ministry_of_magic") || tags.includes("governance_facility");
 }
-export function arcaneOfficerRecruitmentUnlocked(state, options = {}) { return options.recruitmentUnlocked === true || Object.values(state?.buildings ?? {}).some((building) => isGovernanceFacility(building, options)); }
+export function arcaneOfficerRecruitmentUnlocked(state, options = {}) {
+  if (options.recruitmentUnlocked === true) return true;
+  return Object.values(state?.buildings ?? {}).some((building) => isGovernanceFacility(building, options));
+}
 export function recruitmentConfigSummary(options = {}) {
   const config = validatedConfig(options);
   return {
@@ -95,12 +115,15 @@ export function recruitmentConfigSummary(options = {}) {
     attribute_cap: config.attributeCap
   };
 }
-function poolWindow(turn, config) { return Math.floor(Number(turn ?? 0) / Number(config.refreshIntervalTurns)); }
+function poolWindow(turn, config) {
+  return Math.floor(Number(turn ?? 0) / config.refreshIntervalTurns);
+}
 function poolForWindow(cityId, window, config) {
   const seed = `${String(cityId)}:arcane-officer-candidates:${window}`;
   return Array.from({ length: config.candidateCount }, (_, index) => {
     const candidateId = `officer-candidate-${hashSeed(`${seed}:${index}`).toString(16)}`;
-    const identity = generateArcaneOfficerIdentity({ seed: `${seed}:${index}`, id: candidateId, hiredAtTurn: window * config.refreshIntervalTurns, nameIndex: index });
+    const generated = generateArcaneOfficerIdentity({ seed: `${seed}:${index}`, id: candidateId, hiredAtTurn: window * config.refreshIntervalTurns, nameIndex: index });
+    const identity = { ...generated, name: IDENTITY_NAMES[(hashSeed(`${seed}:names`) + index) % IDENTITY_NAMES.length] };
     return { candidateId, identity, costCoins: config.hireCostCoins, status: "available", window };
   });
 }
@@ -134,7 +157,12 @@ export function ensureOfficerCandidatePool(state, cityId = state?.cityId ?? "", 
     const prior = persisted[candidate.candidateId];
     return [candidate.candidateId, prior && candidateMatches(prior, candidate) ? { ...candidate, status: prior.status } : candidate];
   }));
-  const unchanged = current.window === desiredWindow && expected.every((candidate) => persisted[candidate.candidateId] && candidateMatches(persisted[candidate.candidateId], candidate));
+  const persistedIds = Object.keys(persisted).sort();
+  const expectedIds = expected.map((candidate) => candidate.candidateId).sort();
+  const unchanged = current.window === desiredWindow
+    && persistedIds.length === expectedIds.length
+    && persistedIds.every((id, index) => id === expectedIds[index])
+    && expected.every((candidate) => persisted[candidate.candidateId] && candidateMatches(persisted[candidate.candidateId], candidate));
   if (unchanged) return state;
   return { ...state, gameplay: { ...state.gameplay, arcaneOfficerRecruitment: { schemaVersion: 1, window: desiredWindow, candidates } } };
 }

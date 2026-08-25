@@ -21,6 +21,8 @@ test("strategy officer recruitment is read-only on GET and candidate-only/idempo
       return { nextState: state, response: { seeded: true } };
     });
     const before = await json(app, auth(agent.access_token, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
+    const storedBeforeRead = (await repository.getCity(owner, city.id)).state;
+    assert.deepEqual(storedBeforeRead.gameplay.arcaneOfficerRecruitment, { schemaVersion: 1, window: null, candidates: {} });
     const readAgain = await json(app, auth(agent.access_token, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
     assert.equal(readAgain.city_version, before.city_version);
     assert.deepEqual(readAgain.strategy.arcane_officer_recruitment.candidates, before.strategy.arcane_officer_recruitment.candidates);
@@ -29,9 +31,21 @@ test("strategy officer recruitment is read-only on GET and candidate-only/idempo
     assert.equal(forged.statusCode, 400);
     const recruited = await json(app, auth(agent.access_token, { method: "POST", url: `/api/v1/cities/${city.id}/strategy/recruit-officer`, headers: { "idempotency-key": "recruit-1" }, payload: { expected_city_version: before.city_version, candidate_id: candidateId, actor_note: "staffing" } }), 200);
     assert.equal(recruited.cost_coins, 150);
+    assert.equal(recruited.strategy.arcane_officer_recruitment.candidates.length, 2);
+    assert.equal(recruited.strategy.arcane_officer_recruitment.roster_size, 1);
     assert.equal(recruited.officer.name, before.strategy.arcane_officer_recruitment.candidates[0].identity.name);
     const replay = await json(app, auth(agent.access_token, { method: "POST", url: `/api/v1/cities/${city.id}/strategy/recruit-officer`, headers: { "idempotency-key": "recruit-1" }, payload: { expected_city_version: before.city_version, candidate_id: candidateId, actor_note: "staffing" } }), 200);
     assert.equal(replay.idempotent_replay, true);
+    assert.equal((await repository.getCity(owner, city.id)).state.resources.coins, 350);
+    const duplicate = await app.inject(auth(agent.access_token, { method: "POST", url: `/api/v1/cities/${city.id}/strategy/recruit-officer`, headers: { "idempotency-key": "recruit-duplicate" }, payload: { expected_city_version: recruited.city_version_after, candidate_id: candidateId } }));
+    assert.equal(duplicate.statusCode, 422);
+    assert.equal(duplicate.json().code, "ARCANE_OFFICER_CANDIDATE_INVALID");
+    const current = await repository.getCity(owner, city.id);
+    await repository.transactCity({ principal: owner, cityId: city.id, endpoint: "test/officer-insufficient", idempotencyKey: "insufficient", requestBody: {}, expectedVersion: current.row.city_version }, async ({ state }) => ({ nextState: { ...state, resources: { ...state.resources, coins: 149 }, gameplay: { ...state.gameplay, resources: { ...state.gameplay.resources, coins: 149 } } }, response: {} }));
+    const afterInsufficientSeed = await repository.getCity(owner, city.id);
+    const insufficient = await app.inject(auth(agent.access_token, { method: "POST", url: `/api/v1/cities/${city.id}/strategy/recruit-officer`, headers: { "idempotency-key": "insufficient-hire" }, payload: { expected_city_version: afterInsufficientSeed.row.city_version, candidate_id: before.strategy.arcane_officer_recruitment.candidates[1].candidate_id } }));
+    assert.equal(insufficient.statusCode, 422);
+    assert.equal(insufficient.json().code, "INSUFFICIENT_COINS");
     const stale = await app.inject(auth(agent.access_token, { method: "POST", url: `/api/v1/cities/${city.id}/strategy/recruit-officer`, headers: { "idempotency-key": "recruit-stale" }, payload: { expected_city_version: before.city_version, candidate_id: before.strategy.arcane_officer_recruitment.candidates[1].candidate_id } }));
     assert.equal(stale.statusCode, 409);
     assert.equal(stale.json().code, "CITY_VERSION_CONFLICT");
@@ -48,5 +62,8 @@ test("locked strategy context does not expose immediately recruitable candidates
     const strategy = await json(app, auth(agent.access_token, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
     assert.equal(strategy.strategy.arcane_officer_recruitment.unlocked, false);
     assert.deepEqual(strategy.strategy.arcane_officer_recruitment.candidates, []);
+    const lockedPost = await app.inject(auth(agent.access_token, { method: "POST", url: `/api/v1/cities/${city.id}/strategy/recruit-officer`, headers: { "idempotency-key": "locked-hire" }, payload: { expected_city_version: strategy.city_version, candidate_id: "not-current" } }));
+    assert.equal(lockedPost.statusCode, 422);
+    assert.equal(lockedPost.json().code, "ARCANE_OFFICER_RECRUITMENT_LOCKED");
   } finally { await app.close(); }
 });
