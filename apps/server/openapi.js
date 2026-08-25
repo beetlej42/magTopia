@@ -543,13 +543,28 @@ export function createOpenApiDocument(baseUrl) {
             specialty: { enum: ["residential", "commercial", "public_service", "production", "greenhouse", null] },
             specialties: { type: "array", items: { type: "string" } },
             status: { enum: ["available", "assigned", "unavailable"] },
-            hired_at_turn: { type: "integer" }
+            hired_at_turn: { type: "integer" },
+            history: { type: "array", maxItems: 50, items: { $ref: "#/components/schemas/ArcaneOfficerHistoryEntry" } }
           }
+        },
+        ArcaneOfficerHistoryEntry: {
+          type: "object", additionalProperties: false,
+          required: ["turn", "incident_id", "building_id", "source_purpose", "attribute", "outcome", "growth_roll", "growth_chance", "before", "after", "gained"],
+          properties: { turn: { type: "integer" }, incident_id: { type: "string" }, building_id: { type: "string" }, source_purpose: { type: ["string", "null"] }, attribute: { type: "string" }, outcome: { type: "string" }, growth_roll: { type: "number", minimum: 0, maximum: 1 }, growth_chance: { type: "number", minimum: 0, maximum: 1 }, before: { type: "integer", minimum: 0, maximum: 5 }, after: { type: "integer", minimum: 0, maximum: 5 }, gained: { type: "integer", minimum: 0, maximum: 1 } }
+        },
+        ArcaneOfficerCandidate: {
+          type: "object", additionalProperties: false, required: ["candidate_id", "identity", "cost_coins", "window"],
+          properties: { candidate_id: { type: "string" }, identity: { $ref: "#/components/schemas/ArcaneOfficer" }, cost_coins: { type: "integer", minimum: 120, maximum: 180 }, window: { type: "integer", minimum: 0 } }
+        },
+        ArcaneOfficerRecruitment: {
+          type: "object", additionalProperties: false, required: ["unlocked", "status", "capacity", "roster_size", "config", "pool_window", "candidates"],
+          properties: { unlocked: { type: "boolean" }, status: { enum: ["available", "locked"] }, capacity: { type: "integer", minimum: 0 }, roster_size: { type: "integer", minimum: 0 }, config: { type: "object", additionalProperties: false, required: ["refresh_interval_turns", "candidate_count", "hire_cost_coins", "maintenance_coins_per_turn", "capacity_divisor", "growth_chance", "critical_growth_chance", "attribute_cap"], properties: { refresh_interval_turns: { type: "integer" }, candidate_count: { type: "integer", minimum: 2, maximum: 3 }, hire_cost_coins: { type: "integer", minimum: 120, maximum: 180 }, maintenance_coins_per_turn: { type: "integer", minimum: 8, maximum: 12 }, capacity_divisor: { type: "integer" }, growth_chance: { type: "number" }, critical_growth_chance: { type: "number" }, attribute_cap: { type: "integer", maximum: 5 } } }, pool_window: { type: ["integer", "null"] }, candidates: { type: "array", items: { $ref: "#/components/schemas/ArcaneOfficerCandidate" } } }
         },
         OfficerRecruitmentRequest: {
           type: "object", additionalProperties: false, required: ["candidate_id", "expected_city_version"],
           properties: { candidate_id: { type: "string", minLength: 1 }, expected_city_version: { type: "integer", minimum: 0 }, actor_note: { type: "string" } }
         },
+        OfficerRecruitmentResponse: { type: "object", additionalProperties: false, required: ["command_id", "status", "city_version_before", "city_version_after", "officer", "cost_coins", "strategy"], properties: { command_id: { type: "string" }, status: { const: "accepted" }, city_version_before: { type: "integer" }, city_version_after: { type: "integer" }, officer: { $ref: "#/components/schemas/ArcaneOfficer" }, cost_coins: { type: "integer" }, strategy: { type: "object", additionalProperties: true } } },
         StrategyAssignment: {
           type: "object",
           description: "A dispatch instruction. Only these fields are accepted; the system owns every numeric balance parameter.",
@@ -580,11 +595,13 @@ export function createOpenApiDocument(baseUrl) {
         TurnFacts: {
           type: "object",
           description: "Immutable system-generated settlement record. Agents read rolls, outcomes, and state changes here; they never author them.",
-          required: ["turn", "resourceDelta", "populationDelta", "publicService", "exposureChanges", "incidents", "incidentRolls", "unaddressedIncidents", "historicalRiskChanges", "assignments", "rolls", "outcomes", "sealedBuildings", "nextRisks"],
+            required: ["turn", "resourceDelta", "netResourceDelta", "officerMaintenance", "populationDelta", "publicService", "exposureChanges", "incidents", "incidentRolls", "unaddressedIncidents", "historicalRiskChanges", "assignments", "rolls", "outcomes", "sealedBuildings", "nextRisks"],
           properties: {
             turn: { type: "integer" },
             wallClock: { type: "object", nullable: true, additionalProperties: true },
             resourceDelta: { type: "object", properties: { coins: { type: "integer", minimum: 0 }, arcaneEnergy: { type: "number", minimum: 0 } }, required: ["coins", "arcaneEnergy"], additionalProperties: false },
+            netResourceDelta: { type: "object", properties: { coins: { type: "integer" }, arcaneEnergy: { type: "number" } }, required: ["coins", "arcaneEnergy"], additionalProperties: false },
+            officerMaintenance: { type: "object", additionalProperties: false, required: ["count", "rate", "total", "charged", "unpaid"], properties: { count: { type: "integer" }, rate: { type: "integer" }, total: { type: "integer" }, charged: { type: "integer" }, unpaid: { type: "integer" } } },
             populationDelta: { type: "object", additionalProperties: true },
             publicService: {
               type: "object",
@@ -659,6 +676,7 @@ export function createOpenApiDocument(baseUrl) {
                   resolution: { enum: ["assigned", "unaddressed"] },
                   incidentStatus: { type: "string" },
                   arcaneOfficerStatus: { type: "string" }
+                  ,growth: { type: "object", additionalProperties: false, required: ["attribute", "roll", "chance", "before", "after", "gained"], properties: { attribute: { type: "string" }, roll: { type: "number" }, chance: { type: "number" }, before: { type: "integer" }, after: { type: "integer" }, gained: { type: "integer" } } }
                 }
               }
             },
@@ -686,7 +704,7 @@ export function createOpenApiDocument(baseUrl) {
               properties: {
                 incidents: { type: "array", items: { $ref: "#/components/schemas/StrategyIncident" } },
                 arcane_officers: { type: "array", items: { $ref: "#/components/schemas/ArcaneOfficer" } },
-                arcane_officer_recruitment: { type: "object", additionalProperties: true },
+                arcane_officer_recruitment: { $ref: "#/components/schemas/ArcaneOfficerRecruitment" },
                 pending_assignments: { type: "array", items: { type: "object", properties: { incident_id: { type: "string" }, arcane_officer_id: { type: "string" }, rationale: { type: ["string", "null"] } } } },
                 cards: { $ref: "#/components/schemas/StrategyCards" }
               }
@@ -999,7 +1017,7 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}/strategy": { get: operation("Read the strategy context: open incidents, Arcane Officers, player card state, and the last frozen settlement facts", "strategy", null, { $ref: "#/components/schemas/StrategyContext" }) },
       "/cities/{city_id}/strategy/assignments": { post: commandOperation("Submit the Arcane Officer dispatch plan for the strategy phase", "strategy", { $ref: "#/components/schemas/StrategyAssignmentsRequest" }) },
       "/cities/{city_id}/strategy/resolve": { post: commandOperation("Request the single authoritative system settlement of the strategy phase", "strategy", { $ref: "#/components/schemas/StrategyResolveRequest" }) },
-      "/cities/{city_id}/strategy/recruit-officer": { post: commandOperation("Recruit one current system-generated Arcane Officer candidate", "strategy", { $ref: "#/components/schemas/OfficerRecruitmentRequest" }) },
+      "/cities/{city_id}/strategy/recruit-officer": { post: commandOperation("Recruit one current system-generated Arcane Officer candidate", "strategy", { $ref: "#/components/schemas/OfficerRecruitmentRequest" }, { $ref: "#/components/schemas/OfficerRecruitmentResponse" }) },
       "/cards": { get: operation("Read the system-owned 12-card daily catalog", "cards", null, { type: "object", properties: { data: { type: "array", items: { $ref: "#/components/schemas/CardDefinition" } } } }) },
       "/cities/{city_id}/cards/current": { get: operation("Read the canonical three-card offer for the current turn", "cards", null, { type: "object", properties: { city_id: { type: "string" }, city_version: { type: "integer" }, turn: { type: "integer" }, turn_status: { type: "string" }, offer: { $ref: "#/components/schemas/CardOffer" }, choice: { $ref: "#/components/schemas/CardChoice" } } }) },
       "/cities/{city_id}/cards/select": { post: commandOperation("The player selects exactly one offered card for this turn", "cards", { $ref: "#/components/schemas/CardSelectRequest" }, { $ref: "#/components/schemas/CardSelectResponse" }) },

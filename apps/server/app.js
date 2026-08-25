@@ -571,7 +571,6 @@ export async function createApp({ repository, config, logger = false, now = () =
     const { row, state } = await repository.getCity(principal, request.params.cityId);
     const gameplay = state.gameplay ?? {};
     const candidateState = currentOfficerCandidates(state, row.id);
-    if (candidateState.state !== state) await persistOfficerRecruitment(repository, principal, request.params.cityId, candidateState.state);
     const strategyState = candidateState.state;
     const nowValue = now();
     return {
@@ -1325,10 +1324,6 @@ async function persistCardState(repository, principal, cityId, nextState) {
   }, async ({ state }) => ({ nextState, response: { command_id: createId("command"), status: "ok", city_version_after: nextState.version } }));
 }
 
-async function persistOfficerRecruitment(repository, principal, cityId, nextState) {
-  return repository.transactCity({ principal, cityId, endpoint: "strategy/officer-candidates", idempotencyKey: `officer-candidates-v${nextState.turn}`, requestBody: {}, expectedVersion: nextState.version, action: "officer_candidates_refreshed", reason: "deterministic officer candidate pool refresh" }, async ({ state }) => ({ nextState, response: { status: "ok", city_version_after: state.version } }));
-}
-
 function strategyPayload(state) {
   const gameplay = state.gameplay ?? {};
   const incidents = Object.values(gameplay.incidents ?? {})
@@ -1363,8 +1358,10 @@ function strategyPayload(state) {
 function officerRecruitmentPayload(state) {
   const gameplay = state.gameplay ?? {};
   const recruitment = gameplay.arcaneOfficerRecruitment ?? { candidates: {} };
-  const candidates = Object.values(recruitment.candidates ?? {}).filter((candidate) => candidate.status === "available").map((candidate) => ({ candidate_id: candidate.candidateId, identity: strategyOfficerResponse(candidate.identity), cost_coins: candidate.costCoins, window: candidate.window }));
-  return { unlocked: arcaneOfficerRecruitmentUnlocked(state), capacity: arcaneOfficerCapacity(state), roster_size: Object.keys(gameplay.arcaneOfficers ?? {}).length, config: recruitmentConfigSummary(), pool_window: recruitment.window, candidates };
+  const unlocked = arcaneOfficerRecruitmentUnlocked(state);
+  const config = recruitmentConfigSummary();
+  const candidates = unlocked ? Object.values(recruitment.candidates ?? {}).filter((candidate) => candidate.status === "available").map((candidate) => ({ candidate_id: candidate.candidateId, identity: strategyOfficerResponse(candidate.identity), cost_coins: config.hire_cost_coins, window: candidate.window })) : [];
+  return { unlocked, status: unlocked ? "available" : "locked", capacity: arcaneOfficerCapacity(state), roster_size: Object.keys(gameplay.arcaneOfficers ?? {}).length, config, pool_window: unlocked ? recruitment.window : null, candidates };
 }
 
 function strategyIncidentResponse(state, incident) {
@@ -1402,7 +1399,7 @@ function strategyOfficerResponse(officer) {
     specialties: [...(officer.specialties ?? [])],
     status: officer.status,
     hired_at_turn: officer.hiredAtTurn,
-    history: [...(officer.history ?? [])]
+    history: [...(officer.history ?? [])].map((entry) => ({ turn: entry.turn, incident_id: entry.incidentId, building_id: entry.buildingId, source_purpose: entry.sourcePurpose ?? null, attribute: entry.attribute, outcome: entry.outcome, growth_roll: entry.growthRoll, growth_chance: entry.growthChance, before: entry.before, after: entry.after, gained: entry.gained }))
   };
 }
 

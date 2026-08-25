@@ -117,12 +117,14 @@ export function settleResources(state, metadataMap, options = {}) {
   if (!Number.isSafeInteger(income.coins + baseCoins)) throw new EconomyDataError("coin income exceeds the safe integer range");
   income.coins += baseCoins;
   const maintenance = options.chargeOfficerMaintenance === true ? maintenanceForRoster(state, options) : { count: 0, rate: 0, total: 0 };
-  const maintenanceCharged = Math.min(beforeSafeCoins(state), maintenance.total);
-  const netIncome = { ...income, coins: income.coins - maintenanceCharged };
+  const openingCoins = beforeSafeCoins(state);
+  const availableForMaintenance = openingCoins + income.coins;
+  const maintenanceCharged = Math.min(availableForMaintenance, maintenance.total);
   if (!Number.isFinite(income.arcaneEnergy + baseArcaneEnergy) || income.arcaneEnergy + baseArcaneEnergy > Number.MAX_SAFE_INTEGER) {
     throw new EconomyDataError("arcane income exceeds the safe range");
   }
   income.arcaneEnergy += baseArcaneEnergy;
+  const netIncome = { ...income, coins: income.coins - maintenanceCharged };
   // Coins have one authoritative source: `state.resources.coins`, which is
   // debited by construction/road/reservation mutations and credited by card
   // grants. `gameplay.resources` mirrors it at settlement. Basing the settle on
@@ -140,7 +142,7 @@ export function settleResources(state, metadataMap, options = {}) {
   if (!Number.isFinite(before.arcaneEnergy + income.arcaneEnergy) || before.arcaneEnergy + income.arcaneEnergy > Number.MAX_SAFE_INTEGER) {
     throw new EconomyDataError("arcane balance exceeds the safe range");
   }
-  const after = normalizeGameplayResources({ coins: Math.max(0, before.coins + netIncome.coins), arcaneEnergy: before.arcaneEnergy + netIncome.arcaneEnergy });
+  const after = normalizeGameplayResources({ coins: Math.max(0, availableForMaintenance - maintenance.total), arcaneEnergy: before.arcaneEnergy + netIncome.arcaneEnergy });
   return { before, after, income, netIncome, maintenance: { ...maintenance, charged: maintenanceCharged, unpaid: maintenance.total - maintenanceCharged } };
 }
 
@@ -365,9 +367,9 @@ export function resolveIncidentRoll({ incident, officer, modifier = 0, roller, o
   // incident carries the authoritative sourcePurpose.
   const sourcePurpose = incident?.sourcePurpose == null ? null : String(incident.sourcePurpose);
   const purposeSpecialty = officer?.specialty ?? ((officer?.specialties ?? []).length === 1 && ["residential", "commercial", "public_service", "production", "greenhouse"].includes(officer.specialties[0]) ? officer.specialties[0] : null);
-  const specialtyBonus = sourcePurpose != null
-    ? (purposeSpecialty === sourcePurpose ? Number(options.specialtyBonus ?? 2) : 0)
-    : ((officer?.specialties ?? []).includes(definition.specialty) ? Number(options.specialtyBonus ?? 2) : 0);
+  const specialtyBonus = sourcePurpose != null && purposeSpecialty === sourcePurpose
+    ? Number(options.specialtyBonus ?? 2)
+    : 0;
   const roll = rollDice(roller, 20);
   const dc = Number(incident.dc ?? incident.difficulty ?? 10);
   const modifierValue = Number(modifier ?? 0);
@@ -448,9 +450,11 @@ export function settleAssignments(state, incidents, assignments = [], roller, op
     if (!incident || !officer) continue;
     const result = resolveIncidentRoll({ incident, officer, modifier, roller, options });
     const outcome = applyOutcome(result.outcome, options);
-    const growthChance = result.outcome === "critical_success" ? Number(options.criticalGrowthChance ?? 0.2) : Number(options.growthChance ?? 0.08);
+    const eligibleForGrowth = ["success", "critical_success"].includes(result.outcome);
+    const atCap = Number(officer?.[result.attribute] ?? 0) >= Number(options.attributeCap ?? 5);
+    const growthChance = !eligibleForGrowth || atCap ? 0 : result.outcome === "critical_success" ? Number(options.criticalGrowthChance ?? 0.2) : Number(options.growthChance ?? 0.08);
     const growthRoll = roller.next();
-    const canGrow = ["success", "critical_success"].includes(result.outcome) && Number(officer?.[result.attribute] ?? 0) < Number(options.attributeCap ?? 5);
+    const canGrow = eligibleForGrowth && !atCap;
     const gained = canGrow && growthRoll < growthChance ? 1 : 0;
     const attributeBefore = Number(officer?.[result.attribute] ?? 0);
     const attributeAfter = Math.min(Number(options.attributeCap ?? 5), attributeBefore + gained);
@@ -476,9 +480,7 @@ export function settleAssignments(state, incidents, assignments = [], roller, op
     });
     const historyEntry = {
       turn: state.turn,
-      incident: incident.id,
       incidentId: incident.id,
-      building: incident.buildingId,
       buildingId: incident.buildingId,
       sourcePurpose: incident.sourcePurpose ?? null,
       attribute: result.attribute,
@@ -499,7 +501,7 @@ export function settleAssignments(state, incidents, assignments = [], roller, op
       sealed: afterRisk >= 4
     };
     if (state.gameplay?.incidents?.[incidentId]) state.gameplay.incidents[incidentId] = { ...incident, status: outcome.incidentStatus };
-    if (state.gameplay?.arcaneOfficers?.[officerId]) state.gameplay.arcaneOfficers[officerId] = normalizeArcaneOfficer({ ...officer, status: outcome.arcaneOfficerStatus, [result.attribute]: attributeAfter, history: [...(officer.history ?? []), historyEntry] });
+    if (state.gameplay?.arcaneOfficers?.[officerId]) state.gameplay.arcaneOfficers[officerId] = normalizeArcaneOfficer({ ...officer, status: outcome.arcaneOfficerStatus, [result.attribute]: attributeAfter, history: [...(officer.history ?? []), historyEntry].slice(-50) });
     if (state.buildings?.[incident.buildingId]) state.buildings[incident.buildingId] = {
       ...state.buildings[incident.buildingId], historicalRisk: afterRisk, ...(afterRisk >= 4 ? { status: "sealed" } : {})
     };
@@ -808,6 +810,10 @@ function resolveTurnInternal(state, input = {}, context = {}, profile = "product
     resourceDelta: {
       coins: resourceSettlement.income.coins,
       arcaneEnergy: resourceSettlement.income.arcaneEnergy
+    },
+    netResourceDelta: {
+      coins: resourceSettlement.after.coins - resourceSettlement.before.coins,
+      arcaneEnergy: resourceSettlement.after.arcaneEnergy - resourceSettlement.before.arcaneEnergy
     },
     officerMaintenance: resourceSettlement.maintenance,
     populationDelta: {

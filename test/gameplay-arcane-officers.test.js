@@ -1,145 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createCityState } from "../src/city/state.js";
-import { ARCANE_OFFICER_HIRE_COST_COINS, arcaneOfficerCapacity, hireArcaneOfficer, setArcaneOfficerStatus } from "../src/gameplay/arcane-officers.js";
+import { ARCANE_OFFICER_CONFIG, arcaneOfficerCapacity, currentOfficerCandidates, hireArcaneOfficer, hireArcaneOfficerCandidate, setArcaneOfficerStatus } from "../src/gameplay/arcane-officers.js";
 
-function world(columns = 12, rows = 12) {
-  const cells = [];
-  for (let row = 0; row < rows; row += 1) for (let column = 0; column < columns; column += 1) cells.push({ id: `cell-${column}-${row}`, column, row, center: { x: column * 4, z: row * 4 }, buildable: true });
-  return { mapId: "arcane-officers-test", grid: { columns, rows, cells } };
+function state(wizards = 20) {
+  const cells = Array.from({ length: 144 }, (_, i) => ({ id: `cell-${i}`, column: i % 12, row: Math.floor(i / 12), buildable: true }));
+  const result = createCityState({ mapId: "officer-test", grid: { columns: 12, rows: 12, cells } }, { cityId: "officer-test", resources: { coins: 99999 } });
+  result.gameplay.population.wizards.current = wizards;
+  result.buildings.ministry = { id: "ministry", status: "completed", program: { canonicalProgram: "ministry_of_magic" } };
+  return result;
 }
 
-function stateWithWizardPopulation(wizards) {
-  const state = createCityState(world(), { resources: { coins: 99999 } });
-  state.gameplay.population.wizards.current = wizards;
-  return state;
-}
-
-function context() {
-  let id = 0;
-  return { createId: (prefix) => `${prefix}-${++id}` };
-}
-
-test("arcane officer roster capacity scales with wizard population by ten", () => {
-  assert.equal(arcaneOfficerCapacity(stateWithWizardPopulation(0)), 0);
-  assert.equal(arcaneOfficerCapacity(stateWithWizardPopulation(9)), 0);
-  assert.equal(arcaneOfficerCapacity(stateWithWizardPopulation(10)), 1);
-  assert.equal(arcaneOfficerCapacity(stateWithWizardPopulation(25)), 2);
-});
-
-test("hiring an arcane officer deducts the system price and adds an available officer", () => {
-  const state = stateWithWizardPopulation(20);
-  const result = hireArcaneOfficer(state, { id: "officer-1", name: "Vesper", archetype: "investigation" }, context());
-  assert.equal(result.accepted, true);
-  assert.equal(result.cost, ARCANE_OFFICER_HIRE_COST_COINS);
-  assert.equal(result.nextState.gameplay.resources.coins, 99999 - ARCANE_OFFICER_HIRE_COST_COINS);
-  assert.equal(result.nextState.resources.coins, 99999 - ARCANE_OFFICER_HIRE_COST_COINS);
-  assert.equal(result.nextState.gameplay.arcaneOfficers["officer-1"].status, "available");
-  assert.equal(result.nextState.gameplay.arcaneOfficers["officer-1"].investigation, 3);
-  assert.equal(result.nextState.gameplay.arcaneOfficers["officer-1"].archetype, "investigation");
-  assert.deepEqual(result.nextState.gameplay.arcaneOfficers["officer-1"].specialties, ["investigation"]);
-  assert.equal(state.gameplay.resources.coins, 99999, "source state stays untouched");
-});
-
-test("a caller cannot hire the veteran archetype directly", () => {
-  const state = stateWithWizardPopulation(20);
-  const blocked = hireArcaneOfficer(state, { id: "officer-veteran", archetype: "veteran" }, context());
-  assert.equal(blocked.accepted, false);
-  assert.equal(blocked.error.code, "ARCANE_OFFICER_ARCHETYPE_NOT_ALLOWED");
-  assert.equal(state.gameplay.resources.coins, 99999, "no coins are deducted for a rejected hire");
-});
-
-test("a veteran profile is only reachable through a trusted context profile", () => {
-  const state = stateWithWizardPopulation(20);
-  const ctx = { ...context(), profile: { archetype: "veteran", label: "Veteran", investigation: 3, suppression: 3, coverUp: 3, specialties: ["investigation", "suppression", "cover_up"] } };
-  const result = hireArcaneOfficer(state, { id: "officer-1", name: "Cassian" }, ctx);
-  assert.equal(result.accepted, true);
-  assert.equal(result.nextState.gameplay.arcaneOfficers["officer-1"].archetype, "veteran");
-  assert.equal(result.nextState.gameplay.arcaneOfficers["officer-1"].investigation, 3);
-  assert.deepEqual(result.nextState.gameplay.arcaneOfficers["officer-1"].specialties, ["investigation", "suppression", "cover_up"]);
-});
-
-test("a caller cannot raise officer attributes through the hire input", () => {
-  const state = stateWithWizardPopulation(20);
-  const result = hireArcaneOfficer(state, {
-    id: "officer-1",
-    name: "Would-Be Elite",
-    investigation: 5,
-    suppression: 5,
-    coverUp: 5,
-    specialties: ["investigation", "suppression", "cover_up"]
-  }, context());
-  assert.equal(result.accepted, true);
-  const officer = result.nextState.gameplay.arcaneOfficers["officer-1"];
-  assert.equal(officer.investigation, 1, "trainee default, not the injected 5");
-  assert.equal(officer.suppression, 1);
-  assert.equal(officer.coverUp, 1);
-  assert.deepEqual(officer.specialties, []);
-});
-
-test("a trusted context profile can define a system-approved officer", () => {
-  const state = stateWithWizardPopulation(20);
-  const ctx = { ...context(), profile: { label: "Field Marshal", investigation: 4, suppression: 4, coverUp: 4, specialties: ["investigation"] } };
-  const result = hireArcaneOfficer(state, { id: "officer-1", name: "Mira" }, ctx);
-  assert.equal(result.accepted, true);
-  assert.equal(result.nextState.gameplay.arcaneOfficers["officer-1"].investigation, 4);
-  assert.deepEqual(result.nextState.gameplay.arcaneOfficers["officer-1"].specialties, ["investigation"]);
-});
-
-test("a caller cannot bypass the system price", () => {
-  const state = stateWithWizardPopulation(20);
-  const free = hireArcaneOfficer(state, { id: "officer-free", cost: 0 }, context());
-  const negative = hireArcaneOfficer(state, { id: "officer-negative", cost: -999 }, context());
-  assert.equal(free.accepted, true);
-  assert.equal(free.cost, ARCANE_OFFICER_HIRE_COST_COINS);
-  assert.equal(free.nextState.gameplay.resources.coins, 99999 - ARCANE_OFFICER_HIRE_COST_COINS);
-  assert.equal(negative.accepted, true);
-  assert.equal(negative.cost, ARCANE_OFFICER_HIRE_COST_COINS);
-  assert.equal(negative.nextState.gameplay.resources.coins, 99999 - ARCANE_OFFICER_HIRE_COST_COINS);
-});
-
-test("hiring is rejected when the roster is at capacity", () => {
-  const state = stateWithWizardPopulation(10);
-  const first = hireArcaneOfficer(state, { id: "officer-1" }, context());
-  const second = hireArcaneOfficer(first.nextState, { id: "officer-2" }, context());
-  assert.equal(first.accepted, true);
-  assert.equal(second.accepted, false);
-  assert.equal(second.error.code, "ARCANE_OFFICER_CAPACITY_REACHED");
-});
-
-test("hiring is rejected without enough coins", () => {
-  const state = stateWithWizardPopulation(10);
-  state.gameplay.resources.coins = 10;
-  state.resources.coins = 10;
-  const result = hireArcaneOfficer(state, { id: "officer-1" }, context());
-  assert.equal(result.accepted, false);
-  assert.equal(result.error.code, "INSUFFICIENT_COINS");
-});
-
-test("hiring uses outer construction coins as authority in both desync directions", () => {
-  const outerShort = stateWithWizardPopulation(10);
-  outerShort.resources.coins = 0;
-  outerShort.gameplay.resources.coins = 100;
-  const rejected = hireArcaneOfficer(outerShort, { id: "outer-short" }, context());
-  assert.equal(rejected.accepted, false);
-  assert.equal(rejected.error.code, "INSUFFICIENT_COINS");
-  assert.deepEqual(rejected.nextState, undefined);
-  const gameplayShort = stateWithWizardPopulation(10);
-  gameplayShort.resources.coins = 100;
-  gameplayShort.gameplay.resources.coins = 0;
-  const hired = hireArcaneOfficer(gameplayShort, { id: "outer-authority" }, context());
-  assert.equal(hired.accepted, true);
-  assert.equal(hired.nextState.resources.coins, 50);
-  assert.equal(hired.nextState.gameplay.resources.coins, 50);
-});
-
-test("arcane officer status transitions through the helper", () => {
-  const state = stateWithWizardPopulation(10);
-  const hired = hireArcaneOfficer(state, { id: "officer-1" }, context());
-  const assigned = setArcaneOfficerStatus(hired.nextState, "officer-1", "unavailable");
-  assert.equal(assigned.ok, true);
-  assert.equal(assigned.nextState.gameplay.arcaneOfficers["officer-1"].status, "unavailable");
-  const missing = setArcaneOfficerStatus(hired.nextState, "officer-nope", "assigned");
-  assert.equal(missing.ok, false);
-  assert.equal(missing.error.code, "ARCANE_OFFICER_NOT_FOUND");
-});
+test("arcane officer roster capacity scales with wizard population by ten", () => { assert.equal(arcaneOfficerCapacity(state(0)), 0); assert.equal(arcaneOfficerCapacity(state(9)), 0); assert.equal(arcaneOfficerCapacity(state(10)), 1); assert.equal(arcaneOfficerCapacity(state(25)), 2); assert.equal(arcaneOfficerCapacity(state(20), { capacityDivisor: 5 }), 4); });
+test("candidate recruitment owns price and identity; external profile fields are ignored", () => { const source = state(); const pool = currentOfficerCandidates(source, source.cityId); const result = hireArcaneOfficerCandidate(pool.state, { candidate_id: pool.candidates[0].candidateId, name: "forged", investigation: 5, cost: 0 }, { cityId: source.cityId }); assert.equal(result.accepted, true); assert.equal(result.cost, ARCANE_OFFICER_CONFIG.hireCostCoins); assert.equal(result.arcaneOfficer.name, pool.candidates[0].identity.name); assert.equal(result.nextState.resources.coins, 99999 - ARCANE_OFFICER_CONFIG.hireCostCoins); assert.equal(result.nextState.gameplay.resources.coins, result.nextState.resources.coins); });
+test("legacy hire entry point is no longer an external recruitment API", () => { const result = hireArcaneOfficer(state(), { name: "forged", archetype: "veteran", investigation: 5 }); assert.equal(result.accepted, false); assert.equal(result.error.code, "ARCANE_OFFICER_CANDIDATE_REQUIRED"); });
+test("candidate status transition remains available for system assignment", () => { const pool = currentOfficerCandidates(state(), "officer-test"); const hired = hireArcaneOfficerCandidate(pool.state, { candidate_id: pool.candidates[0].candidateId }, { cityId: "officer-test" }); const unavailable = setArcaneOfficerStatus(hired.nextState, hired.arcaneOfficer.id, "unavailable"); assert.equal(unavailable.ok, true); assert.equal(unavailable.nextState.gameplay.arcaneOfficers[hired.arcaneOfficer.id].status, "unavailable"); });
