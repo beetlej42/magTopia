@@ -124,15 +124,15 @@ test("same seed and same state produce identical TurnFacts", () => {
   assert.ok(Array.isArray(a.facts.rolls));
 });
 
-test("exposure reaching the sealed threshold seals the building", () => {
+test("historical risk reaching four seals the building", () => {
   const state = cityWithBuildings([
     { id: "tower", cellId: "cell-5-5", name: "Loud Tower", purpose: "residential", magicLevel: 0.9, prominence: "landmark", exposure: 99 }
   ]);
+  state.buildings.tower.historicalRisk = 4;
   const { nextState, facts } = resolveTurn(state, {}, context());
   assert.equal(nextState.buildings.tower.status, "sealed");
-  assert.ok(facts.sealedBuildings.includes("tower"));
-  assert.ok(facts.exposureChanges.tower.sealed);
-  assert.equal(nextState.buildings.tower.exposure, 100);
+  assert.ok(!facts.incidents.some((incident) => incident.buildingId === "tower"));
+  assert.equal(nextState.buildings.tower.historicalRisk, 4);
 });
 
 test("TurnFacts fully describe the state change", () => {

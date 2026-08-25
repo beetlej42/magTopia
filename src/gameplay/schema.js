@@ -54,7 +54,7 @@ export const POLICY_DURATION_TYPES = Object.freeze(["instant", "turns", "until_r
 
 export const ARCANE_OFFICER_STATUSES = Object.freeze(["available", "assigned", "unavailable"]);
 
-export const INCIDENT_TYPES = Object.freeze(["investigation", "containment", "concealment"]);
+export const INCIDENT_TYPES = Object.freeze(["investigation", "suppression", "cover_up"]);
 
 export const INCIDENT_STATUSES = Object.freeze(["open", "assigned", "resolved", "failed", "escalated"]);
 
@@ -66,6 +66,12 @@ function clampNumber(value, fallback, min, max) {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
   return Math.min(max, Math.max(min, number));
+}
+
+function cloneAuditValue(value) {
+  if (Array.isArray(value)) return value.map(cloneAuditValue);
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, cloneAuditValue(entry)]));
+  return value;
 }
 
 /**
@@ -467,14 +473,23 @@ function normalizeLegacyGameplayBuilding(value = {}) {
 export function normalizeArcaneOfficer(value = {}) {
   const status = String(value.status ?? "available");
   if (!ARCANE_OFFICER_STATUSES.includes(status)) throw new Error(`Unsupported arcane officer status: ${status}`);
+  // Persisted PR-E/early-PR-F archives called these skills containment and
+  // concealment. Read them as migration aliases, but emit only the current
+  // suppression / coverUp vocabulary.
+  const suppression = value.suppression ?? value.containment;
+  const coverUp = value.coverUp ?? value.cover_up ?? value.concealment;
   return {
     id: String(value.id ?? ""),
     name: String(value.name ?? ""),
     archetype: String(value.archetype ?? "trainee"),
     investigation: clampNumber(value.investigation, 0, 0, 5),
-    containment: clampNumber(value.containment, 0, 0, 5),
-    concealment: clampNumber(value.concealment, 0, 0, 5),
-    specialties: Array.isArray(value.specialties) ? [...value.specialties].map(String) : [],
+    suppression: clampNumber(suppression, 0, 0, 5),
+    coverUp: clampNumber(coverUp, 0, 0, 5),
+    specialties: Array.isArray(value.specialties) ? [...value.specialties].map((specialty) => {
+      if (specialty === "containment") return "suppression";
+      if (specialty === "concealment") return "cover_up";
+      return String(specialty);
+    }) : [],
     status,
     hiredAtTurn: clampNumber(value.hiredAtTurn, 0, 0, Number.MAX_SAFE_INTEGER)
   };
@@ -494,18 +509,38 @@ export function normalizeScheduler(value = {}) {
 }
 
 export function normalizeExposureIncident(value = {}) {
-  const type = String(value.type ?? "investigation");
+  const typeAlias = String(value.type ?? "investigation");
+  const type = typeAlias === "containment" ? "suppression" : typeAlias === "concealment" ? "cover_up" : typeAlias;
   if (!INCIDENT_TYPES.includes(type)) throw new Error(`Unsupported incident type: ${type}`);
   const status = String(value.status ?? "open");
   if (!INCIDENT_STATUSES.includes(status)) throw new Error(`Unsupported incident status: ${status}`);
+  const dc = [10, 14, 18].includes(Number(value.dc))
+    ? Number(value.dc)
+    : [10, 14, 18].includes(Number(value.difficulty)) ? Number(value.difficulty) : 10;
+  const difficultyTier = ({ 10: "normal", 14: "hard", 18: "severe" })[dc];
+  if (value.difficultyTier != null && !["normal", "hard", "severe"].includes(String(value.difficultyTier))) {
+    throw new Error(`Unsupported incident difficulty tier: ${String(value.difficultyTier)}`);
+  }
+  if (value.difficultyTier != null && String(value.difficultyTier) !== difficultyTier) {
+    throw new Error(`Incident difficulty tier ${String(value.difficultyTier)} does not match DC ${dc}`);
+  }
   return {
     id: String(value.id ?? ""),
     buildingId: String(value.buildingId ?? ""),
     type,
-    attribute: String(value.attribute ?? type),
-    difficulty: clampNumber(value.difficulty, 3, 1, 10),
+    attribute: type === "cover_up" ? "coverUp" : type,
+    dc,
+    difficultyTier,
     severity: clampNumber(value.severity, 2, 1, 5),
     exposureAtCreation: clampNumber(value.exposureAtCreation, 0, 0, SEALED_EXPOSURE_THRESHOLD),
+    historicalRiskAtCreation: clampNumber(value.historicalRiskAtCreation, 0, 0, 4),
+    sourceRisk: value.sourceRisk ? cloneAuditValue(value.sourceRisk) : null,
+    sourcePurpose: value.sourcePurpose == null ? null : String(value.sourcePurpose),
+    purposeWeights: value.purposeWeights ? cloneAuditValue(value.purposeWeights) : null,
+    typeRoll: value.typeRoll == null ? null : clampNumber(value.typeRoll, 0, 0, 1),
+    typeWeights: value.typeWeights ? cloneAuditValue(value.typeWeights) : null,
+    dcRoll: value.dcRoll == null ? null : clampNumber(value.dcRoll, 0, 0, 1),
+    dcWeights: value.dcWeights ? cloneAuditValue(value.dcWeights) : null,
     summary: String(value.summary ?? ""),
     status,
     createdAtTurn: clampNumber(value.createdAtTurn, 0, 0, Number.MAX_SAFE_INTEGER)
@@ -513,16 +548,23 @@ export function normalizeExposureIncident(value = {}) {
 }
 
 export function normalizeRollRecord(value = {}) {
+  const dc = Number(value.dc ?? value.difficulty);
   return {
     incidentId: String(value.incidentId ?? ""),
     arcaneOfficerId: String(value.arcaneOfficerId ?? ""),
     attribute: String(value.attribute ?? ""),
-    rawRoll: clampNumber(value.rawRoll ?? value.roll, 0, 0, 100),
+    rawRoll: clampNumber(value.rawRoll ?? value.roll, 1, 1, 20),
     attributeValue: clampNumber(value.attributeValue, 0, 0, 5),
     specialtyBonus: clampNumber(value.specialtyBonus, 0, 0, 5),
-    modifier: clampNumber(value.modifier, 0, 0, 100),
-    difficulty: clampNumber(value.difficulty, 3, 1, 10),
-    outcome: String(value.outcome ?? "pending")
+    otherModifiers: clampNumber(value.otherModifiers ?? value.modifier, 0, -100, 100),
+    total: clampNumber(value.total, 0, -100, 200),
+    dc: [10, 14, 18].includes(dc) ? dc : 10,
+    margin: clampNumber(value.margin, 0, -200, 200),
+    historicalRiskDelta: clampNumber(value.historicalRiskDelta, 0, -4, 4),
+    outcome: String(value.outcome ?? "pending"),
+    historicalRiskBefore: clampNumber(value.historicalRiskBefore, 0, 0, 4),
+    historicalRiskAfter: clampNumber(value.historicalRiskAfter, 0, 0, 4),
+    sealed: Boolean(value.sealed)
   };
 }
 
@@ -621,10 +663,12 @@ export function normalizeTurnFacts(value = {}) {
     buildingsCompleted: [...(value.buildingsCompleted ?? [])],
     exposureChanges: Object.fromEntries(Object.entries(value.exposureChanges ?? {}).map(([id, change]) => [id, { ...change }])),
     incidents: [...(value.incidents ?? [])].map(normalizeExposureIncident),
+    incidentRolls: [...(value.incidentRolls ?? [])].map(cloneAuditValue),
     unaddressedIncidents: [...(value.unaddressedIncidents ?? [])].map((entry) => ({ ...entry })),
     assignments: [...(value.assignments ?? [])].map((entry) => ({ ...entry })),
     rolls: [...(value.rolls ?? [])].map(normalizeRollRecord),
     outcomes: [...(value.outcomes ?? [])].map((entry) => ({ ...entry })),
+    historicalRiskChanges: Object.fromEntries(Object.entries(value.historicalRiskChanges ?? {}).map(([id, change]) => [id, cloneAuditValue(change)])),
     sealedBuildings: [...(value.sealedBuildings ?? [])],
     nextRisks: [...(value.nextRisks ?? [])].map((entry) => ({
       ...entry,

@@ -465,15 +465,15 @@ export function generateArcaneOfficer(state, cityId, context = {}) {
     return { accepted: false, code: "ARCANE_OFFICER_CAPACITY_REACHED", message: `Arcane officer roster is at its capacity of ${capacity}` };
   }
   const roller = createRoller({ seed: hashSeed(`${String(cityId)}:officer:${state.turn}:${rosterSize}`) });
-  const archetypeId = pick(roller, ["trainee", "investigation", "containment", "concealment"]);
+  const archetypeId = pick(roller, ["trainee", "investigation", "suppression", "cover_up"]);
   const profile = arcaneOfficerArchetype(archetypeId);
   const officer = normalizeArcaneOfficer({
     id: context.createId?.("arcaneOfficer") ?? `arcaneOfficer-${rosterSize + 1}`,
     name: pick(roller, ARCANE_OFFICER_NAMES),
     archetype: archetypeId,
     investigation: profile.investigation,
-    containment: profile.containment,
-    concealment: profile.concealment,
+    suppression: profile.suppression,
+    coverUp: profile.coverUp,
     specialties: [...(profile.specialties ?? [])],
     status: "available",
     hiredAtTurn: state.turn
