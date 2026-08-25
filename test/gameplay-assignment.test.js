@@ -52,9 +52,9 @@ test("same roll with different officers produces different totals and outcomes",
   const strongResult = resolveIncidentRoll({ incident, officer: strong, roller });
   assert.equal(weakResult.roll, 5);
   assert.equal(weakResult.total, 6);
-  assert.equal(strongResult.total, 5 + 4 + 2);
+  assert.equal(strongResult.total, 5 + 4, "legacy incident-type specialty does not receive a purpose bonus");
   assert.equal(weakResult.outcome, "critical_failure");
-  assert.equal(strongResult.outcome, "failure");
+  assert.equal(strongResult.outcome, "critical_failure", "without a purpose source the legacy specialty gives no bonus");
 });
 
 test("gradeRoll maps d20 results into the four outcome bands", () => {

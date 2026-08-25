@@ -471,6 +471,7 @@ function normalizeLegacyGameplayBuilding(value = {}) {
 }
 
 export function normalizeArcaneOfficer(value = {}) {
+  const purposeSpecialties = ["residential", "commercial", "public_service", "production", "greenhouse"];
   const status = String(value.status ?? "available");
   if (!ARCANE_OFFICER_STATUSES.includes(status)) throw new Error(`Unsupported arcane officer status: ${status}`);
   // Persisted PR-E/early-PR-F archives called these skills containment and
@@ -478,20 +479,38 @@ export function normalizeArcaneOfficer(value = {}) {
   // suppression / coverUp vocabulary.
   const suppression = value.suppression ?? value.containment;
   const coverUp = value.coverUp ?? value.cover_up ?? value.concealment;
+  const rawSpecialty = value.specialty ?? (Array.isArray(value.specialties) && value.specialties.length === 1 ? value.specialties[0] : null);
+  const specialty = rawSpecialty == null ? null : rawSpecialty === "containment" ? "suppression" : rawSpecialty === "concealment" ? "cover_up" : String(rawSpecialty);
+  const isNewIdentity = String(value.archetype ?? "") === "purpose_specialist" || value.appearanceSeed != null || value.visualRef != null;
+  if (isNewIdentity) {
+    if (value.specialty == null || !purposeSpecialties.includes(specialty)) {
+      throw new Error(`Unsupported arcane officer purpose specialty: ${specialty}`);
+    }
+    if (!Array.isArray(value.specialties) || value.specialties.length !== 1 || String(value.specialties[0]) !== specialty) {
+      throw new Error("New Arcane Officer identity must have exactly one purpose specialty");
+    }
+  }
+  const normalizedPurposeSpecialty = purposeSpecialties.includes(specialty) ? specialty : null;
+  const specialties = Array.isArray(value.specialties) ? [...value.specialties].map((entry) => {
+    if (entry === "containment") return "suppression";
+    if (entry === "concealment") return "cover_up";
+    return String(entry);
+  }) : (specialty ? [specialty] : []);
   return {
     id: String(value.id ?? ""),
     name: String(value.name ?? ""),
     archetype: String(value.archetype ?? "trainee"),
+    appearanceSeed: value.appearanceSeed == null ? null : String(value.appearanceSeed),
+    visualRef: value.visualRef == null ? null : String(value.visualRef),
     investigation: clampNumber(value.investigation, 0, 0, 5),
     suppression: clampNumber(suppression, 0, 0, 5),
     coverUp: clampNumber(coverUp, 0, 0, 5),
-    specialties: Array.isArray(value.specialties) ? [...value.specialties].map((specialty) => {
-      if (specialty === "containment") return "suppression";
-      if (specialty === "concealment") return "cover_up";
-      return String(specialty);
-    }) : [],
+    specialty: normalizedPurposeSpecialty,
+    legacySpecialty: specialty && !purposeSpecialties.includes(specialty) ? specialty : (value.legacySpecialty == null ? null : String(value.legacySpecialty)),
+    specialties,
     status,
-    hiredAtTurn: clampNumber(value.hiredAtTurn, 0, 0, Number.MAX_SAFE_INTEGER)
+    hiredAtTurn: clampNumber(value.hiredAtTurn, 0, 0, Number.MAX_SAFE_INTEGER),
+    history: Array.isArray(value.history) ? value.history.slice(-50).map(cloneAuditValue) : []
   };
 }
 
@@ -657,6 +676,8 @@ export function normalizeTurnFacts(value = {}) {
     turn: clampNumber(value.turn, 0, 0, Number.MAX_SAFE_INTEGER),
     wallClock: value.wallClock ? { ...value.wallClock } : null,
     resourceDelta: normalizeGameplayResources(value.resourceDelta),
+    netResourceDelta: value.netResourceDelta ? { coins: clampNumber(value.netResourceDelta.coins, 0, -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER), arcaneEnergy: clampNumber(value.netResourceDelta.arcaneEnergy, 0, -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER) } : { coins: 0, arcaneEnergy: 0 },
+    officerMaintenance: value.officerMaintenance ? { count: clampNumber(value.officerMaintenance.count, 0, 0, Number.MAX_SAFE_INTEGER), rate: clampNumber(value.officerMaintenance.rate, 0, 0, Number.MAX_SAFE_INTEGER), total: clampNumber(value.officerMaintenance.total, 0, 0, Number.MAX_SAFE_INTEGER), charged: clampNumber(value.officerMaintenance.charged, 0, 0, Number.MAX_SAFE_INTEGER), unpaid: clampNumber(value.officerMaintenance.unpaid, 0, 0, Number.MAX_SAFE_INTEGER) } : { count: 0, rate: 0, total: 0, charged: 0, unpaid: 0 },
     populationDelta: normalizePopulationState(value.populationDelta, { allowSignedCurrent: true, allowSignedCapacity: true }),
     publicService: normalizePublicServiceFacts(value.publicService),
     buildingsStarted: [...(value.buildingsStarted ?? [])],

@@ -6,7 +6,7 @@ import { canOccupyFootprint } from "../city/state.js";
 import { getEntranceFrontageCells } from "../city/solver.js";
 import { getFootprintCells } from "../city/contracts.js";
 import { cityBlockOfBuilding } from "../city/blocks.js";
-import { arcaneOfficerArchetype } from "./arcane-officers.js";
+import { arcaneOfficerCapacity, generateArcaneOfficerIdentity } from "./arcane-officers.js";
 
 // PR F — Player Daily Cards domain.
 //
@@ -460,23 +460,15 @@ export function generateArcaneOfficer(state, cityId, context = {}) {
   const officers = state?.gameplay?.arcaneOfficers ?? {};
   const rosterSize = Object.keys(officers).length;
   const wizards = state?.gameplay?.population?.wizards?.current ?? 0;
-  const capacity = Math.floor(wizards / 10);
+  const capacity = arcaneOfficerCapacity(state);
   if (rosterSize >= capacity) {
     return { accepted: false, code: "ARCANE_OFFICER_CAPACITY_REACHED", message: `Arcane officer roster is at its capacity of ${capacity}` };
   }
-  const roller = createRoller({ seed: hashSeed(`${String(cityId)}:officer:${state.turn}:${rosterSize}`) });
-  const archetypeId = pick(roller, ["trainee", "investigation", "suppression", "cover_up"]);
-  const profile = arcaneOfficerArchetype(archetypeId);
-  const officer = normalizeArcaneOfficer({
+  const officer = generateArcaneOfficerIdentity({
+    seed: `${String(cityId)}:card-officer:${state.turn}:${rosterSize}`,
     id: context.createId?.("arcaneOfficer") ?? `arcaneOfficer-${rosterSize + 1}`,
-    name: pick(roller, ARCANE_OFFICER_NAMES),
-    archetype: archetypeId,
-    investigation: profile.investigation,
-    suppression: profile.suppression,
-    coverUp: profile.coverUp,
-    specialties: [...(profile.specialties ?? [])],
-    status: "available",
-    hiredAtTurn: state.turn
+    hiredAtTurn: state.turn,
+    nameIndex: rosterSize
   });
   return { accepted: true, officer };
 }

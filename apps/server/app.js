@@ -38,6 +38,7 @@ import { getCard } from "../../src/gameplay/card-catalog.js";
 import { completedReportTurn, deriveCityDayPresentation } from "../../src/gameplay/city-day.js";
 import { playbookGuidance } from "../../src/gameplay/guidance.js";
 import { isTurnResolveLocked, initializeTurnSchedule, normalizeTurnSchedule } from "../../src/gameplay/turn.js";
+import { arcaneOfficerCapacity, arcaneOfficerRecruitmentUnlocked, currentOfficerCandidates, hireArcaneOfficerCandidate, recruitmentConfigSummary } from "../../src/gameplay/arcane-officers.js";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PLAYBOOK_PATH = path.resolve(SERVER_DIR, "../../docs/agent-playbook.md");
@@ -569,6 +570,8 @@ export async function createApp({ repository, config, logger = false, now = () =
     const principal = await authenticate(repository, request, "city:read");
     const { row, state } = await repository.getCity(principal, request.params.cityId);
     const gameplay = state.gameplay ?? {};
+    const candidateState = currentOfficerCandidates(state, row.id);
+    const strategyState = candidateState.state;
     const nowValue = now();
     return {
       city_id: row.id,
@@ -581,13 +584,34 @@ export async function createApp({ repository, config, logger = false, now = () =
       turn_deadline_at: null,
       next_turn_unlock_at: gameplay.nextTurnUnlockAt ?? null,
       settled_by: gameplay.scheduler?.settledBy ?? null,
-      strategy: strategyPayload(state),
+      strategy: strategyPayload(strategyState),
       last_turn_facts: gameplay.lastTurnFacts ?? null,
       // Progressive playbook disclosure: a short context hint plus a pointer to
       // the authoritative playbook. Never the full document.
       gameplay_guidance: playbookGuidance(state, { turnLocked: isTurnResolveLocked(state, nowValue) ? gameplay.nextTurnUnlockAt : null }),
       playbook_url: `${config.publicBaseUrl}/agent/playbook.md`
     };
+  });
+
+  app.post("/api/v1/cities/:cityId/strategy/recruit-officer", async (request, reply) => {
+    const principal = await authenticate(repository, request, "city:build");
+    const body = request.body ?? {};
+    assertOfficerRecruitmentFields(body);
+    const response = await repository.transactCity({
+      principal,
+      cityId: request.params.cityId,
+      endpoint: "strategy/recruit-officer",
+      idempotencyKey: request.headers["idempotency-key"],
+      requestBody: body,
+      expectedVersion: expectedCityVersion(request, body),
+      action: "recruit_arcane_officer",
+      reason: body.actor_note ?? "recruit_arcane_officer"
+    }, async ({ state }) => {
+      const result = hireArcaneOfficerCandidate(state, { candidate_id: body.candidate_id }, { cityId: request.params.cityId });
+      if (!result.accepted) return { nextState: null, response: rejectedStrategyResponse(result.error.code, result.error.message) };
+      return { nextState: { ...result.nextState, version: (state.version ?? 0) + 1 }, response: { command_id: createId("command"), status: "accepted", city_version_before: state.version, city_version_after: (state.version ?? 0) + 1, officer: strategyOfficerResponse(result.arcaneOfficer), cost_coins: result.cost, strategy: strategyPayload({ ...result.nextState, version: (state.version ?? 0) + 1 }) } };
+    });
+    return reply.code(response.status === "rejected" ? 422 : 200).send(response);
   });
 
   app.post("/api/v1/cities/:cityId/strategy/assignments", async (request, reply) => {
@@ -1194,12 +1218,19 @@ const STRATEGY_ASSIGNMENT_ALLOWED_FIELDS = new Set(["incident_id", "incidentId",
 
 const STRATEGY_ASSIGNMENTS_TOP_FIELDS = new Set(["assignments", "expected_city_version", "actor_note"]);
 const STRATEGY_RESOLVE_TOP_FIELDS = new Set(["expected_city_version", "actor_note"]);
+const OFFICER_RECRUITMENT_TOP_FIELDS = new Set(["candidate_id", "expected_city_version", "actor_note"]);
 
 function assertStrategyTopLevelFields(body, allowed, label) {
   const unknown = Object.keys(body ?? {}).filter((key) => !allowed.has(key));
   if (unknown.length > 0) {
     throw new ServiceError(400, "UNKNOWN_STRATEGY_REQUEST_FIELD", `${label} contains unsupported field${unknown.length > 1 ? "s" : ""}: ${unknown.join(", ")}; only ${[...allowed].sort().join(", ")} are accepted`);
   }
+}
+
+function assertOfficerRecruitmentFields(body) {
+  const unknown = Object.keys(body ?? {}).filter((key) => !OFFICER_RECRUITMENT_TOP_FIELDS.has(key));
+  if (unknown.length) throw new ServiceError(400, "UNKNOWN_OFFICER_RECRUITMENT_FIELD", `Officer recruitment contains unsupported field${unknown.length > 1 ? "s" : ""}: ${unknown.join(", ")}`);
+  if (typeof body?.candidate_id !== "string" || !body.candidate_id.trim()) throw new ServiceError(400, "CANDIDATE_ID_REQUIRED", "candidate_id is required");
 }
 
 function normalizeStrategyAssignments(input) {
@@ -1305,6 +1336,7 @@ function strategyPayload(state) {
   return {
     incidents,
     arcane_officers: arcaneOfficers,
+    arcane_officer_recruitment: officerRecruitmentPayload(state),
     pending_assignments: (gameplay.pendingAssignments ?? []).map((entry) => ({
       incident_id: entry.incidentId,
       arcane_officer_id: entry.arcaneOfficerId,
@@ -1321,6 +1353,15 @@ function strategyPayload(state) {
       pending_placements: pendingPlacements(state)
     }
   };
+}
+
+function officerRecruitmentPayload(state) {
+  const gameplay = state.gameplay ?? {};
+  const recruitment = gameplay.arcaneOfficerRecruitment ?? { candidates: {} };
+  const unlocked = arcaneOfficerRecruitmentUnlocked(state);
+  const config = recruitmentConfigSummary();
+  const candidates = unlocked ? Object.values(recruitment.candidates ?? {}).filter((candidate) => candidate.status === "available").map((candidate) => ({ candidate_id: candidate.candidateId, identity: strategyOfficerResponse(candidate.identity), cost_coins: candidate.costCoins, window: candidate.window })) : [];
+  return { unlocked, status: unlocked ? "available" : "locked", capacity: arcaneOfficerCapacity(state), roster_size: Object.keys(gameplay.arcaneOfficers ?? {}).length, config, pool_window: unlocked ? recruitment.window : null, candidates };
 }
 
 function strategyIncidentResponse(state, incident) {
@@ -1348,13 +1389,17 @@ function strategyOfficerResponse(officer) {
   return {
     id: officer.id,
     name: officer.name,
+    appearance_seed: officer.appearanceSeed ?? null,
+    visual_ref: officer.visualRef ?? null,
     archetype: officer.archetype,
     investigation: officer.investigation,
     suppression: officer.suppression,
     cover_up: officer.coverUp,
+    specialty: officer.specialty ?? null,
     specialties: [...(officer.specialties ?? [])],
     status: officer.status,
-    hired_at_turn: officer.hiredAtTurn
+    hired_at_turn: officer.hiredAtTurn,
+    history: [...(officer.history ?? [])].map((entry) => ({ turn: entry.turn, incident_id: entry.incidentId, building_id: entry.buildingId, source_purpose: entry.sourcePurpose ?? null, attribute: entry.attribute, outcome: entry.outcome, growth_roll: entry.growthRoll, growth_chance: entry.growthChance, before: entry.before, after: entry.after, gained: entry.gained }))
   };
 }
 
