@@ -44,7 +44,7 @@ export const GAMEPLAY_GRAMMAR_ARRAY_FIELDS = Object.freeze([
 
 export const TURN_STATUSES = Object.freeze(["open", "building", "strategy", "resolved", "reported", "closed"]);
 
-export const CARD_CHOICE_STATUSES = Object.freeze(["pending", "selected", "skipped", "resolved"]);
+export const CARD_CHOICE_STATUSES = Object.freeze(["pending", "selected", "skipped", "resolved", "not_applicable"]);
 
 export const CARD_DECISION_MODES = Object.freeze(["immediate", "player_place", "delegate_to_agent"]);
 
@@ -674,6 +674,7 @@ export function normalizeTurnFacts(value = {}) {
   return {
     schemaVersion: GAMEPLAY_SCHEMA_VERSION,
     turn: clampNumber(value.turn, 0, 0, Number.MAX_SAFE_INTEGER),
+    turnKind: value.turnKind == null ? (Number(value.turn) === 1 ? "bootstrap" : "normal") : String(value.turnKind),
     wallClock: value.wallClock ? { ...value.wallClock } : null,
     resourceDelta: normalizeGameplayResources(value.resourceDelta),
     netResourceDelta: value.netResourceDelta ? { coins: clampNumber(value.netResourceDelta.coins, 0, -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER), arcaneEnergy: clampNumber(value.netResourceDelta.arcaneEnergy, 0, -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER) } : { coins: 0, arcaneEnergy: 0 },
@@ -682,6 +683,8 @@ export function normalizeTurnFacts(value = {}) {
     publicService: normalizePublicServiceFacts(value.publicService),
     buildingsStarted: [...(value.buildingsStarted ?? [])],
     buildingsCompleted: [...(value.buildingsCompleted ?? [])],
+    buildingFactRefs: [...(value.buildingFactRefs ?? [])].map(String).sort(),
+    bootstrapProgress: value.bootstrapProgress ? cloneAuditValue(value.bootstrapProgress) : null,
     exposureChanges: Object.fromEntries(Object.entries(value.exposureChanges ?? {}).map(([id, change]) => [id, { ...change }])),
     incidents: [...(value.incidents ?? [])].map(normalizeExposureIncident),
     incidentRolls: [...(value.incidentRolls ?? [])].map(cloneAuditValue),

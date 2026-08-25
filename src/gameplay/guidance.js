@@ -33,6 +33,11 @@ export function playbookGuidance(state, options = {}) {
     if (hints.length < MAX_CONTEXTUAL_HINTS) hints.push(hint);
   };
 
+  if ((state?.turn != null && Number(state.turn) === 0) || gameplay.turnKind === "bootstrap") {
+    addContextual("Turn 0 is bootstrap: no card choice is owed. Build a compact route from old_town_entry with affordable housing and an income building; this guidance is advisory.");
+    return [PLAYBOOK_DISCOVERY_GUIDANCE, ...hints];
+  }
+
   // Highest-priority context first. A locked resolve gate is the most decisive
   // thing to know, then agent-mandated work, then risk, then player-owed steps.
   if (options.turnLocked) {

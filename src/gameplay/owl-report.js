@@ -184,6 +184,8 @@ export function buildReportContext({ cityId = null, state = {}, facts, options =
     schemaVersion: REPORT_CONTEXT_SCHEMA_VERSION,
     cityId,
     turn,
+    turnKind: facts.turnKind ?? null,
+    bootstrapProgress: facts.bootstrapProgress ?? null,
     worldDay: turn,
     factsDigest: factsDigest(facts),
     settlement: {
@@ -200,6 +202,7 @@ export function buildReportContext({ cityId = null, state = {}, facts, options =
     publicService: { factRef: factRef("public-service"), ...(facts.publicService ?? {}) },
     buildingsStarted: buildingFacts(facts.buildingsStarted),
     buildingsCompleted: buildingFacts(facts.buildingsCompleted),
+    buildingFactRefs: [...(facts.buildingFactRefs ?? [])].sort(),
     exposureChanges,
     incidents,
     unresolvedIncidents: incidents.filter((incident) => incident.status !== "resolved"),
@@ -252,6 +255,8 @@ export function buildReportContext({ cityId = null, state = {}, facts, options =
     },
     factRefs: [...refs].sort()
   };
+  for (const ref of facts.buildingFactRefs ?? []) refs.add(String(ref));
+  context.factRefs = [...refs].sort();
   return deepFreeze(context);
 }
 

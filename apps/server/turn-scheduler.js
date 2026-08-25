@@ -57,6 +57,9 @@ export function createTurnScheduler({ repository, config, now = () => new Date()
   }
 
   function handleAction(state, action, nowValue, cityId) {
+    if ((state?.turn != null && Number(state.turn) === 0) || state?.gameplay?.turnKind === "bootstrap") {
+      return { nextState: null, response: { status: "noop", reason: "bootstrap_requires_agent_resolve" } };
+    }
     if (action === "init") {
       const initialized = initializeTurnSchedule(state, nowValue, schedule);
       if (!initialized) return { nextState: null, response: { status: "noop", reason: "not_initializable" } };

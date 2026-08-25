@@ -19,6 +19,7 @@ import { incidentAttribute, incidentDefinition } from "./incidents.js";
 import { createRoller, hashSeed, pick, rollDice } from "./random.js";
 import { maintenanceForRoster, normalizeRecruitmentState } from "./arcane-officers.js";
 import { normalizeTurnSchedule } from "./turn.js";
+import { deriveBootstrapProgress, isBootstrapTurn } from "./bootstrap.js";
 import {
   deepFreeze,
   GAMEPLAY_SCHEMA_VERSION,
@@ -591,7 +592,7 @@ function resolveTurnInternal(state, input = {}, context = {}, profile = "product
   const enableIncidents = profile === "production";
   const enableExposure = profile === "production";
   const cityId = state.cityId ?? "";
-  if (enableCards) {
+  if (enableCards && !isBootstrapTurn(next)) {
     next = ensureCardOffer(next, cityId);
     next = markChoiceSkipped(next, { now });
   }
@@ -825,8 +826,13 @@ function resolveTurnInternal(state, input = {}, context = {}, profile = "product
       }
     },
     publicService: populationSettlement.publicService,
-    buildingsStarted: [...(input.buildingsStarted ?? [])],
-    buildingsCompleted: [...(input.buildingsCompleted ?? [])],
+    // Construction facts are derived from accepted state/events. Agent input
+    // is intentionally ignored; these fields are authoritative audit data.
+    buildingsStarted: deriveConstructionFacts(state, state.turn).started,
+    buildingsCompleted: deriveConstructionFacts(state, state.turn).completed,
+    buildingFactRefs: deriveConstructionFacts(state, state.turn).refs,
+    bootstrapProgress: isBootstrapTurn(state) ? deriveBootstrapProgress(state) : null,
+    turnKind: isBootstrapTurn(state) ? "bootstrap" : "normal",
     exposureChanges,
     incidents: factsIncidents,
     incidentRolls,
@@ -853,6 +859,7 @@ function resolveTurnInternal(state, input = {}, context = {}, profile = "product
   next.gameplay.lastTurnFacts = deepFreeze(facts);
   next.gameplay.turnFacts = appendTurnFacts(next.gameplay.turnFacts, facts);
   next.gameplay.turnStatus = "resolved";
+  next.gameplay.turnKind = "normal";
   next.gameplay.turnOpenedAt = next.gameplay.turnOpenedAt ?? resolvedAt;
   next.gameplay.turnDeadlineAt = null;
   next.gameplay.nextTurnUnlockAt = nextTurnUnlockAt;
@@ -883,6 +890,28 @@ function guardTurnResolve(state, input) {
   return null;
 }
 
+// Project construction facts from accepted city events only. Events are
+// filtered to the turn being settled, deduped by stable id, and sorted so the
+// same authoritative state always produces the same facts digest.
+function deriveConstructionFacts(state, turn) {
+  const started = new Set();
+  const completed = new Set();
+  const refs = new Set();
+  const startTypes = new Set(["construction_reserved", "building_constructed", "construction_reservation_completed", "special_structure_placed"]);
+  const completedTypes = new Set(["building_constructed", "construction_reservation_completed", "special_structure_placed"]);
+  for (const event of state?.events ?? []) {
+    if (Number(event?.turn) !== Number(turn) || !startTypes.has(event?.type)) continue;
+    const id = event.buildingId ?? event.building_id ?? event.proposalId ?? event.reservationId;
+    if (id == null) continue;
+    const value = String(id);
+    started.add(value);
+    refs.add(`fact-building-${value}`);
+    if (event.reservationId != null) refs.add(`fact-construction-reservation-${String(event.reservationId)}`);
+    if (completedTypes.has(event.type)) completed.add(value);
+  }
+  return { started: [...started].sort(), completed: [...completed].sort(), refs: [...refs].sort() };
+}
+
 function migrateGameplay(state) {
   const existing = state.gameplay;
   if (!existing?.schemaVersion) {
@@ -891,6 +920,7 @@ function migrateGameplay(state) {
     return {
       schemaVersion: GAMEPLAY_SCHEMA_VERSION,
       turnStatus: "open",
+      turnKind: Number(state.turn ?? 0) === 0 ? "bootstrap" : "normal",
       turnOpenedAt: null,
       turnDeadlineAt: null,
       nextTurnUnlockAt: null,
@@ -913,6 +943,7 @@ function migrateGameplay(state) {
   }
   const migrated = { ...existing };
   migrated.schemaVersion = GAMEPLAY_SCHEMA_VERSION;
+  if (migrated.turnKind == null) migrated.turnKind = Number(state.turn ?? 0) === 0 ? "bootstrap" : "normal";
   // Normalize legacy `magic` on the first resolve; no legacy key is copied to
   // the canonical state. The resource normalizer below also handles old
   // persisted gameplay resources that have no explicit migration marker.

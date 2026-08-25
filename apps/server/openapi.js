@@ -434,7 +434,7 @@ export function createOpenApiDocument(baseUrl) {
           required: ["status"],
           properties: {
             offer_id: { type: ["string", "null"] },
-            status: { enum: ["pending", "selected", "skipped", "resolved"] },
+            status: { enum: ["pending", "selected", "skipped", "resolved", "not_applicable"], description: "not_applicable is authoritative for the turn-0 bootstrap no-card state." },
             selected_card_id: { type: ["string", "null"] },
             decision_mode: { type: ["string", "null"] },
             choice_resolved_at: { type: ["string", "null"] },
@@ -598,6 +598,8 @@ export function createOpenApiDocument(baseUrl) {
             required: ["turn", "resourceDelta", "netResourceDelta", "officerMaintenance", "populationDelta", "publicService", "exposureChanges", "incidents", "incidentRolls", "unaddressedIncidents", "historicalRiskChanges", "assignments", "rolls", "outcomes", "sealedBuildings", "nextRisks"],
           properties: {
             turn: { type: "integer" },
+            turnKind: { enum: ["bootstrap", "normal"] },
+            bootstrapProgress: { type: ["object", "null"], additionalProperties: true },
             wallClock: { type: "object", nullable: true, additionalProperties: true },
             resourceDelta: { type: "object", properties: { coins: { type: "integer", minimum: 0 }, arcaneEnergy: { type: "number", minimum: 0 } }, required: ["coins", "arcaneEnergy"], additionalProperties: false },
             netResourceDelta: { type: "object", properties: { coins: { type: "integer" }, arcaneEnergy: { type: "number" } }, required: ["coins", "arcaneEnergy"], additionalProperties: false },
@@ -681,6 +683,9 @@ export function createOpenApiDocument(baseUrl) {
               }
             },
             sealedBuildings: { type: "array", items: { type: "string" } },
+            buildingsStarted: { type: "array", items: { type: "string" }, description: "System-derived construction reservation/building ids for this turn." },
+            buildingsCompleted: { type: "array", items: { type: "string" } },
+            buildingFactRefs: { type: "array", items: { type: "string" } },
             nextRisks: { type: "array", items: { type: "object", additionalProperties: true } }
           }
         },
@@ -688,6 +693,8 @@ export function createOpenApiDocument(baseUrl) {
           type: "object",
           required: ["incidents", "arcane_officers", "arcane_officer_recruitment", "pending_assignments", "cards"],
           properties: {
+            turn_kind: { enum: ["bootstrap", "normal"] },
+            bootstrap: { type: ["object", "null"], additionalProperties: true },
             incidents: { type: "array", items: { $ref: "#/components/schemas/StrategyIncident" } },
             arcane_officers: { type: "array", items: { $ref: "#/components/schemas/ArcaneOfficer" } },
             arcane_officer_recruitment: { $ref: "#/components/schemas/ArcaneOfficerRecruitment" },
@@ -702,7 +709,9 @@ export function createOpenApiDocument(baseUrl) {
             city_id: { type: "string" },
             city_version: { type: "integer" },
             turn: { type: "integer" },
+            turn_kind: { enum: ["bootstrap", "normal"] },
             turn_status: { type: "string" },
+            bootstrap: { type: ["object", "null"], additionalProperties: true },
             turn_opened_at: { type: ["string", "null"] },
             turn_deadline_at: { type: ["string", "null"], description: "Deprecated legacy field, always null. Turns no longer have a deadline that auto-settles; it is kept only for API compatibility and never drives settlement." },
             next_turn_unlock_at: { type: ["string", "null"], description: "Server-owned cooldown gate. While the current turn is active it is the earliest wall-clock time the Agent may resolve the turn (POST /strategy/resolve is rejected with TURN_NOT_UNLOCKED before it); once the turn is settled it is the earliest time the next turn may open. Agents cannot change it." },
@@ -896,8 +905,10 @@ export function createOpenApiDocument(baseUrl) {
             city_version: { type: "integer" },
             phase: { enum: ["dawn", "early_morning", "morning", "day", "night"] },
             turn: { type: "integer" },
+            turnKind: { enum: ["bootstrap", "normal"] },
             turnStatus: { type: "string" },
             settled: { type: "boolean" },
+            bootstrap: { type: ["object", "null"], additionalProperties: true },
             report: {
               type: "object",
               properties: {

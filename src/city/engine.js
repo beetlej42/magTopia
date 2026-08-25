@@ -209,7 +209,7 @@ function reserveConstruction(currentState, input, context) {
     createdAt: context.now()
   };
   bump(next, false);
-  appendEvent(next, { type: "construction_reserved", actor: proposal.actor, reservationId, cost: preview.cost }, context);
+  appendEvent(next, { type: "construction_reserved", actor: proposal.actor, reservationId, proposalId: proposal.id ?? null, buildingId: input.buildingId ?? null, cost: preview.cost }, context);
   return accepted(currentState, next, { reservation: structuredClone(next.reservations[reservationId]), preview });
 }
 

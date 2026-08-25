@@ -48,6 +48,7 @@ export function initializeFreshCitySchedule(state, now, config = {}) {
     gameplay: {
       ...(state.gameplay ?? {}),
       turnStatus: state.gameplay?.turnStatus ?? "open",
+      turnKind: state.gameplay?.turnKind ?? (Number(state.turn ?? 0) === 0 ? "bootstrap" : "normal"),
       turnOpenedAt: openedAt,
       nextTurnUnlockAt: new Date(new Date(openedAt).getTime() + schedule.turnCooldownMs).toISOString(),
       turnDeadlineAt: null,
@@ -97,6 +98,7 @@ export function openNextTurn(state, now, config = {}) {
   const openedAt = new Date(at).toISOString();
   return withGameplay(state, {
     turnStatus: "open",
+    turnKind: "normal",
     turnOpenedAt: openedAt,
     nextTurnUnlockAt: new Date(at + schedule.turnCooldownMs).toISOString(),
     turnDeadlineAt: null,
@@ -117,6 +119,9 @@ export function isTurnResolveLocked(state, now) {
 }
 
 export function dueActionFor(state, now) {
+  // Bootstrap is resolved explicitly by the Agent. The scheduler must not
+  // lazily initialize it or create a card offer.
+  if ((state?.turn != null && Number(state.turn) === 0) || state?.gameplay?.turnKind === "bootstrap") return null;
   if (needsTurnScheduleInit(state)) return "init";
   if (shouldOpenNextTurn(state, now)) return "open-next";
   return null;
