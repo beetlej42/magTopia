@@ -482,8 +482,14 @@ export function normalizeArcaneOfficer(value = {}) {
   const rawSpecialty = value.specialty ?? (Array.isArray(value.specialties) && value.specialties.length === 1 ? value.specialties[0] : null);
   const specialty = rawSpecialty == null ? null : rawSpecialty === "containment" ? "suppression" : rawSpecialty === "concealment" ? "cover_up" : String(rawSpecialty);
   const isNewIdentity = String(value.archetype ?? "") === "purpose_specialist" || value.appearanceSeed != null || value.visualRef != null;
-  if (isNewIdentity && value.specialty != null && !purposeSpecialties.includes(specialty)) throw new Error(`Unsupported arcane officer purpose specialty: ${specialty}`);
-  if (isNewIdentity && value.specialty != null && Array.isArray(value.specialties) && (value.specialties.length !== 1 || !purposeSpecialties.includes(specialty))) throw new Error("New Arcane Officer identity must have exactly one purpose specialty");
+  if (isNewIdentity) {
+    if (value.specialty == null || !purposeSpecialties.includes(specialty)) {
+      throw new Error(`Unsupported arcane officer purpose specialty: ${specialty}`);
+    }
+    if (!Array.isArray(value.specialties) || value.specialties.length !== 1 || String(value.specialties[0]) !== specialty) {
+      throw new Error("New Arcane Officer identity must have exactly one purpose specialty");
+    }
+  }
   const normalizedPurposeSpecialty = purposeSpecialties.includes(specialty) ? specialty : null;
   const specialties = Array.isArray(value.specialties) ? [...value.specialties].map((entry) => {
     if (entry === "containment") return "suppression";
@@ -504,7 +510,7 @@ export function normalizeArcaneOfficer(value = {}) {
     specialties,
     status,
     hiredAtTurn: clampNumber(value.hiredAtTurn, 0, 0, Number.MAX_SAFE_INTEGER),
-    history: Array.isArray(value.history) ? value.history.map(cloneAuditValue) : []
+    history: Array.isArray(value.history) ? value.history.slice(-50).map(cloneAuditValue) : []
   };
 }
 

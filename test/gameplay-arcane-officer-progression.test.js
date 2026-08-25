@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createCityState } from "../src/city/state.js";
 import { createRoller } from "../src/gameplay/random.js";
-import { resolveIncidentRoll, settleAssignments, resolveTurn } from "../src/gameplay/simulation.js";
+import { resolveIncidentRoll, settleAssignments, resolveTurn, settleResources } from "../src/gameplay/simulation.js";
 import { ARCANE_OFFICER_PURPOSES, ARCANE_OFFICER_CONFIG, arcaneOfficerCapacity, arcaneOfficerRecruitmentUnlocked, currentOfficerCandidates, generateArcaneOfficerIdentity, hireArcaneOfficerCandidate, isGovernanceFacility, maintenanceForRoster } from "../src/gameplay/arcane-officers.js";
 import { normalizeArcaneOfficer } from "../src/gameplay/schema.js";
 
@@ -48,7 +48,10 @@ test("governance unlock is exact and locked state has no candidates", () => {
 test("candidate recruitment is candidate-only, atomic, authoritative, and capped", () => {
   const original = state();
   const pool = currentOfficerCandidates(original, original.cityId);
-  const result = hireArcaneOfficerCandidate(pool.state, { candidate_id: pool.candidates[0].candidateId, name: "forged", investigation: 5 }, { cityId: original.cityId });
+  const forged = hireArcaneOfficerCandidate(pool.state, { candidate_id: pool.candidates[0].candidateId, name: "forged", investigation: 5 }, { cityId: original.cityId });
+  assert.equal(forged.accepted, false);
+  assert.equal(forged.error.code, "ARCANE_OFFICER_FORGERY");
+  const result = hireArcaneOfficerCandidate(pool.state, { candidate_id: pool.candidates[0].candidateId }, { cityId: original.cityId });
   assert.equal(result.accepted, true);
   assert.equal(result.cost, ARCANE_OFFICER_CONFIG.hireCostCoins);
   assert.equal(result.nextState.resources.coins, 350);
@@ -68,6 +71,10 @@ test("new identity generator is replayable and rejects invalid internal profiles
   assert.deepEqual(generateArcaneOfficerIdentity({ seed: "fixed" }), generateArcaneOfficerIdentity({ seed: "fixed" }));
   assert.throws(() => generateArcaneOfficerIdentity({ seed: "bad", profile: { investigation: 9, suppression: 1, coverUp: 1, specialty: "investigation" } }), /profile/);
   assert.throws(() => normalizeArcaneOfficer({ id: "bad", archetype: "purpose_specialist", specialty: "investigation", specialties: ["investigation"], investigation: 3, suppression: 2, coverUp: 2 }), /purpose specialty/);
+  assert.throws(() => normalizeArcaneOfficer({ id: "bad", archetype: "purpose_specialist", specialty: "residential", specialties: ["commercial"], investigation: 3, suppression: 2, coverUp: 2 }), /exactly one/);
+  assert.throws(() => normalizeArcaneOfficer({ id: "bad", archetype: "purpose_specialist", investigation: 3, suppression: 2, coverUp: 2 }), /purpose specialty/);
+  const history = normalizeArcaneOfficer({ id: "old", history: Array.from({ length: 60 }, (_, turn) => ({ turn })) });
+  assert.equal(history.history.length, 50);
 });
 
 test("purpose specialty is authoritative and legacy incident type specialty receives no bonus", () => {
@@ -106,4 +113,36 @@ test("maintenance charges from opening plus gross income and never Arcane Energy
   assert.equal(result.nextState.gameplay.resources.arcaneEnergy, 4);
   assert.equal(result.facts.officerMaintenance.charged, 10);
   assert.equal(result.facts.netResourceDelta.coins, 90);
+});
+
+test("maintenance charges available opening plus gross income and audits unpaid", () => {
+  const s = state({ coins: 0, wizards: 0 });
+  s.gameplay.arcaneOfficers.one = generateArcaneOfficerIdentity({ seed: "short-maintenance", id: "one" });
+  const short = settleResources(s, {}, { baseCoins: 5, chargeOfficerMaintenance: true });
+  assert.equal(short.maintenance.charged, 5);
+  assert.equal(short.maintenance.unpaid, 5);
+  assert.equal(short.after.coins, 0);
+  const openingOnly = structuredClone(s);
+  openingOnly.resources.coins = 3;
+  const second = settleResources(openingOnly, {}, { chargeOfficerMaintenance: true });
+  assert.equal(second.maintenance.charged, 3);
+  assert.equal(second.maintenance.unpaid, 7);
+  assert.equal(second.after.coins, 0);
+  assert.equal(second.after.arcaneEnergy, 0);
+});
+
+test("growth uses an independent roller so two assignment d20 results replay unchanged", () => {
+  const incidents = [
+    { id: "one", buildingId: "building", type: "investigation", sourcePurpose: "residential", dc: 10, status: "open" },
+    { id: "two", buildingId: "building", type: "investigation", sourcePurpose: "residential", dc: 10, status: "open" }
+  ];
+  const base = { turn: 2, buildings: { building: { historicalRisk: 0 } }, gameplay: { incidents: Object.fromEntries(incidents.map((incident) => [incident.id, incident])), arcaneOfficers: { officer: { id: "officer", investigation: 1, suppression: 1, coverUp: 1, specialty: "residential", specialties: ["residential"], status: "available", history: [] } } } };
+  const assignments = incidents.map((incident) => ({ incidentId: incident.id, arcaneOfficerId: "officer" }));
+  const run = (growthChance) => settleAssignments(structuredClone(base), incidents, assignments, { next: () => 0.5 }, { growthChance, growthRoller: { next: () => 0 } });
+  const noGrowth = run(0);
+  const growth = run(1);
+  assert.deepEqual(growth.rolls.map((roll) => roll.roll), noGrowth.rolls.map((roll) => roll.roll));
+  assert.deepEqual(growth.rolls.map((roll) => roll.roll), noGrowth.rolls.map((roll) => roll.roll));
+  assert.equal(growth.outcomes[0].growth.gained, 1);
+  assert.equal(growth.outcomes[1].growth.gained, 1);
 });

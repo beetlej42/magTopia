@@ -530,7 +530,7 @@ export function createOpenApiDocument(baseUrl) {
         },
         ArcaneOfficer: {
           type: "object",
-            required: ["id", "name", "investigation", "suppression", "cover_up", "specialty", "specialties", "status"],
+            required: ["id", "name", "archetype", "appearance_seed", "visual_ref", "investigation", "suppression", "cover_up", "specialty", "specialties", "status", "hired_at_turn", "history"],
           properties: {
             id: { type: "string" },
             name: { type: "string" },
@@ -564,7 +564,7 @@ export function createOpenApiDocument(baseUrl) {
           type: "object", additionalProperties: false, required: ["candidate_id", "expected_city_version"],
           properties: { candidate_id: { type: "string", minLength: 1 }, expected_city_version: { type: "integer", minimum: 0 }, actor_note: { type: "string" } }
         },
-        OfficerRecruitmentResponse: { type: "object", additionalProperties: false, required: ["command_id", "status", "city_version_before", "city_version_after", "officer", "cost_coins", "strategy"], properties: { command_id: { type: "string" }, status: { const: "accepted" }, city_version_before: { type: "integer" }, city_version_after: { type: "integer" }, officer: { $ref: "#/components/schemas/ArcaneOfficer" }, cost_coins: { type: "integer" }, strategy: { type: "object", additionalProperties: true } } },
+        OfficerRecruitmentResponse: { type: "object", additionalProperties: true, required: ["command_id", "status", "city_version_before", "city_version_after", "officer", "cost_coins", "strategy"], properties: { command_id: { type: "string" }, status: { const: "accepted" }, city_version_before: { type: "integer" }, city_version_after: { type: "integer" }, officer: { $ref: "#/components/schemas/ArcaneOfficer" }, cost_coins: { type: "integer" }, strategy: { $ref: "#/components/schemas/StrategyPayload" }, idempotent_replay: { type: "boolean" } } },
         StrategyAssignment: {
           type: "object",
           description: "A dispatch instruction. Only these fields are accepted; the system owns every numeric balance parameter.",
@@ -675,13 +675,24 @@ export function createOpenApiDocument(baseUrl) {
                   sealed: { type: "boolean" },
                   resolution: { enum: ["assigned", "unaddressed"] },
                   incidentStatus: { type: "string" },
-                  arcaneOfficerStatus: { type: "string" }
-                  ,growth: { type: "object", additionalProperties: false, required: ["attribute", "roll", "chance", "before", "after", "gained"], properties: { attribute: { type: "string" }, roll: { type: "number" }, chance: { type: "number" }, before: { type: "integer" }, after: { type: "integer" }, gained: { type: "integer" } } }
+                  arcaneOfficerStatus: { type: "string" },
+                  growth: { type: "object", additionalProperties: false, required: ["attribute", "roll", "chance", "before", "after", "gained"], properties: { attribute: { type: "string" }, roll: { type: "number" }, chance: { type: "number" }, before: { type: "integer" }, after: { type: "integer" }, gained: { type: "integer" } } }
                 }
               }
             },
             sealedBuildings: { type: "array", items: { type: "string" } },
             nextRisks: { type: "array", items: { type: "object", additionalProperties: true } }
+          }
+        },
+        StrategyPayload: {
+          type: "object",
+          required: ["incidents", "arcane_officers", "arcane_officer_recruitment", "pending_assignments", "cards"],
+          properties: {
+            incidents: { type: "array", items: { $ref: "#/components/schemas/StrategyIncident" } },
+            arcane_officers: { type: "array", items: { $ref: "#/components/schemas/ArcaneOfficer" } },
+            arcane_officer_recruitment: { $ref: "#/components/schemas/ArcaneOfficerRecruitment" },
+            pending_assignments: { type: "array", items: { type: "object" } },
+            cards: { $ref: "#/components/schemas/StrategyCards" }
           }
         },
         StrategyContext: {
@@ -698,17 +709,7 @@ export function createOpenApiDocument(baseUrl) {
             settled_by: { type: ["string", "null"], description: "Which authority settled the last turn: agent, or deadline (historical only; deadline settlement no longer exists)." },
             gameplay_guidance: { type: "array", items: { type: "string" }, description: "Short progressive-disclosure hints (1-3) for the current context, derived from card/placement/incident/turn-lock state. Advisory only; the authoritative contract is the playbook." },
             playbook_url: { type: "string", description: "Stable URL of the authoritative MAGTOPIA Agent Playbook." },
-            strategy: {
-              type: "object",
-              required: ["incidents", "arcane_officers", "arcane_officer_recruitment", "pending_assignments", "cards"],
-              properties: {
-                incidents: { type: "array", items: { $ref: "#/components/schemas/StrategyIncident" } },
-                arcane_officers: { type: "array", items: { $ref: "#/components/schemas/ArcaneOfficer" } },
-                arcane_officer_recruitment: { $ref: "#/components/schemas/ArcaneOfficerRecruitment" },
-                pending_assignments: { type: "array", items: { type: "object", properties: { incident_id: { type: "string" }, arcane_officer_id: { type: "string" }, rationale: { type: ["string", "null"] } } } },
-                cards: { $ref: "#/components/schemas/StrategyCards" }
-              }
-            },
+            strategy: { $ref: "#/components/schemas/StrategyPayload", properties: { incidents: { type: "array" }, arcane_officers: { type: "array" }, arcane_officer_recruitment: { $ref: "#/components/schemas/ArcaneOfficerRecruitment" }, pending_assignments: { type: "array" }, cards: { $ref: "#/components/schemas/StrategyCards" } } },
             last_turn_facts: { oneOf: [{ $ref: "#/components/schemas/TurnFacts" }, { type: "null" }] }
           }
         },
@@ -722,14 +723,7 @@ export function createOpenApiDocument(baseUrl) {
             city_version_after: { type: "integer" },
             turn: { type: "integer" },
             facts: { $ref: "#/components/schemas/TurnFacts" },
-            strategy: {
-              type: "object",
-              properties: {
-                incidents: { type: "array", items: { $ref: "#/components/schemas/StrategyIncident" } },
-                arcane_officers: { type: "array", items: { $ref: "#/components/schemas/ArcaneOfficer" } },
-                pending_assignments: { type: "array", items: { type: "object" } }
-              }
-            }
+            strategy: { $ref: "#/components/schemas/StrategyPayload", properties: { cards: { $ref: "#/components/schemas/StrategyCards" } } }
           }
         },
         ReportContext: {

@@ -1360,7 +1360,7 @@ function officerRecruitmentPayload(state) {
   const recruitment = gameplay.arcaneOfficerRecruitment ?? { candidates: {} };
   const unlocked = arcaneOfficerRecruitmentUnlocked(state);
   const config = recruitmentConfigSummary();
-  const candidates = unlocked ? Object.values(recruitment.candidates ?? {}).filter((candidate) => candidate.status === "available").map((candidate) => ({ candidate_id: candidate.candidateId, identity: strategyOfficerResponse(candidate.identity), cost_coins: config.hire_cost_coins, window: candidate.window })) : [];
+  const candidates = unlocked ? Object.values(recruitment.candidates ?? {}).filter((candidate) => candidate.status === "available").map((candidate) => ({ candidate_id: candidate.candidateId, identity: strategyOfficerResponse(candidate.identity), cost_coins: candidate.costCoins, window: candidate.window })) : [];
   return { unlocked, status: unlocked ? "available" : "locked", capacity: arcaneOfficerCapacity(state), roster_size: Object.keys(gameplay.arcaneOfficers ?? {}).length, config, pool_window: unlocked ? recruitment.window : null, candidates };
 }
 

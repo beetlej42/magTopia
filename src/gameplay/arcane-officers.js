@@ -8,39 +8,43 @@ export const ARCANE_OFFICER_CONFIG = Object.freeze({ refreshIntervalTurns: 3, ca
 export const ARCANE_OFFICER_PURPOSES = Object.freeze(["residential", "commercial", "public_service", "production", "greenhouse"]);
 export const LEGACY_OFFICER_SPECIALTIES = Object.freeze(["investigation", "suppression", "cover_up", "containment", "concealment"]);
 
-export const ARCANE_OFFICER_ARCHETYPES = Object.freeze({
-  trainee: Object.freeze({ label: "Trainee", investigation: 1, suppression: 1, coverUp: 1, specialties: [] }),
-  investigation: Object.freeze({ label: "Investigation Officer", investigation: 3, suppression: 1, coverUp: 2, specialties: ["investigation"] }),
-  suppression: Object.freeze({ label: "Suppression Officer", investigation: 1, suppression: 3, coverUp: 2, specialties: ["suppression"] }),
-  cover_up: Object.freeze({ label: "Cover-up Officer", investigation: 1, suppression: 2, coverUp: 3, specialties: ["cover_up"] }),
-  veteran: Object.freeze({ label: "Veteran", investigation: 3, suppression: 3, coverUp: 3, specialties: ["investigation", "suppression", "cover_up"] })
-});
-
-export const HIREABLE_ARCANE_OFFICER_ARCHETYPES = Object.freeze(["trainee", "investigation", "suppression", "cover_up"]);
-
-export function arcaneOfficerArchetype(archetype) {
-  return ARCANE_OFFICER_ARCHETYPES[archetype] ?? ARCANE_OFFICER_ARCHETYPES.trainee;
+function validatedConfig(options = {}) {
+  const config = { ...ARCANE_OFFICER_CONFIG, ...options, ...(options.config ?? {}) };
+  const integer = (name, minimum, maximum = Number.MAX_SAFE_INTEGER) => {
+    if (!Number.isSafeInteger(Number(config[name])) || Number(config[name]) < minimum || Number(config[name]) > maximum) {
+      throw new Error(`Invalid arcane officer config: ${name}`);
+    }
+    config[name] = Number(config[name]);
+  };
+  integer("refreshIntervalTurns", 1);
+  integer("candidateCount", 2, 3);
+  integer("hireCostCoins", 120, 180);
+  integer("maintenanceCoinsPerTurn", 8, 12);
+  integer("attributeCap", 0, 5);
+  if (!Number.isFinite(Number(config.capacityDivisor)) || Number(config.capacityDivisor) <= 0) {
+    throw new Error("Invalid arcane officer config: capacityDivisor");
+  }
+  config.capacityDivisor = Number(config.capacityDivisor);
+  for (const name of ["growthChance", "criticalGrowthChance"]) {
+    if (!Number.isFinite(Number(config[name])) || Number(config[name]) < 0 || Number(config[name]) > 1) {
+      throw new Error(`Invalid arcane officer config: ${name}`);
+    }
+    config[name] = Number(config[name]);
+  }
+  if (config.growthChance > config.criticalGrowthChance) {
+    throw new Error("Invalid arcane officer config: growthChance must not exceed criticalGrowthChance");
+  }
+  return config;
 }
 
 export function arcaneOfficerCapacity(state, options = {}) {
-  const wizards = state?.gameplay?.population?.wizards?.current ?? 0;
-  return Math.floor(wizards / Number(options.capacityDivisor ?? ARCANE_OFFICER_CONFIG.capacityDivisor));
+  const config = validatedConfig(options);
+  const wizards = Number(state?.gameplay?.population?.wizards?.current ?? 0);
+  return Math.floor(Math.max(0, wizards) / config.capacityDivisor);
 }
 
 export function arcaneOfficerRoster(state) {
   return Object.values(state?.gameplay?.arcaneOfficers ?? {});
-}
-
-export function hireArcaneOfficer(state, input = {}, context = {}) {
-  // Kept as an explicit migration guard: all external recruitment must use a
-  // current candidate_id. Trusted cards call generateArcaneOfficerIdentity.
-  if (context?.systemGrant === true) {
-    const officers = state?.gameplay?.arcaneOfficers ?? {};
-    if (Object.keys(officers).length >= arcaneOfficerCapacity(state)) return { accepted: false, error: { code: "ARCANE_OFFICER_CAPACITY_REACHED", message: "Arcane Officer roster is at capacity" } };
-    const officer = generateArcaneOfficerIdentity({ seed: `${context.cityId ?? state.cityId ?? ""}:system:${state.turn}:${Object.keys(officers).length}`, id: context.createId?.("arcaneOfficer"), hiredAtTurn: state.turn });
-    return { accepted: true, arcaneOfficer: officer, cost: 0, nextState: { ...state, gameplay: { ...state.gameplay, arcaneOfficers: { ...officers, [officer.id]: officer } } } };
-  }
-  return { accepted: false, error: { code: "ARCANE_OFFICER_CANDIDATE_REQUIRED", message: "Arcane Officer recruitment requires a current candidate_id" } };
 }
 
 export function setArcaneOfficerStatus(state, officerId, status) {
@@ -78,11 +82,111 @@ export function isGovernanceFacility(building, options = {}) {
   return ids.has(structure) || ["ministry of magic", "ministry of magic headquarters"].includes(structureName) || programs.has(program) || ["ministry of magic", "ministry of magic headquarters"].includes(programName) || tags.includes("ministry_of_magic") || tags.includes("governance_facility");
 }
 export function arcaneOfficerRecruitmentUnlocked(state, options = {}) { return options.recruitmentUnlocked === true || Object.values(state?.buildings ?? {}).some((building) => isGovernanceFacility(building, options)); }
-export function recruitmentConfigSummary(options = {}) { const config = { ...ARCANE_OFFICER_CONFIG, ...options }; return { refresh_interval_turns: config.refreshIntervalTurns, candidate_count: config.candidateCount, hire_cost_coins: config.hireCostCoins, maintenance_coins_per_turn: config.maintenanceCoinsPerTurn, capacity_divisor: config.capacityDivisor, growth_chance: config.growthChance, critical_growth_chance: config.criticalGrowthChance, attribute_cap: config.attributeCap }; }
+export function recruitmentConfigSummary(options = {}) {
+  const config = validatedConfig(options);
+  return {
+    refresh_interval_turns: config.refreshIntervalTurns,
+    candidate_count: config.candidateCount,
+    hire_cost_coins: config.hireCostCoins,
+    maintenance_coins_per_turn: config.maintenanceCoinsPerTurn,
+    capacity_divisor: config.capacityDivisor,
+    growth_chance: config.growthChance,
+    critical_growth_chance: config.criticalGrowthChance,
+    attribute_cap: config.attributeCap
+  };
+}
 function poolWindow(turn, config) { return Math.floor(Number(turn ?? 0) / Number(config.refreshIntervalTurns)); }
-function poolForWindow(cityId, window, config) { const seed = `${String(cityId)}:arcane-officer-candidates:${window}`; return Array.from({ length: Number(config.candidateCount) }, (_, index) => { const candidateId = `officer-candidate-${hashSeed(`${seed}:${index}`).toString(16)}`; const identity = generateArcaneOfficerIdentity({ seed: `${seed}:${index}`, id: candidateId, hiredAtTurn: window * config.refreshIntervalTurns, nameIndex: index }); return { candidateId, identity, costCoins: config.hireCostCoins, status: "available", window }; }); }
-export function normalizeRecruitmentState(value = {}) { return { schemaVersion: 1, window: Number.isSafeInteger(Number(value.window)) ? Number(value.window) : null, candidates: Object.fromEntries(Object.entries(value.candidates ?? {}).map(([id, candidate]) => [String(id), { candidateId: String(candidate.candidateId ?? id), identity: normalizeArcaneOfficer(candidate.identity ?? candidate), costCoins: Number.isSafeInteger(Number(candidate.costCoins)) && Number(candidate.costCoins) >= 0 ? Number(candidate.costCoins) : ARCANE_OFFICER_CONFIG.hireCostCoins, status: ["available", "recruited", "expired"].includes(candidate.status) ? candidate.status : "available", window: Number(candidate.window ?? value.window ?? 0) }])) }; }
-export function ensureOfficerCandidatePool(state, cityId = state?.cityId ?? "", options = {}) { const config = { ...ARCANE_OFFICER_CONFIG, ...options, ...(options.config ?? {}) }; const desiredWindow = poolWindow(state.turn, config); const current = normalizeRecruitmentState(state.gameplay?.arcaneOfficerRecruitment); if (current.window === desiredWindow && Object.keys(current.candidates).length > 0) return state; const candidates = Object.fromEntries(poolForWindow(cityId, desiredWindow, config).map((candidate) => [candidate.candidateId, candidate])); return { ...state, gameplay: { ...state.gameplay, arcaneOfficerRecruitment: { ...current, window: desiredWindow, candidates } } }; }
-export function currentOfficerCandidates(state, cityId = state?.cityId ?? "", options = {}) { const refreshed = ensureOfficerCandidatePool(state, cityId, options); return { state: refreshed, candidates: Object.values(normalizeRecruitmentState(refreshed.gameplay?.arcaneOfficerRecruitment).candidates).filter((candidate) => candidate.status === "available") }; }
-export function hireArcaneOfficerCandidate(state, input = {}, context = {}) { const config = { ...ARCANE_OFFICER_CONFIG, ...(context.options ?? {}), ...(context.config ?? {}), ...(context.options?.config ?? {}) }; if (!arcaneOfficerRecruitmentUnlocked(state, context.options ?? {})) return { accepted: false, error: { code: "ARCANE_OFFICER_RECRUITMENT_LOCKED", message: "Recruitment requires a completed Ministry of Magic or governance facility" } }; const capacity = arcaneOfficerCapacity(state, config); const officers = state?.gameplay?.arcaneOfficers ?? {}; if (Object.keys(officers).length >= capacity) return { accepted: false, error: { code: "ARCANE_OFFICER_CAPACITY_REACHED", message: `Arcane officer roster is at its capacity of ${capacity}` } }; const pool = currentOfficerCandidates(state, context.cityId ?? state.cityId ?? "", { ...context.options, config }); const candidateId = String(input.candidateId ?? input.candidate_id ?? ""); const candidate = pool.candidates.find((entry) => entry.candidateId === candidateId); if (!candidate) return { accepted: false, error: { code: "ARCANE_OFFICER_CANDIDATE_INVALID", message: "candidate_id is not a current available recruitment candidate" } }; const coins = Number(state?.resources?.coins); if (!Number.isSafeInteger(coins) || coins < config.hireCostCoins) return { accepted: false, error: { code: "INSUFFICIENT_COINS", message: `Hiring an arcane officer requires ${config.hireCostCoins} coins but only ${coins} available` } }; const officer = normalizeArcaneOfficer({ ...candidate.identity, hiredAtTurn: state.turn, history: [] }); const candidates = { ...normalizeRecruitmentState(pool.state.gameplay.arcaneOfficerRecruitment).candidates, [candidateId]: { ...candidate, status: "recruited" } }; const nextState = { ...pool.state, resources: { ...pool.state.resources, coins: coins - config.hireCostCoins }, gameplay: { ...pool.state.gameplay, resources: { ...(pool.state.gameplay.resources ?? {}), coins: coins - config.hireCostCoins }, arcaneOfficers: { ...officers, [officer.id]: officer }, arcaneOfficerRecruitment: { ...pool.state.gameplay.arcaneOfficerRecruitment, candidates } } }; return { accepted: true, arcaneOfficer: officer, candidate, cost: config.hireCostCoins, nextState }; }
-export function maintenanceForRoster(state, options = {}) { const config = { ...ARCANE_OFFICER_CONFIG, ...options, ...(options.config ?? {}) }; const count = arcaneOfficerRoster(state).length; return { count, rate: config.maintenanceCoinsPerTurn, total: count * config.maintenanceCoinsPerTurn }; }
+function poolForWindow(cityId, window, config) {
+  const seed = `${String(cityId)}:arcane-officer-candidates:${window}`;
+  return Array.from({ length: config.candidateCount }, (_, index) => {
+    const candidateId = `officer-candidate-${hashSeed(`${seed}:${index}`).toString(16)}`;
+    const identity = generateArcaneOfficerIdentity({ seed: `${seed}:${index}`, id: candidateId, hiredAtTurn: window * config.refreshIntervalTurns, nameIndex: index });
+    return { candidateId, identity, costCoins: config.hireCostCoins, status: "available", window };
+  });
+}
+
+function normalizeCandidate(candidate, id, fallbackWindow) {
+  return {
+    candidateId: String(candidate.candidateId ?? id),
+    identity: normalizeArcaneOfficer(candidate.identity ?? candidate),
+    costCoins: Number.isSafeInteger(Number(candidate.costCoins)) && Number(candidate.costCoins) >= 0 ? Number(candidate.costCoins) : ARCANE_OFFICER_CONFIG.hireCostCoins,
+    status: ["available", "recruited", "expired"].includes(candidate.status) ? candidate.status : "available",
+    window: Number.isSafeInteger(Number(candidate.window)) ? Number(candidate.window) : fallbackWindow
+  };
+}
+
+export function normalizeRecruitmentState(value = {}) {
+  const window = Number.isSafeInteger(Number(value.window)) ? Number(value.window) : null;
+  return { schemaVersion: 1, window, candidates: Object.fromEntries(Object.entries(value.candidates ?? {}).map(([id, candidate]) => [String(id), normalizeCandidate(candidate, id, window ?? 0)])) };
+}
+
+function candidateMatches(left, right) {
+  return left.candidateId === right.candidateId && left.costCoins === right.costCoins && JSON.stringify(left.identity) === JSON.stringify(right.identity);
+}
+
+export function ensureOfficerCandidatePool(state, cityId = state?.cityId ?? "", options = {}) {
+  const config = validatedConfig(options);
+  const desiredWindow = poolWindow(state.turn, config);
+  const current = normalizeRecruitmentState(state.gameplay?.arcaneOfficerRecruitment);
+  const expected = poolForWindow(cityId, desiredWindow, config);
+  const persisted = current.window === desiredWindow ? current.candidates : {};
+  const candidates = Object.fromEntries(expected.map((candidate) => {
+    const prior = persisted[candidate.candidateId];
+    return [candidate.candidateId, prior && candidateMatches(prior, candidate) ? { ...candidate, status: prior.status } : candidate];
+  }));
+  const unchanged = current.window === desiredWindow && expected.every((candidate) => persisted[candidate.candidateId] && candidateMatches(persisted[candidate.candidateId], candidate));
+  if (unchanged) return state;
+  return { ...state, gameplay: { ...state.gameplay, arcaneOfficerRecruitment: { schemaVersion: 1, window: desiredWindow, candidates } } };
+}
+
+export function currentOfficerCandidates(state, cityId = state?.cityId ?? "", options = {}) {
+  const refreshed = ensureOfficerCandidatePool(state, cityId, options);
+  const recruitment = normalizeRecruitmentState(refreshed.gameplay?.arcaneOfficerRecruitment);
+  return { state: refreshed, candidates: Object.values(recruitment.candidates).filter((candidate) => candidate.status === "available") };
+}
+
+function candidateInputId(input) {
+  const keys = Object.keys(input ?? {});
+  if (keys.some((key) => !["candidateId", "candidate_id"].includes(key)) || (input.candidateId != null && input.candidate_id != null)) {
+    return { error: { code: "ARCANE_OFFICER_FORGERY", message: "Recruitment accepts only one candidate_id" } };
+  }
+  const id = input.candidateId ?? input.candidate_id;
+  if (id == null || String(id).trim() === "") return { error: { code: "ARCANE_OFFICER_CANDIDATE_REQUIRED", message: "Recruitment requires a current candidate_id" } };
+  return { id: String(id) };
+}
+
+export function hireArcaneOfficerCandidate(state, input = {}, context = {}) {
+  const config = validatedConfig({ ...(context.options ?? {}), ...(context.config ?? {}) });
+  const parsed = candidateInputId(input);
+  if (parsed.error) return { accepted: false, error: parsed.error };
+  if (!arcaneOfficerRecruitmentUnlocked(state, context.options ?? {})) return { accepted: false, error: { code: "ARCANE_OFFICER_RECRUITMENT_LOCKED", message: "Recruitment requires a completed Ministry of Magic or governance facility" } };
+  const officers = state?.gameplay?.arcaneOfficers ?? {};
+  const capacity = arcaneOfficerCapacity(state, config);
+  if (Object.keys(officers).length >= capacity) return { accepted: false, error: { code: "ARCANE_OFFICER_CAPACITY_REACHED", message: `Arcane officer roster is at its capacity of ${capacity}` } };
+  const pool = currentOfficerCandidates(state, context.cityId ?? state.cityId ?? "", config);
+  const candidate = pool.candidates.find((entry) => entry.candidateId === parsed.id);
+  if (!candidate) return { accepted: false, error: { code: "ARCANE_OFFICER_CANDIDATE_INVALID", message: "candidate_id is not a current available recruitment candidate" } };
+  const coins = state?.resources?.coins;
+  if (!Number.isSafeInteger(coins) || coins < 0) return { accepted: false, error: { code: "INVALID_COINS_LEDGER", message: "Authoritative coins ledger is invalid" } };
+  if (coins < candidate.costCoins) return { accepted: false, error: { code: "INSUFFICIENT_COINS", message: `Hiring an arcane officer requires ${candidate.costCoins} coins but only ${coins} available` } };
+  const officer = normalizeArcaneOfficer({ ...candidate.identity, hiredAtTurn: state.turn, history: [] });
+  const recruitment = normalizeRecruitmentState(pool.state.gameplay.arcaneOfficerRecruitment);
+  const afterCoins = coins - candidate.costCoins;
+  return {
+    accepted: true,
+    arcaneOfficer: officer,
+    candidate,
+    cost: candidate.costCoins,
+    nextState: {
+      ...pool.state,
+      resources: { ...pool.state.resources, coins: afterCoins },
+      gameplay: { ...pool.state.gameplay, resources: { ...(pool.state.gameplay.resources ?? {}), coins: afterCoins }, arcaneOfficers: { ...officers, [officer.id]: officer }, arcaneOfficerRecruitment: { ...recruitment, candidates: { ...recruitment.candidates, [parsed.id]: { ...candidate, status: "recruited" } } } }
+    }
+  };
+}
+
+export function maintenanceForRoster(state, options = {}) {
+  const config = validatedConfig(options);
+  const count = arcaneOfficerRoster(state).length;
+  return { count, rate: config.maintenanceCoinsPerTurn, total: count * config.maintenanceCoinsPerTurn };
+}
