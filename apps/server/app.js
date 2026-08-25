@@ -1185,8 +1185,8 @@ function assertReportTopLevelFields(body) {
 
 const STRATEGY_ASSIGNMENT_FORBIDDEN_FIELDS = new Set([
   "roll", "raw_roll", "rawRoll", "outcome", "total", "modifier", "specialty_bonus", "specialtyBonus",
-  "attribute", "attribute_value", "attributeValue", "investigation", "containment", "concealment",
-  "specialties", "difficulty", "success_probability", "successProbability", "expected_outcome",
+  "attribute", "attribute_value", "attributeValue", "investigation", "suppression", "coverUp", "cover_up", "containment", "concealment",
+  "specialties", "difficulty", "dc", "difficulty_tier", "historical_risk", "source_risk", "success_probability", "successProbability", "expected_outcome",
   "cost", "price", "profile", "options"
 ]);
 
@@ -1296,7 +1296,7 @@ async function persistCardState(repository, principal, cityId, nextState) {
 function strategyPayload(state) {
   const gameplay = state.gameplay ?? {};
   const incidents = Object.values(gameplay.incidents ?? {})
-    .filter((incident) => incident.status !== "resolved")
+    .filter((incident) => incident.status === "open" || incident.status === "assigned")
     .sort((a, b) => String(a.id).localeCompare(String(b.id)))
     .map((incident) => strategyIncidentResponse(state, incident));
   const arcaneOfficers = Object.values(gameplay.arcaneOfficers ?? {})
@@ -1331,9 +1331,13 @@ function strategyIncidentResponse(state, incident) {
     building_name: building?.program?.name ?? null,
     type: incident.type,
     attribute: incident.attribute,
-    difficulty: incident.difficulty,
+    dc: incident.dc,
+    difficulty_tier: incident.difficultyTier,
     severity: incident.severity,
     exposure_at_creation: incident.exposureAtCreation,
+    historical_risk_at_creation: incident.historicalRiskAtCreation,
+    historical_risk: Number(building?.historicalRisk ?? 0),
+    source_risk: incident.sourceRisk,
     summary: incident.summary,
     status: incident.status,
     created_at_turn: incident.createdAtTurn
@@ -1346,8 +1350,8 @@ function strategyOfficerResponse(officer) {
     name: officer.name,
     archetype: officer.archetype,
     investigation: officer.investigation,
-    containment: officer.containment,
-    concealment: officer.concealment,
+    suppression: officer.suppression,
+    cover_up: officer.coverUp,
     specialties: [...(officer.specialties ?? [])],
     status: officer.status,
     hired_at_turn: officer.hiredAtTurn

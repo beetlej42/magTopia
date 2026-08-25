@@ -364,34 +364,3 @@ export function applyExposureChange(current, delta) {
 export function isSealedExposure(exposure) {
   return exposure >= SEALED_EXPOSURE_THRESHOLD;
 }
-
-export function incidentCandidateThreshold() {
-  return SEALED_EXPOSURE_THRESHOLD / 2;
-}
-
-export function incidentProbability(exposure, threshold = incidentCandidateThreshold()) {
-  if (exposure <= threshold) return 0;
-  const range = SEALED_EXPOSURE_THRESHOLD - threshold;
-  return Math.min(0.9, 0.15 + (exposure - threshold) / range * 0.6);
-}
-
-export function incidentSeverity(exposure) {
-  const threshold = incidentCandidateThreshold();
-  const range = SEALED_EXPOSURE_THRESHOLD - threshold;
-  const normalized = Math.max(0, Math.min(1, (exposure - threshold) / range));
-  return 1 + Math.round(normalized * 4);
-}
-
-export function incidentDifficulty(severity, options = {}) {
-  return Math.max(1, Math.min(10, Math.round(severity + (options.base ?? 2))));
-}
-
-export function incidentSummary(type, buildingName) {
-  const name = String(buildingName ?? "a building");
-  switch (type) {
-    case "investigation": return `Unresolved magical anomaly reported near ${name}; origin requires investigation.`;
-    case "containment": return `Uncontrolled magical activity detected at ${name}; requires containment.`;
-    case "concealment": return `Ordinary citizens noticed unusual events around ${name}; needs concealment work.`;
-    default: return `Magic-related incident reported around ${name}.`;
-  }
-}

@@ -12,27 +12,23 @@ import {
   applyExposureChange,
   exposureDelta,
   exposurePressure,
-  incidentDifficulty,
-  incidentProbability,
-  incidentSeverity,
   inspectSpatialExposure,
-  isSealedExposure,
   neighborhoodConcealment
 } from "./exposure.js";
 import { incidentAttribute, incidentDefinition } from "./incidents.js";
-import { chance, createRoller, pick, rollDice } from "./random.js";
+import { createRoller, pick, rollDice } from "./random.js";
 import { normalizeTurnSchedule } from "./turn.js";
 import {
   deepFreeze,
   GAMEPLAY_SCHEMA_VERSION,
   INCIDENT_TYPES,
   normalizeExposureIncident,
+  normalizeArcaneOfficer,
   normalizeGameplayResources,
   normalizePopulationState,
   normalizeRollRecord,
   normalizeScheduler,
   normalizeTurnFacts,
-  SEALED_EXPOSURE_THRESHOLD
 } from "./schema.js";
 import {
   ECONOMY_RULES,
@@ -194,22 +190,91 @@ export function updateExposures(state, metadataMap, options = {}) {
     const delta = exposureDelta(pressure, options);
     const from = metadata.exposure;
     const to = applyExposureChange(from, delta);
-    changes[id] = { from, to, delta, pressure, concealment, sealed: isSealedExposure(to) };
-    nextMetadata[id] = { ...metadata, exposure: to, status: changes[id].sealed ? "sealed" : metadata.status };
+    // Exposure is an inspectable spatial signal; historicalRisk is the sole
+    // authority for incident sealing in PR-F. Reaching the legacy exposure
+    // accumulator cap must not create a second sealing rule.
+    changes[id] = { from, to, delta, pressure, concealment, sealed: metadata.status === "sealed" };
+    nextMetadata[id] = { ...metadata, exposure: to };
   }
   return { changes, nextMetadata };
 }
 
+const INCIDENT_PURPOSES = Object.freeze({
+  investigation: Object.freeze({ residential: 2, commercial: 1, public_service: 1, production: 1, greenhouse: 1 }),
+  suppression: Object.freeze({ residential: 1, commercial: 1, public_service: 1, production: 2, greenhouse: 2 }),
+  cover_up: Object.freeze({ residential: 1, commercial: 2, public_service: 2, production: 1, greenhouse: 1 })
+});
+
+function clampUnit(value) { return Math.max(0, Math.min(1, Number(value) || 0)); }
+
+function weightedChoice(roller, weights) {
+  const total = Object.values(weights).reduce((sum, weight) => sum + weight, 0);
+  const roll = roller.next();
+  let cursor = roll * total;
+  for (const key of Object.keys(weights)) {
+    cursor -= weights[key];
+    if (cursor < 0) return { value: key, roll };
+  }
+  return { value: Object.keys(weights).at(-1), roll };
+}
+
+function incidentTypeWeights(risk) {
+  const purpose = risk.magicLoadBreakdown?.[0]?.purpose;
+  const ratio = clampUnit(risk.localMagicRatio);
+  const weights = Object.fromEntries(INCIDENT_TYPES.map((type) => [type, 1]));
+  for (const type of INCIDENT_TYPES) weights[type] += INCIDENT_PURPOSES[type][purpose] ?? 1;
+  // A high magic ratio makes active suppression somewhat more likely, while
+  // a low ratio leaves ambiguity/cover-up relatively more likely. These are
+  // weights only: no purpose is hard-bound to one incident type.
+  weights.suppression += ratio * 2;
+  weights.investigation += (1 - ratio);
+  weights.cover_up += (1 - ratio) * 0.5;
+  return weights;
+}
+
+function difficultyWeights(risk, historicalRisk) {
+  const pressure = clampUnit((Number(risk.finalIncidentChance) || 0) / 0.1);
+  const riskScore = clampUnit((pressure + Math.max(0, Number(historicalRisk) || 0) / 4) / 2);
+  return {
+    normal: Math.max(1, 6 - riskScore * 5),
+    hard: 1 + riskScore * 4,
+    severe: 1 + riskScore * 5
+  };
+}
+
 export function generateIncidents(state, metadataMap, roller, options = {}) {
-  const threshold = Number(options.incidentThreshold) || SEALED_EXPOSURE_THRESHOLD / 2;
+  const risks = inspectSpatialExposure(state, {
+    metadataOf: (building) => metadataMap[building.id],
+    typeIntensityResolver: options.typeIntensityResolver
+  })
+    .filter((risk) => risk.authoritative && risk.eligible && risk.magicLoad > 0
+      && state.buildings?.[risk.buildingId]?.status !== "sealed"
+      && metadataMap[risk.buildingId]?.status !== "sealed")
+    .sort((a, b) => a.buildingId.localeCompare(b.buildingId));
+  // Freeze all threshold rolls first. This makes the occurrence of building B
+  // independent of whether building A happened to hit its chance roll.
+  const thresholdRolls = risks.map((risk) => ({ risk, thresholdRoll: roller.next() }));
   const incidents = [];
-  for (const [id, metadata] of Object.entries(metadataMap)) {
-    if (metadata.status === "sealed") continue;
-    const probability = incidentProbability(metadata.exposure, threshold);
-    if (!chance(roller, probability)) continue;
-    const type = pick(roller, INCIDENT_TYPES);
-    const severity = incidentSeverity(metadata.exposure);
-    const difficulty = incidentDifficulty(severity, options);
+  for (const { risk, thresholdRoll } of thresholdRolls) {
+    const hit = thresholdRoll < risk.finalIncidentChance;
+    options.incidentRolls?.push({
+      buildingId: risk.buildingId,
+      finalIncidentChance: risk.finalIncidentChance,
+      thresholdRoll,
+      hit,
+      magicLoad: risk.magicLoad,
+      baseRisk: risk.baseRisk,
+      spatialModifier: risk.spatialModifier,
+      historicalRisk: Number(state.buildings?.[risk.buildingId]?.historicalRisk ?? 0)
+    });
+    if (!hit) continue;
+    const id = risk.buildingId;
+    const metadata = metadataMap[id] ?? {};
+    const historicalRisk = Number(state.buildings?.[id]?.historicalRisk ?? metadata.historicalRisk ?? 0);
+    const typeChoice = weightedChoice(roller, incidentTypeWeights(risk));
+    const dcChoice = weightedChoice(roller, difficultyWeights(risk, historicalRisk));
+    const dc = { normal: 10, hard: 14, severe: 18 }[dcChoice.value];
+    const type = typeChoice.value;
     const buildingName = state.buildings?.[id]?.program?.name;
     const definition = incidentDefinition(type);
     incidents.push(normalizeExposureIncident({
@@ -217,23 +282,38 @@ export function generateIncidents(state, metadataMap, roller, options = {}) {
       buildingId: id,
       type,
       attribute: incidentAttribute(type),
-      difficulty,
-      severity,
+      dc,
+      difficultyTier: dcChoice.value,
+      severity: dcChoice.value === "severe" ? 3 : dcChoice.value === "hard" ? 2 : 1,
       exposureAtCreation: metadata.exposure,
+      historicalRiskAtCreation: historicalRisk,
+      sourceRisk: {
+        finalIncidentChance: risk.finalIncidentChance,
+        baseRisk: risk.baseRisk,
+        spatialModifier: risk.spatialModifier,
+        localMagicRatio: risk.localMagicRatio,
+        magicLoad: risk.magicLoad,
+        thresholdRoll,
+        typeWeights: incidentTypeWeights(risk),
+        difficultyWeights: difficultyWeights(risk, historicalRisk)
+      },
+      typeRoll: typeChoice.roll,
+      typeWeights: incidentTypeWeights(risk),
+      dcRoll: dcChoice.roll,
+      dcWeights: difficultyWeights(risk, historicalRisk),
       summary: definition.summaryTemplate(buildingName),
       status: "open",
       createdAtTurn: options.turn ?? state.turn
     }));
   }
-  return incidents;
+  return incidents.sort((a, b) => a.buildingId.localeCompare(b.buildingId) || a.id.localeCompare(b.id));
 }
 
-export function gradeRoll(roll, total, difficulty) {
-  if (roll === 20) return "critical_success";
-  if (roll === 1) return "critical_failure";
-  if (total >= difficulty + 5) return "critical_success";
-  if (total >= difficulty) return "success";
-  if (total <= difficulty - 5) return "critical_failure";
+export function gradeRoll(roll, total, dc) {
+  const margin = Number(total) - Number(dc);
+  if (margin >= 5) return "critical_success";
+  if (margin >= 0) return "success";
+  if (margin <= -5) return "critical_failure";
   return "failure";
 }
 
@@ -241,15 +321,16 @@ export function resolveIncidentRoll({ incident, officer, modifier = 0, roller, o
   const definition = incidentDefinition(incident.type);
   const attribute = definition.attribute;
   const attributeValue = Number(officer?.[attribute] ?? 0);
-  const specialtyBonus = (officer?.specialties ?? []).includes(incident.type)
+  const specialtyBonus = (officer?.specialties ?? []).includes(definition.specialty)
     ? Number(options.specialtyBonus ?? 2)
     : 0;
   const roll = rollDice(roller, 20);
-  const difficulty = Number(incident.difficulty ?? 3);
+  const dc = Number(incident.dc ?? incident.difficulty ?? 10);
   const modifierValue = Number(modifier ?? 0);
   const total = roll + attributeValue + specialtyBonus + modifierValue;
-  const outcome = gradeRoll(roll, total, difficulty);
-  return { roll, total, attribute, attributeValue, specialtyBonus, modifier: modifierValue, difficulty, outcome };
+  const margin = total - dc;
+  const outcome = gradeRoll(roll, total, dc);
+  return { roll, total, attribute, attributeValue, specialtyBonus, otherModifiers: modifierValue, dc, margin, outcome };
 }
 
 export function validateAssignments(state, incidents, assignments = [], options = {}) {
@@ -267,6 +348,10 @@ export function validateAssignments(state, incidents, assignments = [], options 
     if (!incidentId || !officerId) {
       errors.push({ incidentId, officerId, code: "ASSIGNMENT_INCOMPLETE", message: "Assignment requires both incidentId and arcaneOfficerId" });
       continue;
+    }
+    const allowedFields = new Set(["incidentId", "incident_id", "arcaneOfficerId", "arcane_officer_id", "rationale"]);
+    for (const key of Object.keys(assignment ?? {})) {
+      if (!allowedFields.has(key)) errors.push({ incidentId, officerId, code: "ASSIGNMENT_CARRIES_SYSTEM_PARAMETER", message: `Assignment must not carry ${key}; dice, DC, modifiers, outcomes, and balance fields are system-controlled` });
     }
     if (assignment.roll != null || assignment.outcome != null || assignment.total != null) {
       errors.push({ incidentId, officerId, code: "ASSIGNMENT_CARRIES_OUTCOME", message: "Assignment must not include dice roll or outcome" });
@@ -307,6 +392,7 @@ export function validateAssignments(state, incidents, assignments = [], options 
 export function settleAssignments(state, incidents, assignments = [], roller, options = {}) {
   const rolls = [];
   const outcomes = [];
+  const historicalRiskChanges = {};
   const normalized = [];
   if (!Array.isArray(assignments)) return { assignments: normalized, rolls, outcomes };
   const modifier = Number(options.modifier ?? 0);
@@ -318,8 +404,12 @@ export function settleAssignments(state, incidents, assignments = [], roller, op
     if (!incident || !officer) continue;
     const result = resolveIncidentRoll({ incident, officer, modifier, roller, options });
     const outcome = applyOutcome(result.outcome, options);
+    const building = state.buildings?.[incident.buildingId] ?? {};
+    const beforeRisk = Math.max(0, Math.min(4, Number(building.historicalRisk ?? 0)));
+    const riskDelta = result.outcome === "critical_failure" ? 2 : result.outcome === "failure" ? 1 : 0;
+    const afterRisk = Math.min(4, beforeRisk + riskDelta);
     normalized.push({ incidentId, arcaneOfficerId: officerId, ...(assignment.rationale != null ? { rationale: String(assignment.rationale) } : {}) });
-    rolls.push(normalizeRollRecord({ ...result, incidentId, arcaneOfficerId: officerId }));
+    rolls.push(normalizeRollRecord({ ...result, incidentId, arcaneOfficerId: officerId, historicalRiskBefore: beforeRisk, historicalRiskAfter: afterRisk, sealed: afterRisk >= 4 }));
     outcomes.push({
       incidentId,
       buildingId: incident.buildingId,
@@ -327,39 +417,55 @@ export function settleAssignments(state, incidents, assignments = [], roller, op
       outcome: result.outcome,
       exposureDelta: outcome.exposureDelta,
       incidentStatus: outcome.incidentStatus,
-      arcaneOfficerStatus: outcome.arcaneOfficerStatus
+      arcaneOfficerStatus: outcome.arcaneOfficerStatus,
+      historicalRiskBefore: beforeRisk,
+      historicalRiskAfter: afterRisk,
+      historicalRiskDelta: riskDelta,
+      sealed: afterRisk >= 4,
+      resolution: "assigned"
     });
+    historicalRiskChanges[incident.buildingId] = {
+      buildingId: incident.buildingId,
+      before: historicalRiskChanges[incident.buildingId]?.before ?? beforeRisk,
+      after: afterRisk,
+      delta: (historicalRiskChanges[incident.buildingId]?.delta ?? 0) + riskDelta,
+      incidentIds: [...(historicalRiskChanges[incident.buildingId]?.incidentIds ?? []), incidentId],
+      sealed: afterRisk >= 4
+    };
     if (state.gameplay?.incidents?.[incidentId]) state.gameplay.incidents[incidentId] = { ...incident, status: outcome.incidentStatus };
     if (state.gameplay?.arcaneOfficers?.[officerId]) state.gameplay.arcaneOfficers[officerId] = { ...officer, status: outcome.arcaneOfficerStatus };
+    if (state.buildings?.[incident.buildingId]) state.buildings[incident.buildingId] = {
+      ...state.buildings[incident.buildingId], historicalRisk: afterRisk, ...(afterRisk >= 4 ? { status: "sealed" } : {})
+    };
   }
-  return { assignments: normalized, rolls, outcomes };
+  return { assignments: normalized, rolls, outcomes, historicalRiskChanges };
 }
 
 function applyOutcome(outcome, options = {}) {
   switch (outcome) {
     case "critical_success":
       return {
-        exposureDelta: -Number(options.criticalSuccessExposure ?? 5),
+        exposureDelta: 0,
         incidentStatus: "resolved",
         arcaneOfficerStatus: "available"
       };
     case "success":
       return {
-        exposureDelta: -Number(options.successExposure ?? 2),
+        exposureDelta: 0,
         incidentStatus: "resolved",
         arcaneOfficerStatus: "available"
       };
     case "failure":
       return {
-        exposureDelta: Number(options.failureExposure ?? 1),
-        incidentStatus: "open",
+        exposureDelta: 0,
+        incidentStatus: "failed",
         arcaneOfficerStatus: "available"
       };
     case "critical_failure":
       return {
-        exposureDelta: Number(options.criticalFailureExposure ?? 3),
-        incidentStatus: "escalated",
-        arcaneOfficerStatus: "unavailable"
+        exposureDelta: 0,
+        incidentStatus: "failed",
+        arcaneOfficerStatus: "available"
       };
     default:
       return { exposureDelta: 0, incidentStatus: "open", arcaneOfficerStatus: "available" };
@@ -394,12 +500,16 @@ function resolveTurnInternal(state, input = {}, context = {}, profile = "product
   }
   let next = {
     ...state,
+    buildings: Object.fromEntries(Object.entries(state.buildings ?? {}).map(([id, building]) => {
+      const historicalRisk = Math.max(0, Math.min(4, Number(building?.historicalRisk ?? 0)));
+      return [id, { ...building, historicalRisk, ...(historicalRisk >= 4 ? { status: "sealed" } : {}) }];
+    })),
     gameplay: {
       ...gameplay,
       resources: normalizedResources,
       population: normalizePopulationState(gameplay.population),
-      arcaneOfficers: { ...(gameplay.arcaneOfficers ?? {}) },
-      incidents: { ...(gameplay.incidents ?? {}) }
+      arcaneOfficers: Object.fromEntries(Object.entries(gameplay.arcaneOfficers ?? {}).map(([id, officer]) => [id, normalizeArcaneOfficer(officer)])),
+      incidents: Object.fromEntries(Object.entries(gameplay.incidents ?? {}).map(([id, incident]) => [id, normalizeExposureIncident(incident)]))
     }
   };
 
@@ -452,11 +562,13 @@ function resolveTurnInternal(state, input = {}, context = {}, profile = "product
     })
     : { changes: {}, nextMetadata: metadataMap };
   const exposureChanges = exposureSettlement.changes;
+  const incidentRolls = [];
   const incidents = enableIncidents
     ? generateIncidents(next, exposureSettlement.nextMetadata, roller, {
       ...options,
       createId,
-      turn: state.turn
+      turn: state.turn,
+      incidentRolls
     })
     : [];
   for (const incident of incidents) next.gameplay.incidents[incident.id] = incident;
@@ -468,15 +580,6 @@ function resolveTurnInternal(state, input = {}, context = {}, profile = "product
     return { nextState: state, facts: null, error: { code: "INVALID_ASSIGNMENT", message: assignmentValidation.errors.map((entry) => entry.message).join("; "), assignmentErrors: assignmentValidation.errors } };
   }
   const assignmentSettlement = settleAssignments(next, incidents, input.assignments, roller, options);
-  for (const outcome of assignmentSettlement.outcomes) {
-    const change = exposureChanges[outcome.buildingId];
-    if (change) {
-      change.to = applyExposureChange(change.to, outcome.exposureDelta);
-      change.delta = change.to - change.from;
-      change.sealed = isSealedExposure(change.to);
-    }
-  }
-
   const assignedIncidentIds = new Set(assignmentSettlement.outcomes.map((outcome) => outcome.incidentId));
   const unaddressed = Object.entries(next.gameplay.incidents ?? {})
     .filter(([, incident]) => incident.status === "open" && !assignedIncidentIds.has(incident.id))
@@ -488,25 +591,64 @@ function resolveTurnInternal(state, input = {}, context = {}, profile = "product
       status: "open",
       createdAtTurn: incident.createdAtTurn
     }));
-  const unaddressedExposure = Number(options.unaddressedExposure ?? 1);
-  const penalizedBuildings = new Set();
+  const historicalRiskChanges = { ...assignmentSettlement.historicalRiskChanges };
+  const unaddressedOutcomes = [];
   for (const entry of unaddressed) {
-    if (penalizedBuildings.has(entry.buildingId)) continue;
-    penalizedBuildings.add(entry.buildingId);
-    const change = exposureChanges[entry.buildingId];
-    if (change) {
-      change.to = applyExposureChange(change.to, unaddressedExposure);
-      change.delta = change.to - change.from;
-      change.sealed = isSealedExposure(change.to);
+    const incident = next.gameplay.incidents[entry.incidentId];
+    if (incident) next.gameplay.incidents[entry.incidentId] = { ...incident, status: "failed" };
+    const building = next.buildings[entry.buildingId];
+    const beforeRisk = Math.max(0, Math.min(4, Number(building?.historicalRisk ?? 0)));
+    const riskDelta = beforeRisk >= 4 ? 0 : 1;
+    const afterRisk = Math.min(4, beforeRisk + riskDelta);
+    const change = historicalRiskChanges[entry.buildingId] ?? {
+      buildingId: entry.buildingId,
+      before: beforeRisk,
+      after: beforeRisk,
+      delta: 0,
+      incidentIds: [],
+      sealed: false
+    };
+    change.after = afterRisk;
+    change.delta += riskDelta;
+    change.incidentIds = [...change.incidentIds, entry.incidentId];
+    change.sealed = afterRisk >= 4;
+    historicalRiskChanges[entry.buildingId] = change;
+    if (building) next.buildings[entry.buildingId] = {
+      ...building,
+      historicalRisk: afterRisk,
+      ...(afterRisk >= 4 ? { status: "sealed" } : {})
+    };
+    unaddressedOutcomes.push({
+      incidentId: entry.incidentId,
+      buildingId: entry.buildingId,
+      outcome: "failure",
+      resolution: "unaddressed",
+      historicalRiskBefore: beforeRisk,
+      historicalRiskAfter: afterRisk,
+      historicalRiskDelta: riskDelta,
+      sealed: afterRisk >= 4,
+      incidentStatus: "failed"
+    });
+    const exposureChange = exposureChanges[entry.buildingId];
+    if (exposureChange) {
+      exposureChange.to = applyExposureChange(exposureChange.to, 0);
+      exposureChange.delta = exposureChange.to - exposureChange.from;
+      exposureChange.sealed = exposureChange.sealed || afterRisk >= 4;
     }
   }
+  assignmentSettlement.outcomes.push(...unaddressedOutcomes);
 
-  const sealedBuildings = Object.entries(exposureChanges)
-    .filter(([, change]) => change.sealed)
-    .map(([id]) => id);
+  const sealedBuildings = [...new Set([
+    ...Object.entries(exposureChanges).filter(([, change]) => change.sealed).map(([id]) => id),
+    ...Object.entries(historicalRiskChanges).filter(([, change]) => change.sealed).map(([id]) => id)
+  ])].sort();
   for (const [id, change] of Object.entries(exposureChanges)) {
     if (!next.buildings[id]) continue;
-    next.buildings[id] = { ...next.buildings[id], exposure: change.to, status: change.sealed ? "sealed" : next.buildings[id].status };
+    next.buildings[id] = {
+      ...next.buildings[id],
+      exposure: change.to,
+      ...(change.sealed ? { status: "sealed" } : {})
+    };
   }
 
   const legacyNextRisks = Object.entries(exposureChanges)
@@ -609,10 +751,12 @@ function resolveTurnInternal(state, input = {}, context = {}, profile = "product
     buildingsCompleted: [...(input.buildingsCompleted ?? [])],
     exposureChanges,
     incidents: factsIncidents,
+    incidentRolls,
     unaddressedIncidents: unaddressed,
     assignments: assignmentSettlement.assignments,
     rolls: assignmentSettlement.rolls,
     outcomes: assignmentSettlement.outcomes,
+    historicalRiskChanges,
     sealedBuildings,
     nextRisks,
     cardOfferId: cardStateFacts.cardOfferId,
