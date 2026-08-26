@@ -1,3 +1,5 @@
+import { applyVoxelStylizedHighlight } from "./voxelStylizedHighlight.js";
+
 export const STORYBOOK_SURFACE_KINDS = Object.freeze({
   none: 0,
   plaster: 1,
@@ -49,6 +51,7 @@ export function applyStorybookSurfaceMaterial(material, {
   useSurfaceKindAttribute = false,
   strength = storybookSurfaceStrength
 } = {}) {
+  material = applyVoxelStylizedHighlight(material);
   if (!material || material.userData?.storybookSurface || strength <= 0) return material;
   const previousCompile = material.onBeforeCompile;
   const previousCacheKey = material.customProgramCacheKey?.bind(material);
