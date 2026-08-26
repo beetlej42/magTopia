@@ -56,7 +56,7 @@ export function applyStorybookSurfaceMaterial(material, {
   const resolvedKind = Number(surfaceKind) || 0;
   const resolvedStrength = Math.min(1, Math.max(0, Number(strength) || 0));
   material.userData.storybookSurface = {
-    version: "procedural-microtexture-v2",
+    version: "procedural-microtexture-v1",
     surfaceKind: resolvedKind,
     useSurfaceKindAttribute: Boolean(useSurfaceKindAttribute),
     strength: resolvedStrength,
@@ -91,7 +91,7 @@ export function applyStorybookSurfaceMaterial(material, {
       .replace("mix(0.945, 1.035, felt)", "mix(0.925, 1.045, felt)")
       .replace("mix(0.955, 1.025, aggregate)", "mix(0.94, 1.035, aggregate)");
   };
-  material.customProgramCacheKey = () => `${previousCacheKey?.() ?? material.type}|storybook-surface-v2:${useSurfaceKindAttribute ? "attribute" : resolvedKind}:${stylizedHighlight ? "highlight" : "plain"}`;
+  material.customProgramCacheKey = () => `${previousCacheKey?.() ?? material.type}|storybook-surface-v1:${useSurfaceKindAttribute ? "attribute" : resolvedKind}`;
   material.needsUpdate = true;
   return material;
 }
