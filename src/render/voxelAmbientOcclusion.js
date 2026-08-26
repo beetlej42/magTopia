@@ -1,3 +1,5 @@
+import "./voxelVirtualBevelGlint.js";
+
 const DEFAULT_STRENGTH = 0.32;
 
 export function voxelVertexAmbientOcclusion(sideA, sideB, corner, strength = DEFAULT_STRENGTH) {
