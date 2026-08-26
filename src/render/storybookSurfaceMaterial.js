@@ -49,16 +49,18 @@ export function applyStorybookSurfaceMaterial(material, {
   useSurfaceKindAttribute = false,
   strength = storybookSurfaceStrength
 } = {}) {
-  if (!material || material.userData?.storybookSurface || strength <= 0) return material;
+  const stylizedHighlight = material?.userData?.voxelShader === "diffuse";
+  if (!material || material.userData?.storybookSurface || (!stylizedHighlight && strength <= 0)) return material;
   const previousCompile = material.onBeforeCompile;
   const previousCacheKey = material.customProgramCacheKey?.bind(material);
   const resolvedKind = Number(surfaceKind) || 0;
   const resolvedStrength = Math.min(1, Math.max(0, Number(strength) || 0));
   material.userData.storybookSurface = {
-    version: "procedural-microtexture-v1",
+    version: "procedural-microtexture-v2",
     surfaceKind: resolvedKind,
     useSurfaceKindAttribute: Boolean(useSurfaceKindAttribute),
-    strength: resolvedStrength
+    strength: resolvedStrength,
+    stylizedHighlight
   };
   material.onBeforeCompile = function onBeforeCompile(shader, renderer) {
     previousCompile?.call(this, shader, renderer);
@@ -75,6 +77,12 @@ export function applyStorybookSurfaceMaterial(material, {
       .replace("#include <common>", `#include <common>\nuniform float storybookSurfaceStrength;\nvarying vec3 vStorybookWorldPosition;\nvarying vec3 vStorybookWorldNormal;\nvarying float vStorybookSurfaceKind;\n\nfloat storybookHash(vec2 p) {\n  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);\n}\n\nfloat storybookLine(float value, float width) {\n  float distanceToLine = min(fract(value), 1.0 - fract(value));\n  return 1.0 - smoothstep(width, width + fwidth(value) * 1.35, distanceToLine);\n}\n\nvec2 storybookPlanarUv(vec3 position, vec3 normal) {\n  vec3 axis = abs(normalize(normal));\n  if (axis.y > axis.x && axis.y > axis.z) return position.xz;\n  if (axis.x > axis.z) return position.zy;\n  return position.xy;\n}\n\nfloat storybookSurfaceModulation(float kind, vec3 position, vec3 normal) {\n  vec2 uv = storybookPlanarUv(position, normal);\n  float fine = storybookHash(floor(uv * 92.0));\n  float coarse = storybookHash(floor(uv * 18.0 + 17.0));\n  float paper = mix(0.965, 1.035, fine) * mix(0.985, 1.015, coarse);\n  float modulation = paper;\n  if (kind > 1.5 && kind < 2.5) {\n    vec3 axis = abs(normalize(normal));\n    float vertical = 1.0 - smoothstep(0.62, 0.88, axis.y);\n    vec2 brickUv = uv * vec2(2.75, 5.5);\n    brickUv.x += mod(floor(brickUv.y), 2.0) * 0.5;\n    float mortar = max(storybookLine(brickUv.x, 0.045), storybookLine(brickUv.y, 0.055));\n    modulation *= 1.0 - mortar * vertical * 0.105;\n  } else if (kind > 2.5 && kind < 3.5) {\n    float slateBand = storybookLine(uv.y * 10.0, 0.035);\n    modulation *= 1.0 - slateBand * 0.045;\n  } else if (kind > 3.5 && kind < 4.5) {\n    float brush = storybookHash(vec2(floor(uv.x * 34.0), floor(uv.y * 9.0)));\n    modulation *= mix(0.975, 1.025, brush);\n  } else if (kind > 4.5 && kind < 5.5) {\n    float felt = storybookHash(floor(uv * 42.0)) * 0.65 + storybookHash(floor(uv.yx * 73.0 + 9.0)) * 0.35;\n    modulation *= mix(0.945, 1.035, felt);\n  } else if (kind > 5.5 && kind < 6.5) {\n    float aggregate = storybookHash(floor(uv * 31.0));\n    modulation *= mix(0.955, 1.025, aggregate);\n  }\n  return mix(1.0, modulation, storybookSurfaceStrength);\n}`)
       .replace("#include <map_fragment>", "#include <map_fragment>\ndiffuseColor.rgb *= storybookSurfaceModulation(vStorybookSurfaceKind, vStorybookWorldPosition, vStorybookWorldNormal);")
       .replace("#include <roughnessmap_fragment>", "#include <roughnessmap_fragment>\nroughnessFactor = clamp(roughnessFactor + storybookSurfaceStrength * 0.035, 0.0, 1.0);");
+    if (stylizedHighlight) {
+      shader.fragmentShader = shader.fragmentShader.replace(
+        "#include <lights_fragment_end>",
+        `#include <lights_fragment_end>\n#if NUM_DIR_LIGHTS > 0\n  vec3 voxelHighlightLightDir = directionalLights[0].direction;\n  float voxelSunFacing = saturate(dot(geometryNormal, voxelHighlightLightDir));\n  vec3 voxelHalfDir = normalize(voxelHighlightLightDir + geometryViewDir);\n  float voxelSpec = pow(saturate(dot(geometryNormal, voxelHalfDir)), 24.0);\n  float voxelGate = smoothstep(0.15, 0.60, voxelSunFacing);\n  float voxelRoughnessResponse = clamp(1.10 - roughnessFactor, 0.0, 1.0);\n  float voxelMetalBoost = mix(1.0, 1.8, clamp(metalnessFactor, 0.0, 1.0));\n  float voxelHighlight = voxelSpec * voxelGate * voxelRoughnessResponse * voxelMetalBoost * 0.22;\n  vec3 voxelHighlightColor = mix(vec3(1.0, 0.95, 0.86), diffuseColor.rgb, 0.12);\n  reflectedLight.directSpecular += directionalLights[0].color * voxelHighlightColor * voxelHighlight;\n#endif`
+      );
+    }
     shader.fragmentShader = shader.fragmentShader
       .replace("mortar * vertical * 0.105", "mortar * vertical * 0.16")
       .replace("storybookLine(uv.y * 10.0, 0.035)", "storybookLine(uv.y * 10.0, 0.04)")
@@ -83,7 +91,7 @@ export function applyStorybookSurfaceMaterial(material, {
       .replace("mix(0.945, 1.035, felt)", "mix(0.925, 1.045, felt)")
       .replace("mix(0.955, 1.025, aggregate)", "mix(0.94, 1.035, aggregate)");
   };
-  material.customProgramCacheKey = () => `${previousCacheKey?.() ?? material.type}|storybook-surface-v1:${useSurfaceKindAttribute ? "attribute" : resolvedKind}`;
+  material.customProgramCacheKey = () => `${previousCacheKey?.() ?? material.type}|storybook-surface-v2:${useSurfaceKindAttribute ? "attribute" : resolvedKind}:${stylizedHighlight ? "highlight" : "plain"}`;
   material.needsUpdate = true;
   return material;
 }
