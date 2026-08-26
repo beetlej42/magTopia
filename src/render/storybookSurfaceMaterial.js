@@ -1,3 +1,5 @@
+import { applyVoxelCurvedWorldTwinkle } from "./voxelCurvedWorldTwinkle.js";
+
 export const STORYBOOK_SURFACE_KINDS = Object.freeze({
   none: 0,
   plaster: 1,
@@ -49,6 +51,7 @@ export function applyStorybookSurfaceMaterial(material, {
   useSurfaceKindAttribute = false,
   strength = storybookSurfaceStrength
 } = {}) {
+  material = applyVoxelCurvedWorldTwinkle(material, { surfaceKind, useSurfaceKindAttribute });
   if (!material || material.userData?.storybookSurface || strength <= 0) return material;
   const previousCompile = material.onBeforeCompile;
   const previousCacheKey = material.customProgramCacheKey?.bind(material);
@@ -65,7 +68,7 @@ export function applyStorybookSurfaceMaterial(material, {
     shader.uniforms.storybookSurfaceKind = { value: resolvedKind };
     shader.uniforms.storybookSurfaceStrength = { value: resolvedStrength };
     const kindSource = useSurfaceKindAttribute
-      ? "attribute float voxelSurfaceKind;"
+      ? (material.userData?.voxelCurvedWorldTwinkle ? "" : "attribute float voxelSurfaceKind;")
       : "uniform float storybookSurfaceKind;";
     const kindAssignment = useSurfaceKindAttribute ? "voxelSurfaceKind" : "storybookSurfaceKind";
     shader.vertexShader = shader.vertexShader
