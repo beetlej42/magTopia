@@ -12,6 +12,9 @@ import {
   placeSpecialStructure
 } from "../src/gameplay/cards.js";
 import { CARD_CHOICE_KINDS, CARD_TYPES } from "../src/gameplay/card-catalog.js";
+import { activeConstructionDiscountRate } from "../src/gameplay/cards.js";
+import { previewConstruction } from "../src/city/solver.js";
+import { executeCityCommand } from "../src/city/engine.js";
 
 function stateAt(turn, cityId = "pri-city") {
   const world = createServiceWorldContract({ seed: "pri-special-choice", columns: 20, rows: 20 });
@@ -92,4 +95,26 @@ test("special card definitions are never ordinary and have stable family metadat
   }
   assert.ok(state.gameplay.cardState.offer.eligibilityAudit.every((entry) => Array.isArray(entry.reasons)));
   assert.equal(CARD_TYPES.special_structure, "special_structure");
+});
+
+test("ordinary BUILDING discount is a one-use system entitlement and never applies to special structures", () => {
+  let state = withOffer(1);
+  const offer = state.gameplay.cardState.offer;
+  const selected = selectCard(state, state.cityId, { offerId: offer.offerId, selectedCardId: "ordinary-building-discount" });
+  assert.equal(selected.accepted, true);
+  state = selected.nextState;
+  assert.equal(activeConstructionDiscountRate(state), 0.2);
+  const proposal = {
+    actor: "agent:test",
+    site: { lotId: "cell-0-0", footprint: "1x1", entrance: "south" },
+    program: { archetype: "starter_residence", purpose: "residential", name: "Test Cottage", attributes: {} },
+    gameplayBuilding: { units: [{ purpose: "residential", area: 1, magicRatio: 0 }] },
+    design: { districtStyle: "willow_magic", patterns: [], prompt: "A compact cottage." }
+  };
+  const baseline = previewConstruction(state, proposal, { constructionDiscountRate: 0 });
+  const discounted = previewConstruction(state, proposal, { constructionDiscountRate: activeConstructionDiscountRate(state) });
+  assert.equal(discounted.cost.coins, Math.round(baseline.cost.coins * 0.8));
+  const built = executeCityCommand(state, { type: "construct_building", proposal }, { now: () => "2026-08-27T00:00:00.000Z", createId: (prefix) => `${prefix}-discount` , constructionDiscountRate: activeConstructionDiscountRate(state) });
+  assert.equal(built.accepted, true, built.message);
+  assert.equal(built.state.gameplay.cardState.constructionDiscount.remainingUses, 0);
 });
