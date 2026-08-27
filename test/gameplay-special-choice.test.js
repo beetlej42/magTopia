@@ -9,12 +9,16 @@ import {
   generateOffer,
   openTurnCardState,
   selectCard,
-  placeSpecialStructure
+  placeSpecialStructure,
+  cancelSpecialStructurePlacement
 } from "../src/gameplay/cards.js";
-import { CARD_CHOICE_KINDS, CARD_TYPES } from "../src/gameplay/card-catalog.js";
+import { CARD_CATALOG, CARD_CHOICE_KINDS, CARD_TYPES } from "../src/gameplay/card-catalog.js";
 import { activeConstructionDiscountRate } from "../src/gameplay/cards.js";
 import { previewConstruction } from "../src/city/solver.js";
 import { executeCityCommand } from "../src/city/engine.js";
+import { normalizeCardChoice, normalizeCardOffer } from "../src/gameplay/schema.js";
+import { arcaneOfficerRecruitmentUnlocked } from "../src/gameplay/arcane-officers.js";
+import { createOpenApiDocument } from "../apps/server/openapi.js";
 
 function stateAt(turn, cityId = "pri-city") {
   const world = createServiceWorldContract({ seed: "pri-special-choice", columns: 20, rows: 20 });
@@ -117,4 +121,105 @@ test("ordinary BUILDING discount is a one-use system entitlement and never appli
   const built = executeCityCommand(state, { type: "construct_building", proposal }, { now: () => "2026-08-27T00:00:00.000Z", createId: (prefix) => `${prefix}-discount` , constructionDiscountRate: activeConstructionDiscountRate(state) });
   assert.equal(built.accepted, true, built.message);
   assert.equal(built.state.gameplay.cardState.constructionDiscount.remainingUses, 0);
+});
+
+test("every special structure is a unique free-placement card, including placeholder facilities", () => {
+  const structures = CARD_CATALOG.filter((card) => card.type === CARD_TYPES.special_structure);
+  assert.ok(structures.length >= 7);
+  for (const card of structures) {
+    assert.equal(card.choiceKind, CARD_CHOICE_KINDS.special);
+    assert.equal(card.family, "special_building");
+    assert.equal(card.unique, true);
+    assert.equal(card.effect.freePlacement, true);
+    assert.equal(card.structure?.placeholder ?? false, card.cardId === "ministry-of-magic" || card.cardId === "royal-botanical-greenhouse" || card.cardId === "arcane-energy-conservatory");
+  }
+});
+
+test("special placement is free for every catalog structure and unlocks Ministry governance only after placement", () => {
+  const structureIds = CARD_CATALOG.filter((card) => card.type === CARD_TYPES.special_structure).map((card) => card.cardId);
+  for (const cardId of structureIds) {
+    let state = stateAt(5, `free-${cardId}`);
+    state.resources.coins = 321;
+    state.gameplay.resources.coins = 321;
+    state.gameplay.resources.arcaneEnergy = 50;
+    state.buildings = {
+      "base-1": { id: "base-1", status: "completed", program: { purpose: "commercial" } },
+      "base-2": { id: "base-2", status: "completed", program: { purpose: "greenhouse" } },
+      "base-3": { id: "base-3", status: "completed", program: { purpose: "residential" } },
+      "base-4": { id: "base-4", status: "completed", program: { purpose: "production" } }
+    };
+    const offer = { offerId: `free-offer-${cardId}`, turn: 5, offeredCardIds: [cardId, "emergency-special-grant", "special-arcane-reserve"], choiceKind: "special", eligibilityAudit: [] };
+    state.gameplay.cardState = { ...state.gameplay.cardState, offer, choice: { offerId: offer.offerId, status: "pending", choiceKind: "special" } };
+    const selected = selectCard(state, state.cityId, { offerId: offer.offerId, selectedCardId: cardId }, { createId: (prefix) => `${prefix}-${cardId}` });
+    assert.equal(selected.accepted, true, `${cardId} selection should be eligible`);
+    const placementId = selected.cardEffects.placement.placement_id;
+    const lot = legalMinistryLot(selected.nextState);
+    assert.ok(lot, `${cardId} should have a legal placeholder lot`);
+    const placed = placeSpecialStructure(selected.nextState, selected.nextState.cityId, { cardId, placementId, lotId: lot, entrance: "south" }, { createId: (prefix) => `${prefix}-${cardId}` });
+    assert.equal(placed.accepted, true, `${cardId} should place without a construction cost`);
+    assert.equal(placed.nextState.resources.coins, 321);
+    assert.equal(placed.nextState.gameplay.resources.coins, 321);
+    if (cardId === "ministry-of-magic") {
+      assert.equal(arcaneOfficerRecruitmentUnlocked(placed.nextState), true);
+      assert.equal(placed.nextState.buildings[placed.buildingId].program.canonicalProgram, "ministry_of_magic");
+    }
+  }
+});
+
+test("pending special entitlements survive turns, illegal placement is non-consuming, duplicate placement is rejected, and cancellation reopens eligibility", () => {
+  let state = withOffer(5);
+  const offer = state.gameplay.cardState.offer;
+  const selected = selectCard(state, state.cityId, { offerId: offer.offerId, selectedCardId: "ministry-of-magic" }, { createId: () => "placement-ministry" });
+  assert.equal(selected.accepted, true);
+  state = openTurnCardState({ ...selected.nextState, turn: 6 }, state.cityId, { turn: 6 });
+  state = openTurnCardState({ ...state, turn: 10 }, state.cityId, { turn: 10 });
+  assert.equal(state.gameplay.cardState.placements["placement-ministry"].status, "pending");
+  assert.equal(state.gameplay.cardState.offer.offeredCardIds.includes("ministry-of-magic"), false);
+  const illegal = placeSpecialStructure(state, state.cityId, { cardId: "ministry-of-magic", placementId: "placement-ministry", lotId: "cell-9999-9999" });
+  assert.equal(illegal.accepted, false);
+  assert.equal(illegal.code, "PLACEMENT_ILLEGAL");
+  assert.equal(state.gameplay.cardState.placements["placement-ministry"].status, "pending");
+  const lot = legalMinistryLot(state);
+  const placed = placeSpecialStructure(state, state.cityId, { cardId: "ministry-of-magic", placementId: "placement-ministry", lotId: lot }, { createId: () => "building-ministry" });
+  assert.equal(placed.accepted, true);
+  const duplicate = placeSpecialStructure(placed.nextState, placed.nextState.cityId, { cardId: "ministry-of-magic", placementId: "placement-ministry", lotId: lot });
+  assert.equal(duplicate.accepted, false);
+  assert.equal(duplicate.code, "PLACEMENT_ALREADY_COMPLETED");
+  const cancelled = cancelSpecialStructurePlacement(state, { placementId: "placement-ministry" });
+  assert.equal(cancelled.accepted, true);
+  const reopened = generateOffer(state.cityId, 15, { ...cancelled.nextState, turn: 15 });
+  assert.equal(reopened.offeredCardIds.includes("ministry-of-magic"), true);
+});
+
+test("ordinary discount reservation consumes once, cancellation restores it, and schema rejects invalid choice kinds", () => {
+  let state = withOffer(1);
+  const selected = selectCard(state, state.cityId, { offerId: state.gameplay.cardState.offer.offerId, selectedCardId: "ordinary-building-discount" });
+  state = selected.nextState;
+  const proposal = {
+    actor: "agent:test",
+    site: { lotId: "cell-0-0", footprint: "1x1", entrance: "south" },
+    program: { archetype: "starter_residence", purpose: "residential", name: "Reserved Cottage", attributes: {} },
+    gameplayBuilding: { units: [{ purpose: "residential", area: 1, magicRatio: 0 }] },
+    design: { districtStyle: "willow_magic", patterns: [], prompt: "A reserved cottage." }
+  };
+  const baseline = previewConstruction(state, proposal, { constructionDiscountRate: 0 });
+  const reserved = executeCityCommand(state, { type: "reserve_construction", proposal, reservationId: "discount-reservation" }, { now: () => "2026-08-27T00:00:00.000Z", createId: (prefix) => `${prefix}-reservation`, constructionDiscountRate: activeConstructionDiscountRate(state) });
+  assert.equal(reserved.accepted, true, reserved.message);
+  assert.equal(reserved.state.reservations["discount-reservation"].preview.cost.coins, Math.round(baseline.cost.coins * 0.8));
+  assert.equal(reserved.state.gameplay.cardState.constructionDiscount.remainingUses, 0);
+  const cancelled = executeCityCommand(reserved.state, { type: "cancel_construction_reservation", reservationId: "discount-reservation" }, { now: () => "2026-08-27T00:00:00.000Z", createId: (prefix) => `${prefix}-cancel` });
+  assert.equal(cancelled.accepted, true, cancelled.message);
+  assert.equal(cancelled.state.gameplay.cardState.constructionDiscount.remainingUses, 1);
+  assert.throws(() => normalizeCardChoice({ choiceKind: "forged" }), /Unsupported card choice kind/);
+  assert.throws(() => normalizeCardOffer({ choiceKind: "forged" }), /Unsupported card choice kind/);
+  const schemas = createOpenApiDocument("http://127.0.0.1:4183").components.schemas;
+  for (const schemaName of ["TurnFacts", "ReportContext"]) {
+    for (const field of ["choiceKind", "offerChoiceKind", "specialCadence", "eligibilityAudit"]) {
+      assert.ok(schemas[schemaName].properties[field]);
+      assert.ok(schemas[schemaName].required.includes(field));
+    }
+  }
+  assert.ok(schemas.CardOffer.required.includes("choice_kind"));
+  assert.ok(schemas.CardOffer.required.includes("eligibility_audit"));
+  assert.ok(schemas.CardDefinition.required.includes("choice_kind"));
 });

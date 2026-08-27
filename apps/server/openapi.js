@@ -772,12 +772,16 @@ export function createOpenApiDocument(baseUrl) {
         ReportContext: {
           type: "object",
           description: "SYSTEM-owned immutable newspaper source for one resolved turn. A deterministic projection of the frozen TurnFacts plus read-only city metadata. Never contains prose and never recomputes gameplay. The Agent edits an OwlReport from it and references facts through factRefs.",
-          required: ["schemaVersion", "cityId", "turn", "turnKind", "bootstrapProgress", "worldDay", "factsDigest", "settlement", "resourceDelta", "populationDelta", "publicService", "buildingsStarted", "buildingsCompleted", "buildingFactRefs", "constructionRefs", "incidents", "incidentRolls", "historicalRiskChanges", "factRefs"],
+          required: ["schemaVersion", "cityId", "turn", "turnKind", "choiceKind", "offerChoiceKind", "specialCadence", "eligibilityAudit", "bootstrapProgress", "worldDay", "factsDigest", "settlement", "resourceDelta", "populationDelta", "publicService", "buildingsStarted", "buildingsCompleted", "buildingFactRefs", "constructionRefs", "incidents", "incidentRolls", "historicalRiskChanges", "factRefs"],
           properties: {
             schemaVersion: { type: "integer" },
             cityId: { type: "string" },
             turn: { type: "integer" },
             turnKind: { enum: ["bootstrap", "normal"] },
+            choiceKind: { enum: ["ordinary", "special", null] },
+            offerChoiceKind: { enum: ["ordinary", "special", null] },
+            specialCadence: { type: "boolean" },
+            eligibilityAudit: { type: "array", items: { type: "object", additionalProperties: true } },
             bootstrapProgress: { oneOf: [{ $ref: "#/components/schemas/BootstrapProgress" }, { type: "null" }] },
             worldDay: { type: "integer", description: "One resolved turn is one city day; worldDay equals turn." },
             factsDigest: { type: "string", description: "Stable digest of the frozen TurnFacts; an OwlReport must bind to it." },

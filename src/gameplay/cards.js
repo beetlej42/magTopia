@@ -130,8 +130,8 @@ export function ensureCardOffer(state, cityId) {
   const cardState = normalizeCardState(state.gameplay?.cardState);
   const expectedKind = specialChoiceTurn(state.turn) ? CARD_CHOICE_KINDS.special : CARD_CHOICE_KINDS.ordinary;
   const legacySelected = cardState.choice.status === "selected" && cardState.choice.offerId === cardState.offer?.offerId;
-  if (cardState.offer && cardState.offer.turn === Number(state.turn) && cardState.offer.offeredCardIds.length === 3
-      && (cardState.offer.choiceKind === expectedKind || legacySelected)) {
+  if (cardState.offer && cardState.offer.turn === Number(state.turn)
+      && (legacySelected || (cardState.offer.offeredCardIds.length === 3 && cardState.offer.choiceKind === expectedKind))) {
     return state;
   }
   const offer = generateOffer(cityId, state.turn, state);
@@ -564,7 +564,8 @@ export function placeSpecialStructure(state, cityId, input = {}, context = {}) {
       choice: normalizeCardChoice({ ...cardState.choice, specialPlacementsCompleted: completions }),
       activePolicies: cardState.activePolicies,
       pendingPlacement,
-      placements
+      placements,
+      constructionDiscount: cardState.constructionDiscount
     })
   };
   return { accepted: true, code: "OK", nextState: next, buildingId, placement: completed };

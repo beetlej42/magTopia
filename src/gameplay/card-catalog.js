@@ -108,12 +108,15 @@ export const SPECIAL_STRUCTURES = Object.freeze({
 // the resolution layer reads; `metadata` carries presentation hints. `rarity`
 // is reserved but unused in the MVP.
 function card(cardId, type, title, description, effect, options = {}) {
+  const systemEffect = type === CARD_TYPES.special_structure
+    ? { freePlacement: true, ...effect }
+    : effect;
   return Object.freeze({
     cardId,
     type,
     title,
     description,
-    effect: Object.freeze(effect),
+    effect: Object.freeze(systemEffect),
     decisionMode: options.decisionMode ?? CARD_DECISION_MODES.immediate,
     duration: options.duration ?? "instant",
     structure: options.structure ?? null,
