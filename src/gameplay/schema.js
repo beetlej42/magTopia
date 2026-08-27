@@ -592,7 +592,9 @@ export function normalizeCardOffer(value = {}) {
   return {
     offerId: String(value.offerId ?? ""),
     turn: clampNumber(value.turn, 0, 0, Number.MAX_SAFE_INTEGER),
-    offeredCardIds: [...(value.offeredCardIds ?? [])].map(String)
+    offeredCardIds: [...(value.offeredCardIds ?? [])].map(String),
+    choiceKind: value.choiceKind == null ? null : String(value.choiceKind),
+    eligibilityAudit: Array.isArray(value.eligibilityAudit) ? cloneAuditValue(value.eligibilityAudit) : []
   };
 }
 
@@ -615,6 +617,7 @@ export function normalizeCardChoice(value = {}) {
   return {
     offerId: String(value.offerId ?? ""),
     status,
+    choiceKind: value.choiceKind == null ? null : String(value.choiceKind),
     selectedCardId: value.selectedCardId == null ? null : String(value.selectedCardId),
     decisionMode,
     choiceResolvedAt: value.choiceResolvedAt == null ? null : String(value.choiceResolvedAt),
@@ -667,7 +670,13 @@ export function normalizeCardState(value = {}) {
     choice: normalizeCardChoice(value.choice ?? {}),
     activePolicies: [...(value.activePolicies ?? [])].map(normalizeActivePolicy),
     pendingPlacement: value.pendingPlacement ? normalizePendingPlacement(value.pendingPlacement) : null,
-    placements: Object.fromEntries(Object.entries(value.placements ?? {}).map(([id, entry]) => [id, normalizePendingPlacement(entry)]))
+    placements: Object.fromEntries(Object.entries(value.placements ?? {}).map(([id, entry]) => [id, normalizePendingPlacement(entry)])),
+    constructionDiscount: value.constructionDiscount ? {
+      cardId: String(value.constructionDiscount.cardId ?? ""),
+      discountRate: clampNumber(value.constructionDiscount.discountRate, 0, 0, 1),
+      remainingUses: clampNumber(value.constructionDiscount.remainingUses, 0, 0, 1),
+      grantedAtTurn: clampNumber(value.constructionDiscount.grantedAtTurn, 0, 0, Number.MAX_SAFE_INTEGER)
+    } : null
   };
 }
 
@@ -706,8 +715,12 @@ export function normalizeTurnFacts(value = {}) {
         : {})
     })),
     cardOfferId: value.cardOfferId == null ? null : String(value.cardOfferId),
+    offerChoiceKind: value.offerChoiceKind == null ? null : String(value.offerChoiceKind),
+    specialCadence: Boolean(value.specialCadence),
+    eligibilityAudit: Array.isArray(value.eligibilityAudit) ? cloneAuditValue(value.eligibilityAudit) : [],
     offeredCardIds: [...(value.offeredCardIds ?? [])].map(String),
     selectedCardId: value.selectedCardId == null ? null : String(value.selectedCardId),
+    choiceKind: value.choiceKind == null ? null : String(value.choiceKind),
     choiceStatus: String(value.choiceStatus ?? "pending"),
     choiceResolvedAt: value.choiceResolvedAt == null ? null : String(value.choiceResolvedAt),
     cardEffects: value.cardEffects ? { ...value.cardEffects } : {},

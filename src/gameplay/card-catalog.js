@@ -9,7 +9,14 @@ export const CARD_TYPES = Object.freeze({
   special_structure: "special_structure",
   resource: "resource",
   personnel: "personnel",
-  policy: "policy"
+  policy: "policy",
+  building: "building",
+  people: "people"
+});
+
+export const CARD_CHOICE_KINDS = Object.freeze({
+  ordinary: "ordinary",
+  special: "special"
 });
 
 export const CARD_DECISION_MODES = Object.freeze({
@@ -24,6 +31,10 @@ export const EFFECT_VALUES = Object.freeze({
   ministryGrantCoins: 100,
   newWizardResidents: 4,
   wizardGrowthBonusRate: 0.15,
+  // Ordinary BUILDING is a single-use 20% discount. The old 50% multi-turn
+  // policy remains a legacy catalog entry, but is never part of ordinary
+  // choice generation.
+  ordinaryConstructionDiscountRate: 0.2,
   constructionDiscountRate: 0.5,
   incidentResponseBonus: 1,
   secrecyConcealmentBonus: 1,
@@ -36,7 +47,10 @@ export const EFFECT_VALUES = Object.freeze({
   flooCoinOutput: 5,
   flooWizardCapacity: 2,
   moonlightArcaneEnergyOutput: 6,
-  moonlightExposureModifier: 2
+  moonlightExposureModifier: 2,
+  ordinaryPopulation: 2,
+  ordinaryResourceCoins: 20,
+  largeSpecialGrantCoins: 180
 });
 
 export const SPECIAL_STRUCTURES = Object.freeze({
@@ -69,6 +83,22 @@ export const SPECIAL_STRUCTURES = Object.freeze({
     name: "Moonlight Herb Plot",
     footprint: "1x1",
     purpose: "special_structure"
+  }),
+  "ministry-of-magic": Object.freeze({
+    archetype: "special_structure",
+    name: "Ministry of Magic",
+    footprint: "2x2",
+    purpose: "special_structure",
+    canonicalProgram: "ministry_of_magic",
+    placeholder: true
+  }),
+  "royal-botanical-greenhouse": Object.freeze({
+    archetype: "special_structure",
+    name: "Royal Botanical Greenhouse",
+    footprint: "2x2",
+    purpose: "special_structure",
+    canonicalProgram: "royal_botanical_greenhouse",
+    placeholder: true
   })
 });
 
@@ -85,12 +115,24 @@ function card(cardId, type, title, description, effect, options = {}) {
     decisionMode: options.decisionMode ?? CARD_DECISION_MODES.immediate,
     duration: options.duration ?? "instant",
     structure: options.structure ?? null,
+    choiceKind: options.choiceKind ?? (type === CARD_TYPES.special_structure ? CARD_CHOICE_KINDS.special : null),
+    family: options.family ?? (type === CARD_TYPES.special_structure ? "special_building" : null),
+    unique: Boolean(options.unique),
+    prerequisites: Object.freeze(options.prerequisites ?? {}),
     metadata: Object.freeze(options.metadata ?? {})
   });
 }
 
 export const CARD_CATALOG = Object.freeze([
   // ---- A. Special structures / facilities / magical plants (5) ----
+  card(
+    "ministry-of-magic",
+    CARD_TYPES.special_structure,
+    "Ministry of Magic",
+    "A system-owned civic placeholder that grants one free special-structure placement and unlocks Arcane Officer recruitment once built.",
+    { kind: "special_structure", magicLevel: 0.5, canonicalProgram: "ministry_of_magic", freePlacement: true, governance: true },
+    { choiceKind: CARD_CHOICE_KINDS.special, family: "special_building", unique: true, decisionMode: CARD_DECISION_MODES.player_place, structure: SPECIAL_STRUCTURES["ministry-of-magic"], metadata: { placeholder: true, canonicalProgram: "ministry_of_magic" } }
+  ),
   card(
     "diagon-alley-entrance",
     CARD_TYPES.special_structure,
@@ -103,7 +145,7 @@ export const CARD_CATALOG = Object.freeze([
       concealmentBonus: EFFECT_VALUES.diagonAlleyConcealment,
       concealmentRadius: EFFECT_VALUES.diagonAlleyRadius
     },
-    { decisionMode: CARD_DECISION_MODES.player_place, structure: SPECIAL_STRUCTURES["diagon-alley-entrance"] }
+    { choiceKind: CARD_CHOICE_KINDS.special, family: "special_building", unique: true, decisionMode: CARD_DECISION_MODES.player_place, structure: SPECIAL_STRUCTURES["diagon-alley-entrance"] }
   ),
   card(
     "owl-tower",
@@ -116,7 +158,7 @@ export const CARD_CATALOG = Object.freeze([
       wizardCapacity: EFFECT_VALUES.owlTowerWizardCapacity,
       coinOutput: EFFECT_VALUES.owlTowerCoinOutput
     },
-    { decisionMode: CARD_DECISION_MODES.player_place, structure: SPECIAL_STRUCTURES["owl-tower"] }
+    { choiceKind: CARD_CHOICE_KINDS.special, family: "special_building", unique: true, decisionMode: CARD_DECISION_MODES.player_place, structure: SPECIAL_STRUCTURES["owl-tower"] }
   ),
   card(
     "floo-fireplace-station",
@@ -129,7 +171,7 @@ export const CARD_CATALOG = Object.freeze([
       coinOutput: EFFECT_VALUES.flooCoinOutput,
       wizardCapacity: EFFECT_VALUES.flooWizardCapacity
     },
-    { decisionMode: CARD_DECISION_MODES.player_place, structure: SPECIAL_STRUCTURES["floo-fireplace-station"] }
+    { choiceKind: CARD_CHOICE_KINDS.special, family: "special_building", unique: true, decisionMode: CARD_DECISION_MODES.player_place, structure: SPECIAL_STRUCTURES["floo-fireplace-station"] }
   ),
   card(
     "concealment-statue",
@@ -143,7 +185,7 @@ export const CARD_CATALOG = Object.freeze([
       concealmentBonus: EFFECT_VALUES.concealmentStatueConcealment,
       concealmentRadius: EFFECT_VALUES.concealmentStatueRadius
     },
-    { decisionMode: CARD_DECISION_MODES.player_place, structure: SPECIAL_STRUCTURES["concealment-statue"] }
+    { choiceKind: CARD_CHOICE_KINDS.special, family: "special_building", unique: true, decisionMode: CARD_DECISION_MODES.player_place, structure: SPECIAL_STRUCTURES["concealment-statue"] }
   ),
   card(
     "moonlight-herb-plot",
@@ -156,7 +198,16 @@ export const CARD_CATALOG = Object.freeze([
       arcaneEnergyOutput: EFFECT_VALUES.moonlightArcaneEnergyOutput,
       exposureModifier: EFFECT_VALUES.moonlightExposureModifier
     },
-    { decisionMode: CARD_DECISION_MODES.player_place, structure: SPECIAL_STRUCTURES["moonlight-herb-plot"] }
+    { choiceKind: CARD_CHOICE_KINDS.special, family: "special_building", unique: true, decisionMode: CARD_DECISION_MODES.player_place, structure: SPECIAL_STRUCTURES["moonlight-herb-plot"] }
+  ),
+
+  card(
+    "royal-botanical-greenhouse",
+    CARD_TYPES.special_structure,
+    "Royal Botanical Greenhouse",
+    "A rare civic greenhouse placeholder that produces arcane energy for a growing city.",
+    { kind: "special_structure", magicLevel: 0.85, arcaneEnergyOutput: 12, canonicalProgram: "royal_botanical_greenhouse" },
+    { choiceKind: CARD_CHOICE_KINDS.special, family: "special_building", unique: true, decisionMode: CARD_DECISION_MODES.player_place, structure: SPECIAL_STRUCTURES["royal-botanical-greenhouse"], prerequisites: { minBuildings: 4 }, metadata: { placeholder: true } }
   ),
 
   // ---- B. Resources / personnel (3) ----
@@ -167,6 +218,46 @@ export const CARD_CATALOG = Object.freeze([
     "The Ministry of Magic approves an emergency civic grant for the city treasury.",
     { kind: "grant_coins", coins: EFFECT_VALUES.ministryGrantCoins },
     { decisionMode: CARD_DECISION_MODES.immediate, duration: "instant" }
+  ),
+  card(
+    "ordinary-building-discount",
+    CARD_TYPES.building,
+    "Building Materials Charter",
+    "Your next ordinary building costs 80% of its system-calculated coin cost. This is consumed by one successful construction.",
+    { kind: "construction_discount_once", discountRate: EFFECT_VALUES.ordinaryConstructionDiscountRate, uses: 1 },
+    { choiceKind: CARD_CHOICE_KINDS.ordinary, family: "ordinary_building", decisionMode: CARD_DECISION_MODES.immediate }
+  ),
+  card(
+    "ordinary-people-migration",
+    CARD_TYPES.people,
+    "Supported Wizard Arrivals",
+    "Immediately move around two wizard residents into supported available housing, clamped by authoritative capacity.",
+    { kind: "grant_population", wizards: EFFECT_VALUES.ordinaryPopulation },
+    { choiceKind: CARD_CHOICE_KINDS.ordinary, family: "ordinary_people", decisionMode: CARD_DECISION_MODES.immediate }
+  ),
+  card(
+    "ordinary-resource-grant",
+    CARD_TYPES.resource,
+    "Civic Resource Grant",
+    "Add 20 coins to the city treasury immediately.",
+    { kind: "grant_coins", coins: EFFECT_VALUES.ordinaryResourceCoins },
+    { choiceKind: CARD_CHOICE_KINDS.ordinary, family: "ordinary_resource", decisionMode: CARD_DECISION_MODES.immediate }
+  ),
+  card(
+    "special-development-grant",
+    CARD_TYPES.resource,
+    "Special Development Grant",
+    "A large one-time grant reserved for a mature magical city.",
+    { kind: "grant_coins", coins: EFFECT_VALUES.largeSpecialGrantCoins },
+    { choiceKind: CARD_CHOICE_KINDS.special, family: "large_resource", decisionMode: CARD_DECISION_MODES.immediate, prerequisites: { minBuildings: 2 } }
+  ),
+  card(
+    "emergency-special-grant",
+    CARD_TYPES.resource,
+    "Emergency Magical Reserve",
+    "A repeatable large reserve grant for special-turn strategic choices.",
+    { kind: "grant_coins", coins: EFFECT_VALUES.largeSpecialGrantCoins },
+    { choiceKind: CARD_CHOICE_KINDS.special, family: "large_resource", decisionMode: CARD_DECISION_MODES.immediate }
   ),
   card(
     "new-wizard-residents",
@@ -182,7 +273,23 @@ export const CARD_CATALOG = Object.freeze([
     "Arcane Officer Reinforcement",
     "A named Arcane Officer transfers to the city and joins the response roster.",
     { kind: "recruit_officer" },
-    { decisionMode: CARD_DECISION_MODES.immediate, duration: "instant" }
+    { choiceKind: CARD_CHOICE_KINDS.special, family: "rare_person", decisionMode: CARD_DECISION_MODES.immediate, duration: "instant", prerequisites: { governance: true, officerCapacity: true } }
+  ),
+  card(
+    "arcane-development-charter",
+    CARD_TYPES.policy,
+    "Arcane Development Charter",
+    "A multi-turn charter that increases the city's magical growth while it is active.",
+    { kind: "policy", policyId: "arcane-development-charter", wizardGrowthBonusRate: 0.2 },
+    { choiceKind: CARD_CHOICE_KINDS.special, family: "multi_turn_modifier", decisionMode: CARD_DECISION_MODES.immediate, duration: { type: "turns", turns: 4 }, prerequisites: { minBuildings: 2 } }
+  ),
+  card(
+    "special-secrecy-charter",
+    CARD_TYPES.policy,
+    "Special Secrecy Charter",
+    "A repeatable multi-turn concealment charter reserved for Special Choice.",
+    { kind: "policy", policyId: "special-secrecy-charter", concealmentBonus: 2 },
+    { choiceKind: CARD_CHOICE_KINDS.special, family: "multi_turn_modifier", decisionMode: CARD_DECISION_MODES.immediate, duration: { type: "turns", turns: 3 } }
   ),
 
   // ---- C. City policies (4) ----

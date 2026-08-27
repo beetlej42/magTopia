@@ -411,10 +411,13 @@ export function createOpenApiDocument(baseUrl) {
           required: ["card_id", "type", "title", "description", "decision_mode", "duration"],
           properties: {
             card_id: { type: "string" },
-            type: { enum: ["special_structure", "resource", "personnel", "policy"] },
+            type: { enum: ["special_structure", "resource", "personnel", "policy", "building", "people"] },
             title: { type: "string" },
             description: { type: "string" },
             decision_mode: { enum: ["immediate", "player_place", "delegate_to_agent"], description: "player_place and delegate_to_agent are two resolution choices of the same special structure card, never two separate cards." },
+            choice_kind: { enum: ["ordinary", "special", null] },
+            family: { type: ["string", "null"] },
+            unique: { type: "boolean" },
             duration: { oneOf: [{ type: "string", const: "instant" }, { type: "object", properties: { type: { type: "string" }, turns: { type: "integer" } } }] },
             structure: { type: "object", nullable: true, description: "System-owned placement spec for special structure cards." },
             effect: json
@@ -426,6 +429,8 @@ export function createOpenApiDocument(baseUrl) {
           properties: {
             offer_id: { type: "string" },
             turn: { type: "integer" },
+            choice_kind: { enum: ["ordinary", "special"] },
+            eligibility_audit: { type: "array", items: { type: "object", additionalProperties: true } },
             cards: { type: "array", minItems: 3, maxItems: 3, items: { $ref: "#/components/schemas/CardDefinition" } }
           }
         },
@@ -435,6 +440,7 @@ export function createOpenApiDocument(baseUrl) {
           properties: {
             offer_id: { type: ["string", "null"] },
             status: { enum: ["pending", "selected", "skipped", "resolved", "not_applicable"], description: "not_applicable is authoritative for the turn-0 bootstrap no-card state." },
+            choice_kind: { enum: ["ordinary", "special", null] },
             selected_card_id: { type: ["string", "null"] },
             decision_mode: { type: ["string", "null"] },
             choice_resolved_at: { type: ["string", "null"] },
@@ -945,6 +951,10 @@ export function createOpenApiDocument(baseUrl) {
               properties: {
                 choiceStatus: { type: "string" },
                 choicePending: { type: "boolean" },
+                choiceKind: { type: ["string", "null"] },
+                offerChoiceKind: { type: ["string", "null"] },
+                specialCadence: { type: "boolean" },
+                eligibilityAudit: { type: "array", items: { type: "object", additionalProperties: true } },
                 selectedCardId: { type: ["string", "null"] },
                 decisionMode: { type: ["string", "null"] },
                 playerPlacementPending: { type: "boolean" }

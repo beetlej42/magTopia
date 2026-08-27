@@ -155,6 +155,8 @@ export function buildReportContext({ cityId = null, state = {}, facts, options =
     return {
       cardId,
       type: definition?.type ?? null,
+      choiceKind: definition?.choiceKind ?? null,
+      family: definition?.family ?? null,
       title: definition?.title ?? cardId,
       description: definition?.description ?? null,
       decisionMode: definition?.decisionMode ?? null
@@ -219,6 +221,10 @@ export function buildReportContext({ cityId = null, state = {}, facts, options =
       factRef: factRef("card-offer"),
       offerId: facts.cardOfferId,
       turn,
+      choiceKind: facts.choiceKind ?? null,
+      offerChoiceKind: facts.offerChoiceKind ?? null,
+      specialCadence: Boolean(facts.specialCadence),
+      eligibilityAudit: [...(facts.eligibilityAudit ?? [])],
       offeredCards,
       choice: {
         factRef: factRef("card-choice"),

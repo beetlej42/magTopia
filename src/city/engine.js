@@ -158,6 +158,7 @@ function constructBuilding(currentState, input, context) {
   const next = cloneCityState(currentState);
   const buildingId = input.buildingId ?? context.createId("building");
   applyCompletedBuilding(next, { proposal, preview, buildingId, assetId: input.assetId ?? proposal.program.assetId }, context);
+  consumeOneTimeConstructionDiscount(next);
   return accepted(currentState, next, { building: structuredClone(next.buildings[buildingId]), preview });
 }
 
@@ -208,9 +209,20 @@ function reserveConstruction(currentState, input, context) {
     actor: proposal.actor,
     createdAt: context.now()
   };
+  consumeOneTimeConstructionDiscount(next);
   bump(next, false);
   appendEvent(next, { type: "construction_reserved", actor: proposal.actor, reservationId, proposalId: proposal.id ?? null, buildingId: input.buildingId ?? null, cost: preview.cost }, context);
   return accepted(currentState, next, { reservation: structuredClone(next.reservations[reservationId]), preview });
+}
+
+// Ordinary BUILDING cards grant one successful construction at a 20% discount.
+// Consumption occurs only after the authoritative solver accepts the command;
+// previews and rejected commands never spend the entitlement.
+function consumeOneTimeConstructionDiscount(state) {
+  const discount = state.gameplay?.cardState?.constructionDiscount;
+  if (discount && Number(discount.remainingUses ?? 0) > 0) {
+    state.gameplay.cardState.constructionDiscount = { ...discount, remainingUses: 0 };
+  }
 }
 
 function completeReservedConstruction(currentState, input, context) {
