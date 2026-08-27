@@ -613,7 +613,7 @@ function citySummary(row) {
     ruleset_version: row.ruleset_version,
     city_version: Number(row.city_version),
     turn: state.turn,
-    turn_kind: Number(state.turn ?? 0) === 0 || state.gameplay?.turnKind === "bootstrap" ? "bootstrap" : "normal",
+    turn_kind: Number(state.turn ?? 0) === 0 ? "bootstrap" : "normal",
     resources: state.resources,
     counts: { districts: Object.keys(state.districts ?? {}).length, buildings: Object.keys(state.buildings ?? {}).length, roads: Object.values(state.cells ?? {}).filter((cell) => cell.infrastructure === "road").length, pending_orders: Object.keys(state.reservations ?? {}).length }
   };

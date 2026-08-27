@@ -6,7 +6,9 @@ const START_EVENTS = new Set(["construction_reserved", "building_constructed", "
 const COMPLETE_EVENTS = new Set(["building_constructed", "construction_reservation_completed", "special_structure_placed"]);
 
 export function isBootstrapTurn(state) {
-  return (state?.turn != null && Number(state.turn) === 0) || state?.gameplay?.turnKind === "bootstrap";
+  // The turn number is the authority. Persisted turnKind is a descriptive
+  // read-model field and may be stale after an interrupted migration.
+  return state?.turn != null && Number(state.turn) === 0;
 }
 
 export function deriveBootstrapProgress(state = {}) {
@@ -18,23 +20,23 @@ export function deriveBootstrapProgress(state = {}) {
     if (value?.type === "bridge") roads.add(String(id));
   }
   const buildings = Object.values(state.buildings ?? {}).filter(Boolean);
-  const residential = buildings.filter((b) => purposeFamily(b) === "residential").map((b) => String(b.id)).sort();
-  const commercial = buildings.filter((b) => purposeFamily(b) === "commercial").map((b) => String(b.id)).sort();
-  const publicService = buildings.filter((b) => purposeFamily(b) === "public_service").map((b) => String(b.id)).sort();
+  const activeBuildings = buildings.filter((b) => ["active", "completed"].includes(String(b.status ?? "completed")));
+  const residential = activeBuildings.filter((b) => purposeFamily(b) === "residential").map((b) => String(b.id)).sort();
+  const commercial = activeBuildings.filter((b) => purposeFamily(b) === "commercial").map((b) => String(b.id)).sort();
+  const publicService = activeBuildings.filter((b) => purposeFamily(b) === "public_service").map((b) => String(b.id)).sort();
   const connected = [...roads].sort();
   const events = (state.events ?? []).filter((e) => START_EVENTS.has(e?.type));
   const gatewayNode = state.nodes?.old_town_entry;
   const gatewayCell = gatewayNode?.cellId ? state.cells?.[gatewayNode.cellId] : null;
   const gatewayAdjacentRoad = gatewayCell && Object.values(state.cells ?? {}).some((cell) =>
     cell.infrastructure === "road" && Math.abs(Number(cell.column) - Number(gatewayCell.column)) + Math.abs(Number(cell.row) - Number(gatewayCell.row)) === 1);
-  const gatewayEvent = (state.events ?? []).some((event) => event?.type === "road_connected"
-    && ([event.from, event.to].some((endpoint) => endpoint?.kind === "node" && String(endpoint.id) === "old_town_entry")));
-  const gateway = Boolean(gatewayNode && (gatewayAdjacentRoad || gatewayEvent));
+  const gateway = Boolean(gatewayNode && gatewayAdjacentRoad);
   const started = new Set();
   const completed = new Set();
+  const actualBuildingIds = new Set(buildings.map((building) => String(building.id)));
   for (const event of events) {
-    const id = event.buildingId ?? event.building_id ?? event.proposalId ?? event.reservationId;
-    if (id == null) continue;
+    const id = event.buildingId ?? event.building_id;
+    if (id == null || !actualBuildingIds.has(String(id))) continue;
     const value = String(id);
     if (START_EVENTS.has(event.type)) started.add(value);
     if (COMPLETE_EVENTS.has(event.type)) completed.add(value);
@@ -79,6 +81,13 @@ export function bootstrapGuidance(progress) {
 }
 
 function purposeFamily(building) {
+  const canonicalUnits = building?.gameplay?.units ?? building?.gameplay?.functionalUnits ?? building?.metadata?.units ?? building?.metadata?.functionalUnits ?? [];
+  const canonicalPurposes = (Array.isArray(canonicalUnits) ? canonicalUnits : Object.values(canonicalUnits))
+    .map((unit) => String(unit?.purpose ?? "").toLowerCase());
+  const canonicalText = canonicalPurposes.join(" ");
+  if (/residential/.test(canonicalText)) return "residential";
+  if (/commercial/.test(canonicalText)) return "commercial";
+  if (/public_service/.test(canonicalText)) return "public_service";
   const text = `${building?.program?.purpose ?? ""} ${building?.program?.archetype ?? ""} ${building?.gameplay?.purpose ?? ""}`.toLowerCase();
   if (/residen|housing|house|home|lodging/.test(text)) return "residential";
   if (/shop|commercial|retail|market|income|cafe|tavern/.test(text)) return "commercial";

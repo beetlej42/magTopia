@@ -203,6 +203,7 @@ export function buildReportContext({ cityId = null, state = {}, facts, options =
     buildingsStarted: buildingFacts(facts.buildingsStarted),
     buildingsCompleted: buildingFacts(facts.buildingsCompleted),
     buildingFactRefs: [...(facts.buildingFactRefs ?? [])].sort(),
+    constructionRefs: (facts.constructionRefs ?? []).map((entry) => ({ ...entry })),
     exposureChanges,
     incidents,
     unresolvedIncidents: incidents.filter((incident) => incident.status !== "resolved"),
@@ -256,6 +257,7 @@ export function buildReportContext({ cityId = null, state = {}, facts, options =
     factRefs: [...refs].sort()
   };
   for (const ref of facts.buildingFactRefs ?? []) refs.add(String(ref));
+  for (const ref of facts.constructionRefs ?? []) if (ref?.factRef) refs.add(String(ref.factRef));
   context.factRefs = [...refs].sort();
   return deepFreeze(context);
 }

@@ -32,6 +32,31 @@ async function openCity(repository, app) {
     url: "/api/v1/cities",
     payload: { name: "Card City", map_seed: "player-daily-cards-test" }
   }), 201);
+  // Card behavior is exercised on the first normal turn. Turn 0 bootstrap is
+  // covered by serverBootstrapLifecycle.test.js and intentionally has no card.
+  const ownerForBootstrap = await repository.authenticate(player.access_token);
+  await repository.transactCity({
+    principal: ownerForBootstrap,
+    cityId: city.id,
+    endpoint: "test/open-normal-turn",
+    idempotencyKey: `open-normal-${city.id}`,
+    requestBody: {},
+    expectedVersion: city.city_version
+  }, async ({ state }) => ({
+    nextState: {
+      ...state,
+      turn: 1,
+      gameplay: {
+        ...state.gameplay,
+        turnKind: "normal",
+        turnStatus: "open",
+        turnOpenedAt: "2000-01-01T00:00:00.000Z",
+        nextTurnUnlockAt: "2000-01-01T00:00:00.000Z"
+      }
+    },
+    response: { opened: true }
+  }));
+  city.turn = 1;
   const link = await json(app, auth(player, { method: "POST", url: `/api/v1/cities/${city.id}/agent-links`, payload: {} }), 201);
   const agent = await json(app, { method: "GET", url: `/connect/${link.connect_url.split("/").at(-1)}` }, 200);
   const owner = await repository.authenticate(player.access_token);
@@ -79,6 +104,10 @@ function categoryOf(cardId) {
   return getCard(cardId)?.type;
 }
 
+function normalState(state) {
+  return { ...state, turn: 1, gameplay: { ...state.gameplay, turnKind: "normal", turnStatus: "open", turnOpenedAt: "2000-01-01T00:00:00.000Z", nextTurnUnlockAt: "2000-01-01T00:00:00.000Z" } };
+}
+
 function findLegalLot(state, footprint, entrance) {
   for (const cell of Object.values(state.cells)) {
     if (!cell.buildable || cell.strictBuildable === false || cell.node || cell.occupancy || cell.infrastructure || cell.reservation) continue;
@@ -116,7 +145,7 @@ function entranceFrontage(state, footprintCells, direction) {
   });
 }
 
-test("a fresh city gets one canonical three-category card offer that is stable across reads", async () => {
+test("Turn 1 gets one canonical three-category card offer that is stable across reads", async () => {
   const repository = createMemoryRepository(config);
   const app = await createApp({ repository, config });
   try {
@@ -352,9 +381,9 @@ test("the population card obeys wizard population capacity", async () => {
 });
 
 test("the officer card cannot inject stats or specialties and generates a named MVP officer", () => {
-  // cityId "officer-1" deterministically offers arcane-officer-reinforcement at turn 0.
+  // cityId "officer-1" deterministically offers arcane-officer-reinforcement at turn 1.
   const world = createServiceWorldContract({ seed: "officer-test", columns: 20, rows: 20 });
-  let state = createCityState(world, { cityId: "officer-1", mapSeed: "officer-test" });
+  let state = normalState(createCityState(world, { cityId: "officer-1", mapSeed: "officer-test" }));
   state.gameplay.population.wizards = { current: 50, capacity: 50 };
   state = ensureCardOffer(state, "officer-1");
   const offer = state.gameplay.cardState.offer;
@@ -379,14 +408,14 @@ test("the officer card cannot inject stats or specialties and generates a named 
 });
 
 test("re-selecting the same policy refreshes its duration instead of stacking", () => {
-  // cityId "repeat-test-4" deterministically re-offers wizard-settlement-initiative at turn 0 and turn 1.
+  // cityId "repeat-test-4" deterministically re-offers wizard-settlement-initiative at turn 1 and turn 2.
   const world = createServiceWorldContract({ seed: "repeat-test", columns: 20, rows: 20 });
-  let state = createCityState(world, { cityId: "repeat-test-4", mapSeed: "repeat-test" });
+  let state = normalState(createCityState(world, { cityId: "repeat-test-4", mapSeed: "repeat-test" }));
   state = ensureCardOffer(state, "repeat-test-4");
   const policyId = "wizard-settlement-initiative";
   const durationTurns = getCard(policyId).duration.turns;
   const offer = state.gameplay.cardState.offer;
-  assert.ok(offer.offeredCardIds.includes(policyId), "deterministic turn-0 offer must contain the policy");
+  assert.ok(offer.offeredCardIds.includes(policyId), "deterministic turn-1 offer must contain the policy");
 
   const now = () => new Date().toISOString();
   const first = selectCard(state, "repeat-test-4", { offerId: offer.offerId, selectedCardId: policyId }, { now, createId: (prefix) => `${prefix}-1` });
@@ -394,7 +423,7 @@ test("re-selecting the same policy refreshes its duration instead of stacking", 
   assert.equal(first.cardEffects.policy.action, "started");
   assert.equal(first.nextState.gameplay.cardState.activePolicies.length, 1);
 
-  const resolved = resolveTurn(first.nextState, { assignments: [], expectedTurn: 0 }, {
+  const resolved = resolveTurn(first.nextState, { assignments: [], expectedTurn: 1 }, {
     seed: 1,
     now,
     options: { turnIntervalMs: 86_400_000, turnDeadlineMs: 86_400_000, settlementSource: "agent" }
@@ -574,7 +603,7 @@ test("no-card choice does not block settlement and records an explicit skipped c
     assert.equal(resolved.status, "resolved");
     assert.equal(resolved.facts.choiceStatus, "skipped", "a pending choice is recorded explicitly as skipped");
     assert.equal(resolved.facts.selectedCardId, null);
-    assert.equal(resolved.turn, 1, "settlement advanced normally");
+    assert.equal(resolved.turn, 2, "settlement advanced normally from turn 1");
   } finally {
     await app.close();
   }
@@ -603,7 +632,7 @@ test("card and policy facts are frozen into TurnFacts and projected into the Owl
       payload: { expected_city_version: strategy.city_version }
     }), 200);
 
-    const context = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/report-context?turn=1` }), 200);
+    const context = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/report-context?turn=2` }), 200);
     assert.equal(context.card.offerId, offer.offer.offer_id);
     assert.equal(context.card.offeredCards.length, 3);
     assert.equal(context.card.choice.status, "selected");
@@ -621,7 +650,7 @@ test("card and policy facts are frozen into TurnFacts and projected into the Owl
     assert.equal(resolved2.error, null);
     assert.ok(resolved2.facts.policyExpired.includes(policyId) || resolved2.facts.policyRefreshed.length >= 0, "policy lifecycle keeps advancing");
 
-    const historical = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/report-context?turn=1` }), 200);
+    const historical = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/report-context?turn=2` }), 200);
     assert.equal(historical.factsDigest, context.factsDigest, "turn-1 context is immutable");
     assert.equal(historical.card.policy.started.includes(policyId), true);
   } finally {
@@ -661,7 +690,7 @@ test("offer generation is deterministic and always one of each category", () => 
 
 test("a delegated placement mandate does not silently disappear at settlement or across turn boundaries", () => {
   const world = createServiceWorldContract({ seed: "cards-mandate-test", columns: 20, rows: 20 });
-  let state = createCityState(world, { cityId: "city-mandate", mapSeed: "cards-mandate-test" });
+  let state = normalState(createCityState(world, { cityId: "city-mandate", mapSeed: "cards-mandate-test" }));
   state = ensureCardOffer(state, "city-mandate");
   const special = state.gameplay.cardState.offer.offeredCardIds.find((id) => getCard(id).type === CARD_TYPES.special_structure);
   const selected = selectCard(state, "city-mandate", {
@@ -672,7 +701,7 @@ test("a delegated placement mandate does not silently disappear at settlement or
   assert.ok(selected.accepted);
   assert.equal(selected.nextState.gameplay.cardState.pendingPlacement.status, "deferred");
 
-  const resolved = resolveTurn(selected.nextState, { assignments: [], expectedTurn: 0 }, {
+  const resolved = resolveTurn(selected.nextState, { assignments: [], expectedTurn: 1 }, {
     seed: 1,
     now: () => new Date().toISOString(),
     options: { turnIntervalMs: 86_400_000, turnDeadlineMs: 86_400_000, settlementSource: "agent" }
@@ -696,14 +725,14 @@ test("a delegated placement mandate does not silently disappear at settlement or
 
 test("a multi-turn policy remains active for the correct number of turns and expires on the right boundary", () => {
   const world = createServiceWorldContract({ seed: "expiry-test", columns: 20, rows: 20 });
-  let state = createCityState(world, { cityId: "expiry-test-3", mapSeed: "expiry-test" });
-  state = ensureCardOffer(state, "expiry-test-3");
+  let state = normalState(createCityState(world, { cityId: "x-0", mapSeed: "expiry-test" }));
+  state = ensureCardOffer(state, "x-0");
   const policyId = "city-construction-mobilization"; // duration 2
   const offer = state.gameplay.cardState.offer;
-  assert.ok(offer.offeredCardIds.includes(policyId), "deterministic offer must include the 2-turn construction policy");
+  assert.ok(offer.offeredCardIds.includes(policyId), "deterministic turn-1 offer must include the 2-turn construction policy");
 
   const now = () => new Date().toISOString();
-  const selected = selectCard(state, "expiry-test-3", { offerId: offer.offerId, selectedCardId: policyId }, { now, createId: (prefix) => `${prefix}-1` });
+  const selected = selectCard(state, "x-0", { offerId: offer.offerId, selectedCardId: policyId }, { now, createId: (prefix) => `${prefix}-1` });
   assert.ok(selected.accepted, selected.message);
   assert.equal(selected.nextState.gameplay.cardState.activePolicies[0].remainingTurns, 2);
 
@@ -713,39 +742,39 @@ test("a multi-turn policy remains active for the correct number of turns and exp
     options: { turnIntervalMs: 86_400_000, turnDeadlineMs: 86_400_000, settlementSource: "agent" }
   });
 
-  // Turn 0 resolves -> remaining 2 -> 1 (still active in turn 1).
-  const resolved1 = settle(selected.nextState, 0);
+  // Turn 1 resolves -> remaining 2 -> 1 (still active in turn 2).
+  const resolved1 = settle(selected.nextState, 1);
   assert.equal(resolved1.error, null);
   let next = resolved1.nextState;
   assert.equal(next.gameplay.cardState.activePolicies.length, 1);
   assert.equal(next.gameplay.cardState.activePolicies[0].remainingTurns, 1, "policy stays active for its second turn");
 
-  // Turn 1 resolves -> remaining 1 -> 0 -> expires.
+  // Turn 2 resolves -> remaining 1 -> 0 -> expires.
   const unlocked1 = openNextTurn(next, new Date(Date.now() + 90 * 86_400_000), { turnIntervalMs: 86_400_000, turnDeadlineMs: 86_400_000 });
   next = openTurnCardState(unlocked1, "expiry-test-1", { turn: unlocked1.turn });
-  const resolved2 = settle(next, 1);
+  const resolved2 = settle(next, 2);
   assert.equal(resolved2.error, null);
   assert.ok(resolved2.facts.policyExpired.includes(policyId), "policy expiry is frozen into TurnFacts");
   assert.equal(resolved2.nextState.gameplay.cardState.activePolicies.length, 0, "expired policy is removed from the active set");
 
-  // Turn 2 resolves -> the policy stays expired and never comes back.
+  // Turn 3 resolves -> the policy stays expired and never comes back.
   const unlocked2 = openNextTurn(resolved2.nextState, new Date(Date.now() + 180 * 86_400_000), { turnIntervalMs: 86_400_000, turnDeadlineMs: 86_400_000 });
   next = openTurnCardState(unlocked2, "expiry-test-1", { turn: unlocked2.turn });
-  const resolved3 = settle(next, 2);
+  const resolved3 = settle(next, 3);
   assert.equal(resolved3.error, null);
   assert.equal(resolved3.nextState.gameplay.cardState.activePolicies.length, 0);
 });
 
 test("policy effects feed the deterministic simulation through the unified modifier path", () => {
   const world = createServiceWorldContract({ seed: "policy-effect-test", columns: 20, rows: 20 });
-  let state = createCityState(world, { cityId: "policy-effect-test-3", mapSeed: "policy-effect-test" });
-  state = ensureCardOffer(state, "policy-effect-test-3");
+  let state = normalState(createCityState(world, { cityId: "x-0", mapSeed: "policy-effect-test" }));
+  state = ensureCardOffer(state, "x-0");
   const policyId = "city-construction-mobilization"; // 2-turn construction discount
   const offer = state.gameplay.cardState.offer;
   assert.ok(offer.offeredCardIds.includes(policyId));
   const now = () => new Date().toISOString();
 
-  const selected = selectCard(state, "policy-effect-test-3", { offerId: offer.offerId, selectedCardId: policyId }, { now, createId: (prefix) => `${prefix}-1` });
+  const selected = selectCard(state, "x-0", { offerId: offer.offerId, selectedCardId: policyId }, { now, createId: (prefix) => `${prefix}-1` });
   assert.ok(selected.accepted);
   const policyState = selected.nextState;
   assert.equal(activeConstructionDiscountRate(policyState), 0.5, "the active policy exposes its system-owned discount");
@@ -808,7 +837,7 @@ test("card state is exposed read-only in the Agent strategy context", async () =
 
 test("multiple deferred delegated placements stay independently actionable via placement_id", () => {
   const world = createServiceWorldContract({ seed: "multi-mandate", columns: 30, rows: 30 });
-  let state = createCityState(world, { cityId: "multi-0", mapSeed: "multi-mandate" });
+  let state = normalState(createCityState(world, { cityId: "multi-0", mapSeed: "multi-mandate" }));
   const now = () => new Date().toISOString();
   state = ensureCardOffer(state, "multi-0");
   const specialA = state.gameplay.cardState.offer.offeredCardIds.find((id) => getCard(id).type === CARD_TYPES.special_structure);
@@ -821,7 +850,7 @@ test("multiple deferred delegated placements stay independently actionable via p
   const placementA = selA.nextState.gameplay.cardState.pendingPlacement;
   assert.equal(placementA.status, "deferred");
 
-  const resolved1 = resolveTurn(selA.nextState, { assignments: [], expectedTurn: 0 }, {
+  const resolved1 = resolveTurn(selA.nextState, { assignments: [], expectedTurn: 1 }, {
     seed: 1, now,
     options: { turnIntervalMs: 86_400_000, turnDeadlineMs: 86_400_000, settlementSource: "agent" }
   });
@@ -874,10 +903,10 @@ test("multiple deferred delegated placements stay independently actionable via p
 
 test("Arcane Officer Special Duty Order adds a response slot without touching the dice modifier", () => {
   const world = createServiceWorldContract({ seed: "duty-test", columns: 30, rows: 30 });
-  let state = createCityState(world, { cityId: "duty-4", mapSeed: "duty-test" });
-  state = ensureCardOffer(state, "duty-4");
+  let state = normalState(createCityState(world, { cityId: "d-1", mapSeed: "duty-test" }));
+  state = ensureCardOffer(state, "d-1");
   const offer = state.gameplay.cardState.offer;
-  assert.ok(offer.offeredCardIds.includes("arcane-officer-special-duty-order"), "duty-4 offers the special duty order at turn 0");
+  assert.ok(offer.offeredCardIds.includes("arcane-officer-special-duty-order"), "d-1 offers the special duty order at turn 1");
   const now = () => new Date().toISOString();
 
   const officer = { id: "officer-vesper", name: "Vesper", archetype: "investigation", investigation: 3, containment: 1, concealment: 2, specialties: ["investigation"], status: "available", hiredAtTurn: 0 };
@@ -923,7 +952,7 @@ test("Arcane Officer Special Duty Order adds a response slot without touching th
 
 test("Diagon Alley Entrance is scoped to the real road-bounded city block while the Concealment Statue keeps local radius semantics", () => {
   const world = createServiceWorldContract({ seed: "block-scope", columns: 30, rows: 30 });
-  const state = createCityState(world, { cityId: "block-scope-1", mapSeed: "block-scope" });
+  const state = normalState(createCityState(world, { cityId: "block-scope-1", mapSeed: "block-scope" }));
   // A road column at column 22 divides the buildable land into two real blocks:
   // cols 20-21 (west) and cols 23-29 (east).
   for (let row = 0; row < 30; row += 1) {
@@ -1046,7 +1075,7 @@ test("the special duty order policy is enforced at assignment submission through
 
 test("a later turn completing an older deferred mandate is attributed correctly in the frozen facts", () => {
   const world = createServiceWorldContract({ seed: "attribution-test", columns: 30, rows: 30 });
-  let state = createCityState(world, { cityId: "multi-0", mapSeed: "attribution-test" });
+  let state = normalState(createCityState(world, { cityId: "multi-0", mapSeed: "attribution-test" }));
   const now = () => new Date().toISOString();
   state = ensureCardOffer(state, "multi-0");
   const specialA = state.gameplay.cardState.offer.offeredCardIds.find((id) => getCard(id).type === CARD_TYPES.special_structure);
@@ -1059,7 +1088,7 @@ test("a later turn completing an older deferred mandate is attributed correctly 
   assert.ok(selA.accepted, selA.message);
   const placementA = selA.nextState.gameplay.cardState.pendingPlacement;
 
-  const resolved1 = resolveTurn(selA.nextState, { assignments: [], expectedTurn: 0 }, {
+  const resolved1 = resolveTurn(selA.nextState, { assignments: [], expectedTurn: 1 }, {
     seed: 1, now,
     options: { turnIntervalMs: 86_400_000, turnDeadlineMs: 86_400_000, settlementSource: "agent" }
   });
@@ -1093,7 +1122,7 @@ test("a later turn completing an older deferred mandate is attributed correctly 
   assert.ok(placementB, "mandate B remains tracked");
   assert.equal(placementB.status, "deferred", "B stays deferred while the older A is completed");
 
-  const resolved2 = resolveTurn(placedA.nextState, { assignments: [], expectedTurn: 1 }, {
+  const resolved2 = resolveTurn(placedA.nextState, { assignments: [], expectedTurn: 2 }, {
     seed: 2, now,
     options: { turnIntervalMs: 86_400_000, turnDeadlineMs: 86_400_000, settlementSource: "agent" }
   });

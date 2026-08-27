@@ -47,7 +47,7 @@ export function ensureCardOffer(state, cityId) {
   // Turn 0 is a bootstrap turn.  In particular, this guard must run before
   // any offer generation so read paths and legacy scheduler recovery cannot
   // create a player choice implicitly.
-  if ((state?.turn != null && Number(state.turn) === 0) || state?.gameplay?.turnKind === "bootstrap") return state;
+  if (state?.turn != null && Number(state.turn) === 0) return state;
   const cardState = normalizeCardState(state.gameplay?.cardState);
   if (cardState.offer && cardState.offer.turn === Number(state.turn) && cardState.offer.offeredCardIds.length === 3) {
     return state;
@@ -69,7 +69,7 @@ export function ensureCardOffer(state, cityId) {
 // legally placed or cancelled. A player-owned pending placement that was never
 // located is recorded in the previous turn's frozen facts and reset.
 export function openTurnCardState(state, cityId, { now = () => new Date().toISOString(), turn = state.turn } = {}) {
-  if ((turn != null && Number(turn) === 0) || (turn == null && state?.turn != null && Number(state.turn) === 0) || state?.gameplay?.turnKind === "bootstrap") return state;
+  if ((turn != null && Number(turn) === 0) || (turn == null && state?.turn != null && Number(state.turn) === 0)) return state;
   const offer = generateOffer(cityId, turn);
   const priorPlacements = state.gameplay?.cardState?.placements ?? {};
   const deferred = Object.fromEntries(Object.entries(priorPlacements).filter(([, entry]) => entry.status === "deferred"));
@@ -84,7 +84,7 @@ export function openTurnCardState(state, cityId, { now = () => new Date().toISOS
 }
 
 export function currentOffer(state) {
-  if ((state?.turn != null && Number(state.turn) === 0) || state?.gameplay?.turnKind === "bootstrap") return null;
+  if (state?.turn != null && Number(state.turn) === 0) return null;
   const offer = state?.gameplay?.cardState?.offer ?? null;
   if (!offer) return null;
   return {
@@ -108,7 +108,7 @@ export function currentOffer(state) {
 }
 
 export function currentChoice(state) {
-  if ((state?.turn != null && Number(state.turn) === 0) || state?.gameplay?.turnKind === "bootstrap") {
+  if (state?.turn != null && Number(state.turn) === 0) {
     return { offer_id: null, status: "not_applicable", selected_card_id: null, decision_mode: null, choice_resolved_at: null, card_effects: {} };
   }
   const choice = state?.gameplay?.cardState?.choice ?? {};
@@ -225,7 +225,7 @@ export function specialStructureExposureModifier(state) {
 // population, officer, policy) apply here exactly once; placement cards enter a
 // pending placement state. The Agent can never select on the player's behalf.
 export function selectCard(state, cityId, input = {}, context = {}) {
-  if ((state?.turn != null && Number(state.turn) === 0) || state?.gameplay?.turnKind === "bootstrap") {
+  if (state?.turn != null && Number(state.turn) === 0) {
     return { accepted: false, code: "BOOTSTRAP_TURN_NO_CARD", message: "Turn 0 is the bootstrap turn; no card may be selected" };
   }
   const cardState = normalizeCardState(state.gameplay?.cardState);
@@ -313,7 +313,7 @@ export function selectCard(state, cityId, input = {}, context = {}) {
 // Records the explicit skipped/no-card choice at settlement. Never blocks
 // settlement and never backfills multiple choices.
 export function markChoiceSkipped(state, { now = () => new Date().toISOString() } = {}) {
-  if ((state?.turn != null && Number(state.turn) === 0) || state?.gameplay?.turnKind === "bootstrap") return state;
+  if (state?.turn != null && Number(state.turn) === 0) return state;
   const cardState = normalizeCardState(state.gameplay?.cardState);
   const choice = normalizeCardChoice(cardState.choice);
   if (choice.status !== "pending") return state;
@@ -597,7 +597,7 @@ export function advancePolicies(state, { now = () => new Date().toISOString(), t
 
 // The card facts block frozen into TurnFacts at settlement.
 export function cardFacts(state, turn) {
-  if ((turn != null && Number(turn) === 0) || (turn == null && state?.turn != null && Number(state.turn) === 0) || state?.gameplay?.turnKind === "bootstrap") {
+  if ((turn != null && Number(turn) === 0) || (turn == null && state?.turn != null && Number(state.turn) === 0)) {
     return {
       cardOfferId: null, offeredCardIds: [], selectedCardId: null,
       choiceStatus: "not_applicable", choiceResolvedAt: null, cardEffects: {},

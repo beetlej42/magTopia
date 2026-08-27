@@ -93,7 +93,7 @@ export function playerPlacementPending(state) {
 }
 
 export function cardChoicePending(state) {
-  if ((state?.turn != null && Number(state.turn) === 0) || state?.gameplay?.turnKind === "bootstrap") return false;
+  if (state?.turn != null && Number(state.turn) === 0) return false;
   return normalizeCardState(state?.gameplay?.cardState).choice.status === "pending";
 }
 
@@ -113,7 +113,7 @@ export function deriveCityDayPresentation(state, options = {}) {
   const reportTurn = completedReportTurn(state);
   const reportReady = Boolean(options.reportReady && reportTurn != null);
   const reportDismissed = Boolean(options.reportDismissed);
-  const choice = ((state?.turn != null && Number(state.turn) === 0) || gameplay.turnKind === "bootstrap")
+  const choice = (state?.turn != null && Number(state.turn) === 0)
     ? { status: "not_applicable", offerId: null, selectedCardId: null, decisionMode: null, choiceResolvedAt: null }
     : normalizeCardState(gameplay.cardState).choice;
   const placementPending = playerPlacementPending(state);

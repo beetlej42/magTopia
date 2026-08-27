@@ -57,12 +57,25 @@ export function createTurnScheduler({ repository, config, now = () => new Date()
   }
 
   function handleAction(state, action, nowValue, cityId) {
-    if ((state?.turn != null && Number(state.turn) === 0) || state?.gameplay?.turnKind === "bootstrap") {
-      return { nextState: null, response: { status: "noop", reason: "bootstrap_requires_agent_resolve" } };
-    }
     if (action === "init") {
       const initialized = initializeTurnSchedule(state, nowValue, schedule);
       if (!initialized) return { nextState: null, response: { status: "noop", reason: "not_initializable" } };
+      // Bootstrap schedule repair is allowed, but it must never manufacture a
+      // card offer or settle the turn.
+      if (initialized.turn === 0) {
+        return {
+          nextState: initialized,
+          response: {
+            status: "opened",
+            turn: initialized.turn,
+            turn_status: initialized.gameplay.turnStatus,
+            turn_opened_at: initialized.gameplay.turnOpenedAt,
+            turn_deadline_at: initialized.gameplay.turnDeadlineAt,
+            next_turn_unlock_at: initialized.gameplay.nextTurnUnlockAt,
+            city_version_after: initialized.version
+          }
+        };
+      }
       // Every opened turn carries one canonical card offer. Existing cities
       // that predate the card system receive one lazily here.
       const withCards = ensureCardOffer(initialized, cityId);
@@ -80,6 +93,7 @@ export function createTurnScheduler({ repository, config, now = () => new Date()
       };
     }
     if (action === "open-next") {
+      if (state.turn === 0) return { nextState: null, response: { status: "noop", reason: "bootstrap_requires_agent_resolve" } };
       const opened = openNextTurn(state, nowValue, schedule);
       if (!opened) return { nextState: null, response: { status: "noop", reason: "not_unlocked" } };
       // Reset the choice and create the canonical offer for the newly opened

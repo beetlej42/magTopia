@@ -48,7 +48,7 @@ export function initializeFreshCitySchedule(state, now, config = {}) {
     gameplay: {
       ...(state.gameplay ?? {}),
       turnStatus: state.gameplay?.turnStatus ?? "open",
-      turnKind: state.gameplay?.turnKind ?? (Number(state.turn ?? 0) === 0 ? "bootstrap" : "normal"),
+      turnKind: Number(state.turn ?? 0) === 0 ? "bootstrap" : "normal",
       turnOpenedAt: openedAt,
       nextTurnUnlockAt: new Date(new Date(openedAt).getTime() + schedule.turnCooldownMs).toISOString(),
       turnDeadlineAt: null,
@@ -73,6 +73,7 @@ export function initializeTurnSchedule(state, now, config = {}) {
     const openedAt = gameplay.turnOpenedAt ?? new Date(at).toISOString();
     return withGameplay(state, {
       turnOpenedAt: openedAt,
+      turnKind: Number(state.turn ?? 0) === 0 ? "bootstrap" : "normal",
       // Earliest time the Agent may resolve this turn.
       nextTurnUnlockAt: new Date(new Date(openedAt).getTime() + schedule.turnCooldownMs).toISOString(),
       turnDeadlineAt: null,
@@ -120,9 +121,10 @@ export function isTurnResolveLocked(state, now) {
 
 export function dueActionFor(state, now) {
   // Bootstrap is resolved explicitly by the Agent. The scheduler must not
-  // lazily initialize it or create a card offer.
-  if ((state?.turn != null && Number(state.turn) === 0) || state?.gameplay?.turnKind === "bootstrap") return null;
+  // auto-settle it or create a card offer, but it may repair a missing
+  // cooldown schedule in a legacy archive.
   if (needsTurnScheduleInit(state)) return "init";
+  if (state?.turn != null && Number(state.turn) === 0) return null;
   if (shouldOpenNextTurn(state, now)) return "open-next";
   return null;
 }
