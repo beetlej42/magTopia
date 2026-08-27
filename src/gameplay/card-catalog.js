@@ -50,7 +50,9 @@ export const EFFECT_VALUES = Object.freeze({
   moonlightExposureModifier: 2,
   ordinaryPopulation: 2,
   ordinaryResourceCoins: 20,
-  largeSpecialGrantCoins: 180
+  largeSpecialGrantCoins: 180,
+  specialArcaneReserveCoins: 240,
+  arcaneConservatoryEnergy: 16
 });
 
 export const SPECIAL_STRUCTURES = Object.freeze({
@@ -209,6 +211,14 @@ export const CARD_CATALOG = Object.freeze([
     { kind: "special_structure", magicLevel: 0.85, arcaneEnergyOutput: 12, canonicalProgram: "royal_botanical_greenhouse" },
     { choiceKind: CARD_CHOICE_KINDS.special, family: "special_building", unique: true, decisionMode: CARD_DECISION_MODES.player_place, structure: SPECIAL_STRUCTURES["royal-botanical-greenhouse"], prerequisites: { minBuildings: 4 }, metadata: { placeholder: true } }
   ),
+  card(
+    "arcane-energy-conservatory",
+    CARD_TYPES.special_structure,
+    "Arcane Energy Conservatory",
+    "A high-order greenhouse placeholder that becomes available only after the city proves its arcane economy.",
+    { kind: "special_structure", magicLevel: 1, arcaneEnergyOutput: EFFECT_VALUES.arcaneConservatoryEnergy, canonicalProgram: "arcane_energy_conservatory" },
+    { choiceKind: CARD_CHOICE_KINDS.special, family: "special_building", unique: true, decisionMode: CARD_DECISION_MODES.player_place, structure: { ...SPECIAL_STRUCTURES["royal-botanical-greenhouse"], name: "Arcane Energy Conservatory", canonicalProgram: "arcane_energy_conservatory" }, prerequisites: { minArcaneEnergy: 40, requiredPurpose: "greenhouse", economicBasis: true }, metadata: { placeholder: true } }
+  ),
 
   // ---- B. Resources / personnel (3) ----
   card(
@@ -290,6 +300,22 @@ export const CARD_CATALOG = Object.freeze([
     "A repeatable multi-turn concealment charter reserved for Special Choice.",
     { kind: "policy", policyId: "special-secrecy-charter", concealmentBonus: 2 },
     { choiceKind: CARD_CHOICE_KINDS.special, family: "multi_turn_modifier", decisionMode: CARD_DECISION_MODES.immediate, duration: { type: "turns", turns: 3 } }
+  ),
+  card(
+    "special-arcane-reserve",
+    CARD_TYPES.resource,
+    "Arcane Infrastructure Reserve",
+    "A substantial reserve for a city pursuing a special-turn infrastructure route.",
+    { kind: "grant_coins", coins: EFFECT_VALUES.specialArcaneReserveCoins },
+    { choiceKind: CARD_CHOICE_KINDS.special, family: "large_resource", decisionMode: CARD_DECISION_MODES.immediate }
+  ),
+  card(
+    "special-warding-program",
+    CARD_TYPES.policy,
+    "Warding Programme",
+    "A repeatable multi-turn programme that reduces magical exposure pressure.",
+    { kind: "policy", policyId: "special-warding-program", concealmentBonus: 2 },
+    { choiceKind: CARD_CHOICE_KINDS.special, family: "multi_turn_modifier", decisionMode: CARD_DECISION_MODES.immediate, duration: { type: "turns", turns: 4 } }
   ),
 
   // ---- C. City policies (4) ----

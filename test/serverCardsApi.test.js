@@ -96,6 +96,12 @@ async function forceUnlocked(repository, owner, cityId, expectedVersion) {
   });
 }
 
+async function setTurn(repository, owner, cityId, expectedVersion, turn) {
+  await repository.transactCity({
+    principal: owner, cityId, endpoint: "test/set-turn", idempotencyKey: `set-turn-${cityId}-${turn}`, requestBody: {}, expectedVersion
+  }, async ({ state }) => ({ nextState: { ...state, turn, gameplay: { ...state.gameplay, turnKind: "normal", turnStatus: "open", cardState: { ...state.gameplay.cardState, offer: null, choice: { status: "pending" } } } }, response: { turn } }));
+}
+
 function cardById(cards, cardId) {
   return cards.find((card) => card.card_id === cardId);
 }
@@ -145,7 +151,7 @@ function entranceFrontage(state, footprintCells, direction) {
   });
 }
 
-test("Turn 1 gets one canonical three-category card offer that is stable across reads", async () => {
+test("Turn 1 gets the canonical ordinary BUILDING/PEOPLE/RESOURCE offer stable across reads", async () => {
   const repository = createMemoryRepository(config);
   const app = await createApp({ repository, config });
   try {
@@ -154,20 +160,16 @@ test("Turn 1 gets one canonical three-category card offer that is stable across 
     assert.equal(first.turn_status, "open");
     assert.equal(first.offer.cards.length, 3);
     assert.ok(first.offer.offer_id);
-    const categories = first.offer.cards.map((card) => card.type);
-    assert.equal(categories.filter((type) => type === "special_structure").length, 1);
-    assert.equal(categories.filter((type) => type === "resource" || type === "personnel").length, 1);
-    assert.equal(categories.filter((type) => type === "policy").length, 1);
+    assert.equal(first.offer.choice_kind, "ordinary");
+    assert.deepEqual(new Set(first.offer.cards.map((card) => card.choice_kind)), new Set(["ordinary"]));
+    assert.deepEqual(new Set(first.offer.cards.map((card) => card.family)), new Set(["ordinary_building", "ordinary_people", "ordinary_resource"]));
     const second = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
     assert.deepEqual(second.offer.cards.map((card) => card.card_id), first.offer.cards.map((card) => card.card_id));
     assert.equal(second.offer.offer_id, first.offer.offer_id);
     assert.equal(second.choice.status, "pending");
     const catalog = await json(app, { method: "GET", url: "/api/v1/cards" }, 200);
-    assert.equal(catalog.data.length, 12);
-    const byCategory = getCardsByCategory();
-    assert.equal(byCategory.special_structure.length, 5);
-    assert.equal(byCategory.resource.length + byCategory.personnel.length, 3);
-    assert.equal(byCategory.policy.length, 4);
+    assert.ok(catalog.data.length >= 12);
+    assert.ok(catalog.data.some((card) => card.card_id === "ministry-of-magic" && card.type === "special_structure"));
   } finally {
     await app.close();
   }
@@ -293,6 +295,7 @@ test("an immediate resource/personnel card applies exactly once and an idempoten
   const app = await createApp({ repository, config });
   try {
     const { city, player, owner } = await openCity(repository, app);
+    await setTurn(repository, owner, city.id, 0, 5);
     const offer = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
     const card = offer.offer.cards.find((entry) => ["resource", "personnel"].includes(categoryOf(entry.card_id)));
     assert.ok(card, "offer must contain a resource or personnel card");
@@ -351,6 +354,7 @@ test("the population card obeys wizard population capacity", async () => {
   const app = await createApp({ repository, config });
   try {
     const { city, player, owner } = await openCity(repository, app);
+    await setTurn(repository, owner, city.id, 0, 5);
     const offer = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
     const residents = offer.offer.cards.find((card) => card.card_id === "new-wizard-residents");
     if (!residents) {
@@ -450,6 +454,7 @@ test("a special structure card supports player placement through authoritative c
   const app = await createApp({ repository, config });
   try {
     const { city, player, owner } = await openCity(repository, app);
+    await setTurn(repository, owner, city.id, 0, 5);
     const offer = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
     const special = offer.offer.cards.find((card) => categoryOf(card.card_id) === CARD_TYPES.special_structure);
     assert.ok(special, "offer must contain a special structure card");
@@ -498,6 +503,7 @@ test("a special structure card supports delegate_to_agent and the mandate appear
   const app = await createApp({ repository, config });
   try {
     const { city, player, agent, owner } = await openCity(repository, app);
+    await setTurn(repository, owner, city.id, 0, 5);
     const offer = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
     const special = offer.offer.cards.find((card) => categoryOf(card.card_id) === CARD_TYPES.special_structure);
 
@@ -676,21 +682,21 @@ test("OpenAPI advertises the card endpoints and schemas", async () => {
 });
 
 // ---- Domain-level deterministic offer tests ----
-test("offer generation is deterministic and always one of each category", () => {
+test("offer generation is deterministic and ordinary cards preserve three distinct routes", () => {
   const cityId = "city-deterministic-1";
   const offerA = generateOffer(cityId, 3);
   const offerB = generateOffer(cityId, 3);
   assert.deepEqual(offerA, offerB);
   assert.equal(new Set(offerA.offeredCardIds).size, 3);
-  const types = offerA.offeredCardIds.map((id) => getCard(id).type).sort();
-  assert.deepEqual(types, ["policy", "resource", "special_structure"]);
+  assert.equal(offerA.choiceKind, "ordinary");
+  assert.deepEqual(new Set(offerA.offeredCardIds), new Set(["ordinary-building-discount", "ordinary-people-migration", "ordinary-resource-grant"]));
   const otherCity = generateOffer("city-deterministic-2", 3);
   assert.notDeepEqual(offerA.offeredCardIds, otherCity.offeredCardIds);
 });
 
 test("a delegated placement mandate does not silently disappear at settlement or across turn boundaries", () => {
   const world = createServiceWorldContract({ seed: "cards-mandate-test", columns: 20, rows: 20 });
-  let state = normalState(createCityState(world, { cityId: "city-mandate", mapSeed: "cards-mandate-test" }));
+  let state = { ...normalState(createCityState(world, { cityId: "city-mandate", mapSeed: "cards-mandate-test" })), turn: 5 };
   state = ensureCardOffer(state, "city-mandate");
   const special = state.gameplay.cardState.offer.offeredCardIds.find((id) => getCard(id).type === CARD_TYPES.special_structure);
   const selected = selectCard(state, "city-mandate", {
@@ -837,7 +843,7 @@ test("card state is exposed read-only in the Agent strategy context", async () =
 
 test("multiple deferred delegated placements stay independently actionable via placement_id", () => {
   const world = createServiceWorldContract({ seed: "multi-mandate", columns: 30, rows: 30 });
-  let state = normalState(createCityState(world, { cityId: "multi-0", mapSeed: "multi-mandate" }));
+  let state = { ...normalState(createCityState(world, { cityId: "multi-0", mapSeed: "multi-mandate" })), turn: 5 };
   const now = () => new Date().toISOString();
   state = ensureCardOffer(state, "multi-0");
   const specialA = state.gameplay.cardState.offer.offeredCardIds.find((id) => getCard(id).type === CARD_TYPES.special_structure);
@@ -1075,7 +1081,7 @@ test("the special duty order policy is enforced at assignment submission through
 
 test("a later turn completing an older deferred mandate is attributed correctly in the frozen facts", () => {
   const world = createServiceWorldContract({ seed: "attribution-test", columns: 30, rows: 30 });
-  let state = normalState(createCityState(world, { cityId: "multi-0", mapSeed: "attribution-test" }));
+  let state = { ...normalState(createCityState(world, { cityId: "multi-0", mapSeed: "attribution-test" })), turn: 5 };
   const now = () => new Date().toISOString();
   state = ensureCardOffer(state, "multi-0");
   const specialA = state.gameplay.cardState.offer.offeredCardIds.find((id) => getCard(id).type === CARD_TYPES.special_structure);

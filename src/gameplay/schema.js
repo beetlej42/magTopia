@@ -46,6 +46,7 @@ export const TURN_STATUSES = Object.freeze(["open", "building", "strategy", "res
 export const TURN_KINDS = Object.freeze(["bootstrap", "normal"]);
 
 export const CARD_CHOICE_STATUSES = Object.freeze(["pending", "selected", "skipped", "resolved", "not_applicable"]);
+export const CARD_CHOICE_KINDS = Object.freeze(["ordinary", "special"]);
 
 export const CARD_DECISION_MODES = Object.freeze(["immediate", "player_place", "delegate_to_agent"]);
 
@@ -73,6 +74,23 @@ function cloneAuditValue(value) {
   if (Array.isArray(value)) return value.map(cloneAuditValue);
   if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, cloneAuditValue(entry)]));
   return value;
+}
+
+function normalizeEligibilityAudit(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((entry) => ({
+    cardId: String(entry?.cardId ?? ""),
+    eligible: Boolean(entry?.eligible),
+    reasons: Array.isArray(entry?.reasons) ? [...new Set(entry.reasons.map(String))].sort() : [],
+    ...(entry?.turn != null ? { turn: clampNumber(entry.turn, 0, 0, Number.MAX_SAFE_INTEGER) } : {})
+  })).sort((a, b) => a.cardId.localeCompare(b.cardId));
+}
+
+function normalizeCardChoiceKind(value) {
+  if (value == null || value === "") return null;
+  const kind = String(value);
+  if (!CARD_CHOICE_KINDS.includes(kind)) throw new Error(`Unsupported card choice kind: ${kind}`);
+  return kind;
 }
 
 /**
@@ -589,12 +607,13 @@ export function normalizeRollRecord(value = {}) {
 }
 
 export function normalizeCardOffer(value = {}) {
+  const choiceKind = normalizeCardChoiceKind(value.choiceKind);
   return {
     offerId: String(value.offerId ?? ""),
     turn: clampNumber(value.turn, 0, 0, Number.MAX_SAFE_INTEGER),
     offeredCardIds: [...(value.offeredCardIds ?? [])].map(String),
-    choiceKind: value.choiceKind == null ? null : String(value.choiceKind),
-    eligibilityAudit: Array.isArray(value.eligibilityAudit) ? cloneAuditValue(value.eligibilityAudit) : []
+    choiceKind,
+    eligibilityAudit: normalizeEligibilityAudit(value.eligibilityAudit)
   };
 }
 
@@ -614,10 +633,11 @@ export function normalizeCardChoice(value = {}) {
   if (decisionMode != null && !CARD_DECISION_MODES.includes(decisionMode)) {
     throw new Error(`Unsupported card decision mode: ${decisionMode}`);
   }
+  const choiceKind = normalizeCardChoiceKind(value.choiceKind);
   return {
     offerId: String(value.offerId ?? ""),
     status,
-    choiceKind: value.choiceKind == null ? null : String(value.choiceKind),
+    choiceKind,
     selectedCardId: value.selectedCardId == null ? null : String(value.selectedCardId),
     decisionMode,
     choiceResolvedAt: value.choiceResolvedAt == null ? null : String(value.choiceResolvedAt),
@@ -715,12 +735,12 @@ export function normalizeTurnFacts(value = {}) {
         : {})
     })),
     cardOfferId: value.cardOfferId == null ? null : String(value.cardOfferId),
-    offerChoiceKind: value.offerChoiceKind == null ? null : String(value.offerChoiceKind),
+    offerChoiceKind: normalizeCardChoiceKind(value.offerChoiceKind),
     specialCadence: Boolean(value.specialCadence),
-    eligibilityAudit: Array.isArray(value.eligibilityAudit) ? cloneAuditValue(value.eligibilityAudit) : [],
+    eligibilityAudit: normalizeEligibilityAudit(value.eligibilityAudit),
     offeredCardIds: [...(value.offeredCardIds ?? [])].map(String),
     selectedCardId: value.selectedCardId == null ? null : String(value.selectedCardId),
-    choiceKind: value.choiceKind == null ? null : String(value.choiceKind),
+    choiceKind: normalizeCardChoiceKind(value.choiceKind),
     choiceStatus: String(value.choiceStatus ?? "pending"),
     choiceResolvedAt: value.choiceResolvedAt == null ? null : String(value.choiceResolvedAt),
     cardEffects: value.cardEffects ? { ...value.cardEffects } : {},

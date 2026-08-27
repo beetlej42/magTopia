@@ -28,6 +28,7 @@ import {
   collectPolicyEffects,
   currentChoice,
   currentOffer,
+  cancelSpecialStructurePlacement,
   ensureCardOffer,
   listCards,
   pendingPlacements,
@@ -843,6 +844,28 @@ export async function createApp({ repository, config, logger = false, now = () =
           choice: currentChoice(result.nextState)
         }
       };
+    });
+    return reply.code(response.status === "rejected" ? 422 : 200).send(response);
+  });
+
+  app.post("/api/v1/cities/:cityId/cards/cancel", async (request, reply) => {
+    const principal = await authenticate(repository, request, "city:build");
+    const body = request.body ?? {};
+    const placementId = body.placement_id ?? body.placementId;
+    if (!placementId || Object.keys(body).some((key) => !["placement_id", "placementId", "expected_city_version", "expectedCityVersion", "actor_note"].includes(key))) {
+      throw new ServiceError(400, "INVALID_CARD_CANCELLATION", "Cancellation requires placement_id and expected_city_version only");
+    }
+    const response = await repository.transactCity({
+      principal, cityId: request.params.cityId, endpoint: "cards/cancel", idempotencyKey: request.headers["idempotency-key"],
+      requestBody: body, expectedVersion: expectedCityVersion(request, body), action: "card_cancel", reason: "special_structure_cancellation"
+    }, async ({ state }) => {
+      const placement = state.gameplay?.cardState?.placements?.[placementId];
+      if (!placement) return { nextState: null, response: rejectedCardPlacement("PLACEMENT_NOT_FOUND", "No pending placement matches the request") };
+      if (placement.mode === "player_place" && principal.kind !== "player") return { nextState: null, response: rejectedCardPlacement("PLACEMENT_ACTOR_NOT_ALLOWED", "A player-owned placement must be cancelled by the city owner") };
+      if (placement.mode === "delegate_to_agent" && principal.kind === "player") return { nextState: null, response: rejectedCardPlacement("PLACEMENT_ACTOR_NOT_ALLOWED", "A delegated placement must be cancelled by the city Agent") };
+      const result = cancelSpecialStructurePlacement(state, { placementId });
+      if (!result.accepted) return { nextState: null, response: rejectedCardPlacement(result.code, result.message) };
+      return { nextState: result.nextState, response: { command_id: createId("command"), status: "cancelled", city_version_before: state.version, city_version_after: result.nextState.version, turn: state.turn, placement: result.placement, choice: currentChoice(result.nextState) } };
     });
     return reply.code(response.status === "rejected" ? 422 : 200).send(response);
   });

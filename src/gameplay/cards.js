@@ -1,4 +1,4 @@
-import { getCard, CARD_TYPES, CARD_CATALOG, CARD_CHOICE_KINDS, normalizeCardDuration } from "./card-catalog.js";
+import { getCard, CARD_TYPES, CARD_CATALOG, CARD_CHOICE_KINDS, CARD_DECISION_MODES, normalizeCardDuration } from "./card-catalog.js";
 import { manhattanDistance, cellFootprint } from "./exposure.js";
 import { createRoller, hashSeed, pick } from "./random.js";
 import { normalizeActivePolicy, normalizeArcaneOfficer, normalizeCardChoice, normalizeCardOffer, normalizePendingPlacement, normalizeGameplayResources, normalizePopulationState } from "./schema.js";
@@ -48,16 +48,29 @@ export function cardEligibility(state = {}, cardOrId, { turn = state.turn } = {}
   }
   const hasStructure = id => buildings.some((building) => (
     building?.specialStructure?.cardId === id
-      && ["completed", "active"].includes(building.status ?? "completed")
-      && building.status !== "sealed"
+      // A placed entity owns its unique slot permanently, including sealed or
+      // inactive buildings. Only an explicit cancelled placement reopens it.
+      && building.status !== "cancelled"
   ));
   if (card.unique && (hasStructure(card.cardId) || activePlacements.some((entry) => entry.cardId === card.cardId))) reasons.push("unique_already_claimed");
   const prerequisites = card.prerequisites ?? {};
   if (prerequisites.minBuildings != null && buildings.filter((b) => ["completed", "active"].includes(b.status ?? "completed")).length < Number(prerequisites.minBuildings)) reasons.push("requires_more_buildings");
   if (prerequisites.governance && !arcaneOfficerRecruitmentUnlocked(state)) reasons.push("requires_ministry_or_governance");
   if (prerequisites.officerCapacity && arcaneOfficerCapacity(state) <= Object.keys(state.gameplay?.arcaneOfficers ?? {}).length) reasons.push("officer_capacity_full");
+  const arcaneEnergy = Number(state.gameplay?.resources?.arcaneEnergy ?? state.resources?.arcaneEnergy ?? 0);
+  if (prerequisites.minArcaneEnergy != null && arcaneEnergy < Number(prerequisites.minArcaneEnergy)) reasons.push("requires_arcane_energy");
+  if (prerequisites.requiredPurpose && !buildings.some((building) => (
+    ["completed", "active"].includes(building.status ?? "completed")
+      && String(building.program?.purpose ?? building.metadata?.purpose ?? "") === String(prerequisites.requiredPurpose)
+  ))) reasons.push("requires_canonical_purpose");
+  if (prerequisites.economicBasis && !buildings.some((building) => (
+    ["completed", "active"].includes(building.status ?? "completed")
+      && ["commercial", "production"].includes(String(building.program?.purpose ?? building.metadata?.purpose ?? ""))
+  ))) reasons.push("requires_economic_basis");
   const minCoins = Number(prerequisites.minCoins ?? 0);
-  if (Number(state.resources?.coins ?? 0) < minCoins) reasons.push("insufficient_coins");
+  // Every special_structure is a free system grant; affordability never makes
+  // a gifted building a dead card. Prices may still gate non-gifted families.
+  if (card.type !== CARD_TYPES.special_structure && Number(state.resources?.coins ?? 0) < minCoins) reasons.push("insufficient_coins");
   // Ministry's guarantee is handled by generateOffer; this guard keeps the
   // card itself legal for direct eligibility callers.
   return { eligible: reasons.length === 0, reasons, cardId: card.cardId, turn: Number(turn) };
@@ -72,7 +85,7 @@ export function generateOffer(cityId, turn, state = {}) {
   const special = specialChoiceTurn(turn);
   const kind = special ? CARD_CHOICE_KINDS.special : CARD_CHOICE_KINDS.ordinary;
   let candidates = eligibleCardCandidates(state, kind, { turn });
-  const ministryBuilt = Object.values(state.buildings ?? {}).some((building) => building?.specialStructure?.cardId === "ministry-of-magic" && building.status !== "sealed");
+  const ministryBuilt = Object.values(state.buildings ?? {}).some((building) => building?.specialStructure?.cardId === "ministry-of-magic" && building.status !== "cancelled");
   const ministryPending = Boolean(state.gameplay?.cardState?.pendingPlacement?.cardId === "ministry-of-magic"
     && !["completed", "cancelled"].includes(state.gameplay.cardState.pendingPlacement.status))
     || Object.values(state.gameplay?.cardState?.placements ?? {}).some((entry) => entry.cardId === "ministry-of-magic" && !["completed", "cancelled"].includes(entry.status));
@@ -142,14 +155,19 @@ export function openTurnCardState(state, cityId, { now = () => new Date().toISOS
   if ((turn != null && Number(turn) === 0) || (turn == null && state?.turn != null && Number(state.turn) === 0)) return state;
   const offer = generateOffer(cityId, turn, state);
   const priorPlacements = state.gameplay?.cardState?.placements ?? {};
-  const deferred = Object.fromEntries(Object.entries(priorPlacements).filter(([, entry]) => entry.status === "deferred"));
-  const firstDeferred = Object.values(deferred)[0] ?? null;
+  // Both player-owned pending and delegated deferred entitlements survive the
+  // turn boundary until explicitly placed or cancelled. Older code retained
+  // only deferred mandates, which silently dropped an unplaced player choice.
+  const retained = Object.fromEntries(Object.entries(priorPlacements).filter(([, entry]) => !["completed", "cancelled"].includes(entry.status)));
+  const legacyPending = state.gameplay?.cardState?.pendingPlacement;
+  if (legacyPending && !["completed", "cancelled"].includes(legacyPending.status)) retained[legacyPending.placementId] = legacyPending;
+  const firstPending = Object.values(retained).find((entry) => entry.status === "pending") ?? Object.values(retained)[0] ?? null;
   return withCardState(state, {
     offer,
     choice: normalizeCardChoice({ offerId: offer.offerId, status: "pending", choiceKind: offer.choiceKind }),
     activePolicies: (state.gameplay?.cardState?.activePolicies ?? []).map((entry) => normalizeActivePolicy(entry)),
-    pendingPlacement: firstDeferred,
-    placements: deferred,
+    pendingPlacement: firstPending,
+    placements: retained,
     constructionDiscount: state.gameplay?.cardState?.constructionDiscount ?? null
   }, { bumpVersion: false });
 }
@@ -381,15 +399,19 @@ export function selectCard(state, cityId, input = {}, context = {}) {
     next = resolution.nextState;
     Object.assign(cardEffects, resolution.effects);
   } else if (card.type === CARD_TYPES.building && card.effect?.kind === "construction_discount_once") {
-    next = withCardState(next, {
-      offer: cardState.offer,
-      choice: cardState.choice,
-      activePolicies: next.gameplay.cardState.activePolicies,
-      pendingPlacement: next.gameplay.cardState.pendingPlacement,
-      placements: next.gameplay.cardState.placements,
-      constructionDiscount: { cardId: card.cardId, discountRate: Number(card.effect.discountRate), remainingUses: 1, grantedAtTurn: state.turn }
-    }, { bumpVersion: false });
-    cardEffects.discount = { rate: Number(card.effect.discountRate), uses: 1 };
+    const existing = next.gameplay.cardState.constructionDiscount;
+    const preserved = existing && Number(existing.remainingUses ?? 0) > 0;
+    if (!preserved) {
+      next = withCardState(next, {
+        offer: cardState.offer,
+        choice: cardState.choice,
+        activePolicies: next.gameplay.cardState.activePolicies,
+        pendingPlacement: next.gameplay.cardState.pendingPlacement,
+        placements: next.gameplay.cardState.placements,
+        constructionDiscount: { cardId: card.cardId, discountRate: Number(card.effect.discountRate), remainingUses: 1, grantedAtTurn: state.turn }
+      }, { bumpVersion: false });
+    }
+    cardEffects.discount = { rate: preserved ? existing.discountRate : Number(card.effect.discountRate), uses: 1, preserved };
   } else if (card.type === CARD_TYPES.policy) {
     const policyResult = applyPolicySelection(next, card, state.turn, context);
     next = policyResult.nextState;
@@ -546,6 +568,28 @@ export function placeSpecialStructure(state, cityId, input = {}, context = {}) {
     })
   };
   return { accepted: true, code: "OK", nextState: next, buildingId, placement: completed };
+}
+
+// Explicit cancellation is the only way a unique special card may become
+// eligible again. It releases the entitlement but never mutates a placed
+// building; completed/placed mandates are intentionally non-cancellable.
+export function cancelSpecialStructurePlacement(state, input = {}, context = {}) {
+  const cardState = normalizeCardState(state.gameplay?.cardState);
+  const placementId = String(input.placementId ?? input.placement_id ?? "");
+  const placement = cardState.placements[placementId];
+  if (!placement) return { accepted: false, code: "PLACEMENT_NOT_FOUND", message: `No pending placement exists for id ${placementId || "(none)"}` };
+  if (["completed", "cancelled"].includes(placement.status)) return { accepted: false, code: "PLACEMENT_NOT_CANCELLABLE", message: `Placement ${placementId} is already ${placement.status}` };
+  const cancelled = normalizePendingPlacement({ ...placement, status: "cancelled", cancelledAtTurn: state.turn });
+  const nextPlacements = { ...cardState.placements, [placementId]: cancelled };
+  const next = withCardState(state, {
+    offer: cardState.offer,
+    choice: cardState.choice,
+    activePolicies: cardState.activePolicies,
+    pendingPlacement: cardState.pendingPlacement?.placementId === placementId ? null : cardState.pendingPlacement,
+    placements: nextPlacements,
+    constructionDiscount: cardState.constructionDiscount
+  });
+  return { accepted: true, code: "OK", nextState: next, placement: cancelled };
 }
 
 function resolveImmediateCard(state, card, cityId, context) {

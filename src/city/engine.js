@@ -3,6 +3,8 @@ import { appendEvent, cloneCityState } from "./state.js";
 import { previewConnectionBetween, previewConstruction } from "./solver.js";
 import { deriveGameplayBuilding } from "../gameplay/building-metadata.js";
 import { incomeForSettlement, systemOwnedBonusForBuilding } from "../gameplay/economy.js";
+import { consumeConstructionDiscount } from "../gameplay/cards.js";
+import { getCard } from "../gameplay/card-catalog.js";
 
 export function createEngineContext(options = {}) {
   const sequences = new Map();
@@ -158,7 +160,7 @@ function constructBuilding(currentState, input, context) {
   const next = cloneCityState(currentState);
   const buildingId = input.buildingId ?? context.createId("building");
   applyCompletedBuilding(next, { proposal, preview, buildingId, assetId: input.assetId ?? proposal.program.assetId }, context);
-  consumeOneTimeConstructionDiscount(next);
+  if (!isSpecialStructureProposal(proposal)) next.gameplay = consumeConstructionDiscount(next).gameplay;
   return accepted(currentState, next, { building: structuredClone(next.buildings[buildingId]), preview });
 }
 
@@ -209,20 +211,22 @@ function reserveConstruction(currentState, input, context) {
     actor: proposal.actor,
     createdAt: context.now()
   };
-  consumeOneTimeConstructionDiscount(next);
+  if (!isSpecialStructureProposal(proposal)) {
+    const discount = next.gameplay?.cardState?.constructionDiscount;
+    next.gameplay = consumeConstructionDiscount(next).gameplay;
+    if (discount && Number(discount.remainingUses ?? 0) > 0) {
+      next.reservations[reservationId].consumedConstructionDiscount = structuredClone(discount);
+    }
+  }
   bump(next, false);
   appendEvent(next, { type: "construction_reserved", actor: proposal.actor, reservationId, proposalId: proposal.id ?? null, buildingId: input.buildingId ?? null, cost: preview.cost }, context);
   return accepted(currentState, next, { reservation: structuredClone(next.reservations[reservationId]), preview });
 }
 
-// Ordinary BUILDING cards grant one successful construction at a 20% discount.
-// Consumption occurs only after the authoritative solver accepts the command;
-// previews and rejected commands never spend the entitlement.
-function consumeOneTimeConstructionDiscount(state) {
-  const discount = state.gameplay?.cardState?.constructionDiscount;
-  if (discount && Number(discount.remainingUses ?? 0) > 0) {
-    state.gameplay.cardState.constructionDiscount = { ...discount, remainingUses: 0 };
-  }
+function isSpecialStructureProposal(proposal) {
+  return proposal?.program?.archetype === "special_structure"
+    || proposal?.program?.attributes?.specialCardId != null
+    || proposal?.program?.canonicalProgram === "ministry_of_magic";
 }
 
 function completeReservedConstruction(currentState, input, context) {
@@ -250,6 +254,19 @@ function cancelConstructionReservation(currentState, input, context) {
   const next = cloneCityState(currentState);
   clearReservationMarks(next, reservation);
   next.resources = add(next.resources, reservation.frozenCost);
+  if (reservation.consumedConstructionDiscount) {
+    const discount = next.gameplay?.cardState?.constructionDiscount;
+    if (!discount || Number(discount.remainingUses ?? 0) <= 0) {
+      const prior = reservation.consumedConstructionDiscount;
+      next.gameplay.cardState.constructionDiscount = {
+        ...(prior ?? {}),
+        cardId: prior?.cardId ?? "ordinary-building-discount",
+        discountRate: Number(prior?.discountRate ?? getCard("ordinary-building-discount")?.effect?.discountRate ?? 0),
+        remainingUses: 1,
+        grantedAtTurn: prior?.grantedAtTurn ?? next.turn
+      };
+    }
+  }
   delete next.reservations[input.reservationId];
   bump(next, false);
   appendEvent(next, { type: "construction_reservation_cancelled", reservationId: input.reservationId, reason: input.reason ?? "cancelled", refund: reservation.frozenCost }, context);
