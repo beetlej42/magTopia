@@ -39,6 +39,7 @@ import { completedReportTurn, deriveCityDayPresentation } from "../../src/gamepl
 import { playbookGuidance } from "../../src/gameplay/guidance.js";
 import { isTurnResolveLocked, initializeTurnSchedule, normalizeTurnSchedule } from "../../src/gameplay/turn.js";
 import { arcaneOfficerCapacity, arcaneOfficerRecruitmentUnlocked, currentOfficerCandidates, hireArcaneOfficerCandidate, recruitmentConfigSummary } from "../../src/gameplay/arcane-officers.js";
+import { bootstrapGuidance, deriveBootstrapProgress, isBootstrapTurn } from "../../src/gameplay/bootstrap.js";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PLAYBOOK_PATH = path.resolve(SERVER_DIR, "../../docs/agent-playbook.md");
@@ -577,6 +578,7 @@ export async function createApp({ repository, config, logger = false, now = () =
       city_id: row.id,
       city_version: Number(row.city_version),
       turn: state.turn,
+      turn_kind: isBootstrapTurn(state) ? "bootstrap" : "normal",
       turn_status: gameplay.turnStatus ?? "open",
       turn_opened_at: gameplay.turnOpenedAt ?? null,
       // Deprecated legacy field, always null: turns no longer carry a deadline
@@ -584,6 +586,10 @@ export async function createApp({ repository, config, logger = false, now = () =
       turn_deadline_at: null,
       next_turn_unlock_at: gameplay.nextTurnUnlockAt ?? null,
       settled_by: gameplay.scheduler?.settledBy ?? null,
+      bootstrap: isBootstrapTurn(state) ? {
+        progress: deriveBootstrapProgress(state),
+        guidance: bootstrapGuidance(deriveBootstrapProgress(state))
+      } : null,
       strategy: strategyPayload(strategyState),
       last_turn_facts: gameplay.lastTurnFacts ?? null,
       // Progressive playbook disclosure: a short context hint plus a pointer to
@@ -677,17 +683,16 @@ export async function createApp({ repository, config, logger = false, now = () =
       if (!CLOSED_TURN_STATUSES.has(gameplay.turnStatus) && gameplay.nextTurnUnlockAt == null) {
         const initialized = initializeTurnSchedule(state, now(), config);
         if (initialized) {
-          const withCards = ensureCardOffer(initialized, request.params.cityId);
-          const gate = withCards.gameplay.nextTurnUnlockAt;
+          const gate = initialized.gameplay.nextTurnUnlockAt;
           return {
-            nextState: withCards,
+            nextState: initialized,
             response: {
               command_id: createId("command"),
               status: "rejected",
               code: "TURN_NOT_UNLOCKED",
               message: "The turn was not scheduled yet, so its cooldown gate was written now. Wait until next_turn_unlock_at and resolve again.",
               next_turn_unlock_at: gate,
-              city_version_after: withCards.version,
+              city_version_after: initialized.version,
               errors: [{ code: "TURN_NOT_UNLOCKED", message: `Turn ${state.turn} just received its cooldown gate; resolution unlocks at ${gate}` }]
             }
           };
@@ -732,7 +737,9 @@ export async function createApp({ repository, config, logger = false, now = () =
   app.get("/api/v1/cities/:cityId/cards/current", async (request) => {
     const principal = await authenticate(repository, request, "city:read");
     const { row, state } = await repository.getCity(principal, request.params.cityId);
-    const withCards = ensureCardOffer(state, row.id);
+    // Bootstrap cards are an explicit no-card state. This GET is a pure read
+    // and must not lazily initialize a schedule or write an offer.
+    const withCards = isBootstrapTurn(state) ? state : ensureCardOffer(state, row.id);
     if (withCards !== state) {
       await persistCardState(repository, principal, request.params.cityId, withCards);
     }
@@ -761,7 +768,7 @@ export async function createApp({ repository, config, logger = false, now = () =
       action: "card_select",
       reason: "player_daily_card_selection"
     }, async ({ state }) => {
-      const withCards = ensureCardOffer(state, request.params.cityId);
+      const withCards = isBootstrapTurn(state) ? state : ensureCardOffer(state, request.params.cityId);
       const result = selectCard(withCards, request.params.cityId, {
         offerId: body.offer_id,
         selectedCardId: body.selected_card_id,
@@ -1334,6 +1341,8 @@ function strategyPayload(state) {
     .sort((a, b) => String(a.id).localeCompare(String(b.id)))
     .map((officer) => strategyOfficerResponse(officer));
   return {
+    turn_kind: isBootstrapTurn(state) ? "bootstrap" : "normal",
+    bootstrap: isBootstrapTurn(state) ? { progress: deriveBootstrapProgress(state), guidance: bootstrapGuidance(deriveBootstrapProgress(state)) } : null,
     incidents,
     arcane_officers: arcaneOfficers,
     arcane_officer_recruitment: officerRecruitmentPayload(state),
@@ -1517,6 +1526,8 @@ function agentSnapshot(row, state, events, orders, config) {
     city_version: Number(row.city_version),
     ruleset_version: row.ruleset_version,
     turn: state.turn,
+    turn_kind: isBootstrapTurn(state) ? "bootstrap" : "normal",
+    bootstrap: isBootstrapTurn(state) ? { progress: deriveBootstrapProgress(state), guidance: bootstrapGuidance(deriveBootstrapProgress(state)) } : null,
     elapsed_hours: state.elapsedHours,
     resources: state.resources,
     world: state.world ?? null,

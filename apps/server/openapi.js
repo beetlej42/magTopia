@@ -434,7 +434,7 @@ export function createOpenApiDocument(baseUrl) {
           required: ["status"],
           properties: {
             offer_id: { type: ["string", "null"] },
-            status: { enum: ["pending", "selected", "skipped", "resolved"] },
+            status: { enum: ["pending", "selected", "skipped", "resolved", "not_applicable"], description: "not_applicable is authoritative for the turn-0 bootstrap no-card state." },
             selected_card_id: { type: ["string", "null"] },
             decision_mode: { type: ["string", "null"] },
             choice_resolved_at: { type: ["string", "null"] },
@@ -595,9 +595,11 @@ export function createOpenApiDocument(baseUrl) {
         TurnFacts: {
           type: "object",
           description: "Immutable system-generated settlement record. Agents read rolls, outcomes, and state changes here; they never author them.",
-            required: ["turn", "resourceDelta", "netResourceDelta", "officerMaintenance", "populationDelta", "publicService", "exposureChanges", "incidents", "incidentRolls", "unaddressedIncidents", "historicalRiskChanges", "assignments", "rolls", "outcomes", "sealedBuildings", "nextRisks"],
+          required: ["turn", "turnKind", "bootstrapProgress", "resourceDelta", "netResourceDelta", "officerMaintenance", "populationDelta", "publicService", "buildingsStarted", "buildingsCompleted", "buildingFactRefs", "constructionRefs", "exposureChanges", "incidents", "incidentRolls", "unaddressedIncidents", "historicalRiskChanges", "assignments", "rolls", "outcomes", "sealedBuildings", "nextRisks"],
           properties: {
             turn: { type: "integer" },
+            turnKind: { enum: ["bootstrap", "normal"] },
+            bootstrapProgress: { oneOf: [{ $ref: "#/components/schemas/BootstrapProgress" }, { type: "null" }] },
             wallClock: { type: "object", nullable: true, additionalProperties: true },
             resourceDelta: { type: "object", properties: { coins: { type: "integer", minimum: 0 }, arcaneEnergy: { type: "number", minimum: 0 } }, required: ["coins", "arcaneEnergy"], additionalProperties: false },
             netResourceDelta: { type: "object", properties: { coins: { type: "integer" }, arcaneEnergy: { type: "number" } }, required: ["coins", "arcaneEnergy"], additionalProperties: false },
@@ -628,8 +630,6 @@ export function createOpenApiDocument(baseUrl) {
               },
               required: ["radius", "serviceCoverage", "supportedTarget", "migrationRate", "outboundMigrationRate"]
             },
-            buildingsStarted: { type: "array", items: { type: "string" } },
-            buildingsCompleted: { type: "array", items: { type: "string" } },
             exposureChanges: { type: "object", additionalProperties: true },
             incidents: { type: "array", items: { $ref: "#/components/schemas/StrategyIncident" } },
             incidentRolls: { type: "array", description: "System-owned independent threshold roll for every eligible canonical MagicLoad building.", items: { type: "object", required: ["buildingId", "finalIncidentChance", "thresholdRoll", "hit", "sourcePurpose", "purposeWeights"], properties: { buildingId: { type: "string" }, finalIncidentChance: { type: "number" }, thresholdRoll: { type: "number" }, hit: { type: "boolean" }, magicLoad: { type: "number" }, baseRisk: { type: "number" }, spatialModifier: { type: "number" }, historicalRisk: { type: "integer" }, sourcePurpose: { type: ["string", "null"] }, purposeWeights: { type: "object", additionalProperties: { type: "number" } } } } },
@@ -681,13 +681,35 @@ export function createOpenApiDocument(baseUrl) {
               }
             },
             sealedBuildings: { type: "array", items: { type: "string" } },
+            buildingsStarted: { type: "array", items: { type: "string" }, description: "System-derived ids of authoritative buildings first represented by accepted construction events in this turn." },
+            buildingsCompleted: { type: "array", items: { type: "string" }, description: "System-derived ids of authoritative buildings completed by accepted construction events in this turn." },
+            buildingFactRefs: { type: "array", items: { type: "string" } },
+            constructionRefs: { type: "array", items: { type: "object", additionalProperties: false, required: ["factRef", "kind", "reservationId", "proposalId", "buildingId", "eventType"], properties: { factRef: { type: "string" }, kind: { enum: ["reservation", "completion"] }, reservationId: { type: ["string", "null"] }, proposalId: { type: ["string", "null"] }, buildingId: { type: ["string", "null"] }, eventType: { type: "string" } } } },
             nextRisks: { type: "array", items: { type: "object", additionalProperties: true } }
           }
         },
+        BootstrapProgress: {
+          type: "object",
+          additionalProperties: false,
+          required: ["gatewayConnected", "gatewayNodeId", "roadsConnected", "roadsConnectedCount", "buildingsStarted", "buildingsCompleted", "residentialBuildings", "commercialBuildings", "publicServiceBuildings", "totalBuildings", "milestones"],
+          properties: {
+            gatewayConnected: { type: "boolean" }, gatewayNodeId: { type: ["string", "null"] },
+            roadsConnected: { type: "array", items: { type: "string" } }, roadsConnectedCount: { type: "integer", minimum: 0 },
+            buildingsStarted: { type: "array", items: { type: "string" } }, buildingsCompleted: { type: "array", items: { type: "string" } },
+            residentialBuildings: { type: "array", items: { type: "string" } }, commercialBuildings: { type: "array", items: { type: "string" } }, publicServiceBuildings: { type: "array", items: { type: "string" } }, totalBuildings: { type: "integer", minimum: 0 },
+            milestones: { type: "object", additionalProperties: false, required: ["gateway", "road", "housing", "income", "publicService"], properties: { gateway: { type: "boolean" }, road: { type: "boolean" }, housing: { type: "boolean" }, income: { type: "boolean" }, publicService: { type: "boolean" } } }
+          }
+        },
+        BootstrapState: {
+          type: "object", additionalProperties: false, required: ["progress", "guidance"],
+          properties: { progress: { $ref: "#/components/schemas/BootstrapProgress" }, guidance: { type: "string" } }
+        },
         StrategyPayload: {
           type: "object",
-          required: ["incidents", "arcane_officers", "arcane_officer_recruitment", "pending_assignments", "cards"],
+          required: ["turn_kind", "bootstrap", "incidents", "arcane_officers", "arcane_officer_recruitment", "pending_assignments", "cards"],
           properties: {
+            turn_kind: { enum: ["bootstrap", "normal"] },
+            bootstrap: { oneOf: [{ $ref: "#/components/schemas/BootstrapState" }, { type: "null" }] },
             incidents: { type: "array", items: { $ref: "#/components/schemas/StrategyIncident" } },
             arcane_officers: { type: "array", items: { $ref: "#/components/schemas/ArcaneOfficer" } },
             arcane_officer_recruitment: { $ref: "#/components/schemas/ArcaneOfficerRecruitment" },
@@ -697,12 +719,14 @@ export function createOpenApiDocument(baseUrl) {
         },
         StrategyContext: {
           type: "object",
-          required: ["city_id", "city_version", "turn", "turn_status", "strategy"],
+          required: ["city_id", "city_version", "turn", "turn_kind", "turn_status", "bootstrap", "strategy"],
           properties: {
             city_id: { type: "string" },
             city_version: { type: "integer" },
             turn: { type: "integer" },
+            turn_kind: { enum: ["bootstrap", "normal"] },
             turn_status: { type: "string" },
+            bootstrap: { oneOf: [{ $ref: "#/components/schemas/BootstrapState" }, { type: "null" }] },
             turn_opened_at: { type: ["string", "null"] },
             turn_deadline_at: { type: ["string", "null"], description: "Deprecated legacy field, always null. Turns no longer have a deadline that auto-settles; it is kept only for API compatibility and never drives settlement." },
             next_turn_unlock_at: { type: ["string", "null"], description: "Server-owned cooldown gate. While the current turn is active it is the earliest wall-clock time the Agent may resolve the turn (POST /strategy/resolve is rejected with TURN_NOT_UNLOCKED before it); once the turn is settled it is the earliest time the next turn may open. Agents cannot change it." },
@@ -729,11 +753,13 @@ export function createOpenApiDocument(baseUrl) {
         ReportContext: {
           type: "object",
           description: "SYSTEM-owned immutable newspaper source for one resolved turn. A deterministic projection of the frozen TurnFacts plus read-only city metadata. Never contains prose and never recomputes gameplay. The Agent edits an OwlReport from it and references facts through factRefs.",
-          required: ["schemaVersion", "cityId", "turn", "worldDay", "factsDigest", "settlement", "resourceDelta", "populationDelta", "publicService", "incidents", "incidentRolls", "historicalRiskChanges", "factRefs"],
+          required: ["schemaVersion", "cityId", "turn", "turnKind", "bootstrapProgress", "worldDay", "factsDigest", "settlement", "resourceDelta", "populationDelta", "publicService", "buildingsStarted", "buildingsCompleted", "buildingFactRefs", "constructionRefs", "incidents", "incidentRolls", "historicalRiskChanges", "factRefs"],
           properties: {
             schemaVersion: { type: "integer" },
             cityId: { type: "string" },
             turn: { type: "integer" },
+            turnKind: { enum: ["bootstrap", "normal"] },
+            bootstrapProgress: { oneOf: [{ $ref: "#/components/schemas/BootstrapProgress" }, { type: "null" }] },
             worldDay: { type: "integer", description: "One resolved turn is one city day; worldDay equals turn." },
             factsDigest: { type: "string", description: "Stable digest of the frozen TurnFacts; an OwlReport must bind to it." },
             settlement: {
@@ -751,6 +777,8 @@ export function createOpenApiDocument(baseUrl) {
             publicService: { type: "object", additionalProperties: true },
             buildingsStarted: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, buildingId: { type: "string" }, name: { type: "string" }, archetype: { type: ["string", "null"] }, purpose: { type: ["string", "null"] } } } },
             buildingsCompleted: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, buildingId: { type: "string" }, name: { type: "string" }, archetype: { type: ["string", "null"] }, purpose: { type: ["string", "null"] } } } },
+            buildingFactRefs: { type: "array", items: { type: "string" } },
+            constructionRefs: { type: "array", items: { type: "object", additionalProperties: false, required: ["factRef", "kind", "reservationId", "proposalId", "buildingId", "eventType"], properties: { factRef: { type: "string" }, kind: { enum: ["reservation", "completion"] }, reservationId: { type: ["string", "null"] }, proposalId: { type: ["string", "null"] }, buildingId: { type: ["string", "null"] }, eventType: { type: "string" } } } },
             exposureChanges: { type: "object", additionalProperties: { type: "object", properties: { factRef: { type: "string" }, buildingId: { type: "string" }, name: { type: "string" }, from: { type: "number" }, to: { type: "number" }, delta: { type: "number" }, pressure: { type: "number" }, concealment: { type: "number" }, sealed: { type: "boolean" } } } },
             incidents: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, id: { type: "string" }, buildingId: { type: "string" }, buildingName: { type: "string" }, type: { type: "string" }, dc: { type: "number", enum: [10, 14, 18] }, severity: { type: "number" }, summary: { type: "string" }, status: { type: "string" }, createdAtTurn: { type: "number" } } } },
             incidentRolls: { type: "array", items: { type: "object", properties: { buildingId: { type: "string" }, finalIncidentChance: { type: "number" }, thresholdRoll: { type: "number" }, hit: { type: "boolean" }, sourcePurpose: { type: ["string", "null"] }, purposeWeights: { type: "object", additionalProperties: { type: "number" } } } } },
@@ -890,14 +918,16 @@ export function createOpenApiDocument(baseUrl) {
         CityDayPresentation: {
           type: "object",
           description: "Pure presentation projection of the authoritative turn/workflow state. Visual time-of-day is an output of workflow, never a second simulation clock or realtime economy.",
-          required: ["city_id", "city_version", "phase", "turn", "turnStatus", "settled", "report", "card", "agent", "incident"],
+          required: ["city_id", "city_version", "phase", "turn", "turnKind", "turnStatus", "settled", "bootstrap", "report", "card", "agent", "incident"],
           properties: {
             city_id: { type: "string" },
             city_version: { type: "integer" },
             phase: { enum: ["dawn", "early_morning", "morning", "day", "night"] },
             turn: { type: "integer" },
+            turnKind: { enum: ["bootstrap", "normal"] },
             turnStatus: { type: "string" },
             settled: { type: "boolean" },
+            bootstrap: { oneOf: [{ type: "object", required: ["progress"], properties: { progress: { $ref: "#/components/schemas/BootstrapProgress" } } }, { type: "null" }] },
             report: {
               type: "object",
               properties: {

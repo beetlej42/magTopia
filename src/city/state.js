@@ -35,6 +35,7 @@ export function createCityState(worldContract, options = {}) {
     gameplay: {
       schemaVersion: GAMEPLAY_SCHEMA_VERSION,
       turnStatus: "open",
+      turnKind: "bootstrap",
       turnOpenedAt: null,
       turnDeadlineAt: null,
       nextTurnUnlockAt: null,
@@ -54,7 +55,7 @@ export function createCityState(worldContract, options = {}) {
       lastTurnFacts: null,
       cardState: {
         offer: null,
-        choice: { offerId: null, status: "pending", selectedCardId: null, decisionMode: null, choiceResolvedAt: null, cardEffects: {}, policyStarted: [], policyRefreshed: [], policyExpired: [], officerRecruitedId: null, specialPlacementMandate: null, specialPlacementsCompleted: [] },
+        choice: { offerId: null, status: "not_applicable", selectedCardId: null, decisionMode: null, choiceResolvedAt: null, cardEffects: {}, policyStarted: [], policyRefreshed: [], policyExpired: [], officerRecruitedId: null, specialPlacementMandate: null, specialPlacementsCompleted: [] },
         activePolicies: [],
         pendingPlacement: null,
         placements: {}

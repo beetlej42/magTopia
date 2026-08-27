@@ -20,6 +20,7 @@
 // morning -> day -> night. Only observed authoritative state changes do.
 
 import { normalizeCardState } from "./schema.js";
+import { deriveBootstrapProgress, isBootstrapTurn } from "./bootstrap.js";
 
 export const CITY_DAY_PHASES = Object.freeze(["dawn", "early_morning", "morning", "day", "night"]);
 
@@ -92,6 +93,7 @@ export function playerPlacementPending(state) {
 }
 
 export function cardChoicePending(state) {
+  if (state?.turn != null && Number(state.turn) === 0) return false;
   return normalizeCardState(state?.gameplay?.cardState).choice.status === "pending";
 }
 
@@ -111,7 +113,9 @@ export function deriveCityDayPresentation(state, options = {}) {
   const reportTurn = completedReportTurn(state);
   const reportReady = Boolean(options.reportReady && reportTurn != null);
   const reportDismissed = Boolean(options.reportDismissed);
-  const choice = normalizeCardState(gameplay.cardState).choice;
+  const choice = (state?.turn != null && Number(state.turn) === 0)
+    ? { status: "not_applicable", offerId: null, selectedCardId: null, decisionMode: null, choiceResolvedAt: null }
+    : normalizeCardState(gameplay.cardState).choice;
   const placementPending = playerPlacementPending(state);
   const incidentActive = incidentPhaseActive(state);
   const turnOpenedAt = options.turnOpenedAt ?? gameplay.turnOpenedAt ?? null;
@@ -143,8 +147,10 @@ export function deriveCityDayPresentation(state, options = {}) {
   return {
     phase,
     turn: Number(state?.turn ?? 0),
+    turnKind: isBootstrapTurn(state) ? "bootstrap" : "normal",
     turnStatus,
     settled,
+    bootstrap: isBootstrapTurn(state) ? { progress: deriveBootstrapProgress(state) } : null,
     report: {
       turn: reportTurn,
       ready: reportReady,

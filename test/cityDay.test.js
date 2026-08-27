@@ -11,7 +11,9 @@ import {
 
 function baseState(overrides = {}) {
   return {
-    turn: 0,
+    // Card/day projection tests exercise a normal opened turn; bootstrap has
+    // dedicated lifecycle coverage in serverBootstrapLifecycle.test.js.
+    turn: 1,
     version: 0,
     events: [],
     gameplay: {

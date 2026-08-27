@@ -43,8 +43,9 @@ export const GAMEPLAY_GRAMMAR_ARRAY_FIELDS = Object.freeze([
 ]);
 
 export const TURN_STATUSES = Object.freeze(["open", "building", "strategy", "resolved", "reported", "closed"]);
+export const TURN_KINDS = Object.freeze(["bootstrap", "normal"]);
 
-export const CARD_CHOICE_STATUSES = Object.freeze(["pending", "selected", "skipped", "resolved"]);
+export const CARD_CHOICE_STATUSES = Object.freeze(["pending", "selected", "skipped", "resolved", "not_applicable"]);
 
 export const CARD_DECISION_MODES = Object.freeze(["immediate", "player_place", "delegate_to_agent"]);
 
@@ -674,6 +675,7 @@ export function normalizeTurnFacts(value = {}) {
   return {
     schemaVersion: GAMEPLAY_SCHEMA_VERSION,
     turn: clampNumber(value.turn, 0, 0, Number.MAX_SAFE_INTEGER),
+    turnKind: normalizeTurnKind(value.turnKind),
     wallClock: value.wallClock ? { ...value.wallClock } : null,
     resourceDelta: normalizeGameplayResources(value.resourceDelta),
     netResourceDelta: value.netResourceDelta ? { coins: clampNumber(value.netResourceDelta.coins, 0, -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER), arcaneEnergy: clampNumber(value.netResourceDelta.arcaneEnergy, 0, -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER) } : { coins: 0, arcaneEnergy: 0 },
@@ -682,6 +684,9 @@ export function normalizeTurnFacts(value = {}) {
     publicService: normalizePublicServiceFacts(value.publicService),
     buildingsStarted: [...(value.buildingsStarted ?? [])],
     buildingsCompleted: [...(value.buildingsCompleted ?? [])],
+    buildingFactRefs: [...(value.buildingFactRefs ?? [])].map(String).sort(),
+    constructionRefs: [...(value.constructionRefs ?? [])].map((entry) => ({ ...entry })),
+    bootstrapProgress: value.bootstrapProgress ? cloneAuditValue(value.bootstrapProgress) : null,
     exposureChanges: Object.fromEntries(Object.entries(value.exposureChanges ?? {}).map(([id, change]) => [id, { ...change }])),
     incidents: [...(value.incidents ?? [])].map(normalizeExposureIncident),
     incidentRolls: [...(value.incidentRolls ?? [])].map(cloneAuditValue),
@@ -712,6 +717,15 @@ export function normalizeTurnFacts(value = {}) {
     specialPlacementMandate: value.specialPlacementMandate ? { ...value.specialPlacementMandate } : null,
     specialPlacementsCompleted: [...(value.specialPlacementsCompleted ?? [])].map(normalizePlacementCompletion)
   };
+}
+
+// Historical facts did not carry a kind. Safe legacy default is normal; only
+// the authoritative resolver writes bootstrap explicitly for turn 0.
+export function normalizeTurnKind(value) {
+  if (value == null || value === "") return "normal";
+  const kind = String(value);
+  if (!TURN_KINDS.includes(kind)) throw new Error(`Unsupported turn kind: ${kind}`);
+  return kind;
 }
 
 export function deepFreeze(value) {

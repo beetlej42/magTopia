@@ -37,8 +37,9 @@ test("simulated buildings all expose a legal road-fronting entrance and ledger s
 test("baseline settlement is an explicit PR-D profile while production retains later systems", () => {
   const world = createBlankVoxelWorldContract({ seed: "profile", columns: 10, rows: 10, terrainSubdivisions: 4 });
   const state = createCityState(world, { cityId: "profile-city" });
-  const production = resolveTurn(state, {}, { now: () => "2040-01-02T08:00:00.000Z", seed: "profile" });
-  const baseline = resolvePublicServiceBaselineTurn(state, {}, { now: () => "2040-01-02T08:00:00.000Z", seed: "profile" });
+  const normal = { ...state, turn: 1, gameplay: { ...state.gameplay, turnKind: "normal" } };
+  const production = resolveTurn(normal, {}, { now: () => "2040-01-02T08:00:00.000Z", seed: "profile" });
+  const baseline = resolvePublicServiceBaselineTurn(normal, {}, { now: () => "2040-01-02T08:00:00.000Z", seed: "profile" });
   assert.equal(production.error, null);
   assert.equal(baseline.error, null);
   assert.ok(production.nextState.gameplay.cardState.offer);

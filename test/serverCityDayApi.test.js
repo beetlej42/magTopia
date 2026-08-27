@@ -33,6 +33,16 @@ async function openCity(repository, app) {
     url: "/api/v1/cities",
     payload: { name: "City Day City", map_seed: "city-day-test" }
   }), 201);
+  const ownerForBootstrap = await repository.authenticate(player.access_token);
+  await repository.transactCity({
+    principal: ownerForBootstrap,
+    cityId: city.id,
+    endpoint: "test/open-normal-turn",
+    idempotencyKey: `open-normal-${city.id}`,
+    requestBody: {}, expectedVersion: city.city_version
+  }, async ({ state }) => ({ nextState: { ...state, turn: 1, gameplay: { ...state.gameplay, turnKind: "normal", turnStatus: "open", turnOpenedAt: "2000-01-01T00:00:00.000Z", nextTurnUnlockAt: "2000-01-01T00:00:00.000Z" } }, response: { opened: true } }));
+  city.turn = 1;
+  await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
   const link = await json(app, auth(player, { method: "POST", url: `/api/v1/cities/${city.id}/agent-links`, payload: {} }), 201);
   const connected = await json(app, { method: "GET", url: `/connect/${link.connect_url.split("/").at(-1)}` }, 200);
   const agent = { access_token: connected.access_token };
@@ -164,7 +174,7 @@ test("after a resolved prior day, presentation opens at dawn with the completed 
     const day = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/city-day` }), 200);
     assert.equal(day.phase, "dawn");
     assert.equal(day.settled, true);
-    assert.equal(day.report.turn, 1);
+    assert.equal(day.report.turn, 2);
     assert.equal(day.report.ready, true);
     assert.equal(day.report.dismissed, false);
     assert.ok(day.report.report_id);
@@ -184,7 +194,7 @@ test("dismissing the report advances to card choice without changing gameplay st
     const dismissed = await json(app, auth(player, {
       method: "POST",
       url: `/api/v1/cities/${city.id}/city-day/report-dismissed`,
-      payload: { report_turn: 1 }
+      payload: { report_turn: 2 }
     }), 200);
     assert.equal(dismissed.dismissed, true);
     const after = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/city-day` }), 200);
@@ -208,7 +218,7 @@ test("reopening after dismissal does not replay the mandatory report flow", asyn
       await json(firstApp, auth(player, {
         method: "POST",
         url: `/api/v1/cities/${city.id}/city-day/report-dismissed`,
-        payload: { report_turn: 1 }
+        payload: { report_turn: 2 }
       }), 200);
     } finally {
       await firstApp.close();
@@ -237,7 +247,7 @@ test("a non-player Agent cannot dismiss the player's report", async () => {
     const response = await app.inject(auth(agent, {
       method: "POST",
       url: `/api/v1/cities/${city.id}/city-day/report-dismissed`,
-      payload: { report_turn: 1 }
+      payload: { report_turn: 2 }
     }));
     assert.equal(response.statusCode, 403);
   } finally {
@@ -566,14 +576,14 @@ test("standard resolve settles exactly once and returns presentation to the next
     const day = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/city-day` }), 200);
     assert.equal(day.settled, true);
     assert.equal(day.phase, "dawn");
-    assert.equal(day.report.turn, 1);
+    assert.equal(day.report.turn, 2);
   } finally {
     await app.close();
   }
 });
 
 test("the domain derivation never fabricates a day from elapsed time alone", () => {
-  const open = { turn: 0, version: 0, events: [], gameplay: { turnStatus: "open", turnOpenedAt: "2000-01-01T00:00:00.000Z" } };
+  const open = { turn: 1, version: 0, events: [], gameplay: { turnStatus: "open", turnKind: "normal", turnOpenedAt: "2000-01-01T00:00:00.000Z", cardState: { choice: { status: "pending" } } } };
   const now = new Date().toISOString();
   const farFuture = new Date(Date.now() + 30 * 86_400_000).toISOString();
   const morning = deriveCityDayPresentation(open, { reportReady: false, reportDismissed: false, turnOpenedAt: now });
@@ -618,7 +628,7 @@ test("integration walk: report -> dismiss -> card -> morning -> agent work -> da
     await json(app, auth(player, {
       method: "POST",
       url: `/api/v1/cities/${city.id}/city-day/report-dismissed`,
-      payload: { report_turn: 1 }
+      payload: { report_turn: 2 }
     }), 200);
     day = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/city-day` }), 200);
     assert.equal(day.report.dismissed, true);
@@ -692,7 +702,7 @@ test("card offer and turn stay stable across construction/road/district mutation
   try {
     const { city, player, agent } = await openCity(repository, app);
     const offerBefore = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
-    assert.equal(offerBefore.turn, 0);
+    assert.equal(offerBefore.turn, 1);
 
     // Agent performs real city work: district + road + building. None of these
     // may advance the gameplay turn or re-roll the card offer.
@@ -722,7 +732,7 @@ test("card offer and turn stay stable across construction/road/district mutation
     assert.equal(order.status, "completed");
 
     const offerAfter = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
-    assert.equal(offerAfter.turn, 0, "the turn never advanced from city work");
+    assert.equal(offerAfter.turn, 1, "the turn never advanced from city work");
     assert.equal(offerAfter.offer.offer_id, offerBefore.offer.offer_id, "the card offer still belongs to the same turn");
     assert.deepEqual(offerAfter.offer.cards.map((card) => card.card_id), offerBefore.offer.cards.map((card) => card.card_id));
   } finally {
