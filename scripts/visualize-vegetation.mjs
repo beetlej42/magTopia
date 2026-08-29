@@ -54,7 +54,11 @@ console.log(JSON.stringify({
     forestFloors: baseline.forestFloors.length
   },
   clusters: plan.clusters.length,
-  clusterCells: plan.clusters.map((cluster) => ({ id: cluster.id, cells: cluster.cellIds.length, treeCount: cluster.treeCount, zone: cluster.zone })),
+  clusterCells: plan.clusters.map((cluster) => ({
+    id: cluster.id,
+    cells: cluster.cellIds.length,
+    zoneGroups: cluster.zoneGroups.map((group) => ({ zone: group.zone, cells: group.cellIds.length, treeCount: group.treeCount }))
+  })),
   species: plan.trees.reduce((count, tree) => {
     count[tree.species] = (count[tree.species] ?? 0) + 1;
     return count;

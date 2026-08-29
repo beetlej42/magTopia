@@ -80,9 +80,7 @@ export function createMagicLondonVegetationPlan({ params, grid, cityState, reser
   grid.cells.forEach((gridCell) => {
     neighborhood.set(`${gridCell.column}:${gridCell.row}`, gridCell);
   });
-  const getCluster = (cell) => {
-    const clusterColumn = Math.floor(cell.column / CLUSTER_SIZE);
-    const clusterRow = Math.floor(cell.row / CLUSTER_SIZE);
+  const getRecord = (clusterColumn, clusterRow) => {
     const key = `${clusterColumn}:${clusterRow}`;
     let record = clusterRecords.get(key);
     if (!record) {
@@ -90,6 +88,24 @@ export function createMagicLondonVegetationPlan({ params, grid, cityState, reser
       clusterRecords.set(key, record);
     }
     return record;
+  };
+  const densityFor = (cell) => {
+    const cellClusterColumn = Math.floor(cell.column / CLUSTER_SIZE);
+    const cellClusterRow = Math.floor(cell.row / CLUSTER_SIZE);
+    let best = 0;
+    for (let rowOffset = -1; rowOffset <= 1; rowOffset += 1) {
+      for (let columnOffset = -1; columnOffset <= 1; columnOffset += 1) {
+        const neighbor = getRecord(cellClusterColumn + columnOffset, cellClusterRow + rowOffset);
+        const anchor = worldAnchorForCell(cell, neighbor, cellSize);
+        const distance = Math.hypot(cell.center.x - anchor.x, cell.center.z - anchor.z);
+        let factor = 1 - distance / neighbor.radius;
+        if (factor < 0) factor = 0;
+        factor = Math.pow(factor, neighbor.falloff);
+        if (neighbor.sparse) factor *= SPARSE_POCKET_DENSITY;
+        if (factor > best) best = factor;
+      }
+    }
+    return best;
   };
 
   grid.cells.forEach((cell) => {
@@ -104,9 +120,9 @@ export function createMagicLondonVegetationPlan({ params, grid, cityState, reser
     plan.zoneCounts[zone] += 1;
     plan.cells.push({ cellId: cell.id, zone });
 
-    const cluster = getCluster(cell);
-    const density = clusterDensity(cell, cluster, cellSize);
-    cluster.openCells.push({ cellId: cell.id, cell, zone, density });
+    const record = getRecord(Math.floor(cell.column / CLUSTER_SIZE), Math.floor(cell.row / CLUSTER_SIZE));
+    const density = densityFor(cell);
+    record.openCells.push({ cellId: cell.id, cell, zone, density });
     const rng = createRng(`${params.seed}:development-vegetation:${cell.id}`);
 
     if (zone === "meadow") {
@@ -137,16 +153,9 @@ export function createMagicLondonVegetationPlan({ params, grid, cityState, reser
     addGrassTufts(plan, cell, cellSize, rng, Math.max(1, Math.round(lerp(1, 3, density))) + randInt(rng, 0, 1), zone);
   });
 
-  clusterRecords.forEach((cluster) => {
-    if (!cluster.openCells.length) return;
-    const ordered = cluster.openCells.slice().sort((a, b) => {
-      const anchor = worldAnchorForCell(a.cell, cluster, cellSize);
-      const distanceA = Math.hypot(a.cell.center.x - anchor.x, a.cell.center.z - anchor.z);
-      const anchorB = worldAnchorForCell(b.cell, cluster, cellSize);
-      const distanceB = Math.hypot(b.cell.center.x - anchorB.x, b.cell.center.z - anchorB.z);
-      return distanceA - distanceB || (a.cellId < b.cellId ? -1 : a.cellId > b.cellId ? 1 : 0);
-    });
-    generateClusterTrees(plan, cluster, ordered, cellSize, params.seed);
+  clusterRecords.forEach((record) => {
+    if (!record.openCells.length) return;
+    generateZoneTreeGroups(plan, record, cellSize, params.seed);
   });
 
   return plan;
@@ -225,9 +234,12 @@ export function createMagicLondonVegetationLayer({ params, grid, cityState, rese
     clusters: plan.clusters.map((cluster) => ({
       id: cluster.id,
       cells: cluster.cellIds,
-      treeCount: cluster.treeCount,
-      denseTrees: cluster.ranked.reduce((count, entry) => count + (entry.sizeClass === "dominant" ? 1 : 0), 0),
-      zone: cluster.zone
+      zoneGroups: cluster.zoneGroups.map((group) => ({
+        zone: group.zone,
+        cells: group.cellIds,
+        treeCount: group.treeCount,
+        denseTrees: group.ranked.reduce((count, entry) => count + (entry.sizeClass === "dominant" ? 1 : 0), 0)
+      }))
     })),
     species: speciesCounts,
     skippedOccupied: plan.skippedOccupied,
@@ -254,16 +266,6 @@ function buildClusterRecord(key, clusterColumn, clusterRow, seed, cellSize) {
   };
 }
 
-function clusterDensity(cell, cluster, cellSize) {
-  const anchor = worldAnchorForCell(cell, cluster, cellSize);
-  const distance = Math.hypot(cell.center.x - anchor.x, cell.center.z - anchor.z);
-  let factor = 1 - distance / cluster.radius;
-  if (factor < 0) factor = 0;
-  factor = Math.pow(factor, cluster.falloff);
-  if (cluster.sparse) factor *= SPARSE_POCKET_DENSITY;
-  return factor;
-}
-
 function worldAnchorForCell(cell, cluster, cellSize) {
   const coreColumn = cluster.coreAnchored.column;
   const coreRow = cluster.coreAnchored.row;
@@ -273,16 +275,39 @@ function worldAnchorForCell(cell, cluster, cellSize) {
   };
 }
 
-function generateClusterTrees(plan, cluster, ordered, cellSize, seed) {
+function distanceToAnchor(cell, cluster, cellSize) {
+  const anchor = worldAnchorForCell(cell, cluster, cellSize);
+  return Math.hypot(cell.center.x - anchor.x, cell.center.z - anchor.z);
+}
+
+function generateZoneTreeGroups(plan, cluster, cellSize, seed) {
+  const ordered = cluster.openCells.slice().sort((a, b) => (distanceToAnchor(a.cell, cluster, cellSize) - distanceToAnchor(b.cell, cluster, cellSize)) || (a.cellId < b.cellId ? -1 : a.cellId > b.cellId ? 1 : 0));
   const anchor = worldAnchorForCell(ordered[0].cell, cluster, cellSize);
-  const zone = ordered[0].zone;
-  const density = ordered[0].density;
-  const rng = createRng(`${seed}:vegetation-cluster-trees:${cluster.id}`);
+  const byZone = new Map();
+  ordered.forEach((entry) => {
+    if (!byZone.has(entry.zone)) byZone.set(entry.zone, []);
+    byZone.get(entry.zone).push(entry);
+  });
+  const groups = [...byZone.entries()].sort((left, right) => (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0));
+  const zoneGroups = groups.map(([zone, cells]) => generateZoneTreeGroup(plan, cluster, anchor, zone, cells, cellSize, seed));
+  plan.clusters.push({
+    id: cluster.id,
+    coreX: anchor.x,
+    coreZ: anchor.z,
+    radius: cluster.radius,
+    sparse: cluster.sparse,
+    cellIds: ordered.map((entry) => entry.cellId),
+    zoneGroups
+  });
+}
+
+function generateZoneTreeGroup(plan, cluster, anchor, zone, cells, cellSize, seed) {
+  const density = Math.max(...cells.map((entry) => entry.density));
+  const rng = createRng(`${seed}:vegetation-cluster-trees:${cluster.id}:${zone}`);
   const count = treeCountFor(zone, density, rng);
-  const trees = [];
   const ranked = [];
   for (let index = 0; index < count; index += 1) {
-    const host = weightedHost(ordered, rng);
+    const host = weightedHost(cells, rng);
     const rankFactor = count <= 1 ? 1 : 1 - index / (count - 1);
     const hierarchy = lerp(0.74, 1.3, rankFactor) + randRange(rng, -0.06, 0.06);
     const sizeClass = hierarchy > 1.06 ? "dominant" : hierarchy < 0.94 ? "small" : "medium";
@@ -294,36 +319,28 @@ function generateClusterTrees(plan, cluster, ordered, cellSize, seed) {
     const bound = 0.42 * cellSize;
     treeX = clamp(treeX, host.cell.center.x - bound, host.cell.center.x + bound);
     treeZ = clamp(treeZ, host.cell.center.z - bound, host.cell.center.z + bound);
-    const scale = cellSize * zoneBaseScale(zone) * hierarchy;
-    const species = pickSpecies(rng);
     const tree = {
       cellId: host.cellId,
       zone,
       x: treeX,
       z: treeZ,
       rotation: rng() * Math.PI * 2,
-      scale,
-      species,
+      scale: cellSize * zoneBaseScale(zone) * hierarchy,
+      species: pickSpecies(rng),
       palette: paletteForZone(zone, rng),
       hierarchy,
       sizeClass
     };
-    trees.push(tree);
+    plan.trees.push(tree);
     ranked.push(tree);
   }
-  plan.trees.push(...trees);
-  plan.clusters.push({
-    id: cluster.id,
-    coreX: anchor.x,
-    coreZ: anchor.z,
-    radius: cluster.radius,
-    sparse: cluster.sparse,
+  return {
     zone,
     density,
-    cellIds: ordered.map((entry) => entry.cellId),
     treeCount: count,
+    cellIds: cells.map((entry) => entry.cellId),
     ranked
-  });
+  };
 }
 
 function treeCountFor(zone, density, rng) {

@@ -24,6 +24,14 @@ function stateFor(cells) {
   return { cells: Object.fromEntries(cells.map((entry) => [entry.id, { ...entry }])) };
 }
 
+function findZoneGroup(plan, zone) {
+  for (const cluster of plan.clusters) {
+    const match = cluster.zoneGroups.find((group) => group.zone === zone);
+    if (match) return match;
+  }
+  return undefined;
+}
+
 test("development ground exposes distinct meadow, grove, and woodland attributes", () => {
   const contract = getIsometricDevelopmentContract(ISOMETRIC_DEVELOPMENT_PRESETS.magicLondonRiverfront);
   const counts = contract.grid.cells.reduce((result, gridCell) => {
@@ -97,10 +105,12 @@ test("adjacent open cells form shared cross-cell clusters with deterministic met
   assert.equal(plan.clusters.length, 1, "the nine cells belong to one shared cluster");
   const cluster = plan.clusters[0];
   assert.equal(cluster.cellIds.length, 9, "every open cluster cell should participate in the shared group");
-  assert.equal(cluster.zone, "grove");
   assert.ok(Number.isFinite(cluster.coreX) && Number.isFinite(cluster.coreZ), "cluster exposes its deterministic core");
   assert.ok(cluster.radius > 0, "cluster exposes its influence radius");
-  assert.ok(cluster.density > 0, "cluster exposes deterministic core density");
+  assert.equal(cluster.zoneGroups.length, 1, "a single-zone bucket resolves one zone group");
+  assert.equal(cluster.zoneGroups[0].zone, "grove");
+  assert.equal(cluster.zoneGroups[0].cellIds.length, 9);
+  assert.ok(cluster.zoneGroups[0].density > 0, "zone group exposes deterministic core density");
 
   const placedCellIds = new Set(plan.trees.map((tree) => tree.cellId));
   assert.ok([...placedCellIds].every((id) => cluster.cellIds.includes(id)), "cluster trees stay within the shared cluster cells");
@@ -122,11 +132,12 @@ test("meadow stays open at ground level while gaining richer low vegetation", ()
   };
   const plan = createMagicLondonVegetationPlan(input);
   const cluster = plan.clusters[0];
+  const meadowGroup = cluster.zoneGroups.find((group) => group.zone === "meadow");
 
   assert.equal(cluster.cellIds.length, 9);
   assert.ok(plan.grassTufts.length >= meadowCells.length, "meadow is richer with grass at ground level");
   assert.ok(plan.flowers.length > 0, "meadow includes sparse flower scatter");
-  assert.ok(cluster.treeCount <= 1, "meadow edge trees stay rare so the meadow reads open");
+  assert.ok(meadowGroup.treeCount <= 1, "meadow edge trees stay rare so the meadow reads open");
 });
 
 test("woodland supports a dominant-to-small tree hierarchy within a group", () => {
@@ -144,12 +155,13 @@ test("woodland supports a dominant-to-small tree hierarchy within a group", () =
   };
   const plan = createMagicLondonVegetationPlan(input);
   const cluster = plan.clusters[0];
+  const woodlandGroup = cluster.zoneGroups.find((group) => group.zone === "woodland");
 
-  assert.equal(cluster.zone, "woodland");
-  assert.ok(cluster.treeCount >= 2, "woodland groups should compose multiple trees");
-  const scales = cluster.ranked.map((tree) => tree.scale);
-  assert.ok(cluster.ranked.some((tree) => tree.sizeClass === "dominant"), "woodland group includes a dominant tree");
-  assert.ok(cluster.ranked.some((tree) => tree.sizeClass === "small"), "woodland group includes supporting small trees");
+  assert.equal(woodlandGroup.zone, "woodland");
+  assert.ok(woodlandGroup.treeCount >= 2, "woodland groups should compose multiple trees");
+  const scales = woodlandGroup.ranked.map((tree) => tree.scale);
+  assert.ok(woodlandGroup.ranked.some((tree) => tree.sizeClass === "dominant"), "woodland group includes a dominant tree");
+  assert.ok(woodlandGroup.ranked.some((tree) => tree.sizeClass === "small"), "woodland group includes supporting small trees");
   assert.ok((Math.max(...scales) / Math.min(...scales)) > 1.25, "tree scale hierarchy is clearly composed, not uniform");
 });
 
@@ -173,11 +185,53 @@ test("woodland reads denser than grove on equivalent cluster density", () => {
     reservedCellIds: new Set()
   };
   const plan = createMagicLondonVegetationPlan(input);
-  const grove = plan.clusters.find((cluster) => cluster.zone === "grove");
-  const woodland = plan.clusters.find((cluster) => cluster.zone === "woodland");
+  const grove = findZoneGroup(plan, "grove");
+  const woodland = findZoneGroup(plan, "woodland");
 
   assert.ok(grove && woodland, "both zones should resolve compact clusters");
   assert.ok(woodland.treeCount > grove.treeCount, "woodland should out-densify grove given comparable spacing");
+});
+
+test("a mixed-zone cluster applies each zone's own density rule without cross-contamination", () => {
+  const cells = [
+    cell("meadow-0-0", 0, 0, "meadow"),
+    cell("meadow-1-0", 1, 0, "meadow"),
+    cell("meadow-2-0", 2, 0, "meadow"),
+    cell("woodland-0-1", 0, 1, "woodland"),
+    cell("woodland-1-1", 1, 1, "woodland"),
+    cell("woodland-2-1", 2, 1, "woodland"),
+    cell("meadow-0-2", 0, 2, "meadow"),
+    cell("meadow-1-2", 1, 2, "meadow"),
+    cell("meadow-2-2", 2, 2, "meadow")
+  ];
+  const input = {
+    params: { seed: "mixed-zone-test" },
+    grid: makeGrid(cells),
+    cityState: stateFor(cells),
+    reservedCellIds: new Set()
+  };
+  const plan = createMagicLondonVegetationPlan(input);
+  const cluster = plan.clusters[0];
+
+  const meadowGroup = cluster.zoneGroups.find((group) => group.zone === "meadow");
+  const woodlandGroup = cluster.zoneGroups.find((group) => group.zone === "woodland");
+  assert.ok(meadowGroup && woodlandGroup, "the mixed bucket should resolve separate zone groups");
+  assert.ok(cluster.cellIds.length === 9, "every open cell remains part of the shared cluster");
+
+  assert.ok(meadowGroup.treeCount <= 1, "meadow cells must not inherit woodland/grove high-density tree rules");
+  assert.ok(woodlandGroup.treeCount >= meadowGroup.treeCount, "woodland must not be diluted by meadow");
+  assert.ok(woodlandGroup.treeCount >= 2, "woodland keeps a composed multi-tree group");
+
+  const meadowTreeCells = new Set(meadowGroup.ranked.map((tree) => tree.cellId));
+  const woodlandTreeCells = new Set(woodlandGroup.ranked.map((tree) => tree.cellId));
+  const meadowCellIds = new Set(cells.filter((entry) => entry.ground.vegetation === "meadow").map((entry) => entry.id));
+  const woodlandCellIds = new Set(cells.filter((entry) => entry.ground.vegetation === "woodland").map((entry) => entry.id));
+  assert.ok([...woodlandTreeCells].every((id) => woodlandCellIds.has(id)), "woodland trees never land on meadow cells");
+  assert.ok([...meadowTreeCells].every((id) => meadowCellIds.has(id)), "meadow trees never land on woodland cells");
+
+  const scales = woodlandGroup.ranked.map((tree) => tree.scale);
+  assert.ok(woodlandGroup.ranked.some((tree) => tree.sizeClass === "dominant"), "woodland hierarchy is preserved within a mixed bucket");
+  assert.ok((Math.max(...scales) / Math.min(...scales)) > 1.25, "woodland scale hierarchy is not diluted by meadow");
 });
 
 test("supports the broadleaf species and forest-floor contracts without new assets", () => {
