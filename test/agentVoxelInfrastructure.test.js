@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import { createAgentAcceptanceCity } from "../src/generators/agentAcceptanceCity.js";
-import { createAgentVoxelRoadLayer, selectVictorianBridgeStyle } from "../src/generators/agentVoxelInfrastructure.js";
+import { createAgentVoxelRoadLayer, createAgentVoxelVegetationPlan, selectVictorianBridgeStyle } from "../src/generators/agentVoxelInfrastructure.js";
 import {
   VOXEL_SHADOW_ONLY_LAYER,
   configureVoxelShadowOnlyLayer
@@ -25,9 +25,16 @@ test("Agent acceptance city renders roads and vegetation entirely as voxel geome
   assert.ok(diagnostics.roadRenderer.bridgeSpans.every((span) => span.railings && span.abutments));
   assert.ok(diagnostics.roadRenderer.bridgeSpans.every((span) => span.spanWorldUnits === span.cellCount * 4));
   assert.ok(diagnostics.roadRenderer.renderStats.renderedTriangles > 0);
-  assert.equal(diagnostics.vegetation.renderer, "state-aware-voxel-vegetation-v1");
+  assert.equal(diagnostics.vegetation.renderer, "state-aware-voxel-vegetation-v2-composition");
   assert.equal(diagnostics.vegetation.clearsRoadsAndEntrances, true);
   assert.ok(diagnostics.vegetation.trees > 0);
+  assert.ok(diagnostics.vegetation.clusters > 0, "runtime vegetation should resolve cross-cell clusters");
+  assert.ok(diagnostics.vegetation.clusterGroups > 0);
+  assert.ok(diagnostics.vegetation.vegetatedCells > 0);
+  assert.ok(diagnostics.vegetation.biomeCounts.woodland > 0);
+  assert.ok(diagnostics.vegetation.tierCounts.dominant > 0 && diagnostics.vegetation.tierCounts.small > 0, "tree scale tiers must be represented");
+  assert.ok(Object.keys(diagnostics.vegetation.archetypeCounts).length >= 3, "multiple tree silhouettes must be reachable");
+  assert.ok(diagnostics.vegetation.archetypeCounts.vase >= 0);
   assert.ok(diagnostics.vegetation.renderStats.renderedTriangles > 0);
   assert.equal(diagnostics.projection.type, "spherical-local-frame");
   assert.equal(diagnostics.projection.radius, 220);
@@ -170,3 +177,122 @@ test("bridge geometry grades and scales as a single span across different river 
     assert.ok(layer.userData.contract.renderStats.renderedTriangles > 0);
   }
 });
+
+function agentCell(id, column, row, options = {}) {
+  const strict = options.strict !== false;
+  return {
+    id,
+    column,
+    row,
+    center: { x: column * 4, z: row * 4 },
+    buildable: strict,
+    strictBuildable: strict,
+    bridgeRequired: !strict,
+    surface: {
+      kind: strict ? "terrain" : "water",
+      biome: options.biome ?? "meadow",
+      maxElevationVoxels: 2,
+      minElevationVoxels: 2,
+      waterVoxels: strict ? 0 : 16,
+      shoreVoxels: 0
+    },
+    occupancy: options.occupancy ? "building" : undefined,
+    infrastructure: options.infrastructure ? "road" : undefined,
+    reservation: options.reservation ? "reserved" : undefined
+  };
+}
+
+function agentWorld(columns, rows, options = {}) {
+  const cells = [];
+  for (let row = 0; row < rows; row += 1) {
+    for (let column = 0; column < columns; column += 1) {
+      classifyAgentCell(cells, column, row, columns, rows, options);
+    }
+  }
+  const state = {
+    cells: Object.fromEntries(cells.map((cell) => [cell.id, cell])),
+    infrastructure: {},
+    world: { grid: { columns, rows, cellWorldSize: 4 } }
+  };
+  return { state, grid: { columns, rows, cellWorldSize: 4, cells } };
+}
+
+function classifyAgentCell(cells, column, row, columns, rows, options) {
+  const isWoodland = options.woodland && options.woodland.some(([c, r]) => c === column && r === row);
+  const isHeath = options.heath && options.heath.some(([c, r]) => c === column && r === row);
+  const isBuilding = options.building && options.building.some(([c, r]) => c === column && r === row);
+  const isRoad = options.road && options.road.some(([c, r]) => c === column && r === row);
+  const isWater = options.water && options.water.some(([c, r]) => c === column && r === row);
+  const isReserved = options.reservation && options.reservation.some(([c, r]) => c === column && r === row);
+  cells.push(agentCell(`cell-${column}-${row}`, column, row, {
+    strict: !isWater,
+    biome: isWoodland ? "woodland" : isHeath ? "heath" : "meadow",
+    occupancy: isBuilding,
+    infrastructure: isRoad,
+    reservation: isReserved
+  }));
+}
+
+test("runtime vegetation composition is deterministic for the same state and seed", () => {
+  const { state, grid } = agentWorld(14, 12, { woodland: [[4, 4], [5, 4], [6, 4], [4, 5], [5, 5], [6, 5]] });
+  const first = createAgentVoxelVegetationPlan({ state, grid, seed: "determinism-agent" });
+  const second = createAgentVoxelVegetationPlan({ state, grid, seed: "determinism-agent" });
+  assert.deepEqual(first, second, "the same state + seed must reproduce the same vegetation plan");
+});
+
+test("runtime vegetation preserves biome hierarchy without leaking across biome cells", () => {
+  const woodland = [[0, 1], [1, 1], [2, 1]];
+  const meadow = [[0, 0], [1, 0], [2, 0]];
+  const heath = [[0, 2], [1, 2], [2, 2]];
+  const { state, grid } = agentWorld(4, 4, { woodland, heath });
+  const plan = createAgentVoxelVegetationPlan({ state, grid, seed: "biome-hierarchy" });
+  const cluster = plan.clusters[0];
+  const woodlandGroup = cluster.zoneGroups.find((group) => group.biome === "woodland");
+  const meadowGroup = cluster.zoneGroups.find((group) => group.biome === "meadow");
+  const heathGroup = cluster.zoneGroups.find((group) => group.biome === "heath");
+
+  assert.ok(woodlandGroup && meadowGroup && heathGroup, "the mixed biome bucket should resolve separate zone groups");
+  assert.ok(woodlandGroup.treeCount >= 2, "woodland should compose a multi-tree group");
+  assert.ok(woodlandGroup.treeCount > (heathGroup.treeCount ?? 0), "woodland should out-densify heath");
+  assert.ok(meadowGroup.treeCount <= 1, "meadow cells must not inherit woodland/grove tree density rules");
+
+  const woodlandCells = new Set(woodland.map(([c, r]) => `cell-${c}-${r}`));
+  const heathCells = new Set(heath.map(([c, r]) => `cell-${c}-${r}`));
+  const meadowCells = new Set(meadow.map(([c, r]) => `cell-${c}-${r}`));
+  assert.ok(woodlandGroup.ranked.every((tree) => woodlandCells.has(tree.cellId)), "woodland trees never land on meadow/heath cells");
+  assert.ok(heathGroup.ranked.every((tree) => heathCells.has(tree.cellId)), "heath trees stay on heath cells");
+  assert.ok(meadowGroup.ranked.every((tree) => meadowCells.has(tree.cellId)), "meadow trees (if any) stay on meadow cells");
+  const scales = woodlandGroup.ranked.map((tree) => tree.scale);
+  assert.ok((Math.max(...scales) / Math.min(...scales)) > 1.1, "woodland group keeps a dominant-to-small scale hierarchy");
+});
+
+test("meadow trees are rare but reachable and cluster-aware", () => {
+  const { state, grid } = agentWorld(16, 16);
+  const plan = createAgentVoxelVegetationPlan({ state, grid, seed: "meadow-rare" });
+  const meadowCells = grid.cells.filter((cell) => cell.strictBuildable && cell.surface.biome === "meadow").length;
+  const meadowTrees = plan.trees.filter((tree) => tree.biome === "meadow").length;
+  assert.equal(plan.zoneCounts.meadow, meadowCells, "the whole open-world loads as vegetated meadow");
+  assert.ok(meadowTrees >= 1, "occasional isolated meadow trees remain reachable");
+  assert.ok(meadowTrees <= meadowCells * 0.2, "meadow stays mostly open rather than becoming tree-filled");
+  const meadowGroupCounts = plan.clusters.flatMap((cluster) => cluster.zoneGroups.filter((group) => group.biome === "meadow").map((group) => group.treeCount));
+  assert.ok(meadowGroupCounts.every((count) => count <= 1), "meadow trees are cluster-aware (0-1 per group), never dense");
+});
+
+test("runtime vegetation stays out of construction, roads, reservations, and non-buildable cells", () => {
+  const { state, grid } = agentWorld(18, 14, {
+    building: [[8, 6]],
+    road: [[6, 5], [7, 5], [8, 5], [9, 5], [10, 5]],
+    water: [[12, 7], [13, 7]],
+    reservation: [[4, 8]]
+  });
+  const plan = createAgentVoxelVegetationPlan({ state, grid, seed: "exclusion-agent" });
+  const occupiedIds = new Set([`cell-8-6`, `cell-6-5`, `cell-7-5`, `cell-8-5`, `cell-9-5`, `cell-10-5`, `cell-12-7`, `cell-13-7`, `cell-4-8`]);
+  const placed = [...plan.trees, ...plan.shrubs];
+  assert.ok(!placed.some((entry) => occupiedIds.has(entry.cellId)), "procedural vegetation must not enter occupied, road, water, or reserved cells");
+  assert.ok(!placed.some((entry) => { const match = /^cell-(\d+)-(\d+)$/.exec(entry.cellId); if (!match) return false; const [c, r] = [Number(match[1]), Number(match[2])]; return Math.abs(c - 8) <= 1 && Math.abs(r - 6) <= 1; }), "vegetation must respect the safety margin around construction");
+  assert.ok(buildableCount(grid) > placed.length, "vegetation leaves negative-space breathing room");
+});
+
+function buildableCount(grid) {
+  return grid.cells.filter((cell) => cell.strictBuildable && (cell.surface?.biome === "meadow" || cell.surface?.biome === "heath" || cell.surface?.biome === "woodland")).length;
+}

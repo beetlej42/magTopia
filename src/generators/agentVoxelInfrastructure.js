@@ -5,7 +5,7 @@ import {
   agentNorthIsPositiveWorldZ,
   deriveCardinalRoadPorts
 } from "../city/road-topology.js";
-import { createRng } from "../utils/random.js";
+import { createRng, randRange } from "../utils/random.js";
 import { VoxelInstanceBuffer, VOXEL_SIZE, VOXEL_WRITE_PRIORITIES } from "./voxelBuildingLab.js";
 import { addSharedVoxelRoadTile, classifyVoxelRoadTopology } from "./voxelIntentDistrict.js";
 
@@ -397,10 +397,7 @@ function addOrientedLine(buffer, axis, material, alongA, yA, cross, alongB, yB, 
   }
 }
 
-export function createAgentVoxelVegetationLayer({ state, grid, seed = "agent-vegetation" }) {
-  const group = new THREE.Group();
-  group.name = "AgentVoxelVegetation";
-  const buffer = new VoxelInstanceBuffer(`${seed}:voxel-vegetation`);
+export function createAgentVoxelVegetationPlan({ state, grid, seed = "agent-vegetation" }) {
   const blocked = new Set();
   const occupied = [];
   Object.values(state.cells).forEach((cell) => {
@@ -409,7 +406,6 @@ export function createAgentVoxelVegetationLayer({ state, grid, seed = "agent-veg
       occupied.push(cell);
     }
   });
-
   // Leave a one-cell visual safety margin around construction and roads so the
   // foliage never obscures an entrance or makes a connected road look blocked.
   occupied.forEach((cell) => {
@@ -418,39 +414,153 @@ export function createAgentVoxelVegetationLayer({ state, grid, seed = "agent-veg
     }
   });
 
-  const counts = { trees: 0, shrubs: 0, flowers: 0 };
-  grid.cells.forEach((cell, index) => {
-    if (blocked.has(cell.id) || !cell.strictBuildable) return;
-    const rng = createRng(`${seed}:${cell.id}`);
-    const biome = cell.surface?.biome ?? "meadow";
-    const treeChance = biome === "woodland" ? 0.12 : biome === "heath" ? 0.055 : 0.035;
-    const shrubChance = biome === "heath" ? 0.12 : 0.07;
-    const roll = rng();
-    const groundY = Number(cell.surface?.maxElevationVoxels ?? 0) + 1;
-    const centerX = Math.round(cell.center.x / VOXEL_SIZE) + Math.floor((rng() - 0.5) * 12);
-    const centerZ = Math.round(cell.center.z / VOXEL_SIZE) + Math.floor((rng() - 0.5) * 12);
-    const write = { priority: VOXEL_WRITE_PRIORITIES.decoration, owner: cell.id };
+  const cellWorldSize = Number(grid.cellWorldSize ?? 4);
+  const clusterRecords = new Map();
+  const recordFor = (clusterColumn, clusterRow) => {
+    const key = `${clusterColumn}:${clusterRow}`;
+    let record = clusterRecords.get(key);
+    if (!record) {
+      const rng = createRng(`${seed}:voxel-vegetation-cluster:${key}`);
+      const inset = 0.15;
+      const span = CLUSTER_SIZE - inset * 2;
+      record = {
+        id: key,
+        clusterColumn,
+        clusterRow,
+        coreAnchored: { column: clusterColumn * CLUSTER_SIZE + (inset + rng() * span), row: clusterRow * CLUSTER_SIZE + (inset + rng() * span) },
+        sparse: rng() < SPARSE_POCKET_FRACTION,
+        radius: CLUSTER_SIZE * cellWorldSize * CLUSTER_RADIUS_FRACTION,
+        falloff: CLUSTER_FALLOFF,
+        entries: []
+      };
+      clusterRecords.set(key, record);
+    }
+    return record;
+  };
+  const worldAnchorForCell = (cell, record) => ({
+    x: cell.center.x + (record.coreAnchored.column - cell.column) * cellWorldSize,
+    z: cell.center.z + (record.coreAnchored.row - cell.row) * cellWorldSize
+  });
+  const densityFor = (cell) => {
+    const clusterColumn = Math.floor(cell.column / CLUSTER_SIZE);
+    const clusterRow = Math.floor(cell.row / CLUSTER_SIZE);
+    let best = 0;
+    for (let rowOffset = -1; rowOffset <= 1; rowOffset += 1) {
+      for (let columnOffset = -1; columnOffset <= 1; columnOffset += 1) {
+        const record = recordFor(clusterColumn + columnOffset, clusterRow + rowOffset);
+        const anchor = worldAnchorForCell(cell, record);
+        const distance = Math.hypot(cell.center.x - anchor.x, cell.center.z - anchor.z);
+        let factor = 1 - distance / record.radius;
+        if (factor < 0) factor = 0;
+        factor = Math.pow(factor, record.falloff);
+        if (record.sparse) factor *= SPARSE_POCKET_DENSITY;
+        if (factor > best) best = factor;
+      }
+    }
+    return best;
+  };
 
-    if (roll < treeChance) {
-      addTree(buffer, centerX, groundY, centerZ, rng, index, write, biome === "woodland");
-      counts.trees += 1;
+  const plan = {
+    trees: [],
+    shrubs: [],
+    clusters: [],
+    zoneCounts: { meadow: 0, heath: 0, woodland: 0 },
+    vegetatedCells: 0,
+    skippedExcluded: 0
+  };
+
+  grid.cells.forEach((cell) => {
+    if (blocked.has(cell.id) || !cell.strictBuildable) {
+      plan.skippedExcluded += 1;
       return;
     }
-    if (roll < treeChance + shrubChance) {
-      addShrub(buffer, centerX, groundY, centerZ, rng, index, write);
-      counts.shrubs += 1;
-      if (rng() > 0.55) counts.flowers += 1;
+    const biome = cell.surface?.biome ?? "meadow";
+    if (biome !== "meadow" && biome !== "heath" && biome !== "woodland") {
+      plan.skippedExcluded += 1;
+      return;
     }
+    plan.zoneCounts[biome] += 1;
+    plan.vegetatedCells += 1;
+    const record = recordFor(Math.floor(cell.column / CLUSTER_SIZE), Math.floor(cell.row / CLUSTER_SIZE));
+    const density = densityFor(cell);
+    record.entries.push({ cellId: cell.id, cell, biome, density });
+    addAgentLowVeg(plan, cell, biome, density, seed);
+  });
+
+  clusterRecords.forEach((record) => {
+    if (!record.entries.length) return;
+    const ordered = record.entries.slice().sort((a, b) => {
+      const anchorA = worldAnchorForCell(a.cell, record);
+      const anchorB = worldAnchorForCell(b.cell, record);
+      const distanceA = Math.hypot(a.cell.center.x - anchorA.x, a.cell.center.z - anchorA.z);
+      const distanceB = Math.hypot(b.cell.center.x - anchorB.x, b.cell.center.z - anchorB.z);
+      return distanceA - distanceB || (a.cellId < b.cellId ? -1 : a.cellId > b.cellId ? 1 : 0);
+    });
+    const anchor = worldAnchorForCell(ordered[0].cell, record);
+    const byBiome = new Map();
+    ordered.forEach((entry) => {
+      if (!byBiome.has(entry.biome)) byBiome.set(entry.biome, []);
+      byBiome.get(entry.biome).push(entry);
+    });
+    const groups = [...byBiome.entries()].sort((left, right) => (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0));
+    const hasWoodland = groups.some(([biome]) => biome === "woodland");
+    const zoneGroups = groups.map(([biome, entries]) => generateAgentTreeGroup(plan, record, anchor, biome, entries, seed, hasWoodland));
+    plan.clusters.push({
+      id: record.id,
+      coreX: anchor.x,
+      coreZ: anchor.z,
+      coreColumn: record.coreAnchored.column - record.clusterColumn * CLUSTER_SIZE,
+      coreRow: record.coreAnchored.row - record.clusterRow * CLUSTER_SIZE,
+      radius: record.radius,
+      sparse: record.sparse,
+      cellIds: ordered.map((entry) => entry.cellId),
+      zoneGroups
+    });
+  });
+
+  return plan;
+}
+
+export function createAgentVoxelVegetationLayer({ state, grid, seed = "agent-vegetation" }) {
+  const group = new THREE.Group();
+  group.name = "AgentVoxelVegetation";
+  const buffer = new VoxelInstanceBuffer(`${seed}:voxel-vegetation`);
+  const plan = createAgentVoxelVegetationPlan({ state, grid, seed });
+  const archetypeCounts = {};
+  const tierCounts = { dominant: 0, medium: 0, small: 0 };
+
+  plan.trees.forEach((tree) => {
+    const write = { priority: VOXEL_WRITE_PRIORITIES.decoration, owner: tree.cellId };
+    addVoxelTreeVariant(buffer, tree.x, tree.y, tree.z, tree.archetype, tree.scale, tree.shade, write);
+    archetypeCounts[tree.archetype] = (archetypeCounts[tree.archetype] ?? 0) + 1;
+    tierCounts[tree.sizeClass] = (tierCounts[tree.sizeClass] ?? 0) + 1;
+  });
+
+  let flowers = 0;
+  plan.shrubs.forEach((shrub) => {
+    const write = { priority: VOXEL_WRITE_PRIORITIES.decoration, owner: shrub.cellId };
+    addVoxelShrub(buffer, shrub.x, shrub.y, shrub.z, shrub.shade, write, shrub.blossom);
+    if (shrub.blossom) flowers += 1;
   });
 
   const meshes = buffer.createMeshes({ strategy: "greedy", chunkSizeVoxels: 128, maxMergeSpanVoxels: 8 });
   meshes.forEach((mesh) => group.add(mesh));
   group.userData.contract = {
-    renderer: "state-aware-voxel-vegetation-v1",
-    ...counts,
+    renderer: "state-aware-voxel-vegetation-v2-composition",
+    clusters: plan.clusters.length,
+    clusterGroups: plan.clusters.reduce((total, cluster) => total + cluster.zoneGroups.length, 0),
+    vegetatedCells: plan.vegetatedCells,
+    biomeCounts: plan.zoneCounts,
+    trees: plan.trees.length,
+    shrubs: plan.shrubs.length,
+    flowers,
+    tierCounts,
+    archetypeCounts,
+    clearsRoadsAndEntrances: true,
     voxelCount: buffer.occupiedVoxelCount,
     renderStats: buffer.renderStats,
-    clearsRoadsAndEntrances: true
+    exclusionRule: "Buildings, roads, infrastructure, reservations, non-buildable cells, and a one-cell safety margin suppress procedural vegetation.",
+    compositionRule: "Deterministic cross-cell clusters with a radial density field, per-biome density hierarchy, and dominant/medium/small tree tiers."
   };
   group.userData.updateDaylight = () => {};
   group.userData.updateView = (camera) => {
@@ -466,22 +576,153 @@ export function createAgentVoxelVegetationLayer({ state, grid, seed = "agent-veg
   return group;
 }
 
-function addTree(buffer, x, groundY, z, rng, shade, write, broadCrown) {
-  const height = 9 + Math.floor(rng() * 6);
-  buffer.addBox("timber", x, groundY, z, 2, height, 2, shade, write);
-  const crownY = groundY + height - 2;
-  const radius = broadCrown ? 4 : 3;
-  buffer.addBox("foliageDark", x - radius, crownY, z - radius, radius * 2 + 2, 4, radius * 2 + 2, shade + 1, write);
-  buffer.addBox("foliage", x - radius + 1, crownY + 4, z - radius + 1, radius * 2, 3, radius * 2, shade + 2, write);
-  buffer.addBox("foliageLight", x - 1, crownY + 7, z - 1, 4, 2, 4, shade + 3, write);
+function generateAgentTreeGroup(plan, record, anchor, biome, entries, seed, edge = false) {
+  const density = Math.max(...entries.map((entry) => entry.density));
+  const rng = createRng(`${seed}:voxel-vegetation-trees:${record.id}:${biome}`);
+  const count = agentTreeCountFor(biome, density, rng, edge);
+  const shadeBase = Math.floor(randRange(rng, 0, 60));
+  const anchorX = anchor.x / VOXEL_SIZE;
+  const anchorZ = anchor.z / VOXEL_SIZE;
+  const ranked = [];
+  for (let index = 0; index < count; index += 1) {
+    const host = weightedAgentHost(entries, rng);
+    const rankFactor = count <= 1 ? 1 : 1 - index / (count - 1);
+    const scale = lerp(0.78, 1.25, rankFactor) + randRange(rng, -0.04, 0.04);
+    const sizeClass = scale > 1.06 ? "dominant" : scale < 0.94 ? "small" : "medium";
+    const archetype = pickArchetype(rng);
+    const centerX = host.cell.center.x / VOXEL_SIZE;
+    const centerZ = host.cell.center.z / VOXEL_SIZE;
+    const pull = 0.35 + 0.4 * host.density;
+    const bound = CELL_VOXELS / 2 - 4;
+    const treeX = clamp(centerX + (anchorX - centerX) * pull * 0.5 + randRange(rng, -9, 9), centerX - bound, centerX + bound);
+    const treeZ = clamp(centerZ + (anchorZ - centerZ) * pull * 0.5 + randRange(rng, -9, 9), centerZ - bound, centerZ + bound);
+    const treeY = Number(host.cell.surface?.maxElevationVoxels ?? 0) + 1;
+    const tree = {
+      cellId: host.cellId,
+      biome: host.biome,
+      x: treeX,
+      y: treeY,
+      z: treeZ,
+      archetype,
+      scale,
+      sizeClass,
+      shade: shadeBase + index * 3
+    };
+    plan.trees.push(tree);
+    ranked.push(tree);
+  }
+  return { biome, density, treeCount: count, cellIds: entries.map((entry) => entry.cellId), ranked };
 }
 
-function addShrub(buffer, x, groundY, z, rng, shade, write) {
+function addAgentLowVeg(plan, cell, biome, density, seed) {
+  const rng = createRng(`${seed}:agent-vegetation-lowveg:${cell.id}`);
+  if (biome === "meadow") {
+    if (density > 0.45 && rng() < 0.3) plan.shrubs.push(makeAgentShrub(cell, rng, true));
+    if (rng() < 0.35) plan.shrubs.push(makeAgentShrub(cell, rng, rgbBlossom(rng)));
+    return;
+  }
+  if (biome === "heath") {
+    const count = 1 + Math.round(lerp(0, 4, density));
+    for (let index = 0; index < count; index += 1) plan.shrubs.push(makeAgentShrub(cell, rng, index === 0));
+    return;
+  }
+  const count = Math.max(2, Math.round(lerp(3, 6, density)));
+  for (let index = 0; index < count; index += 1) plan.shrubs.push(makeAgentShrub(cell, rng, false));
+}
+
+function makeAgentShrub(cell, rng, blossom) {
+  const centerX = cell.center.x / VOXEL_SIZE;
+  const centerZ = cell.center.z / VOXEL_SIZE;
+  return {
+    cellId: cell.id,
+    x: centerX + Math.round(randRange(rng, -11, 11)),
+    y: Number(cell.surface?.maxElevationVoxels ?? 0) + 1,
+    z: centerZ + Math.round(randRange(rng, -11, 11)),
+    shade: Math.floor(randRange(rng, 0, 40)),
+    blossom
+  };
+}
+
+function rgbBlossom(rng) {
+  return rng() > 0.5;
+}
+
+function weightedAgentHost(entries, rng) {
+  const total = entries.reduce((sum, entry) => sum + Math.max(0.05, entry.density), 0);
+  let cursor = rng() * total;
+  for (const entry of entries) {
+    cursor -= Math.max(0.05, entry.density);
+    if (cursor <= 0) return entry;
+  }
+  return entries[entries.length - 1];
+}
+
+function agentTreeCountFor(biome, density, rng, edge = false) {
+  if (biome === "woodland") return Math.round(lerp(2, 7, density)) + (rng() < 0.4 ? 1 : 0);
+  if (biome === "heath") return Math.round(lerp(0, 1, density));
+  if ((edge || density > 0.55) && rng() < 0.5) return 1;
+  return 0;
+}
+
+function pickArchetype(rng) {
+  return TREE_ARCHETYPES[Math.floor(rng() * TREE_ARCHETYPES.length) % TREE_ARCHETYPES.length];
+}
+
+function addVoxelTreeVariant(buffer, x, groundY, z, archetype, scale, shade, write) {
+  const spec = TREE_ARCHETYPE_SPECS[archetype] ?? TREE_ARCHETYPE_SPECS.round;
+  const trunkWidth = Math.max(2, Math.round(3 * scale));
+  const trunkHeight = Math.round(spec.trunkHeight * scale);
+  buffer.addBox("timber", x - 1, groundY, z - 1, trunkWidth, trunkHeight, trunkWidth, shade, write);
+  const crownBaseY = groundY + trunkHeight - Math.round(2 * scale);
+  spec.crown.forEach((lobe, index) => {
+    const width = Math.max(1, Math.round(lobe.width * scale));
+    const height = Math.max(1, Math.round(lobe.height * scale));
+    const depth = Math.max(1, Math.round(lobe.depth * scale));
+    const lift = Math.round((lobe.lift ?? 0) * scale);
+    buffer.addBox(lobe.material, x - Math.floor(width / 2), crownBaseY + lift + index * Math.max(0, Math.round(2 * scale)), z - Math.floor(depth / 2), width, height, depth, shade + index + 1, write);
+  });
+}
+
+function addVoxelShrub(buffer, x, groundY, z, shade, write, blossom) {
   buffer.addBox("foliageDark", x - 2, groundY, z - 1, 5, 2, 4, shade, write);
   buffer.addBox("foliage", x - 1, groundY + 2, z, 3, 2, 2, shade + 1, write);
-  if (rng() > 0.55) {
-    const blossom = rng() > 0.5 ? "blossomPink" : "blossomGold";
-    buffer.addVoxel(blossom, x - 1, groundY + 4, z, shade + 2, write);
-    buffer.addVoxel(blossom, x + 1, groundY + 4, z + 1, shade + 3, write);
+  if (blossom) {
+    buffer.addVoxel("blossomPink", x - 1, groundY + 4, z, shade + 2, write);
+    buffer.addVoxel("blossomGold", x + 1, groundY + 4, z + 1, shade + 3, write);
   }
+}
+
+const CLUSTER_SIZE = 3;
+const CLUSTER_RADIUS_FRACTION = 0.62;
+const CLUSTER_FALLOFF = 1.4;
+const SPARSE_POCKET_FRACTION = 0.22;
+const SPARSE_POCKET_DENSITY = 0.3;
+const TREE_ARCHETYPES = ["broad", "round", "tall", "vase"];
+const TREE_ARCHETYPE_SPECS = {
+  broad: { trunkHeight: 8, crown: [
+    { material: "foliageDark", width: 9, height: 4, depth: 9, lift: 0 },
+    { material: "foliage", width: 7, height: 3, depth: 7, lift: 4 },
+    { material: "foliageLight", width: 4, height: 2, depth: 4, lift: 7 }
+  ] },
+  round: { trunkHeight: 9, crown: [
+    { material: "foliageDark", width: 7, height: 5, depth: 7, lift: 0 },
+    { material: "foliageLight", width: 4, height: 2, depth: 4, lift: 4 }
+  ] },
+  tall: { trunkHeight: 14, crown: [
+    { material: "foliage", width: 5, height: 6, depth: 5, lift: 0 },
+    { material: "foliageLight", width: 3, height: 2, depth: 3, lift: 6 }
+  ] },
+  vase: { trunkHeight: 12, crown: [
+    { material: "foliageDark", width: 9, height: 3, depth: 9, lift: -3 },
+    { material: "foliage", width: 7, height: 2, depth: 7, lift: 1 },
+    { material: "foliageLight", width: 4, height: 2, depth: 4, lift: 4 }
+  ] }
+};
+
+function lerp(a, b, ratio) {
+  return a + (b - a) * ratio;
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
