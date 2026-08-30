@@ -604,6 +604,12 @@ export function createAgentVoxelVegetationLayer({ state, grid, seed = "agent-veg
     templateCounts,
     treeFamilies: Object.keys(archetypeCounts).sort(),
     treeMeshCount: treeMeshes.length,
+    storeyVoxels: TREE_STOREY_VOXELS,
+    heightBands: {
+      small: [Math.round(1.5 * TREE_STOREY_VOXELS) - 4, Math.round(2 * TREE_STOREY_VOXELS) + 4],
+      regular: [Math.round(2 * TREE_STOREY_VOXELS), Math.round(3 * TREE_STOREY_VOXELS) + 2],
+      dominant: [Math.round(3.4 * TREE_STOREY_VOXELS) - 1, Math.round(4.6 * TREE_STOREY_VOXELS)]
+    },
     templates: TEMPLATE_IDS.map((templateId) => {
       const spec = TREE_TEMPLATES[templateId];
       const widths = spec.mounds.map((mound) => mound.w);
@@ -660,7 +666,7 @@ function generateAgentTreeGroup(plan, record, anchor, biome, entries, seed, edge
     const family = pickFamily(rng);
     const templateId = pickTemplate(rng, family);
     const sizeClass = assignTier(rng);
-    const scale = TIER_BASE_SCALE[sizeClass] + randRange(rng, -0.06, 0.06);
+    const scale = TIER_BASE_SCALE[sizeClass] + randRange(rng, -0.05, 0.05);
     const centerX = host.cell.center.x / VOXEL_SIZE;
     const centerZ = host.cell.center.z / VOXEL_SIZE;
     const pull = 0.35 + 0.4 * host.density;
@@ -799,8 +805,8 @@ function buildTreeGeometry(templateId) {
     const len = branch.len;
     const y = branch.y;
     const dir = branch.dir ?? 1;
-    if (branch.axis === "x") boxes.push(treeBox(dir * (spec.trunkWidth / 2 + len / 2), y, 0, len, thickness, 3, TREE_MATERIAL_COLORS.foliageDark));
-    else boxes.push(treeBox(0, y, dir * (spec.trunkWidth / 2 + len / 2), 3, thickness, len, TREE_MATERIAL_COLORS.foliageDark));
+    if (branch.axis === "x") boxes.push(treeBox(dir * (spec.trunkWidth / 2 + len / 2), y, 0, len, thickness, 3, TREE_MATERIAL_COLORS.timber));
+    else boxes.push(treeBox(0, y, dir * (spec.trunkWidth / 2 + len / 2), 3, thickness, len, TREE_MATERIAL_COLORS.timber));
   });
   spec.mounds.forEach((mound) => addCrownMound(boxes, mound));
   const geometry = mergeGeometries(boxes, false);
@@ -813,14 +819,23 @@ function buildTreeGeometry(templateId) {
 function addCrownMound(boxes, mound) {
   const steps = Math.max(1, mound.steps ?? 2);
   const stepHeight = mound.h / steps;
-  const inset = 2;
   for (let step = 0; step < steps; step += 1) {
-    const width = Math.max(2, mound.w - step * inset * 2);
-    const depth = Math.max(2, mound.d - step * inset * 1.7);
+    const size = Math.max(2, mound.w * moundWidthFactor(step, steps));
+    const depthSize = Math.max(2, mound.d * moundWidthFactor(step, steps));
     const height = Math.max(1, stepHeight);
     const tone = step === 0 ? 0 : step === steps - 1 ? 2 : 1;
-    boxes.push(treeBox(mound.cx, Math.round(mound.baseY + step * stepHeight), mound.cz, Math.round(width), Math.round(height), Math.round(depth), FOLIAGE_TONES[tone]));
+    boxes.push(treeBox(mound.cx, Math.round(mound.baseY + step * stepHeight), mound.cz, Math.round(size), Math.round(height), Math.round(depthSize), FOLIAGE_TONES[tone]));
   }
+}
+
+// A mound is narrower at the bottom, widest around the lower-middle, then
+// narrower toward the top so it reads as a rounded volume rather than a slab.
+function moundWidthFactor(step, steps) {
+  if (steps <= 2) return step === 0 ? 1 : 0.66;
+  const peak = 0.35;
+  const t = step / (steps - 1);
+  const dist = Math.abs(t - peak) / Math.max(peak, 1 - peak);
+  return 0.7 + 0.3 * (1 - dist);
 }
 
 function treeBox(cx, baseY, cz, width, height, depth, hexColor) {
@@ -866,80 +881,76 @@ const FAMILY_TEMPLATE_IDS = {
 };
 // Family share of the population: tall is an uncommon accent family.
 const FAMILY_WEIGHTS = { broad: 0.45, round: 0.4, tall: 0.15 };
-const TIER_BASE_SCALE = { dominant: 1.55, regular: 1, small: 0.72 };
+const TIER_BASE_SCALE = { dominant: 1.62, regular: 1.05, small: 0.75 };
+// Building storey height (voxels) for the street-house scale the city uses.
+const TREE_STOREY_VOXELS = 20;
 const FOLIAGE_TONES = ["#2f4d38", "#55793d", "#7f9c5a"];
 
 // Each template is a family-specific silhouette: a trunk, a handful of coarse
 // branch stubs, and a set of overlapping crown "mounds". Each mound is emitted
-// as a stepped (inset) stack of grid-aligned boxes so crowns taper toward top
+// as a stepped (inset) pair of grid-aligned boxes so crowns taper toward top
 // and outer edges instead of reading as full cuboids.
 const TREE_TEMPLATES = {
   "broad-0": {
     family: "broad", trunkHeight: 15, trunkWidth: 6,
     branches: [{ axis: "x", y: 13, len: 6, dir: 1 }],
     mounds: [
-      { cx: -7, cz: 2, baseY: 11, w: 22, d: 20, h: 12, steps: 3 },
-      { cx: 8, cz: -2, baseY: 12, w: 20, d: 18, h: 11, steps: 2 },
-      { cx: 0, cz: 0, baseY: 13, w: 26, d: 24, h: 15, steps: 3 },
-      { cx: -5, cz: 0, baseY: 27, w: 17, d: 15, h: 10, steps: 2 },
-      { cx: 6, cz: 1, baseY: 28, w: 15, d: 13, h: 9, steps: 2 },
-      { cx: 0, cz: 0, baseY: 37, w: 11, d: 10, h: 8, steps: 2 }
+      { cx: -8, cz: 2, baseY: 12, w: 19, d: 17, h: 10, steps: 2 },
+      { cx: 8, cz: -2, baseY: 13, w: 18, d: 16, h: 9, steps: 2 },
+      { cx: 0, cz: 0, baseY: 12, w: 25, d: 23, h: 14, steps: 3 },
+      { cx: -2, cz: 0, baseY: 25, w: 20, d: 18, h: 12, steps: 2 },
+      { cx: 0, cz: 0, baseY: 35, w: 13, d: 12, h: 9, steps: 2 }
     ]
   },
   "broad-1": {
     family: "broad", trunkHeight: 14, trunkWidth: 5,
     branches: [{ axis: "z", y: 12, len: 6, dir: -1 }],
     mounds: [
-      { cx: -9, cz: -1, baseY: 11, w: 17, d: 15, h: 10, steps: 2 },
-      { cx: 7, cz: 3, baseY: 12, w: 19, d: 17, h: 11, steps: 2 },
-      { cx: 0, cz: 0, baseY: 12, w: 24, d: 22, h: 13, steps: 3 },
-      { cx: 1, cz: 0, baseY: 22, w: 22, d: 20, h: 12, steps: 3 },
-      { cx: -3, cz: 0, baseY: 32, w: 14, d: 13, h: 9, steps: 2 },
-      { cx: 0, cz: 0, baseY: 39, w: 9, d: 9, h: 7, steps: 2 }
+      { cx: -9, cz: -1, baseY: 11, w: 17, d: 15, h: 9, steps: 2 },
+      { cx: 7, cz: 3, baseY: 12, w: 19, d: 17, h: 10, steps: 2 },
+      { cx: 0, cz: 0, baseY: 12, w: 23, d: 21, h: 13, steps: 3 },
+      { cx: 1, cz: 0, baseY: 22, w: 20, d: 18, h: 12, steps: 2 },
+      { cx: -3, cz: 0, baseY: 34, w: 13, d: 12, h: 9, steps: 2 }
     ]
   },
   "round-0": {
     family: "round", trunkHeight: 18, trunkWidth: 4,
-    branches: [{ axis: "x", y: 16, len: 5, dir: 1 }],
+    branches: [],
     mounds: [
-      { cx: 0, cz: 0, baseY: 16, w: 18, d: 17, h: 9, steps: 2 },
-      { cx: -3, cz: 0, baseY: 21, w: 17, d: 16, h: 11, steps: 2 },
-      { cx: 3, cz: 0, baseY: 22, w: 16, d: 16, h: 10, steps: 2 },
-      { cx: 0, cz: 0, baseY: 22, w: 26, d: 24, h: 13, steps: 3 },
-      { cx: -1, cz: 0, baseY: 32, w: 15, d: 14, h: 9, steps: 2 },
-      { cx: 0, cz: 0, baseY: 39, w: 10, d: 9, h: 7, steps: 2 }
+      { cx: 0, cz: 0, baseY: 16, w: 17, d: 16, h: 8, steps: 2 },
+      { cx: -3, cz: 0, baseY: 20, w: 17, d: 16, h: 11, steps: 2 },
+      { cx: 0, cz: 0, baseY: 20, w: 25, d: 23, h: 13, steps: 2 },
+      { cx: 0, cz: 0, baseY: 36, w: 10, d: 9, h: 8, steps: 2 }
     ]
   },
   "round-1": {
     family: "round", trunkHeight: 17, trunkWidth: 4,
-    branches: [{ axis: "z", y: 15, len: 5, dir: 1 }],
+    branches: [],
     mounds: [
-      { cx: 0, cz: 0, baseY: 15, w: 16, d: 16, h: 8, steps: 2 },
-      { cx: -1, cz: 0, baseY: 20, w: 24, d: 22, h: 14, steps: 3 },
-      { cx: 4, cz: 0, baseY: 21, w: 18, d: 18, h: 11, steps: 2 },
-      { cx: -2, cz: 0, baseY: 31, w: 15, d: 14, h: 10, steps: 2 },
-      { cx: 0, cz: 0, baseY: 38, w: 10, d: 9, h: 8, steps: 2 }
+      { cx: 0, cz: 0, baseY: 15, w: 16, d: 15, h: 8, steps: 2 },
+      { cx: -1, cz: 0, baseY: 19, w: 24, d: 22, h: 14, steps: 2 },
+      { cx: -2, cz: 0, baseY: 32, w: 15, d: 14, h: 10, steps: 2 },
+      { cx: 0, cz: 0, baseY: 36, w: 10, d: 9, h: 8, steps: 2 }
     ]
   },
   "tall-0": {
     family: "tall", trunkHeight: 24, trunkWidth: 3,
     branches: [],
     mounds: [
-      { cx: 0, cz: 0, baseY: 22, w: 14, d: 14, h: 11, steps: 2 },
-      { cx: -1, cz: 0, baseY: 31, w: 17, d: 16, h: 12, steps: 3 },
-      { cx: 2, cz: 0, baseY: 32, w: 13, d: 13, h: 10, steps: 2 },
-      { cx: 0, cz: 0, baseY: 41, w: 13, d: 12, h: 10, steps: 2 },
-      { cx: 0, cz: 0, baseY: 49, w: 9, d: 9, h: 8, steps: 2 }
+      { cx: 0, cz: 0, baseY: 22, w: 14, d: 14, h: 10, steps: 2 },
+      { cx: -1, cz: 0, baseY: 30, w: 17, d: 16, h: 11, steps: 2 },
+      { cx: 2, cz: 0, baseY: 40, w: 13, d: 12, h: 9, steps: 2 },
+      { cx: 0, cz: 0, baseY: 45, w: 9, d: 9, h: 7, steps: 2 }
     ]
   },
   "tall-1": {
     family: "tall", trunkHeight: 26, trunkWidth: 3,
     branches: [],
     mounds: [
-      { cx: 0, cz: 0, baseY: 24, w: 13, d: 13, h: 10, steps: 2 },
-      { cx: 1, cz: 0, baseY: 32, w: 18, d: 15, h: 12, steps: 3 },
-      { cx: -1, cz: 0, baseY: 42, w: 12, d: 12, h: 11, steps: 2 },
-      { cx: 0, cz: 0, baseY: 51, w: 9, d: 9, h: 9, steps: 2 }
+      { cx: 0, cz: 0, baseY: 24, w: 13, d: 13, h: 9, steps: 2 },
+      { cx: 1, cz: 0, baseY: 31, w: 18, d: 15, h: 11, steps: 2 },
+      { cx: -1, cz: 0, baseY: 42, w: 12, d: 12, h: 9, steps: 2 },
+      { cx: 0, cz: 0, baseY: 46, w: 8, d: 8, h: 6, steps: 2 }
     ]
   }
 };

@@ -15,13 +15,15 @@ const layer = createAgentVoxelVegetationLayer({ state: scenario.state, grid: sce
 const wallMs = Date.now() - startedAt;
 const c = layer.userData.contract;
 
-// #84 baseline (greedy voxel pipeline on the same fixture), measured from main
-// after #84 merged: source voxels, rendered triangles, and greedy chunk meshes.
+// #85 baseline (instanced-tree architecture on the same fixture), measured on
+// main after #85 merged: ~40.6k rendered triangles, ~58 mesh/draw-call proxy,
+// ~1.3s vegetation build. #86 must stay close to this (it is the intended
+// architecture + performance level), not the older #84 greedy envelope.
 const BASELINE = {
-  postShort81: "84-baseline-greedy-voxel-pipeline",
-  sourceVoxelCount: 228373,
-  renderedTriangles: 102578,
-  meshCount: 167
+  label: "85-baseline-instanced-architecture",
+  renderedTriangles: 40640,
+  meshCount: 58,
+  buildMs: 1300
 };
 
 const trees = c.renderStats.trees;
@@ -59,10 +61,10 @@ const report = {
       baseline: BASELINE.meshCount,
       multiplier: Number((totalDrawCalls / BASELINE.meshCount).toFixed(2))
     },
-    voxelCount: {
-      now: c.voxelCount,
-      baseline: BASELINE.sourceVoxelCount,
-      multiplier: Number((c.voxelCount / BASELINE.sourceVoxelCount).toFixed(2))
+    buildMs: {
+      now: c.perf.buildMs,
+      baseline: BASELINE.buildMs,
+      multiplier: Number((c.perf.buildMs / BASELINE.buildMs).toFixed(2))
     }
   }
 };

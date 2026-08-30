@@ -380,15 +380,20 @@ test("runtime vegetation build stays within the performance acceptance envelope"
   assert.equal(c.renderStats.trees.drawCalls, 6);
   assert.equal(c.renderStats.trees.strategy, "instanced-tree-mesh");
 
-  // #84 baseline had 102,578 rendered triangles across 167 greedy voxel chunk meshes
-  // on this same fixture. Keep the redesigned vegetation within roughly 1.5-2x.
+  // #85 established the intended instanced architecture on this fixture:
+  // ~40,640 rendered triangles across ~58 mesh/draw-call proxy, ~1.3s build.
+  // #86 (sculpted 6-template crowns) must stay close to that, not the older
+  // #84 greedy envelope. Report the measured multiplier via the benchmark.
   const shrubTris = c.renderStats.shrubs?.renderedTriangles ?? 0;
   const totalTriangles = c.renderStats.trees.renderedTriangles + shrubTris;
   const shrubDrawCalls = c.renderStats.shrubs?.meshCount ?? c.renderStats.shrubs?.chunkCount ?? 0;
   const totalDrawCalls = c.renderStats.trees.drawCalls + shrubDrawCalls;
-  assert.ok(totalTriangles < 102578, `rendered triangles must stay well inside the #84 budget (got ${totalTriangles})`);
-  assert.ok(totalDrawCalls <= 167, `draw-call/mesh count must not materially regress (got ${totalDrawCalls} vs #84 167)`);
-  assert.ok(c.perf.buildMs < 5000, "vegetation construction is not a multi-tens-of-seconds startup step");
+  const BASELINE_85 = { triangles: 40640, drawCalls: 58, buildMs: 1300 };
+  const trianglesMultiplier = totalTriangles / BASELINE_85.triangles;
+  const drawCallsMultiplier = totalDrawCalls / BASELINE_85.drawCalls;
+  assert.ok(trianglesMultiplier <= 1.85, `rendered triangles stay close to #85 (multiplier ${trianglesMultiplier.toFixed(2)}x)`);
+  assert.ok(drawCallsMultiplier <= 1.4, `draw-call/mesh count stays close to #85 (multiplier ${drawCallsMultiplier.toFixed(2)}x)`);
+  assert.ok(c.perf.buildMs <= 3300, "vegetation build stays close to the #85 ~1.3s startup");
   assert.ok(c.perf.planMs >= 0 && c.perf.shrubMeshMs >= 0);
   assert.ok(c.renderStats.trees.instances > 0);
   assert.ok(layer.children.filter((child) => child.isInstancedMesh).length >= 6, "tree families render as batching InstancedMeshes");
@@ -424,6 +429,15 @@ test("runtime tree models are sculpted templates with controlled distribution an
   assert.ok(counts.dominant / total >= 0.09 && counts.dominant / total <= 0.18, `dominant share ~10-15% (got ${(counts.dominant / total).toFixed(3)})`);
   assert.ok(counts.regular / total >= 0.5 && counts.regular / total <= 0.7, `regular share ~55-65% (got ${(counts.regular / total).toFixed(3)})`);
   assert.ok(counts.small / total >= 0.2 && counts.small / total <= 0.4, `small share ~25-35% (got ${(counts.small / total).toFixed(3)})`);
+
+  // Absolute height must be anchored to the building storey scale, per tier.
+  assert.ok(Object.keys(c.heightBands).length === 3);
+  ["small", "regular", "dominant"].forEach((cls) => {
+    const band = c.heightBands[cls];
+    const heights = plan.trees.filter((tree) => tree.sizeClass === cls).map((tree) => tree.heightVoxels);
+    assert.ok(heights.length > 0, `${cls} tier is represented`);
+    assert.ok(heights.every((h) => h >= band[0] && h <= band[1]), `${cls} tree heights stay in the ${band[0]}-${band[1]} voxel band (storey ${c.storeyVoxels})`);
+  });
 
   // Family crown-width over height ratios stay in their design bands.
   const bands = { broad: [0.62, 0.9], round: [0.48, 0.7], tall: [0.28, 0.46] };
