@@ -376,8 +376,8 @@ test("runtime vegetation build stays within the performance acceptance envelope"
   const c = layer.userData.contract;
 
   assert.equal(c.instancedTrees, true, "repeated large trees are instanced rather than greedily voxelised");
-  assert.equal(c.treeMeshCount, 3, "one instanced mesh per tree family");
-  assert.equal(c.renderStats.trees.drawCalls, 3);
+  assert.equal(c.treeMeshCount, 6, "one instanced mesh per shared template (2 per family)");
+  assert.equal(c.renderStats.trees.drawCalls, 6);
   assert.equal(c.renderStats.trees.strategy, "instanced-tree-mesh");
 
   // #84 baseline had 102,578 rendered triangles across 167 greedy voxel chunk meshes
@@ -391,5 +391,63 @@ test("runtime vegetation build stays within the performance acceptance envelope"
   assert.ok(c.perf.buildMs < 5000, "vegetation construction is not a multi-tens-of-seconds startup step");
   assert.ok(c.perf.planMs >= 0 && c.perf.shrubMeshMs >= 0);
   assert.ok(c.renderStats.trees.instances > 0);
-  assert.ok(layer.children.filter((child) => child.isInstancedMesh).length >= 3, "tree families render as batching InstancedMeshes");
+  assert.ok(layer.children.filter((child) => child.isInstancedMesh).length >= 6, "tree families render as batching InstancedMeshes");
+});
+
+test("runtime tree models are sculpted templates with controlled distribution and grid alignment", () => {
+  const scenario = runNonVisualAgentBuildScenario({ seed: "voxel-infrastructure-test" });
+  const plan = createAgentVoxelVegetationPlan({ state: scenario.state, grid: scenario.world.grid, seed: "voxel-infrastructure-test" });
+  const layer = createAgentVoxelVegetationLayer({ state: scenario.state, grid: scenario.world.grid, seed: "voxel-infrastructure-test" });
+  const c = layer.userData.contract;
+
+  const families = new Set(plan.trees.map((tree) => tree.family));
+  assert.deepEqual([...families].sort(), ["broad", "round", "tall"], "only the approved families are emitted");
+
+  // At least two genuinely different shared templates are reachable per family.
+  ["broad", "round", "tall"].forEach((family) => {
+    const templates = new Set(plan.trees.filter((tree) => tree.family === family).map((tree) => tree.template));
+    assert.ok(templates.size >= 2, `${family} reaches at least two shared geometry variants`);
+  });
+
+  // Yaw is always grid-aligned to 90-degree increments.
+  const halfPi = Math.PI / 2;
+  assert.ok(plan.trees.every((tree) => {
+    const normalized = tree.rotation % (Math.PI * 2);
+    const nearest = Math.round(normalized / halfPi) * halfPi;
+    return Math.abs(normalized - nearest) < 1e-6;
+  }), "every tree rotation is grid-aligned");
+
+  // Tier population mix stays near the target distribution.
+  const total = plan.trees.length;
+  const counts = { dominant: 0, regular: 0, small: 0 };
+  plan.trees.forEach((tree) => { counts[tree.sizeClass] += 1; });
+  assert.ok(counts.dominant / total >= 0.09 && counts.dominant / total <= 0.18, `dominant share ~10-15% (got ${(counts.dominant / total).toFixed(3)})`);
+  assert.ok(counts.regular / total >= 0.5 && counts.regular / total <= 0.7, `regular share ~55-65% (got ${(counts.regular / total).toFixed(3)})`);
+  assert.ok(counts.small / total >= 0.2 && counts.small / total <= 0.4, `small share ~25-35% (got ${(counts.small / total).toFixed(3)})`);
+
+  // Family crown-width over height ratios stay in their design bands.
+  const bands = { broad: [0.62, 0.9], round: [0.48, 0.7], tall: [0.28, 0.46] };
+  ["broad", "round", "tall"].forEach((family) => {
+    const trees = plan.trees.filter((tree) => tree.family === family);
+    const avg = trees.reduce((sum, tree) => sum + tree.crownWidth / tree.heightVoxels, 0) / trees.length;
+    assert.ok(avg >= bands[family][0] && avg <= bands[family][1], `${family} crown/height ratio within band (got ${avg.toFixed(3)})`);
+  });
+
+  // Dominant trunks are thicker than support trunks within a comparable family.
+  const broadDominant = plan.trees.filter((tree) => tree.family === "broad" && tree.sizeClass === "dominant");
+  const broadSmall = plan.trees.filter((tree) => tree.family === "broad" && tree.sizeClass === "small");
+  assert.ok(broadDominant.length > 0 && broadSmall.length > 0);
+  const avgDominantTrunk = broadDominant.reduce((sum, tree) => sum + tree.trunkWidth, 0) / broadDominant.length;
+  const avgSmallTrunk = broadSmall.reduce((sum, tree) => sum + tree.trunkWidth, 0) / broadSmall.length;
+  assert.ok(avgDominantTrunk > avgSmallTrunk, "dominant broad trees carry heavier trunks than support trees");
+
+  // Every shared template is sculpted: multiple crown masses, stepped levels,
+  // and narrowing toward the top (no single cuboid / equal-width column).
+  assert.equal(c.templates.length, 6);
+  c.templates.forEach((template) => {
+    assert.ok(template.moundCount >= 4, `${template.id} has multiple crown masses`);
+    assert.ok(template.maxSteps >= 2, `${template.id} uses stepped crown levels`);
+    assert.ok(template.taper < 0.8, `${template.id} tapers toward the top instead of equal-width boxes`);
+  });
+  assert.ok(c.templates.filter((template) => template.family === "broad").every((template) => template.branches >= 1), "broad family connects trunk to crown with coat stub branches");
 });
