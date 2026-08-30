@@ -8,6 +8,7 @@ import {
 import { createRng, randRange } from "../utils/random.js";
 import { VoxelInstanceBuffer, VOXEL_SIZE, VOXEL_WRITE_PRIORITIES } from "./voxelBuildingLab.js";
 import { addSharedVoxelRoadTile, classifyVoxelRoadTopology } from "./voxelIntentDistrict.js";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 
 const CELL_VOXELS = 32;
 const ROAD_WIDTH = 16;
@@ -523,27 +524,71 @@ export function createAgentVoxelVegetationPlan({ state, grid, seed = "agent-vege
 export function createAgentVoxelVegetationLayer({ state, grid, seed = "agent-vegetation" }) {
   const group = new THREE.Group();
   group.name = "AgentVoxelVegetation";
-  const buffer = new VoxelInstanceBuffer(`${seed}:voxel-vegetation`);
+  const perf = { planMs: 0, treeInstanceMs: 0, shrubVoxelMs: 0, shrubMeshMs: 0, buildMs: 0 };
+  const startedAt = now();
   const plan = createAgentVoxelVegetationPlan({ state, grid, seed });
+  perf.planMs = now() - startedAt;
+
   const archetypeCounts = {};
   const tierCounts = { dominant: 0, medium: 0, small: 0 };
-
+  const treesByArchetype = new Map();
   plan.trees.forEach((tree) => {
-    const write = { priority: VOXEL_WRITE_PRIORITIES.decoration, owner: tree.cellId };
-    addVoxelTreeVariant(buffer, tree.x, tree.y, tree.z, tree.archetype, tree.scale, tree.shade, write);
     archetypeCounts[tree.archetype] = (archetypeCounts[tree.archetype] ?? 0) + 1;
     tierCounts[tree.sizeClass] = (tierCounts[tree.sizeClass] ?? 0) + 1;
+    if (!treesByArchetype.has(tree.archetype)) treesByArchetype.set(tree.archetype, []);
+    treesByArchetype.get(tree.archetype).push(tree);
   });
 
+  // Trees use shared pre-generated meshes + instanced transforms so the
+  // million-voxel cost of repeated large crowns never reach the greedy voxel
+  // pipeline. Shrubs stay on the cheap voxel path below.
+  const treeMaterial = createTreeInstanceMaterial();
+  const treeDummy = new THREE.Object3D();
+  const treeMeshes = [];
+  let treeTriangles = 0;
+  const treeStartedAt = now();
+  treesByArchetype.forEach((trees, archetype) => {
+    const geometry = buildTreeGeometry(archetype);
+    const mesh = new THREE.InstancedMesh(geometry, treeMaterial, trees.length);
+    mesh.name = `TreeInstances-${archetype}`;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    const geometryTriangles = geometry.index ? geometry.index.count / 3 : geometry.attributes.position.count / 3;
+    treeTriangles += Math.round(geometryTriangles * trees.length);
+    trees.forEach((tree, index) => {
+      treeDummy.position.set(tree.x * VOXEL_SIZE, tree.y * VOXEL_SIZE, tree.z * VOXEL_SIZE);
+      treeDummy.rotation.set(0, tree.rotation, 0);
+      treeDummy.scale.setScalar(tree.scale);
+      treeDummy.updateMatrix();
+      mesh.setMatrixAt(index, treeDummy.matrix);
+      mesh.setColorAt(index, treeTint(tree));
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    mesh.computeBoundingSphere();
+    treeMeshes.push(mesh);
+    group.add(mesh);
+  });
+  perf.treeInstanceMs = now() - treeStartedAt;
+
+  const buffer = new VoxelInstanceBuffer(`${seed}:voxel-vegetation-shrubs`);
+  const fillStartedAt = now();
   plan.shrubs.forEach((shrub) => {
     const write = { priority: VOXEL_WRITE_PRIORITIES.decoration, owner: shrub.cellId };
     addVoxelShrub(buffer, shrub.x, shrub.y, shrub.z, shrub.shade, write, shrub.blossom);
   });
+  perf.shrubVoxelMs = now() - fillStartedAt;
+  const shrubMsStartedAt = now();
+  const shrubMeshes = buffer.createMeshes({ strategy: "greedy", chunkSizeVoxels: 256, maxMergeSpanVoxels: 24 });
+  perf.shrubMeshMs = now() - shrubMsStartedAt;
+  shrubMeshes.forEach((mesh) => group.add(mesh));
 
-  const meshes = buffer.createMeshes({ strategy: "greedy", chunkSizeVoxels: 128, maxMergeSpanVoxels: 8 });
-  meshes.forEach((mesh) => group.add(mesh));
+  const meshes = [...treeMeshes, ...shrubMeshes];
+  perf.buildMs = now() - startedAt;
+
   group.userData.contract = {
     renderer: "state-aware-voxel-vegetation-v3-groves",
+    instancedTrees: true,
     clusters: plan.clusters.length,
     clusterGroups: plan.clusters.reduce((total, cluster) => total + cluster.zoneGroups.length, 0),
     groveCount: plan.clusters.reduce((total, cluster) => total + cluster.zoneGroups.filter((group) => group.treeCount >= 2).length, 0),
@@ -554,10 +599,21 @@ export function createAgentVoxelVegetationLayer({ state, grid, seed = "agent-veg
     flowers: plan.shrubs.reduce((total, shrub) => total + (shrub.blossom ? 1 : 0), 0),
     tierCounts,
     archetypeCounts,
-    treeFamilies: Object.keys(archetypeCounts),
-    clearsRoadsAndEntrances: true,
+    treeFamilies: Object.keys(archetypeCounts).sort(),
+    treeMeshCount: treeMeshes.length,
     voxelCount: buffer.occupiedVoxelCount,
-    renderStats: buffer.renderStats,
+    renderStats: {
+      trees: {
+        strategy: "instanced-tree-mesh",
+        drawCalls: treeMeshes.length,
+        instances: plan.trees.length,
+        meshes: treeMeshes.length,
+        renderedTriangles: treeTriangles
+      },
+      shrubs: buffer.renderStats
+    },
+    perf,
+    clearsRoadsAndEntrances: true,
     exclusionRule: "Buildings, roads, infrastructure, reservations, non-buildable cells, and a one-cell safety margin suppress procedural vegetation.",
     compositionRule: "Fewer, larger mature tree groves (broad, round, tall families) with dominant/medium/small tiers; low vegetation is subordinate grove detail; meadow keeps clean negative space."
   };
@@ -606,6 +662,7 @@ function generateAgentTreeGroup(plan, record, anchor, biome, entries, seed, edge
       archetype,
       scale,
       sizeClass,
+      rotation: rng() * Math.PI * 2,
       shade: shadeBase + index * 3,
       heightVoxels: metrics.height,
       crownWidth: metrics.crownWidth
@@ -673,19 +730,54 @@ function pickArchetype(rng) {
   return TREE_ARCHETYPES[Math.floor(rng() * TREE_ARCHETYPES.length) % TREE_ARCHETYPES.length];
 }
 
-function addVoxelTreeVariant(buffer, x, groundY, z, archetype, scale, shade, write) {
+function now() {
+  return globalThis.performance?.now?.() ?? Date.now();
+}
+
+const TREE_MATERIAL_COLORS = {
+  timber: "#273f3d",
+  foliageDark: "#355b43",
+  foliage: "#557748",
+  foliageLight: "#78965a"
+};
+
+function createTreeInstanceMaterial() {
+  return new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0, flatShading: true });
+}
+
+function buildTreeGeometry(archetype) {
   const spec = TREE_ARCHETYPE_SPECS[archetype] ?? TREE_ARCHETYPE_SPECS.round;
-  const trunkWidth = Math.max(2, Math.round(spec.trunkWidth * scale));
-  const trunkHeight = Math.round(spec.trunkHeight * scale);
-  buffer.addBox("timber", x - Math.floor(trunkWidth / 2), groundY, z - Math.floor(trunkWidth / 2), trunkWidth, trunkHeight, trunkWidth, shade, write);
-  const crownBaseY = groundY + trunkHeight - Math.round(spec.crownInset * scale);
-  spec.crown.forEach((lobe, index) => {
-    const width = Math.max(1, Math.round(lobe.width * scale));
-    const height = Math.max(1, Math.round(lobe.height * scale));
-    const depth = Math.max(1, Math.round(lobe.depth * scale));
-    const lift = Math.round((lobe.lift ?? 0) * scale);
-    buffer.addBox(lobe.material, x - Math.floor(width / 2), crownBaseY + lift, z - Math.floor(depth / 2), width, height, depth, shade + index + 1, write);
+  const boxes = [];
+  const trunkWidth = spec.trunkWidth;
+  boxes.push(treeBox(0, 0, 0, trunkWidth, spec.trunkHeight, trunkWidth, TREE_MATERIAL_COLORS.timber));
+  const crownBaseY = spec.trunkHeight - spec.crownInset;
+  spec.crown.forEach((lobe) => {
+    boxes.push(treeBox(0, crownBaseY + (lobe.lift ?? 0), 0, lobe.width, lobe.height, lobe.depth, TREE_MATERIAL_COLORS[lobe.material] ?? TREE_MATERIAL_COLORS.foliage));
   });
+  const geometry = mergeGeometries(boxes, false);
+  geometry.computeBoundingSphere();
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function treeBox(cx, baseY, cz, width, height, depth, hexColor) {
+  const color = new THREE.Color(hexColor);
+  const geometry = new THREE.BoxGeometry(width * VOXEL_SIZE, height * VOXEL_SIZE, depth * VOXEL_SIZE);
+  geometry.translate(cx * VOXEL_SIZE, (baseY + height / 2) * VOXEL_SIZE, cz * VOXEL_SIZE);
+  const count = geometry.attributes.position.count;
+  const colors = new Float32Array(count * 3);
+  for (let index = 0; index < count; index += 1) {
+    colors[index * 3] = color.r;
+    colors[index * 3 + 1] = color.g;
+    colors[index * 3 + 2] = color.b;
+  }
+  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  return geometry;
+}
+
+function treeTint(tree) {
+  const base = 0.82 + ((tree.shade % 24) / 24) * 0.3;
+  return new THREE.Color(base, base, base);
 }
 
 function addVoxelShrub(buffer, x, groundY, z, shade, write, blossom) {

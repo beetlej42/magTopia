@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import { createAgentAcceptanceCity } from "../src/generators/agentAcceptanceCity.js";
-import { createAgentVoxelRoadLayer, createAgentVoxelVegetationPlan, selectVictorianBridgeStyle } from "../src/generators/agentVoxelInfrastructure.js";
+import { createAgentVoxelRoadLayer, createAgentVoxelVegetationPlan, createAgentVoxelVegetationLayer, selectVictorianBridgeStyle } from "../src/generators/agentVoxelInfrastructure.js";
+import { runNonVisualAgentBuildScenario } from "../src/city/agent-district-simulation.js";
 import {
   VOXEL_SHADOW_ONLY_LAYER,
   configureVoxelShadowOnlyLayer
@@ -36,7 +37,8 @@ test("Agent acceptance city renders roads and vegetation entirely as voxel geome
   assert.ok(diagnostics.vegetation.tierCounts.dominant > 0 && diagnostics.vegetation.tierCounts.small > 0, "tree scale tiers must be represented");
   assert.equal(diagnostics.vegetation.treeFamilies.length, 3, "only the three normal tree families are used");
   assert.ok(["broad", "round", "tall"].every((family) => diagnostics.vegetation.treeFamilies.includes(family)));
-  assert.ok(diagnostics.vegetation.renderStats.renderedTriangles > 0);
+  assert.ok(diagnostics.vegetation.renderStats.trees.renderedTriangles > 0);
+  assert.ok((diagnostics.vegetation.renderStats.shrubs?.renderedTriangles ?? 0) > 0);
   assert.equal(diagnostics.projection.type, "spherical-local-frame");
   assert.equal(diagnostics.projection.radius, 220);
   assert.ok(diagnostics.projection.projectedObjects > 0);
@@ -114,7 +116,7 @@ test("Agent acceptance city renders roads and vegetation entirely as voxel geome
   const roads = city.getObjectByName("AgentAcceptanceRoads");
   const vegetation = city.getObjectByName("AgentAcceptanceVegetation");
   assert.ok(roads.children.every((child) => child.userData.voxelRenderStrategy === "greedy-chunk"));
-  assert.ok(vegetation.children.every((child) => child.userData.voxelRenderStrategy === "greedy-chunk"));
+  assert.ok(vegetation.children.every((child) => child.userData.voxelRenderStrategy === "greedy-chunk" || child.isInstancedMesh));
   assert.equal(city.getObjectByName("MagicLondonVegetation"), undefined);
   assert.equal(city.getObjectByName("MagicLondonBaseTiles"), undefined);
 });
@@ -366,4 +368,28 @@ test("meadow low vegetation is heavily reduced and subordinate to groves", () =>
 
   const meadowGroups = plan.clusters.flatMap((cluster) => cluster.zoneGroups.filter((entry) => entry.biome === "meadow"));
   assert.ok(meadowGroups.every((group) => group.shrubCount === group.treeCount), "meadow shrubs cluster with groves instead of uniform scatter");
+});
+
+test("runtime vegetation build stays within the performance acceptance envelope", () => {
+  const scenario = runNonVisualAgentBuildScenario({ seed: "voxel-infrastructure-test" });
+  const layer = createAgentVoxelVegetationLayer({ state: scenario.state, grid: scenario.world.grid, seed: "voxel-infrastructure-test" });
+  const c = layer.userData.contract;
+
+  assert.equal(c.instancedTrees, true, "repeated large trees are instanced rather than greedily voxelised");
+  assert.equal(c.treeMeshCount, 3, "one instanced mesh per tree family");
+  assert.equal(c.renderStats.trees.drawCalls, 3);
+  assert.equal(c.renderStats.trees.strategy, "instanced-tree-mesh");
+
+  // #84 baseline had 102,578 rendered triangles across 167 greedy voxel chunk meshes
+  // on this same fixture. Keep the redesigned vegetation within roughly 1.5-2x.
+  const shrubTris = c.renderStats.shrubs?.renderedTriangles ?? 0;
+  const totalTriangles = c.renderStats.trees.renderedTriangles + shrubTris;
+  const shrubDrawCalls = c.renderStats.shrubs?.meshCount ?? c.renderStats.shrubs?.chunkCount ?? 0;
+  const totalDrawCalls = c.renderStats.trees.drawCalls + shrubDrawCalls;
+  assert.ok(totalTriangles < 102578, `rendered triangles must stay well inside the #84 budget (got ${totalTriangles})`);
+  assert.ok(totalDrawCalls <= 167, `draw-call/mesh count must not materially regress (got ${totalDrawCalls} vs #84 167)`);
+  assert.ok(c.perf.buildMs < 5000, "vegetation construction is not a multi-tens-of-seconds startup step");
+  assert.ok(c.perf.planMs >= 0 && c.perf.shrubMeshMs >= 0);
+  assert.ok(c.renderStats.trees.instances > 0);
+  assert.ok(layer.children.filter((child) => child.isInstancedMesh).length >= 3, "tree families render as batching InstancedMeshes");
 });
