@@ -503,7 +503,8 @@ export function createAgentVoxelVegetationPlan({ state, grid, seed = "agent-vege
       byBiome.get(entry.biome).push(entry);
     });
     const groups = [...byBiome.entries()].sort((left, right) => (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0));
-    const zoneGroups = groups.map(([biome, entries]) => generateAgentTreeGroup(plan, record, anchor, biome, entries, seed));
+    const hasWoodland = groups.some(([biome]) => biome === "woodland");
+    const zoneGroups = groups.map(([biome, entries]) => generateAgentTreeGroup(plan, record, anchor, biome, entries, seed, hasWoodland));
     plan.clusters.push({
       id: record.id,
       coreX: anchor.x,
@@ -575,10 +576,10 @@ export function createAgentVoxelVegetationLayer({ state, grid, seed = "agent-veg
   return group;
 }
 
-function generateAgentTreeGroup(plan, record, anchor, biome, entries, seed) {
+function generateAgentTreeGroup(plan, record, anchor, biome, entries, seed, edge = false) {
   const density = Math.max(...entries.map((entry) => entry.density));
   const rng = createRng(`${seed}:voxel-vegetation-trees:${record.id}:${biome}`);
-  const count = agentTreeCountFor(biome, density, rng);
+  const count = agentTreeCountFor(biome, density, rng, edge);
   const shadeBase = Math.floor(randRange(rng, 0, 60));
   const anchorX = anchor.x / VOXEL_SIZE;
   const anchorZ = anchor.z / VOXEL_SIZE;
@@ -656,9 +657,10 @@ function weightedAgentHost(entries, rng) {
   return entries[entries.length - 1];
 }
 
-function agentTreeCountFor(biome, density, rng) {
+function agentTreeCountFor(biome, density, rng, edge = false) {
   if (biome === "woodland") return Math.round(lerp(2, 7, density)) + (rng() < 0.4 ? 1 : 0);
   if (biome === "heath") return Math.round(lerp(0, 1, density));
+  if ((edge || density > 0.55) && rng() < 0.5) return 1;
   return 0;
 }
 

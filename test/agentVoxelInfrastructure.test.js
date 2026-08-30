@@ -254,7 +254,7 @@ test("runtime vegetation preserves biome hierarchy without leaking across biome 
   assert.ok(woodlandGroup && meadowGroup && heathGroup, "the mixed biome bucket should resolve separate zone groups");
   assert.ok(woodlandGroup.treeCount >= 2, "woodland should compose a multi-tree group");
   assert.ok(woodlandGroup.treeCount > (heathGroup.treeCount ?? 0), "woodland should out-densify heath");
-  assert.equal(meadowGroup.treeCount, 0, "meadow cells must not inherit woodland/grove tree density rules");
+  assert.ok(meadowGroup.treeCount <= 1, "meadow cells must not inherit woodland/grove tree density rules");
 
   const woodlandCells = new Set(woodland.map(([c, r]) => `cell-${c}-${r}`));
   const heathCells = new Set(heath.map(([c, r]) => `cell-${c}-${r}`));
@@ -264,6 +264,18 @@ test("runtime vegetation preserves biome hierarchy without leaking across biome 
   assert.ok(meadowGroup.ranked.every((tree) => meadowCells.has(tree.cellId)), "meadow trees (if any) stay on meadow cells");
   const scales = woodlandGroup.ranked.map((tree) => tree.scale);
   assert.ok((Math.max(...scales) / Math.min(...scales)) > 1.1, "woodland group keeps a dominant-to-small scale hierarchy");
+});
+
+test("meadow trees are rare but reachable and cluster-aware", () => {
+  const { state, grid } = agentWorld(16, 16);
+  const plan = createAgentVoxelVegetationPlan({ state, grid, seed: "meadow-rare" });
+  const meadowCells = grid.cells.filter((cell) => cell.strictBuildable && cell.surface.biome === "meadow").length;
+  const meadowTrees = plan.trees.filter((tree) => tree.biome === "meadow").length;
+  assert.equal(plan.zoneCounts.meadow, meadowCells, "the whole open-world loads as vegetated meadow");
+  assert.ok(meadowTrees >= 1, "occasional isolated meadow trees remain reachable");
+  assert.ok(meadowTrees <= meadowCells * 0.2, "meadow stays mostly open rather than becoming tree-filled");
+  const meadowGroupCounts = plan.clusters.flatMap((cluster) => cluster.zoneGroups.filter((group) => group.biome === "meadow").map((group) => group.treeCount));
+  assert.ok(meadowGroupCounts.every((count) => count <= 1), "meadow trees are cluster-aware (0-1 per group), never dense");
 });
 
 test("runtime vegetation stays out of construction, roads, reservations, and non-buildable cells", () => {
