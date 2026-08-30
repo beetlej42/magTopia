@@ -252,8 +252,10 @@ export function createMagicLondonVegetationLayer({ params, grid, cityState, rese
 
 function buildClusterRecord(key, clusterColumn, clusterRow, seed, cellSize) {
   const rng = createRng(`${seed}:vegetation-cluster:${key}`);
-  const coreColumn = clusterColumn * CLUSTER_SIZE + (0.15 + rng() * 0.7);
-  const coreRow = clusterRow * CLUSTER_SIZE + (0.15 + rng() * 0.7);
+  const inset = 0.15;
+  const span = CLUSTER_SIZE - inset * 2;
+  const coreColumn = clusterColumn * CLUSTER_SIZE + (inset + rng() * span);
+  const coreRow = clusterRow * CLUSTER_SIZE + (inset + rng() * span);
   return {
     id: key,
     clusterColumn,
@@ -294,6 +296,8 @@ function generateZoneTreeGroups(plan, cluster, cellSize, seed) {
     id: cluster.id,
     coreX: anchor.x,
     coreZ: anchor.z,
+    coreColumn: cluster.coreAnchored.column - cluster.clusterColumn * CLUSTER_SIZE,
+    coreRow: cluster.coreAnchored.row - cluster.clusterRow * CLUSTER_SIZE,
     radius: cluster.radius,
     sparse: cluster.sparse,
     cellIds: ordered.map((entry) => entry.cellId),

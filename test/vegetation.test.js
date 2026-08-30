@@ -234,6 +234,39 @@ test("a mixed-zone cluster applies each zone's own density rule without cross-co
   assert.ok((Math.max(...scales) / Math.min(...scales)) > 1.25, "woodland scale hierarchy is not diluted by meadow");
 });
 
+test("cluster cores spread across the full bucket interior rather than pinning to the first cell", () => {
+  const bucketCells = [];
+  for (let row = 0; row < 3; row += 1) {
+    for (let column = 0; column < 3; column += 1) {
+      bucketCells.push(cell(`grove-${column}-${row}`, column, row, "grove"));
+    }
+  }
+  const minimumInset = 0.15;
+  const span = 3 - minimumInset * 2;
+  let minColumn = Infinity;
+  let maxColumn = -Infinity;
+  let minRow = Infinity;
+  let maxRow = -Infinity;
+  for (let index = 0; index < 48; index += 1) {
+    const input = {
+      params: { seed: `core-spread-${index}` },
+      grid: makeGrid(bucketCells),
+      cityState: stateFor(bucketCells),
+      reservedCellIds: new Set()
+    };
+    const cluster = createMagicLondonVegetationPlan(input).clusters[0];
+    assert.ok(cluster.coreColumn >= minimumInset && cluster.coreColumn <= minimumInset + span, "core column stays inset inside the bucket");
+    assert.ok(cluster.coreRow >= minimumInset && cluster.coreRow <= minimumInset + span, "core row stays inset inside the bucket");
+    minColumn = Math.min(minColumn, cluster.coreColumn);
+    maxColumn = Math.max(maxColumn, cluster.coreColumn);
+    minRow = Math.min(minRow, cluster.coreRow);
+    maxRow = Math.max(maxRow, cluster.coreRow);
+  }
+  assert.ok(maxColumn > 1.4 && maxRow > 1.4, "cores can occupy the far cells of the bucket, not just the first");
+  assert.ok(minColumn <= 0.5 && minRow <= 0.5, "cores can also sit near the bucket origin");
+  assert.ok(maxColumn - minColumn >= 1.8 && maxRow - minRow >= 1.8, "cores are spread across the full bucket width, avoiding a repeated directional bias");
+});
+
 test("supports the broadleaf species and forest-floor contracts without new assets", () => {
   const cells = [
     cell("meadow-a", 0, 0, "meadow"),
