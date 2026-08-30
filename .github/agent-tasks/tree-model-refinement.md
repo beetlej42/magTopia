@@ -44,8 +44,18 @@ The current result reads as stacked boxes rather than mature trees. Implement th
 ### Variation
 
 - Provide at least 2 geometry variants per family (about 6 shared templates total) while retaining instancing.
-- Variation should come from crown offsets/asymmetry, trunk proportion, controlled width/depth changes, rotation, and scale.
+- Variation should come primarily from crown offsets/asymmetry, trunk proportion, controlled width/depth changes, template choice, and scale.
 - Use only 2–3 foliage tone bands for volume; avoid noisy random color fragmentation.
+
+### Grid-aligned rotation
+
+Trees must preserve the orthogonal voxel language of MAGTOPIA. Do **not** use arbitrary free yaw rotation on tree instances.
+
+- Quantize tree yaw to 90-degree increments only: 0°, 90°, 180°, 270°.
+- Near-symmetric broad/round variants may intentionally use fewer orientations (for example 0°/90° only) if that avoids redundant visual states.
+- Do not rotate the geometry itself off-grid to manufacture variety.
+- Variation should come from modeled geometry variants, size tiers, crown asymmetry, trunk/crown proportions, and grove composition rather than arbitrary angles.
+- Add an automated assertion that every emitted tree rotation is grid-aligned within floating-point tolerance.
 
 ## Scale distribution
 
@@ -69,6 +79,7 @@ The tall-upright family should not imply dominant scale by default; family and s
 - Groves should have clear height rhythm rather than all members competing with nearby buildings.
 - Broad/round/tall must be visually distinguishable at normal gameplay distance.
 - Trees must no longer read as stacked cuboids or placeholder props.
+- Tree silhouettes must remain visually aligned with the voxel/grid world; no obvious diagonal instance rotations.
 
 ## Performance acceptance
 
@@ -79,4 +90,4 @@ The tall-upright family should not imply dominant scale by default; family and s
 
 ## Completion model
 
-Automated tests should cover family/template usage, tier distribution bounds, deterministic placement, and performance regression. Final visual quality remains manual user acceptance on an existing city.
+Automated tests should cover family/template usage, tier distribution bounds, deterministic placement, grid-aligned tree rotation, and performance regression. Final visual quality remains manual user acceptance on an existing city.
