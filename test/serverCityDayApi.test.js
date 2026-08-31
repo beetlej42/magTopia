@@ -26,7 +26,7 @@ const config = {
 
 const VESPER = { id: "officer-vesper", name: "Vesper", archetype: "investigation", investigation: 3, containment: 1, concealment: 2, specialties: ["investigation"], status: "available", hiredAtTurn: 0 };
 
-async function openCity(repository, app) {
+async function openCity(repository, app, { turn = 1 } = {}) {
   const player = await json(app, { method: "POST", url: "/api/v1/players", payload: { display_name: "City Day Owner" } }, 201);
   const city = await json(app, auth(player, {
     method: "POST",
@@ -40,8 +40,8 @@ async function openCity(repository, app) {
     endpoint: "test/open-normal-turn",
     idempotencyKey: `open-normal-${city.id}`,
     requestBody: {}, expectedVersion: city.city_version
-  }, async ({ state }) => ({ nextState: { ...state, turn: 1, gameplay: { ...state.gameplay, turnKind: "normal", turnStatus: "open", turnOpenedAt: "2000-01-01T00:00:00.000Z", nextTurnUnlockAt: "2000-01-01T00:00:00.000Z" } }, response: { opened: true } }));
-  city.turn = 1;
+  }, async ({ state }) => ({ nextState: { ...state, turn, gameplay: { ...state.gameplay, turnKind: "normal", turnStatus: "open", turnOpenedAt: "2000-01-01T00:00:00.000Z", nextTurnUnlockAt: "2000-01-01T00:00:00.000Z" } }, response: { opened: true } }));
+  city.turn = turn;
   await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
   const link = await json(app, auth(player, { method: "POST", url: `/api/v1/cities/${city.id}/agent-links`, payload: {} }), 201);
   const connected = await json(app, { method: "GET", url: `/connect/${link.connect_url.split("/").at(-1)}` }, 200);
@@ -261,7 +261,7 @@ test("selecting an immediate card completes the player action exactly once and t
   try {
     const { city, player } = await openCity(repository, app);
     const offer = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
-    const cardId = nonSpecialCardId(offer, CARD_TYPES.policy);
+    const cardId = nonSpecialCardId(offer, CARD_TYPES.resource);
     const selected = await json(app, auth(player, {
       method: "POST",
       url: `/api/v1/cities/${city.id}/cards/select`,
@@ -290,7 +290,7 @@ test("wall-clock elapsed alone and Agent presence alone never move morning to da
       method: "POST",
       url: `/api/v1/cities/${city.id}/cards/select`,
       headers: { "idempotency-key": "cityday-wait-1" },
-      payload: { expected_city_version: offer.city_version, offer_id: offer.offer.offer_id, selected_card_id: nonSpecialCardId(offer, CARD_TYPES.policy) }
+      payload: { expected_city_version: offer.city_version, offer_id: offer.offer.offer_id, selected_card_id: nonSpecialCardId(offer, CARD_TYPES.resource) }
     }), 200);
 
     const day = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/city-day` }), 200);
@@ -317,7 +317,7 @@ test("first accepted meaningful Agent city work moves presentation to day", asyn
       method: "POST",
       url: `/api/v1/cities/${city.id}/cards/select`,
       headers: { "idempotency-key": "cityday-day-1" },
-      payload: { expected_city_version: offer.city_version, offer_id: offer.offer.offer_id, selected_card_id: nonSpecialCardId(offer, CARD_TYPES.policy) }
+      payload: { expected_city_version: offer.city_version, offer_id: offer.offer.offer_id, selected_card_id: nonSpecialCardId(offer, CARD_TYPES.resource) }
     }), 200);
 
     // The Agent performs a real construction order.
@@ -411,7 +411,7 @@ test("special structure selection supports player_place and delegate_to_agent fo
   const repository = createMemoryRepository(config);
   const app = await createApp({ repository, config });
   try {
-    const { city, player } = await openCity(repository, app);
+    const { city, player } = await openCity(repository, app, { turn: 5 });
     const offer = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
     const cardId = offer.offer.cards.find((card) => card.type === CARD_TYPES.special_structure).card_id;
     assert.ok(cardId);
@@ -419,7 +419,7 @@ test("special structure selection supports player_place and delegate_to_agent fo
     // Same card, two independent cities: both decision modes are accepted and
     // resolve the same underlying card (never two cards).
     for (const mode of ["player_place", "delegate_to_agent"]) {
-      const { city: modeCity, player: modePlayer } = await openCity(repository, app);
+      const { city: modeCity, player: modePlayer } = await openCity(repository, app, { turn: 5 });
       const modeOffer = await json(app, auth(modePlayer, { method: "GET", url: `/api/v1/cities/${modeCity.id}/cards/current` }), 200);
       const modeCardId = modeOffer.offer.cards.find((card) => card.type === CARD_TYPES.special_structure).card_id;
       const selected = await json(app, auth(modePlayer, {
@@ -441,7 +441,7 @@ test("delegating special placement completes the player turn without opening pla
   const repository = createMemoryRepository(config);
   const app = await createApp({ repository, config });
   try {
-    const { city, player } = await openCity(repository, app);
+    const { city, player } = await openCity(repository, app, { turn: 5 });
     const offer = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
     const cardId = offer.offer.cards.find((card) => card.type === CARD_TYPES.special_structure).card_id;
     await json(app, auth(player, {
@@ -462,7 +462,7 @@ test("a player-owned pending placement keeps the player turn open until legally 
   const repository = createMemoryRepository(config);
   const app = await createApp({ repository, config });
   try {
-    const { city, player, agent, owner } = await openCity(repository, app);
+    const { city, player, agent, owner } = await openCity(repository, app, { turn: 5 });
     const offer = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
     const cardId = offer.offer.cards.find((card) => card.type === CARD_TYPES.special_structure).card_id;
     const selected = await json(app, auth(player, {
@@ -500,7 +500,7 @@ test("an illegal manual placement is rejected without consuming the pending enti
   const repository = createMemoryRepository(config);
   const app = await createApp({ repository, config });
   try {
-    const { city, player, owner } = await openCity(repository, app);
+    const { city, player, owner } = await openCity(repository, app, { turn: 5 });
     const offer = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
     const cardId = offer.offer.cards.find((card) => card.type === CARD_TYPES.special_structure).card_id;
     const selected = await json(app, auth(player, {
@@ -536,7 +536,7 @@ test("reload during morning/day/night restores the same phase without a second c
       method: "POST",
       url: `/api/v1/cities/${city.id}/cards/select`,
       headers: { "idempotency-key": "cityday-reload" },
-      payload: { expected_city_version: offer.city_version, offer_id: offer.offer.offer_id, selected_card_id: nonSpecialCardId(offer, CARD_TYPES.policy) }
+      payload: { expected_city_version: offer.city_version, offer_id: offer.offer.offer_id, selected_card_id: nonSpecialCardId(offer, CARD_TYPES.resource) }
     }), 200);
 
     const morning = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/city-day` }), 200);
@@ -616,7 +616,7 @@ test("integration walk: report -> dismiss -> card -> morning -> agent work -> da
       method: "POST",
       url: `/api/v1/cities/${city.id}/cards/select`,
       headers: { "idempotency-key": "walk-select-0" },
-      payload: { expected_city_version: offer0.city_version, offer_id: offer0.offer.offer_id, selected_card_id: nonSpecialCardId(offer0, CARD_TYPES.policy) }
+      payload: { expected_city_version: offer0.city_version, offer_id: offer0.offer.offer_id, selected_card_id: nonSpecialCardId(offer0, CARD_TYPES.resource) }
     }), 200);
     await resolveAndPublish(app, repository, { player, agent, city }, { turn: 1 });
 
@@ -660,7 +660,7 @@ test("integration walk: report -> dismiss -> card -> morning -> agent work -> da
       method: "POST",
       url: `/api/v1/cities/${city.id}/cards/select`,
       headers: { "idempotency-key": "walk-select-1" },
-      payload: { expected_city_version: offer1.city_version, offer_id: offer1.offer.offer_id, selected_card_id: nonSpecialCardId(offer1, CARD_TYPES.policy) }
+      payload: { expected_city_version: offer1.city_version, offer_id: offer1.offer.offer_id, selected_card_id: nonSpecialCardId(offer1, CARD_TYPES.resource) }
     }), 200);
     day = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/city-day` }), 200);
     assert.equal(day.phase, "morning");

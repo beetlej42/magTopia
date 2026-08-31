@@ -108,7 +108,12 @@ export function previewConstruction(state, proposal, options = {}) {
   // in one solver. Client input never carries the discount.
   let discountedBuildingCost;
   try {
-    const discountRate = Math.min(1, Math.max(0, Number(options.constructionDiscountRate ?? 0)));
+    const isSpecialStructure = proposal.program?.archetype === "special_structure"
+      || proposal.program?.attributes?.specialCardId != null
+      || proposal.program?.canonicalProgram === "ministry_of_magic";
+    const discountRate = isSpecialStructure
+      ? 0
+      : Math.min(1, Math.max(0, Number(options.constructionDiscountRate ?? 0)));
     discountedBuildingCost = { coins: roundConstructionCoins(buildingCost.coins * (1 - discountRate)) };
   } catch (error) {
     return {

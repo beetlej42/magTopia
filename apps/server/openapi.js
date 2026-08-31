@@ -408,13 +408,16 @@ export function createOpenApiDocument(baseUrl) {
         },
         CardDefinition: {
           type: "object",
-          required: ["card_id", "type", "title", "description", "decision_mode", "duration"],
+          required: ["card_id", "type", "title", "description", "decision_mode", "duration", "choice_kind", "family", "unique"],
           properties: {
             card_id: { type: "string" },
-            type: { enum: ["special_structure", "resource", "personnel", "policy"] },
+            type: { enum: ["special_structure", "resource", "personnel", "policy", "building", "people"] },
             title: { type: "string" },
             description: { type: "string" },
             decision_mode: { enum: ["immediate", "player_place", "delegate_to_agent"], description: "player_place and delegate_to_agent are two resolution choices of the same special structure card, never two separate cards." },
+            choice_kind: { enum: ["ordinary", "special", null] },
+            family: { type: ["string", "null"] },
+            unique: { type: "boolean" },
             duration: { oneOf: [{ type: "string", const: "instant" }, { type: "object", properties: { type: { type: "string" }, turns: { type: "integer" } } }] },
             structure: { type: "object", nullable: true, description: "System-owned placement spec for special structure cards." },
             effect: json
@@ -422,10 +425,12 @@ export function createOpenApiDocument(baseUrl) {
         },
         CardOffer: {
           type: "object",
-          required: ["offer_id", "turn", "cards"],
+          required: ["offer_id", "turn", "choice_kind", "eligibility_audit", "cards"],
           properties: {
             offer_id: { type: "string" },
             turn: { type: "integer" },
+            choice_kind: { enum: ["ordinary", "special"] },
+            eligibility_audit: { type: "array", items: { type: "object", additionalProperties: true } },
             cards: { type: "array", minItems: 3, maxItems: 3, items: { $ref: "#/components/schemas/CardDefinition" } }
           }
         },
@@ -435,6 +440,7 @@ export function createOpenApiDocument(baseUrl) {
           properties: {
             offer_id: { type: ["string", "null"] },
             status: { enum: ["pending", "selected", "skipped", "resolved", "not_applicable"], description: "not_applicable is authoritative for the turn-0 bootstrap no-card state." },
+            choice_kind: { enum: ["ordinary", "special", null] },
             selected_card_id: { type: ["string", "null"] },
             decision_mode: { type: ["string", "null"] },
             choice_resolved_at: { type: ["string", "null"] },
@@ -491,6 +497,15 @@ export function createOpenApiDocument(baseUrl) {
             building_id: { type: "string" },
             placement: json,
             choice: { $ref: "#/components/schemas/CardChoice" }
+          }
+        },
+        CardCancelRequest: {
+          type: "object",
+          required: ["expected_city_version", "placement_id"],
+          properties: {
+            expected_city_version: { type: "integer", minimum: 0 },
+            placement_id: { type: "string" },
+            actor_note: { type: "string" }
           }
         },
         ActivePolicy: {
@@ -595,10 +610,14 @@ export function createOpenApiDocument(baseUrl) {
         TurnFacts: {
           type: "object",
           description: "Immutable system-generated settlement record. Agents read rolls, outcomes, and state changes here; they never author them.",
-          required: ["turn", "turnKind", "bootstrapProgress", "resourceDelta", "netResourceDelta", "officerMaintenance", "populationDelta", "publicService", "buildingsStarted", "buildingsCompleted", "buildingFactRefs", "constructionRefs", "exposureChanges", "incidents", "incidentRolls", "unaddressedIncidents", "historicalRiskChanges", "assignments", "rolls", "outcomes", "sealedBuildings", "nextRisks"],
+          required: ["turn", "turnKind", "bootstrapProgress", "resourceDelta", "netResourceDelta", "officerMaintenance", "populationDelta", "publicService", "buildingsStarted", "buildingsCompleted", "buildingFactRefs", "constructionRefs", "exposureChanges", "incidents", "incidentRolls", "unaddressedIncidents", "historicalRiskChanges", "assignments", "rolls", "outcomes", "sealedBuildings", "nextRisks", "choiceKind", "offerChoiceKind", "specialCadence", "eligibilityAudit"],
           properties: {
             turn: { type: "integer" },
             turnKind: { enum: ["bootstrap", "normal"] },
+            choiceKind: { enum: ["ordinary", "special", null] },
+            offerChoiceKind: { enum: ["ordinary", "special", null] },
+            specialCadence: { type: "boolean" },
+            eligibilityAudit: { type: "array", items: { type: "object", additionalProperties: true } },
             bootstrapProgress: { oneOf: [{ $ref: "#/components/schemas/BootstrapProgress" }, { type: "null" }] },
             wallClock: { type: "object", nullable: true, additionalProperties: true },
             resourceDelta: { type: "object", properties: { coins: { type: "integer", minimum: 0 }, arcaneEnergy: { type: "number", minimum: 0 } }, required: ["coins", "arcaneEnergy"], additionalProperties: false },
@@ -753,12 +772,16 @@ export function createOpenApiDocument(baseUrl) {
         ReportContext: {
           type: "object",
           description: "SYSTEM-owned immutable newspaper source for one resolved turn. A deterministic projection of the frozen TurnFacts plus read-only city metadata. Never contains prose and never recomputes gameplay. The Agent edits an OwlReport from it and references facts through factRefs.",
-          required: ["schemaVersion", "cityId", "turn", "turnKind", "bootstrapProgress", "worldDay", "factsDigest", "settlement", "resourceDelta", "populationDelta", "publicService", "buildingsStarted", "buildingsCompleted", "buildingFactRefs", "constructionRefs", "incidents", "incidentRolls", "historicalRiskChanges", "factRefs"],
+          required: ["schemaVersion", "cityId", "turn", "turnKind", "choiceKind", "offerChoiceKind", "specialCadence", "eligibilityAudit", "bootstrapProgress", "worldDay", "factsDigest", "settlement", "resourceDelta", "populationDelta", "publicService", "buildingsStarted", "buildingsCompleted", "buildingFactRefs", "constructionRefs", "incidents", "incidentRolls", "historicalRiskChanges", "factRefs"],
           properties: {
             schemaVersion: { type: "integer" },
             cityId: { type: "string" },
             turn: { type: "integer" },
             turnKind: { enum: ["bootstrap", "normal"] },
+            choiceKind: { enum: ["ordinary", "special", null] },
+            offerChoiceKind: { enum: ["ordinary", "special", null] },
+            specialCadence: { type: "boolean" },
+            eligibilityAudit: { type: "array", items: { type: "object", additionalProperties: true } },
             bootstrapProgress: { oneOf: [{ $ref: "#/components/schemas/BootstrapProgress" }, { type: "null" }] },
             worldDay: { type: "integer", description: "One resolved turn is one city day; worldDay equals turn." },
             factsDigest: { type: "string", description: "Stable digest of the frozen TurnFacts; an OwlReport must bind to it." },
@@ -793,10 +816,15 @@ export function createOpenApiDocument(baseUrl) {
             card: {
               type: "object",
               description: "Card and policy facts projected strictly from the frozen TurnFacts of this turn.",
+              required: ["offerId", "turn", "choiceKind", "offerChoiceKind", "specialCadence", "eligibilityAudit", "offeredCards", "choice", "policy", "placement"],
               properties: {
                 factRef: { type: "string" },
                 offerId: { type: ["string", "null"] },
                 turn: { type: "integer" },
+                choiceKind: { enum: ["ordinary", "special", null] },
+                offerChoiceKind: { enum: ["ordinary", "special", null] },
+                specialCadence: { type: "boolean" },
+                eligibilityAudit: { type: "array", items: { type: "object", additionalProperties: true } },
                 offeredCards: { type: "array", items: { type: "object", properties: { cardId: { type: "string" }, type: { type: ["string", "null"] }, title: { type: "string" }, description: { type: ["string", "null"] }, decisionMode: { type: ["string", "null"] } } } },
                 choice: { type: "object", properties: { factRef: { type: "string" }, status: { type: "string" }, selectedCardId: { type: ["string", "null"] }, selectedCardTitle: { type: ["string", "null"] }, choiceResolvedAt: { type: ["string", "null"] }, cardEffects: { type: "object" } } },
                 policy: { type: "object", properties: { factRef: { type: "string" }, started: { type: "array", items: { type: "string" } }, refreshed: { type: "array", items: { type: "string" } }, expired: { type: "array", items: { type: "string" } }, active: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, policyId: { type: "string" }, event: { type: "string" } } } } } },
@@ -945,6 +973,10 @@ export function createOpenApiDocument(baseUrl) {
               properties: {
                 choiceStatus: { type: "string" },
                 choicePending: { type: "boolean" },
+                choiceKind: { type: ["string", "null"] },
+                offerChoiceKind: { type: ["string", "null"] },
+                specialCadence: { type: "boolean" },
+                eligibilityAudit: { type: "array", items: { type: "object", additionalProperties: true } },
                 selectedCardId: { type: ["string", "null"] },
                 decisionMode: { type: ["string", "null"] },
                 playerPlacementPending: { type: "boolean" }
@@ -1042,10 +1074,11 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}/strategy/assignments": { post: commandOperation("Submit the Arcane Officer dispatch plan for the strategy phase", "strategy", { $ref: "#/components/schemas/StrategyAssignmentsRequest" }) },
       "/cities/{city_id}/strategy/resolve": { post: commandOperation("Request the single authoritative system settlement of the strategy phase", "strategy", { $ref: "#/components/schemas/StrategyResolveRequest" }) },
       "/cities/{city_id}/strategy/recruit-officer": { post: commandOperation("Recruit one current system-generated Arcane Officer candidate", "strategy", { $ref: "#/components/schemas/OfficerRecruitmentRequest" }, { $ref: "#/components/schemas/OfficerRecruitmentResponse" }) },
-      "/cards": { get: operation("Read the system-owned 12-card daily catalog", "cards", null, { type: "object", properties: { data: { type: "array", items: { $ref: "#/components/schemas/CardDefinition" } } } }) },
+      "/cards": { get: operation("Read the system-owned daily card catalog", "cards", null, { type: "object", properties: { data: { type: "array", items: { $ref: "#/components/schemas/CardDefinition" } } } }) },
       "/cities/{city_id}/cards/current": { get: operation("Read the canonical three-card offer for the current turn", "cards", null, { type: "object", properties: { city_id: { type: "string" }, city_version: { type: "integer" }, turn: { type: "integer" }, turn_status: { type: "string" }, offer: { $ref: "#/components/schemas/CardOffer" }, choice: { $ref: "#/components/schemas/CardChoice" } } }) },
       "/cities/{city_id}/cards/select": { post: commandOperation("The player selects exactly one offered card for this turn", "cards", { $ref: "#/components/schemas/CardSelectRequest" }, { $ref: "#/components/schemas/CardSelectResponse" }) },
       "/cities/{city_id}/cards/place": { post: commandOperation("Place a pending special structure at a legal location (player placement or delegated Agent placement)", "cards", { $ref: "#/components/schemas/CardPlaceRequest" }, { $ref: "#/components/schemas/CardPlaceResponse" }) },
+      "/cities/{city_id}/cards/cancel": { post: commandOperation("Cancel an unplaced special structure entitlement; cancelled unique cards may reappear on a later Special Choice", "cards", { $ref: "#/components/schemas/CardCancelRequest" }, json) },
       "/cities/{city_id}/report-context": {
         get: operation("Read the immutable SYSTEM newspaper source facts for a resolved turn", "reports", null, { $ref: "#/components/schemas/ReportContext" }, true, [
           queryParameter("turn", { type: "integer", minimum: 1 }, "The resolved turn to read. Omit to select the latest resolved turn that has frozen facts.")
