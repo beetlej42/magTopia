@@ -68,7 +68,8 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     newspaper: document.createElement("section"),
     cards: document.createElement("section"),
     placement: document.createElement("section"),
-    toast: document.createElement("div")
+    toast: document.createElement("div"),
+    strategy: document.createElement("aside")
   };
   layers.phase.className = "city-day-phase-chip";
   layers.owl.className = "city-day-owl";
@@ -80,6 +81,8 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
   layers.placement.className = "city-day-placement";
   layers.placement.hidden = true;
   layers.toast.className = "city-day-toast";
+  layers.strategy.className = "city-day-strategy-facts";
+  layers.strategy.hidden = true;
   for (const layer of Object.values(layers)) root.append(layer);
 
   // ---- Full-screen layer mutual exclusion ----------------------------------
@@ -208,13 +211,13 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     window.setTimeout(() => {
       layers.newspaper.hidden = true;
       layers.newspaper.classList.remove("is-entering", "is-dismissing");
-      root.hidden = !state.cardOpen && !state.placementOpen;
+      root.hidden = !state.presentation && !state.cardOpen && !state.placementOpen;
     }, 320);
   }
 
   // ---- Three-card choice ---------------------------------------------------
 
-  function buildCardShell(card, index, onPick) {
+  function buildCardShell(card, index, onPick, audit = null) {
     const element = document.createElement("button");
     element.type = "button";
     element.className = `city-day-card city-day-card-${card.type ?? "unknown"}`;
@@ -224,21 +227,49 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     title.textContent = card.title;
     const kind = document.createElement("span");
     kind.className = "city-day-card-kind";
-    kind.textContent = card.type === "special_structure"
-      ? "特殊建筑"
-      : card.type === "policy"
-        ? "市政政策"
-        : card.type === "resource" || card.type === "personnel"
-          ? "资源 / 人事"
-          : "卡牌";
+    const typeLabels = {
+      building: "BUILDING · 建设",
+      people: "PEOPLE · 人口",
+      resource: "RESOURCE · 资源",
+      personnel: "PERSONNEL · 人事",
+      policy: "POLICY · 政策",
+      special_structure: "SPECIAL · 特殊建筑"
+    };
+    kind.textContent = typeLabels[card.type] ?? "CARD · 卡牌";
     const description = document.createElement("p");
     description.className = "city-day-card-description";
     description.textContent = card.description;
     const effect = document.createElement("p");
     effect.className = "city-day-card-effect";
     effect.textContent = cardDurationLabel(card);
-    element.append(kind, title, description, effect);
-    element.addEventListener("click", () => onPick(card, index));
+    const facts = document.createElement("div");
+    facts.className = "city-day-card-facts";
+    const addFact = (text, className = "") => {
+      if (!text) return;
+      const fact = document.createElement("span");
+      fact.className = className;
+      fact.textContent = text;
+      facts.append(fact);
+    };
+    if (card.type === "special_structure") {
+      addFact(`SPECIAL FAMILY · ${String(card.family ?? "special_building").replaceAll("_", " ")}`);
+      if (card.unique) addFact("唯一资格");
+      if (card.free_placement ?? card.effect?.freePlacement) addFact("免费放置");
+      if (card.structure?.footprint) addFact(`占地 ${card.structure.footprint}`);
+      addFact(audit?.eligible === false ? "资格受限" : "资格：符合当前条件");
+      addFact("选择后：自己放置 / 交给 Agent", "is-action");
+    } else if (card.choice_kind) {
+      addFact(`${String(card.choice_kind).toUpperCase()} CHOICE`);
+      if (card.family) addFact(`FAMILY · ${String(card.family).replaceAll("_", " ")}`);
+    }
+    element.append(kind, title, description, effect, facts);
+    element.addEventListener("click", () => {
+      if (element.dataset.selected === "true") return;
+      element.dataset.selected = "true";
+      element.setAttribute("aria-pressed", "true");
+      element.classList.add("is-selected");
+      onPick(card, index);
+    });
     return element;
   }
 
@@ -256,16 +287,22 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     heading.className = "city-day-cards-heading";
     const eyebrow = document.createElement("p");
     eyebrow.className = "eyebrow";
-    eyebrow.textContent = "今日卡牌";
+    const isSpecial = offer?.choice_kind === "special";
+    eyebrow.textContent = isSpecial
+      ? `SPECIAL CHOICE · 第 ${offer?.turn ?? ""} 回合`
+      : "ORDINARY CHOICE · 今日卡牌";
     const title = document.createElement("h2");
     title.textContent = "为今天的城市做出一个选择";
     heading.append(eyebrow, title);
+    layers.cards.dataset.choiceKind = isSpecial ? "special" : "ordinary";
+    layers.cards.classList.toggle("is-special-choice", isSpecial);
     layers.cards.append(heading);
 
     const grid = document.createElement("div");
     grid.className = "city-day-cards-grid";
     (offer?.cards ?? []).forEach((card, index) => {
-      grid.append(buildCardShell(card, index, (picked) => onSelect(picked, offer)));
+      const audit = (offer?.eligibility_audit ?? []).find((entry) => entry.cardId === card.card_id || entry.card_id === card.card_id);
+      grid.append(buildCardShell(card, index, (picked) => onSelect(picked, offer), audit));
     });
     layers.cards.append(grid);
     showLayer("cards");
@@ -352,7 +389,8 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
       icon: "cancel",
       onClick: () => {
         const { onCancel: cancelPlacement } = state.activePlacement ?? {};
-        closePlacement();
+        // The controller owns the authoritative cancellation mutation. Do not
+        // close first and lose the recoverable session if that mutation fails.
         cancelPlacement?.();
       }
     });
@@ -439,14 +477,14 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     state.activePlacement = null;
     layers.placement.hidden = true;
     layers.placement.replaceChildren();
-    root.hidden = !state.cardOpen && !state.reportOpen;
+    root.hidden = !state.presentation && !state.cardOpen && !state.reportOpen;
   }
 
   function closeCards() {
     state.cardOpen = false;
     layers.cards.hidden = true;
     layers.cards.replaceChildren();
-    root.hidden = !state.placementOpen && !state.reportOpen;
+    root.hidden = !state.presentation && !state.placementOpen && !state.reportOpen;
   }
 
   // ---- Phase projection ----------------------------------------------------
@@ -458,6 +496,7 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
       return;
     }
     state.presentation = presentation;
+    root.hidden = false;
     const changed = state.phase !== nextPhase;
     state.phase = nextPhase;
     layers.phase.textContent = PHASE_LABELS[nextPhase] ?? nextPhase;
@@ -469,6 +508,34 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
   function showIdleNote(message) {
     layers.toast.textContent = message ?? "";
     layers.toast.hidden = !message;
+  }
+
+  // Strategy data is read-only and supplied by the authoritative strategy
+  // endpoint. The player sees factual incident/officer state without the
+  // client deriving outcomes or inventing values.
+  function applyStrategyFacts(strategy) {
+    state.strategy = strategy ?? null;
+    layers.strategy.replaceChildren();
+    const incidents = strategy?.incidents ?? [];
+    const candidates = strategy?.arcane_officer_recruitment?.candidates ?? [];
+    if (!incidents.length && !candidates.length) {
+      layers.strategy.hidden = true;
+      return;
+    }
+    const title = document.createElement("strong");
+    title.textContent = "夜间事实 · Agent / Arcane Officer";
+    layers.strategy.append(title);
+    if (incidents.length) {
+      const incidentLine = document.createElement("p");
+      incidentLine.textContent = `待处理事件 ${incidents.length} 件：${incidents.map((entry) => entry.summary ?? entry.type ?? entry.id).join("、")}`;
+      layers.strategy.append(incidentLine);
+    }
+    if (candidates.length) {
+      const officerLine = document.createElement("p");
+      officerLine.textContent = `可招募 Arcane Officer：${candidates.map((entry) => entry.identity?.name ?? entry.candidate_id).join("、")}`;
+      layers.strategy.append(officerLine);
+    }
+    layers.strategy.hidden = false;
   }
 
   function setHidden(hidden) {
@@ -493,6 +560,7 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     closePlacement,
     closeCards,
     showIdleNote,
+    applyStrategyFacts,
     setHidden,
     setSwipeDirectionalHint,
     phaseLightTarget

@@ -178,13 +178,15 @@ test("Turn 1 gets the canonical ordinary BUILDING/PEOPLE/RESOURCE offer stable a
     assert.equal(first.offer.choice_kind, "ordinary");
     assert.deepEqual(new Set(first.offer.cards.map((card) => card.choice_kind)), new Set(["ordinary"]));
     assert.deepEqual(new Set(first.offer.cards.map((card) => card.family)), new Set(["ordinary_building", "ordinary_people", "ordinary_resource"]));
+    assert.ok(first.offer.cards.every((card) => card.free_placement === false && card.placement_required === false), "ordinary cards disclose non-placement semantics");
+    assert.ok(Array.isArray(first.pending_placements), "cards/current exposes the authoritative placement projection");
     const second = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
     assert.deepEqual(second.offer.cards.map((card) => card.card_id), first.offer.cards.map((card) => card.card_id));
     assert.equal(second.offer.offer_id, first.offer.offer_id);
     assert.equal(second.choice.status, "pending");
     const catalog = await json(app, { method: "GET", url: "/api/v1/cards" }, 200);
     assert.ok(catalog.data.length >= 12);
-    assert.ok(catalog.data.some((card) => card.card_id === "ministry-of-magic" && card.type === "special_structure"));
+    assert.ok(catalog.data.some((card) => card.card_id === "ministry-of-magic" && card.type === "special_structure" && card.free_placement === true && card.placement_required === true));
   } finally {
     await app.close();
   }
@@ -733,6 +735,11 @@ test("OpenAPI advertises the card endpoints and schemas", async () => {
     for (const schema of ["CardDefinition", "CardOffer", "CardChoice", "CardSelectRequest", "CardPlaceRequest", "CardCancelRequest", "ActivePolicy", "PendingPlacement", "StrategyCards"]) {
       assert.ok(openapi.components.schemas[schema], `missing schema ${schema}`);
     }
+    assert.ok(openapi.components.schemas.CardDefinition.required.includes("free_placement"));
+    assert.ok(openapi.components.schemas.CardDefinition.required.includes("placement_required"));
+    assert.ok(openapi.paths["/cities/{city_id}/cards/current"].get.responses);
+    const currentSchema = openapi.paths["/cities/{city_id}/cards/current"].get.responses["200"].content["application/json"].schema;
+    assert.equal(currentSchema.properties.pending_placements.type, "array");
     assert.ok(openapi.components.schemas.StrategyContext.properties.strategy.properties.cards);
   } finally {
     await app.close();

@@ -750,7 +750,8 @@ export async function createApp({ repository, config, logger = false, now = () =
       turn: withCards.turn,
       turn_status: withCards.gameplay?.turnStatus ?? "open",
       offer: currentOffer(withCards),
-      choice: currentChoice(withCards)
+      choice: currentChoice(withCards),
+      pending_placements: pendingPlacements(withCards)
     };
   });
 

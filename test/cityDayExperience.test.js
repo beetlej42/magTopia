@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 import { chooseCardOrientation, phaseLightTarget, PHASE_LABELS, createCityDayExperience } from "../src/ui/cityDayExperience.js";
 import { createCityDayController } from "../src/ui/cityDayController.js";
 
@@ -283,6 +284,129 @@ test("confirm is disabled again when the target becomes illegal", async () => {
     assert.equal(confirm.disabled, true);
     assert.equal(experience.layers.placement.querySelector(".city-day-placement-status").classList.has("is-invalid"), true);
   });
+});
+
+test("phase chrome and strategy facts remain visible after choice layers close", async () => {
+  await withFakeDom(async () => {
+    const experience = createCityDayExperience({});
+    experience.applyPresentation({ phase: "morning", turn: 6 });
+    experience.presentCards({ choice_kind: "ordinary", cards: OFFER.cards }, () => {});
+    experience.closeCards();
+    assert.equal(experience.root.hidden, false, "the decorative phase layer is not hidden with the cards");
+    assert.equal(experience.layers.phase.hidden, false);
+    experience.applyStrategyFacts({
+      incidents: [{ id: "incident-1", summary: "A trace was observed" }],
+      arcane_officer_recruitment: { candidates: [{ candidate_id: "candidate-1", identity: { name: "Vesper Lark" } }] }
+    });
+    assert.equal(experience.layers.strategy.hidden, false);
+    assert.ok([...experience.layers.strategy.children].some((child) => /incident-1|A trace/.test(child.textContent)));
+    assert.ok([...experience.layers.strategy.children].some((child) => /Vesper Lark/.test(child.textContent)));
+  });
+});
+
+test("ordinary and special offers expose distinct headings and card facts without stale special state", async () => {
+  await withFakeDom(async () => {
+    const experience = createCityDayExperience({});
+    experience.presentCards({
+      turn: 4,
+      choice_kind: "ordinary",
+      cards: [{ card_id: "building", type: "building", title: "Building Materials", description: "x", choice_kind: "ordinary", family: "ordinary_building" }, { card_id: "people", type: "people", title: "People", description: "x" }, { card_id: "resource", type: "resource", title: "Resource", description: "x" }]
+    }, () => {});
+    assert.equal(experience.layers.cards.dataset.choiceKind, "ordinary");
+    assert.equal(experience.layers.cards.classList.has("is-special-choice"), false);
+    assert.match(experience.layers.cards.children[0].children[0].textContent, /ORDINARY CHOICE/);
+    assert.ok(collectButtons(experience.layers.cards).some((button) => button.querySelector(".city-day-card-kind")?.textContent.includes("BUILDING")));
+    assert.ok(experience.layers.cards.querySelector(".city-day-card-facts"), "ordinary family fact is shown");
+
+    experience.presentCards({
+      turn: 5,
+      choice_kind: "special",
+      eligibility_audit: [{ cardId: "ministry-of-magic", eligible: true }],
+      cards: [{ card_id: "ministry-of-magic", type: "special_structure", title: "Ministry", description: "x", choice_kind: "special", family: "special_building", unique: true, free_placement: true, structure: { footprint: "2x2" } }, { card_id: "other", type: "resource", title: "Reserve", description: "x" }, { card_id: "policy", type: "policy", title: "Policy", description: "x" }]
+    }, () => {});
+    assert.equal(experience.layers.cards.dataset.choiceKind, "special");
+    assert.equal(experience.layers.cards.classList.has("is-special-choice"), true);
+    assert.match(experience.layers.cards.children[0].children[0].textContent, /SPECIAL CHOICE.*5/);
+    const specialCard = collectButtons(experience.layers.cards).find((button) => button.className.includes("city-day-card-special_structure"));
+    const specialFacts = specialCard.querySelector(".city-day-card-facts");
+    const factText = [...specialFacts.children].map((child) => child.textContent).join(" | ");
+    assert.match(factText, /SPECIAL FAMILY/);
+    assert.match(factText, /唯一资格/);
+    assert.match(factText, /免费放置/);
+    assert.match(factText, /2x2/);
+    assert.match(factText, /自己放置 \/ 交给 Agent/);
+
+    experience.presentCards({ turn: 6, choice_kind: "ordinary", cards: [{ card_id: "resource", type: "resource", title: "Resource", description: "x" }] }, () => {});
+    assert.equal(experience.layers.cards.dataset.choiceKind, "ordinary");
+    assert.equal(experience.layers.cards.classList.has("is-special-choice"), false, "special styling is cleared when returning to ordinary");
+  });
+});
+
+test("controller and experience walk bootstrap through Turn 10 without duplicate card submissions", async () => {
+  await withFakeDom(async () => {
+    const experience = createCityDayExperience({});
+    let turn = 0;
+    let choicePending = false;
+    let selectCount = 0;
+    let specialChoiceCount = 0;
+    const ordinaryCards = [
+      { card_id: "ordinary-building-discount", type: "building", title: "Materials", description: "x", choice_kind: "ordinary", family: "ordinary_building" },
+      { card_id: "ordinary-people-migration", type: "people", title: "People", description: "x", choice_kind: "ordinary", family: "ordinary_people" },
+      { card_id: "ordinary-resource-grant", type: "resource", title: "Resource", description: "x", choice_kind: "ordinary", family: "ordinary_resource" }
+    ];
+    const specialCards = [
+      { card_id: "ministry-of-magic", type: "special_structure", title: "Ministry of Magic", description: "x", choice_kind: "special", family: "special_building", unique: true, free_placement: true, structure: { footprint: "2x2" } },
+      { card_id: "special-development-grant", type: "resource", title: "Special Grant", description: "x", choice_kind: "special", family: "large_resource" },
+      { card_id: "special-secrecy-charter", type: "policy", title: "Secrecy", description: "x", choice_kind: "special", family: "multi_turn_modifier" }
+    ];
+    const calls = stubFetch({
+      "/api/v1/cities/city-1/city-day": () => ({ body: { phase: choicePending ? "early_morning" : "morning", turn, settled: false, report: { ready: false, dismissed: false }, card: { choicePending, playerPlacementPending: false }, agent: { workStarted: false }, incident: { phaseActive: false } } }),
+      "/api/v1/cities/city-1/cards/current": () => ({ body: { city_id: "city-1", city_version: turn + selectCount, turn, offer: { offer_id: `offer-${turn}`, turn, choice_kind: turn % 5 === 0 ? "special" : "ordinary", eligibility_audit: [], cards: turn % 5 === 0 ? specialCards : ordinaryCards }, choice: { status: choicePending ? "pending" : "selected" } } }),
+      "/api/v1/cards": { body: { data: [...ordinaryCards, ...specialCards] } },
+      "/api/v1/cities/city-1/cards/select": (init) => {
+        const body = JSON.parse(String(init.body));
+        selectCount += 1;
+        if (turn % 5 === 0) {
+          specialChoiceCount += 1;
+          assert.equal(body.decision_mode, "delegate_to_agent");
+        } else assert.equal(body.decision_mode, "immediate");
+        choicePending = false;
+        return { body: { status: "selected", selected_card_id: body.selected_card_id } };
+      }
+    });
+    const controller = createCityDayController({
+      experience,
+      api: { baseUrl: "/api/v1", cityId: "city-1", token: "session" },
+      setLight: () => {}
+    });
+    await controller.sync();
+    assert.equal(calls.some((call) => call.url.endsWith("/cards/current")), false, "bootstrap Turn 0 has no card request");
+    for (turn = 1; turn <= 10; turn += 1) {
+      choicePending = true;
+      await controller.sync();
+      const isSpecial = turn % 5 === 0;
+      assert.equal(experience.layers.cards.dataset.choiceKind, isSpecial ? "special" : "ordinary");
+      const cards = collectButtons(experience.layers.cards);
+      cards.find((button) => button.className.includes(isSpecial ? "city-day-card-special_structure" : "city-day-card-building")).dispatchEvent({ type: "click" });
+      if (isSpecial) {
+        const delegate = collectButtons(experience.layers.cards).find((button) => button.textContent.includes("交给 Agent"));
+        assert.ok(delegate, `Turn ${turn} opens the placement decision`);
+        delegate.dispatchEvent({ type: "click" });
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    assert.equal(selectCount, 10, "each turn submits exactly one card selection");
+    assert.equal(specialChoiceCount, 2, "Turn 5 and Turn 10 are Special Choice");
+    assert.equal(calls.filter((call) => call.url.endsWith("/cards/select")).length, 10);
+  });
+});
+
+test("desktop card CSS gives the horizontal offer enough width for readable facts", async () => {
+  const css = await readFile(new URL("../src/style.css", import.meta.url), "utf8");
+  assert.match(css, /@media \(orientation: landscape\) and \(min-width: 700px\)/);
+  assert.match(css, /\.city-day-cards-grid\s*\{[^}]*width:\s*min\(1080px,\s*100%\)/s);
+  assert.match(css, /\.city-day-card\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
+  assert.match(css, /grid-template-areas:\s*"kind"\s*"title"\s*"description"\s*"effect"\s*"facts"/s);
 });
 
 // ---- Fake DOM harness ------------------------------------------------------
