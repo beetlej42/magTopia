@@ -685,10 +685,10 @@ test("OpenAPI advertises the card endpoints and schemas", async () => {
   const app = await createApp({ repository, config });
   try {
     const openapi = await json(app, { method: "GET", url: "/openapi.json" }, 200);
-    for (const route of ["/cards", "/cities/{city_id}/cards/current", "/cities/{city_id}/cards/select", "/cities/{city_id}/cards/place"]) {
+    for (const route of ["/cards", "/cities/{city_id}/cards/current", "/cities/{city_id}/cards/select", "/cities/{city_id}/cards/place", "/cities/{city_id}/cards/cancel"]) {
       assert.ok(openapi.paths[route], `missing ${route}`);
     }
-    for (const schema of ["CardDefinition", "CardOffer", "CardChoice", "CardSelectRequest", "CardPlaceRequest", "ActivePolicy", "PendingPlacement", "StrategyCards"]) {
+    for (const schema of ["CardDefinition", "CardOffer", "CardChoice", "CardSelectRequest", "CardPlaceRequest", "CardCancelRequest", "ActivePolicy", "PendingPlacement", "StrategyCards"]) {
       assert.ok(openapi.components.schemas[schema], `missing schema ${schema}`);
     }
     assert.ok(openapi.components.schemas.StrategyContext.properties.strategy.properties.cards);

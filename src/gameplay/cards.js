@@ -61,11 +61,11 @@ export function cardEligibility(state = {}, cardOrId, { turn = state.turn } = {}
   if (prerequisites.minArcaneEnergy != null && arcaneEnergy < Number(prerequisites.minArcaneEnergy)) reasons.push("requires_arcane_energy");
   if (prerequisites.requiredPurpose && !buildings.some((building) => (
     ["completed", "active"].includes(building.status ?? "completed")
-      && String(building.program?.purpose ?? building.metadata?.purpose ?? "") === String(prerequisites.requiredPurpose)
+      && canonicalBuildingPurposes(building).includes(String(prerequisites.requiredPurpose))
   ))) reasons.push("requires_canonical_purpose");
   if (prerequisites.economicBasis && !buildings.some((building) => (
     ["completed", "active"].includes(building.status ?? "completed")
-      && ["commercial", "production"].includes(String(building.program?.purpose ?? building.metadata?.purpose ?? ""))
+      && canonicalBuildingPurposes(building).some((purpose) => ["commercial", "production"].includes(purpose))
   ))) reasons.push("requires_economic_basis");
   const minCoins = Number(prerequisites.minCoins ?? 0);
   // Every special_structure is a free system grant; affordability never makes
@@ -192,6 +192,7 @@ export function currentOffer(state) {
           decision_mode: definition.decisionMode,
           choice_kind: definition.choiceKind,
           family: definition.family,
+          unique: definition.unique,
           duration: definition.duration,
           ...(definition.structure ? { structure: definition.structure } : {})
         }
@@ -276,9 +277,15 @@ export function activeConstructionDiscountRate(state) {
   return Math.max(policyRate, oneTimeRate);
 }
 
-export function consumeConstructionDiscount(state) {
+export function consumeConstructionDiscount(state, appliedRate = activeConstructionDiscountRate(state)) {
   const discount = state?.gameplay?.cardState?.constructionDiscount;
   if (!discount || Number(discount.remainingUses ?? 0) <= 0) return state;
+  const oneTimeRate = Number(discount.discountRate ?? 0);
+  const policyRate = collectPolicyEffects(state).constructionDiscountRate;
+  // A one-shot entitlement is consumed only when it actually determines the
+  // applied rate. A stronger legacy policy may coexist with it without
+  // burning the player's unused entitlement.
+  if (oneTimeRate + 1e-9 < Number(appliedRate ?? 0) || oneTimeRate + 1e-9 < policyRate) return state;
   return {
     ...state,
     gameplay: {
@@ -286,6 +293,20 @@ export function consumeConstructionDiscount(state) {
       cardState: normalizeCardState({ ...(state.gameplay.cardState ?? {}), constructionDiscount: { ...discount, remainingUses: 0 } })
     }
   };
+}
+
+function canonicalBuildingPurposes(building) {
+  // Persisted canonical gameplay units are authoritative. Do not let a
+  // renderer/program label override them when the two disagree. The
+  // gameplayBuilding spelling is accepted for transitional in-memory states;
+  // only when neither canonical field exists do we use legacy fallbacks.
+  const units = Array.isArray(building?.gameplay?.units)
+    ? building.gameplay.units
+    : Array.isArray(building?.gameplayBuilding?.units)
+      ? building.gameplayBuilding.units
+      : null;
+  if (units) return units.map((unit) => String(unit?.purpose ?? "").toLowerCase()).filter(Boolean);
+  return [String(building?.program?.purpose ?? building?.metadata?.purpose ?? "").toLowerCase()].filter(Boolean);
 }
 
 export function specialStructureBuildings(state) {

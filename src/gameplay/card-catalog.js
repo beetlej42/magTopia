@@ -377,7 +377,7 @@ export function getCard(cardId) {
 }
 
 export function getCardsByCategory() {
-  const byCategory = { special_structure: [], resource: [], personnel: [], policy: [] };
+  const byCategory = Object.fromEntries(Object.values(CARD_TYPES).map((type) => [type, []]));
   for (const entry of CARD_CATALOG) {
     if (byCategory[entry.type]) byCategory[entry.type].push(entry);
   }

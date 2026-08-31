@@ -3,14 +3,14 @@ import { appendEvent, cloneCityState } from "./state.js";
 import { previewConnectionBetween, previewConstruction } from "./solver.js";
 import { deriveGameplayBuilding } from "../gameplay/building-metadata.js";
 import { incomeForSettlement, systemOwnedBonusForBuilding } from "../gameplay/economy.js";
-import { consumeConstructionDiscount } from "../gameplay/cards.js";
+import { activeConstructionDiscountRate, consumeConstructionDiscount } from "../gameplay/cards.js";
 import { getCard } from "../gameplay/card-catalog.js";
 
 export function createEngineContext(options = {}) {
   const sequences = new Map();
   return {
     now: options.now ?? (() => new Date().toISOString()),
-    constructionDiscountRate: options.constructionDiscountRate ?? 0,
+    constructionDiscountRate: options.constructionDiscountRate ?? null,
     createId: options.createId ?? ((prefix) => {
       const sequence = (sequences.get(prefix) ?? 0) + 1;
       sequences.set(prefix, sequence);
@@ -155,12 +155,13 @@ function constructBuilding(currentState, input, context) {
   let proposal;
   try { proposal = normalizeConstructionProposal(input.proposal ?? input, context); }
   catch (error) { return rejected(currentState, "INVALID_PROPOSAL", error.message); }
-  const preview = previewConstruction(currentState, proposal, { constructionDiscountRate: context.constructionDiscountRate });
+  const constructionDiscountRate = effectiveConstructionDiscountRate(currentState, context);
+  const preview = previewConstruction(currentState, proposal, { constructionDiscountRate });
   if (!preview.feasible) return rejected(currentState, classifyPreviewError(preview), preview.errors?.[0] ?? "Construction is not feasible", { preview });
   const next = cloneCityState(currentState);
   const buildingId = input.buildingId ?? context.createId("building");
   applyCompletedBuilding(next, { proposal, preview, buildingId, assetId: input.assetId ?? proposal.program.assetId }, context);
-  if (!isSpecialStructureProposal(proposal)) next.gameplay = consumeConstructionDiscount(next).gameplay;
+  if (!isSpecialStructureProposal(proposal)) next.gameplay = consumeConstructionDiscount(next, constructionDiscountRate).gameplay;
   return accepted(currentState, next, { building: structuredClone(next.buildings[buildingId]), preview });
 }
 
@@ -193,7 +194,8 @@ function reserveConstruction(currentState, input, context) {
   let proposal;
   try { proposal = normalizeConstructionProposal(input.proposal ?? input, context); }
   catch (error) { return rejected(currentState, "INVALID_PROPOSAL", error.message); }
-  const preview = previewConstruction(currentState, proposal, { constructionDiscountRate: context.constructionDiscountRate });
+  const constructionDiscountRate = effectiveConstructionDiscountRate(currentState, context);
+  const preview = previewConstruction(currentState, proposal, { constructionDiscountRate });
   if (!preview.feasible) return rejected(currentState, classifyPreviewError(preview), preview.errors?.[0] ?? "Construction is not feasible", { preview });
   const reservationId = input.reservationId ?? context.createId("reservation");
   const next = cloneCityState(currentState);
@@ -213,14 +215,24 @@ function reserveConstruction(currentState, input, context) {
   };
   if (!isSpecialStructureProposal(proposal)) {
     const discount = next.gameplay?.cardState?.constructionDiscount;
-    next.gameplay = consumeConstructionDiscount(next).gameplay;
-    if (discount && Number(discount.remainingUses ?? 0) > 0) {
+    const consumed = consumeConstructionDiscount(next, constructionDiscountRate);
+    next.gameplay = consumed.gameplay;
+    if (discount && Number(discount.remainingUses ?? 0) > 0
+      && Number(consumed.gameplay.cardState.constructionDiscount?.remainingUses ?? 0) === 0) {
       next.reservations[reservationId].consumedConstructionDiscount = structuredClone(discount);
     }
   }
   bump(next, false);
   appendEvent(next, { type: "construction_reserved", actor: proposal.actor, reservationId, proposalId: proposal.id ?? null, buildingId: input.buildingId ?? null, cost: preview.cost }, context);
   return accepted(currentState, next, { reservation: structuredClone(next.reservations[reservationId]), preview });
+}
+
+function effectiveConstructionDiscountRate(state, context) {
+  const requested = context.constructionDiscountRate == null ? 0 : Number(context.constructionDiscountRate);
+  // State-owned entitlements remain authoritative even for non-HTTP callers
+  // that construct a default engine context. An injected rate can represent a
+  // legacy policy, but may not suppress a stronger system entitlement.
+  return Math.max(0, requested, activeConstructionDiscountRate(state));
 }
 
 function isSpecialStructureProposal(proposal) {
