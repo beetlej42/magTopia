@@ -1828,10 +1828,25 @@ html[data-magtopia-surface="acceptance"] .city-day-experience {
   .city-day-cards-grid {
     flex-direction: row;
     align-items: stretch;
+    width: min(1080px, 100%);
   }
 
   .city-day-card {
     flex: 1 1 0;
+    /* A broad desktop card reads as a compact information sheet: the
+       category badge gets its own row instead of stealing 40% of the text
+       column from a long Ministry/special-structure title. */
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "kind"
+      "title"
+      "description"
+      "effect"
+      "facts";
+  }
+
+  .city-day-card-kind {
+    justify-self: start;
   }
 }
 

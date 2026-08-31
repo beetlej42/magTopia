@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 import { chooseCardOrientation, phaseLightTarget, PHASE_LABELS, createCityDayExperience } from "../src/ui/cityDayExperience.js";
 import { createCityDayController } from "../src/ui/cityDayController.js";
 
@@ -398,6 +399,14 @@ test("controller and experience walk bootstrap through Turn 10 without duplicate
     assert.equal(specialChoiceCount, 2, "Turn 5 and Turn 10 are Special Choice");
     assert.equal(calls.filter((call) => call.url.endsWith("/cards/select")).length, 10);
   });
+});
+
+test("desktop card CSS gives the horizontal offer enough width for readable facts", async () => {
+  const css = await readFile(new URL("../src/style.css", import.meta.url), "utf8");
+  assert.match(css, /@media \(orientation: landscape\) and \(min-width: 700px\)/);
+  assert.match(css, /\.city-day-cards-grid\s*\{[^}]*width:\s*min\(1080px,\s*100%\)/s);
+  assert.match(css, /\.city-day-card\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
+  assert.match(css, /grid-template-areas:\s*"kind"\s*"title"\s*"description"\s*"effect"\s*"facts"/s);
 });
 
 // ---- Fake DOM harness ------------------------------------------------------
