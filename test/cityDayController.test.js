@@ -655,7 +655,8 @@ function pendingPlacementRoutes({ searchData = [{ lotId: "cell-2-3", center: { x
     "/api/v1/cities/city-1/site-searches": (init) => {
       onSearch?.(init);
       return { body: { city_version: 8, data: searchData } };
-    }
+    },
+    "/api/v1/cities/city-1/cards/cancel": { body: { status: "cancelled" } }
   };
 }
 
@@ -931,4 +932,82 @@ test("player placement cancellation uses the authoritative endpoint and idempote
   assert.deepEqual(cancelBody, { expected_city_version: 8, placement_id: "placement-9" });
   const cancelCall = calls.find((call) => call.url.endsWith("/cards/cancel"));
   assert.ok(idempotencyKeyOf(cancelCall), "cancellation carries an idempotency key");
+});
+
+test("failed placement cancellation restores the HUD without completing the player turn", async () => {
+  for (const [label, cancellation] of [
+    ["http failure", { status: 422, body: { code: "PLACEMENT_NOT_CANCELLABLE", message: "still pending" } }],
+    ["empty 200", { status: 200, body: {} }],
+    ["explicit rejection", { status: 200, body: { status: "rejected", message: "cancel rejected" } }]
+  ]) {
+    const experience = createMockExperience();
+    let completed = 0;
+    stubFetch({
+      ...pendingPlacementRoutes(),
+      "/api/v1/cities/city-1/cards/cancel": cancellation
+    });
+    const controller = createCityDayController({
+      experience,
+      api: { baseUrl: "/api/v1", cityId: "city-1", token: "session" },
+      setLight: () => {},
+      onPlayerTurnComplete: () => { completed += 1; }
+    });
+    await controller.sync();
+    await experience.onCancel?.();
+    assert.equal(controller.placementActive, true, `${label}: pending placement remains recoverable`);
+    assert.equal(experience.state.placementOpen, true, `${label}: placement HUD is restored`);
+    assert.equal(completed, 0, `${label}: failed cancel does not complete the player turn`);
+  }
+});
+
+test("multiple player placements sort by earned turn then id and continue after the first is cancelled", async () => {
+  const experience = createMockExperience();
+  let cancelled = false;
+  const entries = () => cancelled
+    ? [{ placement_id: "placement-late", card_id: "owl-tower", mode: "player_place", status: "pending", delegated_at_turn: 10 }]
+    : [
+      { placement_id: "placement-late", card_id: "owl-tower", mode: "player_place", status: "pending", delegated_at_turn: 10 },
+      { placement_id: "placement-early", card_id: "owl-tower", mode: "player_place", status: "pending", delegated_at_turn: 5 }
+    ];
+  stubFetch({
+    ...pendingPlacementRoutes(),
+    "/api/v1/cities/city-1/city-day": () => ({ body: { ...PENDING_PLACEMENT_DAY, card: { ...PENDING_PLACEMENT_DAY.card, pendingPlacements: entries() } } }),
+    "/api/v1/cities/city-1/cards/current": () => ({ body: { city_id: "city-1", city_version: cancelled ? 9 : 8, turn: 10, offer: OFFER, choice: { status: "selected", card_effects: { placement: { placement_id: "wrong-current-choice", mode: "player_place" } } }, pending_placements: entries() } }),
+    "/api/v1/cities/city-1/cards/cancel": () => { cancelled = true; return { body: { status: "cancelled" } }; }
+  });
+  const controller = createCityDayController({
+    experience,
+    api: { baseUrl: "/api/v1", cityId: "city-1", token: "session" },
+    setLight: () => {}
+  });
+  await controller.sync();
+  assert.equal(controller.getPlacementState().placementId, "placement-early");
+  await experience.onCancel?.();
+  assert.equal(controller.getPlacementState().placementId, "placement-late", "the next mandate opens after the first is cancelled");
+});
+
+test("completing the first of multiple placements automatically opens the next mandate", async () => {
+  const experience = createMockExperience();
+  let placed = false;
+  const entries = () => placed
+    ? [{ placement_id: "placement-next", card_id: "owl-tower", mode: "player_place", status: "pending", delegated_at_turn: 10 }]
+    : [
+      { placement_id: "placement-first", card_id: "owl-tower", mode: "player_place", status: "pending", delegated_at_turn: 5 },
+      { placement_id: "placement-next", card_id: "owl-tower", mode: "player_place", status: "pending", delegated_at_turn: 10 }
+    ];
+  stubFetch({
+    ...pendingPlacementRoutes(),
+    "/api/v1/cities/city-1/city-day": () => ({ body: { ...PENDING_PLACEMENT_DAY, card: { ...PENDING_PLACEMENT_DAY.card, pendingPlacements: entries() } } }),
+    "/api/v1/cities/city-1/cards/current": () => ({ body: { city_id: "city-1", city_version: placed ? 9 : 8, turn: 10, offer: OFFER, choice: { status: "selected" }, pending_placements: entries() } }),
+    "/api/v1/cities/city-1/cards/place": () => { placed = true; return { body: { status: "placed" } }; }
+  });
+  const controller = createCityDayController({
+    experience,
+    api: { baseUrl: "/api/v1", cityId: "city-1", token: "session" },
+    setLight: () => {}
+  });
+  await controller.sync();
+  controller.setPlacementTarget(legalTarget(), { viewMode: "near" });
+  await experience.onConfirm?.();
+  assert.equal(controller.getPlacementState().placementId, "placement-next");
 });

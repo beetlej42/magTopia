@@ -245,6 +245,11 @@ export function pendingPlacements(state) {
   }
   return entries
     .filter((entry) => !["completed", "cancelled"].includes(entry.status))
+    .sort((a, b) => {
+      const turnA = Number.isFinite(Number(a.delegatedAtTurn)) ? Number(a.delegatedAtTurn) : Number.MAX_SAFE_INTEGER;
+      const turnB = Number.isFinite(Number(b.delegatedAtTurn)) ? Number(b.delegatedAtTurn) : Number.MAX_SAFE_INTEGER;
+      return turnA - turnB || String(a.placementId).localeCompare(String(b.placementId));
+    })
     .map((entry) => ({
       placement_id: entry.placementId,
       card_id: entry.cardId,

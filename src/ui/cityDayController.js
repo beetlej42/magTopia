@@ -237,7 +237,13 @@ export function createCityDayController({ experience, api, setLight, placementLa
         ? day.card.pending_placements
         : (Array.isArray(cardsCurrent.pending_placements) ? cardsCurrent.pending_placements : null));
     const pending = projectedPlacements
-      ? projectedPlacements.find((entry) => entry.mode === "player_place" && entry.status === "pending")
+      ? [...projectedPlacements]
+        .filter((entry) => entry.mode === "player_place" && entry.status === "pending")
+        .sort((a, b) => {
+          const turnA = Number.isFinite(Number(a.delegated_at_turn ?? a.delegatedAtTurn)) ? Number(a.delegated_at_turn ?? a.delegatedAtTurn) : Number.MAX_SAFE_INTEGER;
+          const turnB = Number.isFinite(Number(b.delegated_at_turn ?? b.delegatedAtTurn)) ? Number(b.delegated_at_turn ?? b.delegatedAtTurn) : Number.MAX_SAFE_INTEGER;
+          return turnA - turnB || String(a.placement_id ?? a.placementId).localeCompare(String(b.placement_id ?? b.placementId));
+        })[0]
       : null;
     const placementId = pending?.placement_id
       ?? (projectedPlacements == null ? cardsCurrent.choice?.card_effects?.placement?.placement_id : null);
@@ -427,13 +433,20 @@ export function createCityDayController({ experience, api, setLight, placementLa
         expected_city_version: active.cityVersion,
         placement_id: active.placementId
       });
-      // A real server response always carries `cancelled`; accepting an empty
-      // legacy test/edge response keeps the UI fail-closed while still making
-      // every explicit non-cancelled status an error.
-      if (payload.status && payload.status !== "cancelled") throw new Error(payload.message ?? "取消放置被拒绝");
+      // Cancellation is a command, so only the explicit authoritative result
+      // is success. Empty or malformed 200 responses must restore the HUD;
+      // they cannot release a unique entitlement locally.
+      if (payload.status !== "cancelled") throw new Error(payload.message ?? "取消放置被拒绝");
       cancelledPlacementIds.add(active.placementId);
       onPlayerTurnComplete();
-      await sync();
+      // The command has already released the entitlement. A follow-up read
+      // failure must not incorrectly restore a HUD for a placement that no
+      // longer exists; the next periodic sync will reconcile the view.
+      try {
+        await sync();
+      } catch (error) {
+        experience.showIdleNote(error.message);
+      }
     } catch (error) {
       experience.showIdleNote(error.message);
       // Restore the recoverable placement session if the server did not

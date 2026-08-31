@@ -475,6 +475,10 @@ test("a player-owned pending placement keeps the player turn open until legally 
     const pending = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/city-day` }), 200);
     assert.equal(pending.card.playerPlacementPending, true, "manual placement is still owed");
     assert.equal(pending.phase, "early_morning");
+    assert.deepEqual(pending.card.pendingPlacements.map((entry) => entry.placement_id), [selected.choice.card_effects.placement.placement_id]);
+    assert.equal(pending.card.pendingPlacements[0].mode, "player_place");
+    const currentWithPending = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
+    assert.deepEqual(currentWithPending.pending_placements.map((entry) => entry.placement_id), [selected.choice.card_effects.placement.placement_id]);
 
     const state = (await repository.getCity(owner, city.id)).state;
     const placementId = selected.choice.card_effects?.placement?.placement_id;

@@ -7,9 +7,11 @@ Special Choice is visually marked and each special card exposes its family,
 unique entitlement, free placement, footprint, and the player-place/delegate
 decision.
 
-`GET /cities/{city_id}/city-day` and `GET /cities/{city_id}/cards/current`
-both expose the stable `pending_placements` projection. The player controller
-uses the first pending `player_place` entry in placement-id order, so a
+`GET /cities/{city_id}/city-day` exposes the camelCase `card.pendingPlacements`
+projection; `GET /cities/{city_id}/cards/current` exposes the API-style
+`pending_placements` projection. Both are authoritative and stable. Entries
+are ordered by the earned/delegated turn and then `placement_id`; the player
+controller uses the first pending `player_place` entry, so a
 mandate retained across a turn cannot be confused with the current turn's
 card choice. A player cancellation is submitted to
 `POST /cities/{city_id}/cards/cancel` with the current city version and an

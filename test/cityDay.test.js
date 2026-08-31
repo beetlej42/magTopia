@@ -164,9 +164,9 @@ test("city-day exposes all pending player placements in stable order across turn
         ...baseState().gameplay.cardState,
         choice: { status: "selected", selectedCardId: "ordinary-resource-grant", decisionMode: "immediate" },
         placements: {
-          "placement-z": { placementId: "placement-z", cardId: "owl-tower", mode: "player_place", status: "pending" },
-          "placement-a": { placementId: "placement-a", cardId: "ministry-of-magic", mode: "player_place", status: "pending" },
-          "placement-d": { placementId: "placement-d", cardId: "owl-tower", mode: "delegate_to_agent", status: "deferred" }
+          "placement-z": { placementId: "placement-z", cardId: "owl-tower", mode: "player_place", status: "pending", delegatedAtTurn: 10 },
+          "placement-a": { placementId: "placement-a", cardId: "ministry-of-magic", mode: "player_place", status: "pending", delegatedAtTurn: 5 },
+          "placement-d": { placementId: "placement-d", cardId: "owl-tower", mode: "delegate_to_agent", status: "deferred", delegatedAtTurn: 5 }
         }
       }
     }
