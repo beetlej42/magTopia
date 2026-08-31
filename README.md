@@ -79,6 +79,58 @@ idempotency receipts, and city state in `.magictown/agent-lan-state.json` using
 atomic file replacement. Restarting `agent:lan` reopens the same bootstrap city
 and writes the current connection metadata to `.magictown/agent-lan-info.json`.
 
+## Local test environment
+
+This repo runs entirely on the machine's Node.js. If the shell cannot find
+`node`/`pnpm`, add the Node.js install to `PATH` (the local installs live in
+`~/.local/node/bin`; interactive shells already pick them up via `~/.bashrc`,
+and login shells get them from `~/.profile`).
+
+A single command runs every non-PostgreSQL test method on the local machine:
+
+```bash
+pnpm run test:local
+```
+
+This chains: the unit suite (`pnpm test`, including the agent build simulation),
+`test:agent-build`, and the browser render acceptance (`test:render-acceptance:local`).
+The PostgreSQL integration specs are skipped automatically when
+`MAGICTOWN_TEST_DATABASE_URL` is unset, so the local run needs no database.
+
+## Local browser render acceptance
+
+`test:render-acceptance` drives a headless Chromium (via `puppeteer-core`) through
+the agent-city voxel scene, captures near/far and Bokeh-transition screenshots,
+measures drag/settled frame times, and asserts terrain coverage and browser
+error-freedom. It writes reviewable PNGs plus `report.json` under
+`artifacts/render-acceptance/`. To eyeball the same scene yourself, open a locally
+running `pnpm run dev` instance at `/?mode=agentcity&worldTime=0.58`.
+
+```bash
+# Fast, review-first run (ideal for local QA on any architecture)
+pnpm run test:render-acceptance:local
+
+# Full detail/performance capture at mobile @3x screen density
+pnpm run test:render-acceptance
+```
+
+The script auto-detects a local Chromium. `@sparticuz/chromium` only ships an
+x86_64 binary, so on Apple Silicon / Linux ARM it falls back to a browser already
+installed on the machine (e.g. a Playwright cache) before failing with guidance.
+Everything is overridable through env vars:
+
+- `CHROMIUM_PATH` — explicit Chromium/Chrome executable.
+- `RENDER_ACCEPTANCE_URL` — point at an already-running server instead of
+  spawning Vite; `RENDER_ACCEPTANCE_PORT` changes the spawned Vite port.
+- `RENDER_ACCEPTANCE_DEVICE_SCALE_FACTOR` — screenshot density (3 = sharp/normal,
+  1–1.2 = fast on software rendering).
+- `RENDER_ACCEPTANCE_DRAG_FRAMES` — frames sampled per drag (default 90).
+- `RENDER_ACCEPTANCE_WORLD_TIME`, `RENDER_ACCEPTANCE_CLOCK`,
+  `RENDER_ACCEPTANCE_DAY_LENGTH` — lighting/time-of-day probes.
+- `RENDER_ACCEPTANCE_BOKEH` — `default` (on), `0` (off), or a scene name.
+- `RENDER_ACCEPTANCE_MAX_P95_MS` — set > 0 to make frame time a hard gate
+  (16.7 ms via the `:60hz` script).
+
 ## Magic London Development Terrain
 
 Every valid grid cell can later hold a road, building, or district reservation.

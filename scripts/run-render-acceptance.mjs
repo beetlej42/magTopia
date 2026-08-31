@@ -1,5 +1,7 @@
-import { spawn } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { spawn, execFileSync } from "node:child_process";
+import { constants as fsConstants } from "node:fs";
+import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import chromium from "@sparticuz/chromium";
@@ -28,11 +30,11 @@ const server = suppliedUrl ? null : startViteServer(port);
 await mkdir(artifactsDir, { recursive: true });
 try {
   if (server) await waitForServer(baseUrl);
-  const executablePath = process.env.CHROMIUM_PATH || await chromium.executablePath();
+  const browserLaunch = await resolveBrowser();
   const browser = await puppeteer.launch({
-    executablePath,
+    executablePath: browserLaunch.executablePath,
     args: [...chromium.args, "--use-gl=angle", "--use-angle=swiftshader"],
-    headless: "shell",
+    headless: browserLaunch.headless,
     protocolTimeout: 180000,
     defaultViewport: null
   });
@@ -72,6 +74,93 @@ async function waitForServer(url) {
     await delay(150);
   }
   throw new Error(`Timed out waiting for the render acceptance server at ${url}`);
+}
+
+// @sparticuz/chromium ships an x86_64 build. On arm64 machines (Apple Silicon,
+// Linux ARM) that binary is not executable, so look for a locally installed
+// Chromium (e.g. a Playwright cache) before falling back to it. The chosen
+// binary is returned together with the matching Puppeteer headless mode:
+// a chrome-headless-shell executable pairs with "shell"; a full Chrome binary
+// pairs with true.
+async function resolveBrowser() {
+  if (process.env.CHROMIUM_PATH) {
+    return { executablePath: process.env.CHROMIUM_PATH, headless: "shell" };
+  }
+  const native = await findNativeChromium();
+  if (native) return native;
+  if (process.arch === "arm64") {
+    throw new Error([
+      "No usable Chromium was found for this arm64 machine.",
+      "Set CHROMIUM_PATH to a local Chromium/Chrome executable, for example:",
+      "  CHROMIUM_PATH=$HOME/.cache/ms-playwright/chromium_headless_shell-*/chrome-linux/headless_shell",
+      "  npm run test:render-acceptance:local"
+    ].join("\n"));
+  }
+  return { executablePath: await chromium.executablePath(), headless: "shell" };
+}
+
+async function findNativeChromium() {
+  const cacheDirs = [
+    path.join(os.homedir(), ".cache", "ms-playwright"),
+    path.join(os.homedir(), "Library", "Caches", "ms-playwright")
+  ];
+  const headlessShells = [];
+  const chromes = [];
+  for (const cacheDir of cacheDirs) {
+    if (!await exists(cacheDir)) continue;
+    for (const dir of await readdir(cacheDir).catch(() => [])) {
+      const base = path.join(cacheDir, dir);
+      const candidates = [
+        { path: path.join(base, "chrome-linux", "headless_shell"), kind: "shell" },
+        { path: path.join(base, "chrome-linux", "chrome"), kind: "chrome" },
+        { path: path.join(base, "chrome-mac", "Chromium.app", "Contents", "MacOS", "Chromium"), kind: "chrome" },
+        { path: path.join(base, "chrome-mac-arm64", "Chromium.app", "Contents", "MacOS", "Chromium"), kind: "chrome" },
+        { path: path.join(base, "chrome-headless-shell-mac-arm64", "chrome-headless-shell"), kind: "shell" },
+        { path: path.join(base, "chrome-headless-shell-mac", "chrome-headless-shell"), kind: "shell" }
+      ];
+      for (const candidate of candidates) {
+        if (await isExecutable(candidate.path)) {
+          (candidate.kind === "shell" ? headlessShells : chromes).push(candidate.path);
+        }
+      }
+    }
+  }
+  // Prefer the lightweight chrome-headless-shell for stable, deterministic runs.
+  if (headlessShells.length) return { executablePath: headlessShells[0], headless: "shell" };
+  if (chromes.length) return { executablePath: chromes[0], headless: true };
+  const onPath = findBrowserOnPath();
+  if (onPath) return { executablePath: onPath, headless: true };
+  return null;
+}
+
+function findBrowserOnPath() {
+  for (const name of ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"]) {
+    try {
+      return execFileSync("which", [name], { encoding: "utf8" }).trim() || null;
+    } catch {
+      // Not on PATH.
+    }
+  }
+  return null;
+}
+
+async function exists(filePath) {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function isExecutable(filePath) {
+  if (!await exists(filePath)) return false;
+  try {
+    await access(filePath, fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function runAcceptance(browser) {
