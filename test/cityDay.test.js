@@ -155,3 +155,23 @@ test("helper predicates are conservative and authority-only", () => {
   assert.equal(completedReportTurn(settled), 1);
   assert.equal(agentWorkStartedForTurn(settled, { turnOpenedAt: "2026-01-01T00:00:00.000Z" }), false);
 });
+
+test("city-day exposes all pending player placements in stable order across turns", () => {
+  const state = baseState({
+    gameplay: {
+      ...baseState().gameplay,
+      cardState: {
+        ...baseState().gameplay.cardState,
+        choice: { status: "selected", selectedCardId: "ordinary-resource-grant", decisionMode: "immediate" },
+        placements: {
+          "placement-z": { placementId: "placement-z", cardId: "owl-tower", mode: "player_place", status: "pending" },
+          "placement-a": { placementId: "placement-a", cardId: "ministry-of-magic", mode: "player_place", status: "pending" },
+          "placement-d": { placementId: "placement-d", cardId: "owl-tower", mode: "delegate_to_agent", status: "deferred" }
+        }
+      }
+    }
+  });
+  const presentation = deriveCityDayPresentation(state);
+  assert.deepEqual(presentation.card.pendingPlacements.map((entry) => entry.placement_id), ["placement-a", "placement-d", "placement-z"]);
+  assert.equal(presentation.card.pendingPlacements.find((entry) => entry.placement_id === "placement-z").mode, "player_place");
+});

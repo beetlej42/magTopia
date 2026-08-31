@@ -193,6 +193,8 @@ export function currentOffer(state) {
           choice_kind: definition.choiceKind,
           family: definition.family,
           unique: definition.unique,
+          free_placement: Boolean(definition.effect?.freePlacement),
+          placement_required: definition.type === CARD_TYPES.special_structure,
           duration: definition.duration,
           ...(definition.structure ? { structure: definition.structure } : {})
         }
@@ -232,7 +234,16 @@ export function activePolicies(state) {
 // Pending special-structure placement mandates, including deferred (Agent-owned)
 // and player-owned ones awaiting a location. Never silently dropped.
 export function pendingPlacements(state) {
-  return Object.values(state?.gameplay?.cardState?.placements ?? {})
+  const cardState = state?.gameplay?.cardState ?? {};
+  const entries = [...Object.values(cardState.placements ?? {})];
+  // Older persisted states may still carry the single legacy pointer without
+  // the indexed placements map. Project it as well so reload recovery does
+  // not lose a valid entitlement during the schema transition.
+  if (cardState.pendingPlacement?.placementId
+      && !entries.some((entry) => entry?.placementId === cardState.pendingPlacement.placementId)) {
+    entries.push(cardState.pendingPlacement);
+  }
+  return entries
     .filter((entry) => !["completed", "cancelled"].includes(entry.status))
     .map((entry) => ({
       placement_id: entry.placementId,
@@ -244,7 +255,10 @@ export function pendingPlacements(state) {
         card_id: entry.cardId,
         title: getCard(entry.cardId)?.title ?? null,
         description: getCard(entry.cardId)?.description ?? null,
-        structure: getCard(entry.cardId)?.structure ?? null
+        structure: getCard(entry.cardId)?.structure ?? null,
+        free_placement: Boolean(getCard(entry.cardId)?.effect?.freePlacement),
+        unique: Boolean(getCard(entry.cardId)?.unique),
+        family: getCard(entry.cardId)?.family ?? null
       }
     }));
 }
@@ -835,6 +849,8 @@ export function listCards() {
     choice_kind: entry.choiceKind,
     family: entry.family,
     unique: entry.unique,
+    free_placement: Boolean(entry.effect?.freePlacement),
+    placement_required: entry.type === CARD_TYPES.special_structure,
     duration: entry.duration,
     ...(entry.structure ? { structure: entry.structure } : {})
   }));

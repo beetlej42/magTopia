@@ -408,7 +408,7 @@ export function createOpenApiDocument(baseUrl) {
         },
         CardDefinition: {
           type: "object",
-          required: ["card_id", "type", "title", "description", "decision_mode", "duration", "choice_kind", "family", "unique"],
+          required: ["card_id", "type", "title", "description", "decision_mode", "duration", "choice_kind", "family", "unique", "free_placement", "placement_required"],
           properties: {
             card_id: { type: "string" },
             type: { enum: ["special_structure", "resource", "personnel", "policy", "building", "people"] },
@@ -418,6 +418,8 @@ export function createOpenApiDocument(baseUrl) {
             choice_kind: { enum: ["ordinary", "special", null] },
             family: { type: ["string", "null"] },
             unique: { type: "boolean" },
+            free_placement: { type: "boolean", description: "System-owned entitlement; special structures are free to place." },
+            placement_required: { type: "boolean" },
             duration: { oneOf: [{ type: "string", const: "instant" }, { type: "object", properties: { type: { type: "string" }, turns: { type: "integer" } } }] },
             structure: { type: "object", nullable: true, description: "System-owned placement spec for special structure cards." },
             effect: json
@@ -979,7 +981,8 @@ export function createOpenApiDocument(baseUrl) {
                 eligibilityAudit: { type: "array", items: { type: "object", additionalProperties: true } },
                 selectedCardId: { type: ["string", "null"] },
                 decisionMode: { type: ["string", "null"] },
-                playerPlacementPending: { type: "boolean" }
+                playerPlacementPending: { type: "boolean" },
+                pendingPlacements: { type: "array", items: { $ref: "#/components/schemas/PendingPlacement" } }
               }
             },
             agent: { type: "object", properties: { workStarted: { type: "boolean" } } },
@@ -1075,7 +1078,7 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}/strategy/resolve": { post: commandOperation("Request the single authoritative system settlement of the strategy phase", "strategy", { $ref: "#/components/schemas/StrategyResolveRequest" }) },
       "/cities/{city_id}/strategy/recruit-officer": { post: commandOperation("Recruit one current system-generated Arcane Officer candidate", "strategy", { $ref: "#/components/schemas/OfficerRecruitmentRequest" }, { $ref: "#/components/schemas/OfficerRecruitmentResponse" }) },
       "/cards": { get: operation("Read the system-owned daily card catalog", "cards", null, { type: "object", properties: { data: { type: "array", items: { $ref: "#/components/schemas/CardDefinition" } } } }) },
-      "/cities/{city_id}/cards/current": { get: operation("Read the canonical three-card offer for the current turn", "cards", null, { type: "object", properties: { city_id: { type: "string" }, city_version: { type: "integer" }, turn: { type: "integer" }, turn_status: { type: "string" }, offer: { $ref: "#/components/schemas/CardOffer" }, choice: { $ref: "#/components/schemas/CardChoice" } } }) },
+      "/cities/{city_id}/cards/current": { get: operation("Read the canonical three-card offer and all pending placement mandates for the current turn", "cards", null, { type: "object", properties: { city_id: { type: "string" }, city_version: { type: "integer" }, turn: { type: "integer" }, turn_status: { type: "string" }, offer: { $ref: "#/components/schemas/CardOffer" }, choice: { $ref: "#/components/schemas/CardChoice" }, pending_placements: { type: "array", items: { $ref: "#/components/schemas/PendingPlacement" } } } }) },
       "/cities/{city_id}/cards/select": { post: commandOperation("The player selects exactly one offered card for this turn", "cards", { $ref: "#/components/schemas/CardSelectRequest" }, { $ref: "#/components/schemas/CardSelectResponse" }) },
       "/cities/{city_id}/cards/place": { post: commandOperation("Place a pending special structure at a legal location (player placement or delegated Agent placement)", "cards", { $ref: "#/components/schemas/CardPlaceRequest" }, { $ref: "#/components/schemas/CardPlaceResponse" }) },
       "/cities/{city_id}/cards/cancel": { post: commandOperation("Cancel an unplaced special structure entitlement; cancelled unique cards may reappear on a later Special Choice", "cards", { $ref: "#/components/schemas/CardCancelRequest" }, json) },

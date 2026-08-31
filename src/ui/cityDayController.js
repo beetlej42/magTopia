@@ -22,12 +22,11 @@ export function createCityDayController({ experience, api, setLight, placementLa
   let cardCatalog = null;
   let activeOffer = null;
   let placement = null;
-  // Client-only set of placement ids the player has explicitly cancelled this
-  // page session. Cancel is a local exit from the placement session; the
-  // server's pending placement is untouched (no invented mutation), so a page
-  // reload restores the pending placement. While an id stays in this set the
-  // periodic city-day sync must not automatically reopen its placement HUD.
-  const dismissedPlacementIds = new Set();
+  // Placement cancellation is authoritative. This set only suppresses a
+  // duplicate local reopen while the cancellation request is in flight; the
+  // server remains the source of truth after a reload or on another device.
+  const cancellingPlacementIds = new Set();
+  const cancelledPlacementIds = new Set();
 
   function pathFor(relative) {
     const base = String(api.baseUrl ?? "").replace(/\/+$/, "");
@@ -106,6 +105,20 @@ export function createCityDayController({ experience, api, setLight, placementLa
       const day = await fetchJson(`/cities/${api.cityId}/city-day`);
       experience.applyPresentation(day);
       setLight(day.phase);
+
+      // Strategy is a read-only companion projection. Fetch it whenever the
+      // authoritative workflow enters night, even if a secondary card or
+      // placement layer is still visible.
+      if (day.phase === "night" || day.incident?.phaseActive) {
+        try {
+          const strategy = await fetchJson(`/cities/${api.cityId}/strategy`);
+          experience.applyStrategyFacts?.(strategy.strategy ?? strategy);
+        } catch {
+          experience.applyStrategyFacts?.(null);
+        }
+      } else {
+        experience.applyStrategyFacts?.(null);
+      }
 
       if (day.report.ready && !day.report.dismissed) {
         if (!experience.state.reportOpen) await openReport(day);
@@ -215,20 +228,36 @@ export function createCityDayController({ experience, api, setLight, placementLa
     const day = await fetchJson(`/cities/${api.cityId}/city-day`);
     const choice = day.card;
     const cardsCurrent = await fetchJson(`/cities/${api.cityId}/cards/current`);
-    const placementId = cardsCurrent.choice?.card_effects?.placement?.placement_id ?? null;
+    // Prefer the complete authoritative pending-placement projection. It
+    // survives a turn boundary and may contain several independent mandates;
+    // never infer an older placement from the current card choice.
+    const projectedPlacements = Array.isArray(day.card?.pendingPlacements)
+      ? day.card.pendingPlacements
+      : (Array.isArray(day.card?.pending_placements)
+        ? day.card.pending_placements
+        : (Array.isArray(cardsCurrent.pending_placements) ? cardsCurrent.pending_placements : null));
+    const pending = projectedPlacements
+      ? projectedPlacements.find((entry) => entry.mode === "player_place" && entry.status === "pending")
+      : null;
+    const placementId = pending?.placement_id
+      ?? (projectedPlacements == null ? cardsCurrent.choice?.card_effects?.placement?.placement_id : null);
+    const pendingCardId = pending?.card_id ?? null;
     await ensureCardCatalog();
-    const card = cardForId(choice.selectedCardId);
-    const footprint = card?.structure?.footprint ?? "1x1";
-    const cityVersion = cardsCurrent.city_version;
-
-    // A placement the player explicitly cancelled this page session must not
-    // silently reopen on the next periodic sync. The server-side pending
-    // placement stays untouched, so a page reload restores it naturally.
-    if (placementId && dismissedPlacementIds.has(placementId)) {
+    const selectedCardId = pendingCardId ?? (projectedPlacements == null ? choice.selectedCardId : null);
+    const card = cardForId(selectedCardId) ?? pending?.card ?? null;
+    if (!placementId || !selectedCardId) {
+      // The read model briefly lagged or this placement was completed on
+      // another device. Re-read on the next sync rather than opening a stale
+      // placement HUD with guessed identifiers.
       closeChoiceLayers();
-      experience.showIdleNote("已取消放置，可刷新页面后重新选择位置。");
       return;
     }
+    if (cancelledPlacementIds.has(placementId)) {
+      closeChoiceLayers();
+      return;
+    }
+    const footprint = card?.structure?.footprint ?? "1x1";
+    const cityVersion = cardsCurrent.city_version;
 
     // The periodic city-day sync re-enters this path while a placement is
     // pending. Reuse the live session (preserving building rotation and the
@@ -236,7 +265,7 @@ export function createCityDayController({ experience, api, setLight, placementLa
     // HUD would silently reset the player's rotation every few seconds.
     const sameSession = placement
       && placement.placementId === placementId
-      && placement.cardId === choice.selectedCardId;
+      && placement.cardId === selectedCardId;
     if (sameSession) {
       placement.cityVersion = cityVersion;
       experience.updatePlacementControls(placementTargetControls());
@@ -258,8 +287,8 @@ export function createCityDayController({ experience, api, setLight, placementLa
     const grid = api.getState?.()?.world?.grid ?? {};
     const cellWorldSize = Number(grid.cellWorldSize ?? 4);
     placement = {
-      card: card ?? { title: "特殊建筑", card_id: choice.selectedCardId },
-      cardId: choice.selectedCardId,
+      card: card ?? { title: "特殊建筑", card_id: selectedCardId },
+      cardId: selectedCardId,
       placementId,
       cityVersion: sessionVersion,
       footprint,
@@ -386,9 +415,44 @@ export function createCityDayController({ experience, api, setLight, placementLa
     experience.updatePlacementControls(placementTargetControls());
   }
 
-  function cancelPlacement() {
-    if (placement?.placementId) dismissedPlacementIds.add(placement.placementId);
+  async function cancelPlacement() {
+    const active = placement;
+    if (!active?.placementId || cancellingPlacementIds.has(active.placementId)) return;
+    cancellingPlacementIds.add(active.placementId);
+    // Close the pass-through HUD immediately so map controls are available;
+    // a failed authoritative cancellation reopens the same session below.
     closePlacement();
+    try {
+      const payload = await postCommand(`/cities/${api.cityId}/cards/cancel`, {
+        expected_city_version: active.cityVersion,
+        placement_id: active.placementId
+      });
+      // A real server response always carries `cancelled`; accepting an empty
+      // legacy test/edge response keeps the UI fail-closed while still making
+      // every explicit non-cancelled status an error.
+      if (payload.status && payload.status !== "cancelled") throw new Error(payload.message ?? "取消放置被拒绝");
+      cancelledPlacementIds.add(active.placementId);
+      onPlayerTurnComplete();
+      await sync();
+    } catch (error) {
+      experience.showIdleNote(error.message);
+      // Restore the recoverable placement session if the server did not
+      // accept cancellation (network failure, stale version, or actor error).
+      placement = active;
+      try {
+        experience.presentPlacementMode({
+          card: active.card,
+          onRotate: () => rotatePlacement(),
+          onConfirm: () => confirmPlacement(),
+          onCancel: () => cancelPlacement()
+        });
+        await refreshPlacementState();
+      } catch {
+        // Keep the authoritative pending mandate for the next periodic sync.
+      }
+    } finally {
+      cancellingPlacementIds.delete(active.placementId);
+    }
   }
 
   function closePlacement() {

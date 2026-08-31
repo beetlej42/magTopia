@@ -20,6 +20,7 @@
 // morning -> day -> night. Only observed authoritative state changes do.
 
 import { normalizeCardState } from "./schema.js";
+import { pendingPlacements } from "./cards.js";
 import { deriveBootstrapProgress, isBootstrapTurn } from "./bootstrap.js";
 
 export const CITY_DAY_PHASES = Object.freeze(["dawn", "early_morning", "morning", "day", "night"]);
@@ -117,6 +118,15 @@ export function deriveCityDayPresentation(state, options = {}) {
     ? { status: "not_applicable", offerId: null, selectedCardId: null, decisionMode: null, choiceResolvedAt: null }
     : normalizeCardState(gameplay.cardState).choice;
   const placementPending = playerPlacementPending(state);
+  // Keep the complete, stable placement projection in the read model. A
+  // player's current card choice is not a reliable owner for an older
+  // placement that survived a turn boundary.
+  const placements = pendingPlacements(state)
+    .sort((a, b) => {
+      const turnA = Number.isFinite(Number(a.delegated_at_turn)) ? Number(a.delegated_at_turn) : Number.MAX_SAFE_INTEGER;
+      const turnB = Number.isFinite(Number(b.delegated_at_turn)) ? Number(b.delegated_at_turn) : Number.MAX_SAFE_INTEGER;
+      return turnA - turnB || String(a.placement_id).localeCompare(String(b.placement_id));
+    });
   const incidentActive = incidentPhaseActive(state);
   const turnOpenedAt = options.turnOpenedAt ?? gameplay.turnOpenedAt ?? null;
   const agentWorkStarted = agentWorkStartedForTurn(state, { turnOpenedAt });
@@ -161,7 +171,8 @@ export function deriveCityDayPresentation(state, options = {}) {
       choicePending: choice.status === "pending",
       selectedCardId: choice.selectedCardId ?? null,
       decisionMode: choice.decisionMode ?? null,
-      playerPlacementPending: placementPending
+      playerPlacementPending: placementPending,
+      pendingPlacements: placements,
     },
     agent: {
       workStarted: agentWorkStarted

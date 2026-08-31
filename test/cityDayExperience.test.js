@@ -285,6 +285,24 @@ test("confirm is disabled again when the target becomes illegal", async () => {
   });
 });
 
+test("phase chrome and strategy facts remain visible after choice layers close", async () => {
+  await withFakeDom(async () => {
+    const experience = createCityDayExperience({});
+    experience.applyPresentation({ phase: "morning", turn: 6 });
+    experience.presentCards({ choice_kind: "ordinary", cards: OFFER.cards }, () => {});
+    experience.closeCards();
+    assert.equal(experience.root.hidden, false, "the decorative phase layer is not hidden with the cards");
+    assert.equal(experience.layers.phase.hidden, false);
+    experience.applyStrategyFacts({
+      incidents: [{ id: "incident-1", summary: "A trace was observed" }],
+      arcane_officer_recruitment: { candidates: [{ candidate_id: "candidate-1", identity: { name: "Vesper Lark" } }] }
+    });
+    assert.equal(experience.layers.strategy.hidden, false);
+    assert.ok([...experience.layers.strategy.children].some((child) => /incident-1|A trace/.test(child.textContent)));
+    assert.ok([...experience.layers.strategy.children].some((child) => /Vesper Lark/.test(child.textContent)));
+  });
+});
+
 // ---- Fake DOM harness ------------------------------------------------------
 
 function createFakeDom() {

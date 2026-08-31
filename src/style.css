@@ -1623,6 +1623,8 @@ html[data-magtopia-surface="acceptance"] .city-day-experience {
   gap: 18px;
   padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
   background: radial-gradient(circle at 50% 46%, rgb(40 30 70 / 40%), rgb(22 16 40 / 76%));
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .city-day-cards-heading {
@@ -1659,7 +1661,8 @@ html[data-magtopia-surface="acceptance"] .city-day-experience {
   grid-template-areas:
     "kind title"
     "kind description"
-    "kind effect";
+    "kind effect"
+    "kind facts";
   column-gap: 14px;
   align-items: start;
   padding: 16px 18px;
@@ -1682,6 +1685,11 @@ html[data-magtopia-surface="acceptance"] .city-day-experience {
 
 .city-day-card:active {
   transform: translateY(0);
+}
+
+.city-day-card.is-selected {
+  border-color: #e6c07a;
+  box-shadow: 0 0 0 3px rgb(230 192 122 / 35%), 0 16px 40px rgb(20 12 34 / 42%);
 }
 
 .city-day-card-kind {
@@ -1714,6 +1722,68 @@ html[data-magtopia-surface="acceptance"] .city-day-experience {
   margin: 8px 0 0;
   font-size: 0.74rem;
   color: #7c5a33;
+}
+
+.city-day-card-facts {
+  grid-area: facts;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 9px;
+}
+
+.city-day-card-facts span {
+  padding: 3px 7px;
+  border: 1px solid #e5d4b5;
+  border-radius: 999px;
+  color: #66523d;
+  background: #fff8e9;
+  font-size: 0.64rem;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+}
+
+.city-day-card-facts span.is-action {
+  border-color: #b992d7;
+  color: #5b3f8f;
+  background: #f4eaff;
+}
+
+.city-day-cards.is-special-choice {
+  background: radial-gradient(circle at 50% 46%, rgb(92 58 32 / 48%), rgb(28 16 32 / 84%));
+}
+
+.city-day-cards.is-special-choice .city-day-cards-heading h2 {
+  text-shadow: 0 2px 18px rgb(244 193 100 / 34%);
+}
+
+.city-day-strategy-facts {
+  position: fixed;
+  right: max(14px, env(safe-area-inset-right));
+  bottom: max(14px, env(safe-area-inset-bottom));
+  z-index: 15;
+  width: min(360px, calc(100vw - 28px));
+  padding: 11px 14px;
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-radius: 12px;
+  color: #fff8ee;
+  background: rgb(41 31 58 / 82%);
+  box-shadow: 0 12px 32px rgb(20 12 34 / 30%);
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+}
+
+.city-day-strategy-facts strong,
+.city-day-strategy-facts p {
+  display: block;
+  margin: 0;
+}
+
+.city-day-strategy-facts p {
+  margin-top: 5px;
+  color: #e9dfcf;
+  font-size: 0.72rem;
+  line-height: 1.4;
 }
 
 .city-day-placement-actions {
