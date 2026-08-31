@@ -512,6 +512,48 @@ test("a special structure card supports player placement through authoritative c
   }
 });
 
+test("cancelled placement ids cannot be reused through the API", async () => {
+  const repository = createMemoryRepository(config);
+  const app = await createApp({ repository, config });
+  try {
+    const { city, player, owner } = await openCity(repository, app);
+    await setTurn(repository, owner, city.id, 0, 5);
+    const offer = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
+    const special = offer.offer.cards.find((card) => categoryOf(card.card_id) === CARD_TYPES.special_structure);
+    const selected = await json(app, auth(player, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/cards/select`,
+      headers: { "idempotency-key": "special-cancel-reuse-select" },
+      payload: { expected_city_version: offer.city_version, offer_id: offer.offer.offer_id, selected_card_id: special.card_id, decision_mode: "player_place" }
+    }), 200);
+    const beforeCancel = (await repository.getCity(owner, city.id)).state;
+    const placementId = selected.choice.card_effects.placement.placement_id;
+    const lotId = findLegalLot(beforeCancel, special.structure.footprint, "south");
+    assert.ok(lotId, "a legal lot must exist");
+    const cancelled = await json(app, auth(player, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/cards/cancel`,
+      headers: { "idempotency-key": "special-cancel-reuse-cancel" },
+      payload: { expected_city_version: selected.city_version_after, placement_id: placementId }
+    }), 200);
+    assert.equal(cancelled.status, "cancelled");
+    const beforeStalePlace = (await repository.getCity(owner, city.id)).state;
+    const stale = await app.inject(auth(player, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/cards/place`,
+      headers: { "idempotency-key": "special-cancel-reuse-place" },
+      payload: { expected_city_version: cancelled.city_version_after, card_id: special.card_id, placement_id: placementId, lot_id: lotId, footprint: special.structure.footprint, entrance: "south" }
+    }));
+    assert.equal(stale.statusCode, 422);
+    assert.equal(stale.json().code, "PLACEMENT_CANCELLED");
+    const afterStalePlace = (await repository.getCity(owner, city.id)).state;
+    assert.equal(afterStalePlace.version, beforeStalePlace.version, "stale placement rejection does not bump city version");
+    assert.deepEqual(afterStalePlace, beforeStalePlace, "stale placement rejection is state preserving");
+  } finally {
+    await app.close();
+  }
+});
+
 test("a special structure card supports delegate_to_agent and the mandate appears in strategy context", async () => {
   const repository = createMemoryRepository(config);
   const app = await createApp({ repository, config });

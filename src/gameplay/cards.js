@@ -508,6 +508,12 @@ export function placeSpecialStructure(state, cityId, input = {}, context = {}) {
   if (placement.status === "completed") {
     return { accepted: false, code: "PLACEMENT_ALREADY_COMPLETED", message: `Placement ${placement.placementId} was already completed` };
   }
+  if (placement.status === "cancelled") {
+    return { accepted: false, code: "PLACEMENT_CANCELLED", message: `Placement ${placement.placementId} was cancelled and cannot be placed` };
+  }
+  if (!["pending", "deferred"].includes(placement.status)) {
+    return { accepted: false, code: "PLACEMENT_NOT_ACTIVE", message: `Placement ${placement.placementId} is not active` };
+  }
   if (["resolved", "reported", "closed"].includes(state.gameplay?.turnStatus) && placement.mode === "delegate_to_agent" && placement.status === "pending") {
     return { accepted: false, code: "TURN_CLOSED", message: "The turn has settled; the pending placement remains open for a later turn" };
   }

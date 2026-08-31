@@ -277,8 +277,25 @@ test("pending special entitlements survive turns, illegal placement is non-consu
   assert.equal(duplicate.code, "PLACEMENT_ALREADY_COMPLETED");
   const cancelled = cancelSpecialStructurePlacement(state, { placementId: "placement-ministry" });
   assert.equal(cancelled.accepted, true);
+  const cancelledSnapshot = structuredClone(cancelled.nextState);
+  const stalePlacement = placeSpecialStructure(cancelled.nextState, cancelled.nextState.cityId, {
+    cardId: "ministry-of-magic", placementId: "placement-ministry", lotId: lot
+  }, { createId: () => "stale-building" });
+  assert.equal(stalePlacement.accepted, false);
+  assert.equal(stalePlacement.code, "PLACEMENT_CANCELLED");
+  assert.deepEqual(cancelled.nextState, cancelledSnapshot, "cancelled placement attempts are read-only");
   const reopened = generateOffer(state.cityId, 15, { ...cancelled.nextState, turn: 15 });
   assert.equal(reopened.offeredCardIds.includes("ministry-of-magic"), true);
+  const nextTurn = ensureCardOffer({ ...cancelled.nextState, turn: 15 }, state.cityId);
+  const reselected = selectCard(nextTurn, nextTurn.cityId, {
+    offerId: nextTurn.gameplay.cardState.offer.offerId, selectedCardId: "ministry-of-magic"
+  }, { createId: () => "placement-ministry-new" });
+  assert.equal(reselected.accepted, true);
+  assert.notEqual(reselected.cardEffects.placement.placement_id, "placement-ministry");
+  const replaced = placeSpecialStructure(reselected.nextState, reselected.nextState.cityId, {
+    cardId: "ministry-of-magic", placementId: "placement-ministry-new", lotId: lot
+  }, { createId: () => "building-ministry-new" });
+  assert.equal(replaced.accepted, true, replaced.message);
 });
 
 test("ordinary discount reservation consumes once, cancellation restores it, and schema rejects invalid choice kinds", () => {
