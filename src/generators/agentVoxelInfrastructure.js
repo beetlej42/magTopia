@@ -567,14 +567,26 @@ export function createAgentVoxelVegetationLayer({ state, grid, seed = "agent-veg
   perf.buildMs = now() - startedAt;
 
   const treeStats = treeRenderer.userData.getDiagnostics();
+  const treeGroves = plan.clusters
+    .flatMap((cluster) => cluster.zoneGroups)
+    .filter((grove) => grove.treeCount > 0);
+  const dominantGroveFamilies = treeGroves.reduce((counts, grove) => {
+    const family = grove.speciesPlan?.dominantFamily;
+    if (family) counts[family] = (counts[family] ?? 0) + 1;
+    return counts;
+  }, {});
 
   group.userData.contract = {
-    renderer: "state-aware-voxel-vegetation-v4-tree-lod",
+    renderer: "state-aware-voxel-vegetation-v5-species-groves",
     instancedTrees: true,
     screenSpaceTreeLod: true,
     clusters: plan.clusters.length,
     clusterGroups: plan.clusters.reduce((total, cluster) => total + cluster.zoneGroups.length, 0),
     groveCount: plan.clusters.reduce((total, cluster) => total + cluster.zoneGroups.filter((group) => group.treeCount >= 2).length, 0),
+    singleSpeciesGroves: treeGroves.filter((grove) => grove.speciesPlan.distinctFamilies === 1).length,
+    mixedSpeciesGroves: treeGroves.filter((grove) => grove.speciesPlan.distinctFamilies === 2).length,
+    dominantGroveFamilies,
+    isolatedPines: treeGroves.filter((grove) => grove.ranked.filter((tree) => tree.family === "pine").length === 1).length,
     vegetatedCells: plan.vegetatedCells,
     biomeCounts: plan.zoneCounts,
     trees: plan.trees.length,
@@ -613,7 +625,7 @@ export function createAgentVoxelVegetationLayer({ state, grid, seed = "agent-veg
     perf,
     clearsRoadsAndEntrances: true,
     exclusionRule: "Buildings, roads, infrastructure, reservations, non-buildable cells, and a one-cell safety margin suppress procedural vegetation.",
-    compositionRule: "Sculpted British voxel groves with oak-like broad crowns, rounded beech/chestnut crowns, yew-like columns, airy silver birch, and irregular Scots pine; dominant/regular/support tiers; grid-aligned rotation; low vegetation is subordinate grove detail."
+    compositionRule: "Each grove chooses one biome-aware dominant British tree family; groups below five trees stay single-species, larger groups may add one companion at 10-25%; Scots pine only appears as a multi-tree dominant stand; scale, rotation, and templates provide within-species variety."
   };
   group.userData.updateDaylight = () => {};
   group.userData.updateView = (camera, viewport = {}) => {
@@ -641,13 +653,16 @@ function generateAgentTreeGroup(plan, record, anchor, biome, entries, seed, edge
   const density = Math.max(...entries.map((entry) => entry.density));
   const rng = createRng(`${seed}:voxel-vegetation-trees:${record.id}:${biome}`);
   const count = agentTreeCountFor(biome, density, rng, edge);
+  const speciesPlan = selectGroveSpeciesPlan({ biome, count, rng });
   const shadeBase = Math.floor(randRange(rng, 0, 60));
   const anchorX = anchor.x / VOXEL_SIZE;
   const anchorZ = anchor.z / VOXEL_SIZE;
   const ranked = [];
   for (let index = 0; index < count; index += 1) {
     const host = weightedAgentHost(entries, rng);
-    const family = pickFamily(rng);
+    const family = index < speciesPlan.dominantCount
+      ? speciesPlan.dominantFamily
+      : speciesPlan.companionFamily;
     const templateId = pickTemplate(rng, family);
     const sizeClass = assignTier(rng);
     const scale = TIER_BASE_SCALE[sizeClass] + randRange(rng, -0.05, 0.05);
@@ -701,7 +716,53 @@ function generateAgentTreeGroup(plan, record, anchor, biome, entries, seed, edge
       blossom
     });
   }
-  return { biome, density, treeCount: count, shrubCount, shrubFlowerCount, cellIds: entries.map((entry) => entry.cellId), ranked };
+  return {
+    biome,
+    density,
+    treeCount: count,
+    shrubCount,
+    shrubFlowerCount,
+    cellIds: entries.map((entry) => entry.cellId),
+    speciesPlan,
+    ranked
+  };
+}
+
+function selectGroveSpeciesPlan({ biome, count, rng }) {
+  if (count <= 0) {
+    return { dominantFamily: null, companionFamily: null, dominantCount: 0, companionCount: 0, distinctFamilies: 0 };
+  }
+  const weights = GROVE_FAMILY_WEIGHTS[biome] ?? GROVE_FAMILY_WEIGHTS.woodland;
+  let dominantFamily = weightedFamily(rng, weights);
+  // A lone Scots pine reads as a random decorative exception. Pine is only
+  // emitted when the group can establish a recognisable stand.
+  if (dominantFamily === "pine" && count < 2) {
+    dominantFamily = weightedFamily(rng, GROVE_FAMILY_WEIGHTS.pineFallback);
+  }
+  const companionCandidates = GROVE_COMPANIONS[dominantFamily] ?? [];
+  const useCompanion = count >= 5 && companionCandidates.length > 0 && rng() < 0.58;
+  const companionFamily = useCompanion
+    ? companionCandidates[Math.floor(rng() * companionCandidates.length) % companionCandidates.length]
+    : null;
+  const companionCount = companionFamily ? Math.max(1, Math.min(2, Math.round(count * 0.18))) : 0;
+  return {
+    dominantFamily,
+    companionFamily,
+    dominantCount: count - companionCount,
+    companionCount,
+    distinctFamilies: companionFamily ? 2 : 1
+  };
+}
+
+function weightedFamily(rng, weights) {
+  const entries = Object.entries(weights).filter(([, weight]) => weight > 0);
+  const total = entries.reduce((sum, [, weight]) => sum + weight, 0);
+  let cursor = rng() * total;
+  for (const [family, weight] of entries) {
+    cursor -= weight;
+    if (cursor <= 0) return family;
+  }
+  return entries.at(-1)?.[0] ?? "broad";
 }
 
 function agentShrubCountFor(biome, density, treeCount, rng) {
@@ -725,16 +786,6 @@ function agentTreeCountFor(biome, density, rng, edge = false) {
   if (biome === "heath") return Math.round(lerp(0, 1, density));
   if ((edge || density > 0.55) && rng() < 0.5) return 1;
   return 0;
-}
-
-function pickFamily(rng) {
-  const roll = rng();
-  let cursor = 0;
-  for (const family of TREE_FAMILIES) {
-    cursor += FAMILY_WEIGHTS[family];
-    if (roll < cursor) return family;
-  }
-  return "broad";
 }
 
 function pickTemplate(rng, family) {
@@ -774,10 +825,19 @@ const CLUSTER_RADIUS_FRACTION = 0.62;
 const CLUSTER_FALLOFF = 1.4;
 const SPARSE_POCKET_FRACTION = 0.22;
 const SPARSE_POCKET_DENSITY = 0.3;
-const TREE_FAMILIES = ["broad", "round", "tall", "birch", "pine"];
-// Broadleaf trees remain dominant. Birch and Scots pine are distinctive
-// British accents, while the dense yew-like column remains uncommon.
-const FAMILY_WEIGHTS = { broad: 0.34, round: 0.3, tall: 0.1, birch: 0.16, pine: 0.1 };
+const GROVE_FAMILY_WEIGHTS = Object.freeze({
+  woodland: Object.freeze({ broad: 0.36, round: 0.31, birch: 0.16, pine: 0.12, tall: 0.05 }),
+  heath: Object.freeze({ pine: 0.46, birch: 0.34, broad: 0.12, round: 0.08 }),
+  meadow: Object.freeze({ broad: 0.5, round: 0.4, birch: 0.1 }),
+  pineFallback: Object.freeze({ birch: 0.58, broad: 0.24, round: 0.18 })
+});
+const GROVE_COMPANIONS = Object.freeze({
+  broad: Object.freeze(["round", "birch"]),
+  round: Object.freeze(["broad", "birch"]),
+  birch: Object.freeze(["broad", "round"]),
+  pine: Object.freeze(["birch"]),
+  tall: Object.freeze(["round", "broad"])
+});
 const TIER_BASE_SCALE = { dominant: 1.62, regular: 1.05, small: 0.75 };
 // Building storey height (voxels) for the street-house scale the city uses.
 const TREE_STOREY_VOXELS = 20;

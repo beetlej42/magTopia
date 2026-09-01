@@ -26,13 +26,15 @@ test("Agent acceptance city renders roads and vegetation entirely as voxel geome
   assert.ok(diagnostics.roadRenderer.bridgeSpans.every((span) => span.railings && span.abutments));
   assert.ok(diagnostics.roadRenderer.bridgeSpans.every((span) => span.spanWorldUnits === span.cellCount * 4));
   assert.ok(diagnostics.roadRenderer.renderStats.renderedTriangles > 0);
-  assert.equal(diagnostics.vegetation.renderer, "state-aware-voxel-vegetation-v4-tree-lod");
+  assert.equal(diagnostics.vegetation.renderer, "state-aware-voxel-vegetation-v5-species-groves");
   assert.equal(diagnostics.vegetation.screenSpaceTreeLod, true);
   assert.equal(diagnostics.vegetation.clearsRoadsAndEntrances, true);
   assert.ok(diagnostics.vegetation.trees > 0);
   assert.ok(diagnostics.vegetation.clusters > 0, "runtime vegetation should resolve cross-cell clusters");
   assert.ok(diagnostics.vegetation.clusterGroups > 0);
   assert.ok(diagnostics.vegetation.groveCount > 0, "runtime should compose multi-tree groves");
+  assert.ok(diagnostics.vegetation.singleSpeciesGroves > diagnostics.vegetation.mixedSpeciesGroves, "existing cities rebuild mostly single-species groves");
+  assert.equal(diagnostics.vegetation.isolatedPines, 0, "existing cities never rebuild with a lone Scots pine inside another grove");
   assert.ok(diagnostics.vegetation.vegetatedCells > 0);
   assert.ok(diagnostics.vegetation.biomeCounts.woodland > 0);
   assert.ok(diagnostics.vegetation.tierCounts.dominant > 0 && diagnostics.vegetation.tierCounts.small > 0, "tree scale tiers must be represented");
@@ -303,16 +305,15 @@ function buildableCount(grid) {
   return grid.cells.filter((cell) => cell.strictBuildable && (cell.surface?.biome === "meadow" || cell.surface?.biome === "heath" || cell.surface?.biome === "woodland")).length;
 }
 
-test("runtime tree redesign keeps the five approved British families with mature proportions", () => {
+test("runtime tree redesign stays within the approved British family pool with mature proportions", () => {
   const { state, grid } = agentWorld(16, 16, { woodland: [[3, 3], [4, 3], [5, 3], [3, 4], [4, 4], [5, 4], [3, 5], [4, 5], [5, 5]] });
   const plan = createAgentVoxelVegetationPlan({ state, grid, seed: "tree-design-ranges" });
   assert.ok(plan.trees.length > 0);
   const families = new Set(plan.trees.map((tree) => tree.archetype));
   assert.ok([...families].every((family) => ["birch", "broad", "pine", "round", "tall"].includes(family)), "no hero/special archetype is emitted");
-  assert.ok(families.size >= 4, "a compact woodland still carries strong family variety");
+  assert.ok(families.size >= 2 && families.size <= 4, "a compact woodland varies between groves without mixing every family together");
 
   const tall = plan.trees.filter((tree) => tree.archetype === "tall");
-  assert.ok(tall.length > 0);
   assert.ok(tall.every((tree) => tree.crownWidth / tree.heightVoxels >= 0.25), "the tall family must carry substantial crown mass, not a pole with a cap");
 
   const dominant = plan.trees.filter((tree) => tree.sizeClass === "dominant");
@@ -324,9 +325,7 @@ test("runtime tree redesign keeps the five approved British families with mature
   assert.ok(dominantHeightMin >= 55, "dominant trees reach into the building-scale height band");
 
   const broad = plan.trees.filter((tree) => tree.archetype === "broad");
-  assert.ok(broad.length > 0);
-  const broadCrown = broad.reduce((sum, tree) => sum + tree.crownWidth, 0) / broad.length;
-  assert.ok(broadCrown >= 20, "broad-canopy family carries wide horizontal crown mass");
+  assert.ok(broad.every((tree) => tree.crownWidth >= 20), "broad-canopy family carries wide horizontal crown mass");
 });
 
 test("runtime groves contain tier and silhouette mixing where enough trees are present", () => {
@@ -344,11 +343,36 @@ test("runtime groves contain tier and silhouette mixing where enough trees are p
   });
   const familyMixed = groves.some((grove) => new Set(grove.ranked.map((tree) => tree.archetype)).size >= 2);
   assert.ok(tierMixed, "a grove includes a dominant and supporting trees");
-  assert.ok(familyMixed, "grove mixes tree families for silhouette rhythm");
+  assert.ok(familyMixed, "a larger grove may carry one subordinate companion family");
   assert.ok(groves.some((grove) => {
     const scales = grove.ranked.map((tree) => tree.scale);
     return Math.max(...scales) / Math.min(...scales) > 1.2;
   }), "groves show obvious height/size rhythm rather than equal repeated props");
+});
+
+test("runtime groves choose species at cluster level and keep Scots pine in stands", () => {
+  const scenario = runNonVisualAgentBuildScenario({ seed: "voxel-infrastructure-test" });
+  const plan = createAgentVoxelVegetationPlan({ state: scenario.state, grid: scenario.world.grid, seed: "voxel-infrastructure-test" });
+  const groves = plan.clusters.flatMap((cluster) => cluster.zoneGroups.filter((group) => group.treeCount >= 2));
+  assert.ok(groves.length > 0);
+
+  groves.forEach((grove) => {
+    const families = new Set(grove.ranked.map((tree) => tree.family));
+    assert.ok(families.size <= 2, "a grove has one dominant species and at most one companion");
+    assert.equal(families.size, grove.speciesPlan.distinctFamilies);
+    assert.equal(grove.speciesPlan.dominantCount + grove.speciesPlan.companionCount, grove.treeCount);
+    if (grove.treeCount <= 4) assert.equal(families.size, 1, "small groves stay single-species");
+    if (grove.speciesPlan.companionFamily) {
+      assert.ok(grove.speciesPlan.dominantCount / grove.treeCount >= 0.75, "mixed groves retain a clear dominant species");
+    }
+  });
+
+  const pineGroves = groves.filter((grove) => grove.ranked.some((tree) => tree.family === "pine"));
+  assert.ok(pineGroves.length > 0, "the fixture reaches Scots pine stands");
+  pineGroves.forEach((grove) => {
+    assert.equal(grove.speciesPlan.dominantFamily, "pine", "pine never appears as a random companion");
+    assert.ok(grove.ranked.filter((tree) => tree.family === "pine").length >= 2, "Scots pine appears as a recognisable stand");
+  });
 });
 
 test("meadow low vegetation is heavily reduced and subordinate to groves", () => {
