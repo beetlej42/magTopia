@@ -5,8 +5,8 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { AdaptiveBokehPass, calculateBokehViewAmount } from "./render/adaptiveBokehPass.js";
-import { StorybookColorPass } from "./render/storybookColorPass.js";
 import { setStorybookSurfaceStrength } from "./render/storybookSurfaceMaterial.js";
+import { getVoxelFacetHighlightMode } from "./render/voxelCurvedWorldTwinkle.js";
 import { chooseAdaptiveQuality, detectMobileRenderProfile, shouldEnableBokeh } from "./render/mobilePerformance.js";
 import {
   calculateShadowViewExtent,
@@ -124,9 +124,7 @@ scene.matrixAutoUpdate = false;
 
 const startupParams = new URLSearchParams(window.location.search);
 setVoxelMaterialMode(startupParams.get("voxelShader") ?? "diffuse");
-const storybookEnabled = startupParams.get("storybook") !== "0";
-const startupStorybookStrength = THREE.MathUtils.clamp(Number(startupParams.get("storybookStrength") ?? 0.78), 0, 1);
-const startupStorybookMaterialStrength = setStorybookSurfaceStrength(
+const startupVoxelSurfaceStrength = setStorybookSurfaceStrength(
   startupParams.get("storybookMaterials") === "0"
     ? 0
     : Number(startupParams.get("storybookMaterialStrength") ?? 0.78)
@@ -240,12 +238,9 @@ const districtDepthOfField = new AdaptiveBokehPass(scene, camera, {
   maxblur: districtBokehDefaults.maxblur,
   quality: renderQuality.depthOfFieldQuality
 });
-const storybookColorPass = new StorybookColorPass({ strength: startupStorybookStrength });
-storybookColorPass.enabled = storybookEnabled;
 const outputPass = new OutputPass();
 composer.addPass(renderPass);
 composer.addPass(districtDepthOfField);
-composer.addPass(storybookColorPass);
 composer.addPass(outputPass);
 composer.setPixelRatio(renderQuality.pixelRatio);
 
@@ -861,17 +856,32 @@ async function rebuildActive(config) {
 
 function getVoxelShaderMaterialDiagnostics(object) {
   const materials = new Set();
+  const facetMaterials = new Set();
+  const surfaceKinds = new Set();
   let meshCount = 0;
   object?.traverse((child) => {
     if (!child.isMesh) return;
     const childMaterials = Array.isArray(child.material) ? child.material : [child.material];
     childMaterials.forEach((material) => {
+      if (material?.userData?.voxelFacetHighlight) {
+        facetMaterials.add(material.uuid);
+        surfaceKinds.add(material.userData.voxelFacetHighlight.surfaceKind ?? "unknown");
+      }
       if (material?.userData?.voxelShader !== "diffuse") return;
       materials.add(material.uuid);
       meshCount += 1;
     });
   });
-  return { mode: getVoxelMaterialMode(), materialCount: materials.size, meshCount };
+  return {
+    mode: getVoxelMaterialMode(),
+    materialCount: materials.size,
+    meshCount,
+    facetHighlight: {
+      mode: getVoxelFacetHighlightMode(),
+      materialCount: facetMaterials.size,
+      surfaceKinds: [...surfaceKinds].sort()
+    }
+  };
 }
 
 function warmupActiveVoxelLod() {
@@ -962,14 +972,7 @@ function applyWorldLighting(sunTime = 0.52, updateActiveObject = true) {
   requestShadowRefreshForLight(style.sunPosition);
   worldLights.rim.color.copy(style.rgbTint);
   worldLights.rim.intensity = shadowDebugEnabled ? 0 : style.rimIntensity * voxelRimContrast;
-  const storybookState = storybookColorPass.setStyle(style, {
-    enabled: storybookEnabled && voxelWorldLighting,
-    strength: startupStorybookStrength
-  });
-  document.documentElement.dataset.magicTownStorybookGrade = String(storybookState.enabled);
-  document.documentElement.dataset.magicTownStorybookStrength = storybookState.strength.toFixed(3);
-  document.documentElement.dataset.magicTownStorybookNightBlend = storybookState.nightBlend.toFixed(3);
-  document.documentElement.dataset.magicTownStorybookMaterialStrength = startupStorybookMaterialStrength.toFixed(3);
+  document.documentElement.dataset.magicTownVoxelSurfaceStrength = startupVoxelSurfaceStrength.toFixed(3);
   if (updateActiveObject) activeObject?.userData.updateDaylight?.(style);
   return style;
 }
@@ -2048,7 +2051,7 @@ function animate() {
     districtDepthOfField.enabled = bokehActive;
     if (activeAnimatedShadowCasters) scheduleShadowRefresh("animated-caster", true);
     commitPendingShadowRefresh(performance.now(), cameraInMotion);
-    if (districtDepthOfField.enabled || storybookColorPass.enabled) composer.render();
+    if (districtDepthOfField.enabled) composer.render();
     else renderer.render(scene, camera);
   } else {
     districtDepthOfField.enabled = false;

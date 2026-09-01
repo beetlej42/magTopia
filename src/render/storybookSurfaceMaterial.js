@@ -1,4 +1,7 @@
-import { applyVoxelCurvedWorldTwinkle } from "./voxelCurvedWorldTwinkle.js";
+import {
+  VOXEL_FACET_DECLARATIONS_MARKER,
+  applyVoxelCurvedWorldTwinkle
+} from "./voxelCurvedWorldTwinkle.js";
 
 export const STORYBOOK_SURFACE_KINDS = Object.freeze({
   none: 0,
@@ -7,7 +10,9 @@ export const STORYBOOK_SURFACE_KINDS = Object.freeze({
   slate: 3,
   painted: 4,
   felt: 5,
-  stone: 6
+  stone: 6,
+  water: 7,
+  glass: 8
 });
 
 const MATERIAL_KIND_BY_ID = Object.freeze({
@@ -28,8 +33,87 @@ const MATERIAL_KIND_BY_ID = Object.freeze({
   soil: STORYBOOK_SURFACE_KINDS.felt,
   foliage: STORYBOOK_SURFACE_KINDS.felt,
   foliageDark: STORYBOOK_SURFACE_KINDS.felt,
-  foliageLight: STORYBOOK_SURFACE_KINDS.felt
+  foliageLight: STORYBOOK_SURFACE_KINDS.felt,
+  water: STORYBOOK_SURFACE_KINDS.water,
+  waterLight: STORYBOOK_SURFACE_KINDS.water,
+  glass: STORYBOOK_SURFACE_KINDS.glass,
+  lightGlass: STORYBOOK_SURFACE_KINDS.glass,
+  tealGlass: STORYBOOK_SURFACE_KINDS.glass,
+  warmWindow: STORYBOOK_SURFACE_KINDS.glass,
+  violetMagic: STORYBOOK_SURFACE_KINDS.glass,
+  tealMagic: STORYBOOK_SURFACE_KINDS.glass
 });
+
+const STORYBOOK_SURFACE_GLSL = `
+float storybookHandcraftedVoxelColor(float kind, vec3 position, vec3 normal) {
+  // glint mode is deliberately a clean material baseline for screenshot comparison.
+  if (voxelFacetMode > 0.5 && voxelFacetMode < 1.5) return 1.0;
+  if (kind < 0.5 || (kind > 6.5 && kind < 8.5)) return 1.0;
+
+  vec2 uv = voxelFacetPlanarUv(position, normal);
+  vec2 grid = uv / max(voxelFacetCellSize, 0.0001);
+  vec2 cell = floor(grid);
+  float seed = voxelFacetHash(cell + vec2(kind * 13.17, kind * 7.91));
+  float seedB = voxelFacetHash(cell + vec2(19.37 + kind, 41.83));
+  float facetDetailStrength = clamp(voxelFacetStrength * storybookSurfaceStrength, 0.0, 1.0);
+  float heightSignal = clamp(voxelHeightField(cell) * 8.0, -1.0, 1.0);
+  float materialJitter = (seed - 0.5) * 0.08;
+  float blockSignal = clamp(heightSignal + materialJitter, -1.0, 1.0);
+  float variation = 1.0;
+  float cavityStrength = 0.0;
+
+  if (kind > 0.5 && kind < 1.5) {
+    // Plaster/limestone: nearly clean, with only a restrained block lift.
+    variation = 1.0 + blockSignal * 0.035;
+    cavityStrength = 0.018;
+  } else if (kind > 1.5 && kind < 2.5) {
+    // Brick: readable warm block variation without a black grid.
+    variation = 1.0 + blockSignal * 0.075;
+    cavityStrength = 0.060;
+  } else if (kind > 2.5 && kind < 3.5) {
+    // Slate: the strongest handcrafted block read.
+    variation = 1.0 + blockSignal * 0.16;
+    cavityStrength = 0.12;
+  } else if (kind > 3.5 && kind < 4.5) {
+    // Painted/timber: soft color drift, no regular grid.
+    variation = 1.0 + blockSignal * 0.045;
+    cavityStrength = 0.025;
+  } else if (kind > 4.5 && kind < 5.5) {
+    // Felt/grass/soil/foliage are a clean baseline in this experiment. Their
+    // existing material colors remain untouched and receive no regular pattern.
+    return 1.0;
+  } else if (kind > 5.5 && kind < 6.5) {
+    // Stone/pavement: visible block variation with soft cavity response.
+    variation = 1.0 + blockSignal * 0.09;
+    cavityStrength = 0.075;
+  } else {
+    return 1.0;
+  }
+
+  // Neighbor-height curvature supplies a soft cavity/AO cue. It is continuous
+  // across the voxel boundary and therefore cannot turn into a black grid.
+  float cavity = max(voxelHeightCavity(cell), 0.0) * (0.82 + 0.18 * seedB);
+  variation *= 1.0 - cavity * cavityStrength * facetDetailStrength;
+  // Fade block response before a cell becomes sub-pixel to avoid shimmer.
+  float detailFade = 1.0 - smoothstep(0.70, 1.55, length(fwidth(grid)));
+  return mix(1.0, variation, facetDetailStrength * detailFade);
+}
+
+float storybookHandcraftedVoxelRoughness(float kind, vec3 position, vec3 normal, float baseRoughness) {
+  if (voxelFacetMode > 0.5 && voxelFacetMode < 1.5) return baseRoughness;
+  if (kind > 4.5 && kind < 5.5) return baseRoughness;
+  if (kind < 0.5 || (kind > 6.5 && kind < 9.5)) return baseRoughness;
+  vec2 uv = voxelFacetPlanarUv(position, normal);
+  vec2 cell = floor(uv / max(voxelFacetCellSize, 0.0001));
+  float seed = voxelFacetHash(cell + vec2(kind * 5.13, 17.37));
+  float heightSignal = clamp(voxelHeightField(cell) * 8.0, -1.0, 1.0);
+  float blockSignal = clamp(heightSignal + (seed - 0.5) * 0.08, -1.0, 1.0);
+  float spread = kind > 2.5 && kind < 3.5 ? 0.075 : kind > 5.5 && kind < 6.5 ? 0.045 : 0.025;
+  float detailFade = 1.0 - smoothstep(0.70, 1.55, length(fwidth(uv / max(voxelFacetCellSize, 0.0001))));
+  float facetDetailStrength = clamp(voxelFacetStrength * storybookSurfaceStrength, 0.0, 1.0);
+  return clamp(baseRoughness + blockSignal * spread * facetDetailStrength * detailFade, 0.0, 1.0);
+}
+`;
 
 let storybookSurfaceStrength = 0.78;
 
@@ -58,7 +142,7 @@ export function applyStorybookSurfaceMaterial(material, {
   const resolvedKind = Number(surfaceKind) || 0;
   const resolvedStrength = Math.min(1, Math.max(0, Number(strength) || 0));
   material.userData.storybookSurface = {
-    version: "procedural-microtexture-v1",
+    version: "handcrafted-voxel-surface-v2",
     surfaceKind: resolvedKind,
     useSurfaceKindAttribute: Boolean(useSurfaceKindAttribute),
     strength: resolvedStrength
@@ -67,26 +151,12 @@ export function applyStorybookSurfaceMaterial(material, {
     previousCompile?.call(this, shader, renderer);
     shader.uniforms.storybookSurfaceKind = { value: resolvedKind };
     shader.uniforms.storybookSurfaceStrength = { value: resolvedStrength };
-    const kindSource = useSurfaceKindAttribute
-      ? (material.userData?.voxelCurvedWorldTwinkle ? "" : "attribute float voxelSurfaceKind;")
-      : "uniform float storybookSurfaceKind;";
-    const kindAssignment = useSurfaceKindAttribute ? "voxelSurfaceKind" : "storybookSurfaceKind";
-    shader.vertexShader = shader.vertexShader
-      .replace("#include <common>", `#include <common>\n${kindSource}\nvarying vec3 vStorybookWorldPosition;\nvarying vec3 vStorybookWorldNormal;\nvarying float vStorybookSurfaceKind;`)
-      .replace("#include <project_vertex>", `#include <project_vertex>\nvStorybookWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvStorybookWorldNormal = normalize(mat3(modelMatrix) * objectNormal);\nvStorybookSurfaceKind = ${kindAssignment};`);
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", `#include <common>\nuniform float storybookSurfaceStrength;\nvarying vec3 vStorybookWorldPosition;\nvarying vec3 vStorybookWorldNormal;\nvarying float vStorybookSurfaceKind;\n\nfloat storybookHash(vec2 p) {\n  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);\n}\n\nfloat storybookLine(float value, float width) {\n  float distanceToLine = min(fract(value), 1.0 - fract(value));\n  return 1.0 - smoothstep(width, width + fwidth(value) * 1.35, distanceToLine);\n}\n\nvec2 storybookPlanarUv(vec3 position, vec3 normal) {\n  vec3 axis = abs(normalize(normal));\n  if (axis.y > axis.x && axis.y > axis.z) return position.xz;\n  if (axis.x > axis.z) return position.zy;\n  return position.xy;\n}\n\nfloat storybookSurfaceModulation(float kind, vec3 position, vec3 normal) {\n  vec2 uv = storybookPlanarUv(position, normal);\n  float fine = storybookHash(floor(uv * 92.0));\n  float coarse = storybookHash(floor(uv * 18.0 + 17.0));\n  float paper = mix(0.965, 1.035, fine) * mix(0.985, 1.015, coarse);\n  float modulation = paper;\n  if (kind > 1.5 && kind < 2.5) {\n    vec3 axis = abs(normalize(normal));\n    float vertical = 1.0 - smoothstep(0.62, 0.88, axis.y);\n    vec2 brickUv = uv * vec2(2.75, 5.5);\n    brickUv.x += mod(floor(brickUv.y), 2.0) * 0.5;\n    float mortar = max(storybookLine(brickUv.x, 0.045), storybookLine(brickUv.y, 0.055));\n    modulation *= 1.0 - mortar * vertical * 0.105;\n  } else if (kind > 2.5 && kind < 3.5) {\n    float slateBand = storybookLine(uv.y * 10.0, 0.035);\n    modulation *= 1.0 - slateBand * 0.045;\n  } else if (kind > 3.5 && kind < 4.5) {\n    float brush = storybookHash(vec2(floor(uv.x * 34.0), floor(uv.y * 9.0)));\n    modulation *= mix(0.975, 1.025, brush);\n  } else if (kind > 4.5 && kind < 5.5) {\n    float felt = storybookHash(floor(uv * 42.0)) * 0.65 + storybookHash(floor(uv.yx * 73.0 + 9.0)) * 0.35;\n    modulation *= mix(0.945, 1.035, felt);\n  } else if (kind > 5.5 && kind < 6.5) {\n    float aggregate = storybookHash(floor(uv * 31.0));\n    modulation *= mix(0.955, 1.025, aggregate);\n  }\n  return mix(1.0, modulation, storybookSurfaceStrength);\n}`)
-      .replace("#include <map_fragment>", "#include <map_fragment>\ndiffuseColor.rgb *= storybookSurfaceModulation(vStorybookSurfaceKind, vStorybookWorldPosition, vStorybookWorldNormal);")
-      .replace("#include <roughnessmap_fragment>", "#include <roughnessmap_fragment>\nroughnessFactor = clamp(roughnessFactor + storybookSurfaceStrength * 0.035, 0.0, 1.0);");
-    shader.fragmentShader = shader.fragmentShader
-      .replace("mortar * vertical * 0.105", "mortar * vertical * 0.16")
-      .replace("storybookLine(uv.y * 10.0, 0.035)", "storybookLine(uv.y * 10.0, 0.04)")
-      .replace("slateBand * 0.045", "slateBand * 0.075")
-      .replace("mix(0.975, 1.025, brush)", "mix(0.97, 1.03, brush)")
-      .replace("mix(0.945, 1.035, felt)", "mix(0.925, 1.045, felt)")
-      .replace("mix(0.955, 1.025, aggregate)", "mix(0.94, 1.035, aggregate)");
+      .replace(VOXEL_FACET_DECLARATIONS_MARKER, `${VOXEL_FACET_DECLARATIONS_MARKER}\nuniform float storybookSurfaceStrength;\n${STORYBOOK_SURFACE_GLSL}`)
+      .replace("#include <map_fragment>", "#include <map_fragment>\ndiffuseColor.rgb *= storybookHandcraftedVoxelColor(vVoxelSurfaceKind, vVoxelWorldPosition, vVoxelWorldNormal);")
+      .replace("#include <roughnessmap_fragment>", "#include <roughnessmap_fragment>\nroughnessFactor = storybookHandcraftedVoxelRoughness(vVoxelSurfaceKind, vVoxelWorldPosition, vVoxelWorldNormal, roughnessFactor);");
   };
-  material.customProgramCacheKey = () => `${previousCacheKey?.() ?? material.type}|storybook-surface-v1:${useSurfaceKindAttribute ? "attribute" : resolvedKind}`;
+  material.customProgramCacheKey = () => `${previousCacheKey?.() ?? material.type}|storybook-surface-v2:${useSurfaceKindAttribute ? "attribute" : resolvedKind}`;
   material.needsUpdate = true;
   return material;
 }
