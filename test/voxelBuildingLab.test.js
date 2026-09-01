@@ -244,7 +244,7 @@ test("the diffuse voxel shader is opt-in and invalid modes fall back safely", ()
     const [mesh] = buffer.createMeshes({ strategy: "greedy" });
     assert.equal(mesh.material.isMeshStandardMaterial, true);
     assert.equal(mesh.material.userData.voxelShader, "diffuse");
-    assert.equal(mesh.material.customProgramCacheKey(), "voxel-diffuse-v1|storybook-surface-v1:attribute");
+    assert.equal(mesh.material.customProgramCacheKey(), "voxel-diffuse-v1|voxel-facet-highlight-v2:attribute:combined:1.15:1|storybook-surface-v2:attribute");
     const shader = {
       uniforms: {},
       vertexShader: "#include <common>\n#include <project_vertex>",

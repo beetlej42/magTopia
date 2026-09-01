@@ -1248,7 +1248,7 @@ function createMacroTerrainChunkGeometry(terrainGrid, palette, {
       const height = GLOBAL_CONSTRUCTION_HEIGHT + terrainGrid.elevationSteps[cellIndex] * VOXEL_SIZE;
       const surfaceName = MACRO_TERRAIN_COLOR_NAMES[terrainGrid.colors[cellIndex]];
       const surfaceKind = surfaceName === "water" || surfaceName === "waterLight"
-        ? STORYBOOK_SURFACE_KINDS.none
+        ? STORYBOOK_SURFACE_KINDS.water
         : surfaceName === "road" || surfaceName === "shore"
           ? STORYBOOK_SURFACE_KINDS.stone
           : STORYBOOK_SURFACE_KINDS.felt;
