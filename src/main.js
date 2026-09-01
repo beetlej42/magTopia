@@ -95,6 +95,11 @@ import { createVoxelSky } from "./city/voxel-sky.js";
 import { findAssetCandidates, getAssetRegistry, resolveAsset } from "./city/assets.js";
 import { getModelOrientationPreviewUrls } from "./generators/modelOrientation.js";
 import { createAgentAcceptanceCity } from "./generators/agentAcceptanceCity.js";
+import {
+  VOXEL_VEGETATION_PRESETS,
+  createVoxelVegetationLab,
+  normalizeVoxelVegetationConfig
+} from "./generators/voxelVegetationLab.js";
 import { configureVoxelShadowOnlyLayer } from "./generators/magicLondonStarterDistrict.js";
 import { createCityInfoOverlay } from "./ui/cityInfoOverlay.js";
 import {
@@ -160,7 +165,7 @@ const frontendSurface = isPresentationRequest
     : "studio";
 document.documentElement.dataset.magtopiaSurface = frontendSurface;
 if (isPresentationRequest) document.documentElement.dataset.magicTownPresentation = "true";
-const studioModes = ["map", "asset", "vanishing", "comparison", "voxel", "massing", "styles", "district", "agentcity", "parcel"];
+const studioModes = ["map", "asset", "vanishing", "comparison", "voxel", "massing", "styles", "vegetation", "district", "agentcity", "parcel"];
 let currentMode = frontendSurface === "studio" && studioModes.includes(startupMode)
   ? startupMode
   : frontendSurface === "player" || frontendSurface === "acceptance"
@@ -501,6 +506,44 @@ const MODES = {
       { key: "scale", label: "Study Scale", min: 0.58, max: 0.9, step: 0.01 }
     ]
   },
+  vegetation: {
+    label: "Voxel Vegetation Lab",
+    presets: VOXEL_VEGETATION_PRESETS,
+    defaultPreset: "familyCatalog",
+    normalize: normalizeVoxelVegetationConfig,
+    randomize: (seed) => normalizeVoxelVegetationConfig({
+      ...configsByMode.vegetation,
+      seed,
+      previewLod: Math.floor(Math.random() * 3)
+    }),
+    sliders: [
+      { key: "sunTime", label: "Sun Time", min: 0, max: 1, step: 0.01 },
+      { key: "nightLighting", label: "Night Lights", min: 0, max: 1, step: 0.01 },
+      {
+        key: "studyMode",
+        label: "Study Layout",
+        control: "select",
+        valueType: "string",
+        options: [
+          { value: "catalog", label: "Family Catalog" },
+          { value: "lod", label: "LOD Comparison" }
+        ]
+      },
+      {
+        key: "previewLod",
+        label: "Catalog LOD",
+        control: "select",
+        options: [
+          { value: 0, label: "LOD 0 · Near" },
+          { value: 1, label: "LOD 1 · Medium" },
+          { value: 2, label: "LOD 2 · Far" }
+        ],
+        visible: (config) => config.studyMode === "catalog"
+      },
+      { key: "treeScale", label: "Tree Scale", min: 0.65, max: 1.35, step: 0.01 },
+      { key: "spacing", label: "Spacing", min: 4.5, max: 8.5, step: 0.1 }
+    ]
+  },
   district: {
     label: "Agent Intent District",
     presets: VOXEL_INTENT_DISTRICT_PRESETS,
@@ -573,6 +616,8 @@ const presetLabels = {
   civicDome: "Massing · Civic Dome",
   agentQuarterDay: "Intent District · Day",
   agentQuarterEvening: "Intent District · Evening",
+  familyCatalog: "Vegetation · Family Catalog",
+  lodComparison: "Vegetation · LOD Comparison",
   cottage: "1 × 1 Cottage",
   shop: "1 × 2 Shop",
   tower: "1 × 3 Tower",
@@ -668,6 +713,7 @@ const configsByMode = {
       ? PUBLIC_BUILDING_STYLE_COMPARISON_PRESETS.fiveStyleEvening
       : PUBLIC_BUILDING_STYLE_COMPARISON_PRESETS.fiveStyleDay
   ),
+  vegetation: normalizeVoxelVegetationConfig(VOXEL_VEGETATION_PRESETS.familyCatalog),
   district: normalizeVoxelIntentDistrictConfig(VOXEL_INTENT_DISTRICT_PRESETS.agentQuarterDay),
   agentcity: normalizeVoxelIntentDistrictConfig({
     ...(startupParams.get("time") === "evening"
@@ -793,6 +839,8 @@ async function rebuildActive(config) {
     activeObject = createVoxelMassingLab(currentConfig);
   } else if (currentMode === "styles") {
     activeObject = createPublicBuildingStyleComparison(currentConfig);
+  } else if (currentMode === "vegetation") {
+    activeObject = createVoxelVegetationLab(currentConfig);
   } else if (currentMode === "district") {
     activeObject = createVoxelIntentDistrict(currentConfig);
   } else if (currentMode === "agentcity") {
@@ -837,7 +885,7 @@ async function rebuildActive(config) {
   document.documentElement.dataset.magicTownComparison = currentMode === "comparison"
     ? JSON.stringify(activeObject.userData.getComparisonDiagnostics?.() ?? {})
     : "{}";
-  document.documentElement.dataset.magicTownVoxel = currentMode === "voxel" || currentMode === "massing" || currentMode === "styles" || currentMode === "district" || currentMode === "agentcity"
+  document.documentElement.dataset.magicTownVoxel = currentMode === "voxel" || currentMode === "massing" || currentMode === "styles" || currentMode === "vegetation" || currentMode === "district" || currentMode === "agentcity"
     ? JSON.stringify(activeObject.userData.getVoxelDiagnostics?.() ?? {})
     : "{}";
   document.documentElement.dataset.magicTownVanishingError = currentMode === "vanishing"
@@ -957,7 +1005,7 @@ function applyWorldLighting(sunTime = 0.52, updateActiveObject = true) {
   worldLights.ambient.color.copy(style.ambientSky);
   worldLights.ambient.groundColor.copy(style.ambientGround);
   const massingContrast = currentMode === "massing" || currentMode === "styles";
-  const voxelWorldLighting = ["voxel", "district", "agentcity"].includes(currentMode);
+  const voxelWorldLighting = ["voxel", "vegetation", "district", "agentcity"].includes(currentMode);
   const voxelAmbientContrast = voxelWorldLighting ? 0.58 : 1;
   const voxelRimContrast = voxelWorldLighting ? 0.72 : 1;
   worldLights.ambient.intensity = shadowDebugEnabled
@@ -1631,8 +1679,12 @@ function syncApiPill() {
     apiPill.textContent = `Massing Explorer · ${currentConfig.masses.length} nodes · ${currentConfig.relations.length} relations · MAGTOPIA.getObject().userData.getVoxelDiagnostics()`;
   } else if (currentMode === "styles") {
     apiPill.textContent = "Five bounded public-building style grammars · silhouette + facade + material identity";
+  } else if (currentMode === "vegetation") {
+    apiPill.textContent = `Eight British tree templates · LOD ${currentConfig.previewLod} · MAGTOPIA.getObject().userData.getVoxelDiagnostics()`;
   } else if (currentMode === "district") {
     apiPill.textContent = "BuildingIntent → Street + Massing adapters · MAGTOPIA.generateIntentDistrict({ intents })";
+  } else if (currentMode === "agentcity") {
+    apiPill.textContent = "Agent City · screen-space building + vegetation LOD visual acceptance";
   } else {
     apiPill.textContent = `MAGTOPIA.previewParcel({ footprint: '${currentConfig.footprint}', floors: ${currentConfig.floors}, maxHeight: ${currentConfig.maxHeight} })`;
   }
@@ -1649,6 +1701,7 @@ function exposeAgentApi() {
       voxel: VOXEL_BUILDING_PRESETS,
       massing: VOXEL_MASSING_PRESETS,
       styles: PUBLIC_BUILDING_STYLE_COMPARISON_PRESETS,
+      vegetation: VOXEL_VEGETATION_PRESETS,
       district: VOXEL_INTENT_DISTRICT_PRESETS,
       parcel: PARCEL_BLUEPRINT_PRESETS
     },
@@ -1694,6 +1747,10 @@ function exposeAgentApi() {
     },
     comparePublicBuildingStyles(config = {}) {
       setMode("styles", { ...configsByMode.styles, ...config });
+      return this.getParams();
+    },
+    previewVoxelVegetation(config = {}) {
+      setMode("vegetation", { ...configsByMode.vegetation, ...config });
       return this.getParams();
     },
     randomizeVoxelMassing(scope = "all", seed = Date.now()) {
@@ -1773,11 +1830,13 @@ function exposeAgentApi() {
                 ? "massing"
                 : MODES.styles.presets[name]
                   ? "styles"
-                : MODES.district.presets[name]
-                  ? "district"
-                  : MODES.parcel.presets[name]
-                    ? "parcel"
-                    : currentMode;
+                  : MODES.vegetation.presets[name]
+                    ? "vegetation"
+                    : MODES.district.presets[name]
+                      ? "district"
+                      : MODES.parcel.presets[name]
+                        ? "parcel"
+                        : currentMode;
       const preset = MODES[mode].presets[name] ?? MODES[mode].presets[MODES[mode].defaultPreset];
       setMode(mode, { ...preset, ...overrides });
       return this.getParams();
@@ -2310,7 +2369,7 @@ function getSkyClockState() {
 }
 
 function isVoxelSkyMode() {
-  return ["map", "voxel", "massing", "styles", "district", "agentcity"].includes(currentMode);
+  return ["map", "voxel", "massing", "styles", "vegetation", "district", "agentcity"].includes(currentMode);
 }
 
 function onResize() {
@@ -2326,10 +2385,11 @@ function configureCameraForViewport() {
   const isVanishing = currentMode === "vanishing";
   const isMassing = currentMode === "massing";
   const isStyles = currentMode === "styles";
+  const isVegetation = currentMode === "vegetation";
   const isDistrict = currentMode === "district";
   const isAgentCity = currentMode === "agentcity";
   const isSurfaceWorld = isDistrict || isAgentCity;
-  const isVoxel = currentMode === "voxel" || currentMode === "massing" || isStyles;
+  const isVoxel = currentMode === "voxel" || currentMode === "massing" || isStyles || isVegetation;
   const perspective = isMap ? currentConfig?.perspective ?? 0 : 0;
   if (isParcel || isVanishing || isVoxel || (isMap && perspective <= 0.001)) {
     const aspect = window.innerWidth / window.innerHeight;
@@ -2337,6 +2397,8 @@ function configureCameraForViewport() {
       ? Math.max(150, (currentConfig?.mapSize ?? 180) * 1.12)
       : isVanishing
         ? 10
+        : isVegetation
+          ? currentConfig.studyMode === "lod" ? 34 : 28
         : isStyles
           ? 38
           : isVoxel
@@ -2363,8 +2425,8 @@ function configureCameraForViewport() {
         ? new THREE.Vector3(0.774, 0, -0.633)
           .multiplyScalar(currentConfig?.viewFraming?.horizontalOffset ?? 1.75)
         : new THREE.Vector3();
-      camera.position.set(isStyles ? 22 : 18, isStyles ? 16 : 14.5, isStyles ? 32 : 22).add(framingOffset);
-      controls.target.set(0, isStyles ? 4.8 : 5.4, 0.4).add(framingOffset);
+      camera.position.set(isStyles ? 22 : isVegetation ? 24 : 18, isStyles ? 16 : isVegetation ? 18 : 14.5, isStyles ? 32 : isVegetation ? 30 : 22).add(framingOffset);
+      controls.target.set(0, isStyles ? 4.8 : isVegetation ? 3.2 : 5.4, isVegetation ? 0 : 0.4).add(framingOffset);
     } else {
       camera.position.set(isMap ? 124 : 11, isMap ? groundY + 152 : 22.2, isMap ? 124 : 11);
       controls.target.set(0, groundY, isMap ? -1 : 0);
@@ -2781,6 +2843,7 @@ function createCopyPayload() {
   if (currentMode === "comparison") return getAssetComparisonContract(currentConfig);
   if (currentMode === "voxel") return getVoxelBuildingContract(currentConfig);
   if (currentMode === "massing") return activeObject?.userData?.getVoxelContract?.() ?? currentConfig;
+  if (currentMode === "vegetation") return activeObject?.userData?.getVoxelContract?.() ?? currentConfig;
   if (currentMode === "district" || currentMode === "agentcity") return activeObject?.userData?.getVoxelContract?.() ?? currentConfig;
   return {
     mode: currentMode,
@@ -2790,6 +2853,7 @@ function createCopyPayload() {
 
 function inferMode(config) {
   if (config.mode && MODES[config.mode]) return config.mode;
+  if ("studyMode" in config && ("previewLod" in config || "treeScale" in config)) return "vegetation";
   if ("intents" in config && ("magicBias" in config || config.id?.includes("quarter"))) return "district";
   if ("masses" in config || config.specVersion === getUrbanMassingCatalog().specVersion) return "massing";
   if ("mapId" in config || "developmentColumns" in config || "developmentRows" in config || "cameraMode" in config || "perspective" in config || "showGrid" in config || "trainSpeed" in config) return "map";

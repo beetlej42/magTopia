@@ -26,7 +26,8 @@ test("Agent acceptance city renders roads and vegetation entirely as voxel geome
   assert.ok(diagnostics.roadRenderer.bridgeSpans.every((span) => span.railings && span.abutments));
   assert.ok(diagnostics.roadRenderer.bridgeSpans.every((span) => span.spanWorldUnits === span.cellCount * 4));
   assert.ok(diagnostics.roadRenderer.renderStats.renderedTriangles > 0);
-  assert.equal(diagnostics.vegetation.renderer, "state-aware-voxel-vegetation-v3-groves");
+  assert.equal(diagnostics.vegetation.renderer, "state-aware-voxel-vegetation-v4-tree-lod");
+  assert.equal(diagnostics.vegetation.screenSpaceTreeLod, true);
   assert.equal(diagnostics.vegetation.clearsRoadsAndEntrances, true);
   assert.ok(diagnostics.vegetation.trees > 0);
   assert.ok(diagnostics.vegetation.clusters > 0, "runtime vegetation should resolve cross-cell clusters");
@@ -35,8 +36,8 @@ test("Agent acceptance city renders roads and vegetation entirely as voxel geome
   assert.ok(diagnostics.vegetation.vegetatedCells > 0);
   assert.ok(diagnostics.vegetation.biomeCounts.woodland > 0);
   assert.ok(diagnostics.vegetation.tierCounts.dominant > 0 && diagnostics.vegetation.tierCounts.small > 0, "tree scale tiers must be represented");
-  assert.equal(diagnostics.vegetation.treeFamilies.length, 3, "only the three normal tree families are used");
-  assert.ok(["broad", "round", "tall"].every((family) => diagnostics.vegetation.treeFamilies.includes(family)));
+  assert.equal(diagnostics.vegetation.treeFamilies.length, 5, "the five approved British tree families are used");
+  assert.ok(["broad", "round", "tall", "birch", "pine"].every((family) => diagnostics.vegetation.treeFamilies.includes(family)));
   assert.ok(diagnostics.vegetation.renderStats.trees.renderedTriangles > 0);
   assert.ok((diagnostics.vegetation.renderStats.shrubs?.renderedTriangles ?? 0) > 0);
   assert.equal(diagnostics.projection.type, "spherical-local-frame");
@@ -116,7 +117,9 @@ test("Agent acceptance city renders roads and vegetation entirely as voxel geome
   const roads = city.getObjectByName("AgentAcceptanceRoads");
   const vegetation = city.getObjectByName("AgentAcceptanceVegetation");
   assert.ok(roads.children.every((child) => child.userData.voxelRenderStrategy === "greedy-chunk"));
-  assert.ok(vegetation.children.every((child) => child.userData.voxelRenderStrategy === "greedy-chunk" || child.isInstancedMesh));
+  const vegetationMeshes = [];
+  vegetation.traverse((child) => { if (child.isMesh) vegetationMeshes.push(child); });
+  assert.ok(vegetationMeshes.every((child) => child.userData.voxelRenderStrategy === "greedy-chunk" || child.isInstancedMesh));
   assert.equal(city.getObjectByName("MagicLondonVegetation"), undefined);
   assert.equal(city.getObjectByName("MagicLondonBaseTiles"), undefined);
 });
@@ -300,12 +303,13 @@ function buildableCount(grid) {
   return grid.cells.filter((cell) => cell.strictBuildable && (cell.surface?.biome === "meadow" || cell.surface?.biome === "heath" || cell.surface?.biome === "woodland")).length;
 }
 
-test("runtime tree redesign keeps only the three normal families with mature proportions", () => {
+test("runtime tree redesign keeps the five approved British families with mature proportions", () => {
   const { state, grid } = agentWorld(16, 16, { woodland: [[3, 3], [4, 3], [5, 3], [3, 4], [4, 4], [5, 4], [3, 5], [4, 5], [5, 5]] });
   const plan = createAgentVoxelVegetationPlan({ state, grid, seed: "tree-design-ranges" });
   assert.ok(plan.trees.length > 0);
   const families = new Set(plan.trees.map((tree) => tree.archetype));
-  assert.deepEqual([...families].sort(), ["broad", "round", "tall"], "no hero/special archetype is emitted");
+  assert.ok([...families].every((family) => ["birch", "broad", "pine", "round", "tall"].includes(family)), "no hero/special archetype is emitted");
+  assert.ok(families.size >= 4, "a compact woodland still carries strong family variety");
 
   const tall = plan.trees.filter((tree) => tree.archetype === "tall");
   assert.ok(tall.length > 0);
@@ -376,13 +380,15 @@ test("runtime vegetation build stays within the performance acceptance envelope"
   const c = layer.userData.contract;
 
   assert.equal(c.instancedTrees, true, "repeated large trees are instanced rather than greedily voxelised");
-  assert.equal(c.treeMeshCount, 6, "one instanced mesh per shared template (2 per family)");
-  assert.equal(c.renderStats.trees.drawCalls, 6);
-  assert.equal(c.renderStats.trees.strategy, "instanced-tree-mesh");
+  assert.equal(c.treeMeshCount, 24, "three instanced LOD buckets per shared template");
+  assert.equal(c.treeShadowProxyMeshCount, 8, "one coarse shadow proxy per shared template");
+  assert.equal(c.renderStats.trees.drawCalls, 24);
+  assert.equal(c.renderStats.trees.shadowDrawCalls, 8);
+  assert.equal(c.renderStats.trees.strategy, "instanced-voxel-tree-screen-lod-v1");
 
   // #85 established the intended instanced architecture on this fixture:
   // ~40,640 rendered triangles across ~58 mesh/draw-call proxy, ~1.3s build.
-  // #86 (sculpted 6-template crowns) must stay close to that, not the older
+  // The sculpted eight-template British set must stay close to that, not the older
   // #84 greedy envelope. Report the measured multiplier via the benchmark.
   const shrubTris = c.renderStats.shrubs?.renderedTriangles ?? 0;
   const totalTriangles = c.renderStats.trees.renderedTriangles + shrubTris;
@@ -396,7 +402,9 @@ test("runtime vegetation build stays within the performance acceptance envelope"
   assert.ok(c.perf.buildMs <= 3300, "vegetation build stays close to the #85 ~1.3s startup");
   assert.ok(c.perf.planMs >= 0 && c.perf.shrubMeshMs >= 0);
   assert.ok(c.renderStats.trees.instances > 0);
-  assert.ok(layer.children.filter((child) => child.isInstancedMesh).length >= 6, "tree families render as batching InstancedMeshes");
+  const instancedMeshes = [];
+  layer.traverse((child) => { if (child.isInstancedMesh) instancedMeshes.push(child); });
+  assert.ok(instancedMeshes.length >= 32, "tree LOD buckets and coarse shadow proxies are instanced");
 });
 
 test("runtime tree models are sculpted templates with controlled distribution and grid alignment", () => {
@@ -406,12 +414,16 @@ test("runtime tree models are sculpted templates with controlled distribution an
   const c = layer.userData.contract;
 
   const families = new Set(plan.trees.map((tree) => tree.family));
-  assert.deepEqual([...families].sort(), ["broad", "round", "tall"], "only the approved families are emitted");
+  assert.deepEqual([...families].sort(), ["birch", "broad", "pine", "round", "tall"], "only the approved families are emitted");
 
   // At least two genuinely different shared templates are reachable per family.
   ["broad", "round", "tall"].forEach((family) => {
     const templates = new Set(plan.trees.filter((tree) => tree.family === family).map((tree) => tree.template));
     assert.ok(templates.size >= 2, `${family} reaches at least two shared geometry variants`);
+  });
+  ["birch", "pine"].forEach((family) => {
+    const templates = new Set(plan.trees.filter((tree) => tree.family === family).map((tree) => tree.template));
+    assert.equal(templates.size, 1, `${family} uses its distinctive shared template with rotational variation`);
   });
 
   // Yaw is always grid-aligned to 90-degree increments.
@@ -440,8 +452,8 @@ test("runtime tree models are sculpted templates with controlled distribution an
   });
 
   // Family crown-width over height ratios stay in their design bands.
-  const bands = { broad: [0.62, 0.9], round: [0.48, 0.7], tall: [0.28, 0.46] };
-  ["broad", "round", "tall"].forEach((family) => {
+  const bands = { broad: [0.62, 0.9], round: [0.48, 0.7], tall: [0.28, 0.46], birch: [0.36, 0.49], pine: [0.44, 0.56] };
+  ["broad", "round", "tall", "birch", "pine"].forEach((family) => {
     const trees = plan.trees.filter((tree) => tree.family === family);
     const avg = trees.reduce((sum, tree) => sum + tree.crownWidth / tree.heightVoxels, 0) / trees.length;
     assert.ok(avg >= bands[family][0] && avg <= bands[family][1], `${family} crown/height ratio within band (got ${avg.toFixed(3)})`);
@@ -455,13 +467,14 @@ test("runtime tree models are sculpted templates with controlled distribution an
   const avgSmallTrunk = broadSmall.reduce((sum, tree) => sum + tree.trunkWidth, 0) / broadSmall.length;
   assert.ok(avgDominantTrunk > avgSmallTrunk, "dominant broad trees carry heavier trunks than support trees");
 
-  // Every shared template is sculpted: multiple crown masses, stepped levels,
-  // and narrowing toward the top (no single cuboid / equal-width column).
-  assert.equal(c.templates.length, 6);
+  // Every shared template is one connected sculpted voxel field with multiple
+  // crown masses and strictly cheaper LODs.
+  assert.equal(c.templates.length, 8);
   c.templates.forEach((template) => {
-    assert.ok(template.moundCount >= 4, `${template.id} has multiple crown masses`);
-    assert.ok(template.maxSteps >= 2, `${template.id} uses stepped crown levels`);
-    assert.ok(template.taper < 0.8, `${template.id} tapers toward the top instead of equal-width boxes`);
+    assert.ok(template.lobeCount >= 4, `${template.id} has multiple crown masses`);
+    assert.equal(template.connectedComponents, 1, `${template.id} is a connected tree volume`);
+    assert.deepEqual(template.lods.map((lod) => lod.factor), [1, 3, 8]);
+    assert.ok(template.lods.every((lod, index) => index === 0 || lod.triangles < template.lods[index - 1].triangles), `${template.id} LOD triangle counts descend`);
   });
   assert.ok(c.templates.filter((template) => template.family === "broad").every((template) => template.branches >= 1), "broad family connects trunk to crown with coat stub branches");
 });
