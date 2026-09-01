@@ -143,7 +143,7 @@ export function createAgentAcceptanceCity(config = {}) {
   root.userData.updateView = (camera, _maxDynamicLights = 4, viewport = {}) => {
     macro.group.userData.updateView?.(camera);
     buildings.userData.updateView?.(camera, _maxDynamicLights, viewport);
-    vegetation.userData.updateView?.(camera);
+    vegetation.userData.updateView?.(camera, viewport);
     streetLife.userData.updateView(camera, viewport);
     root.userData.diagnostics.streetLife = streetLife.userData.getDiagnostics();
   };

@@ -8,7 +8,12 @@ import {
 import { createRng, randRange } from "../utils/random.js";
 import { VoxelInstanceBuffer, VOXEL_SIZE, VOXEL_WRITE_PRIORITIES } from "./voxelBuildingLab.js";
 import { addSharedVoxelRoadTile, classifyVoxelRoadTopology } from "./voxelIntentDistrict.js";
-import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import {
+  TREE_FAMILY_TEMPLATE_IDS,
+  createVoxelTreeLodRenderer,
+  getVoxelTreeMetrics,
+  getVoxelTreeTemplateDiagnostics
+} from "./agentVoxelTrees.js";
 
 const CELL_VOXELS = 32;
 const ROAD_WIDTH = 16;
@@ -532,45 +537,19 @@ export function createAgentVoxelVegetationLayer({ state, grid, seed = "agent-veg
   const archetypeCounts = {};
   const templateCounts = {};
   const tierCounts = { dominant: 0, regular: 0, small: 0 };
-  const treesByTemplate = new Map();
   plan.trees.forEach((tree) => {
     archetypeCounts[tree.archetype] = (archetypeCounts[tree.archetype] ?? 0) + 1;
     templateCounts[tree.template] = (templateCounts[tree.template] ?? 0) + 1;
     tierCounts[tree.sizeClass] = (tierCounts[tree.sizeClass] ?? 0) + 1;
-    if (!treesByTemplate.has(tree.template)) treesByTemplate.set(tree.template, []);
-    treesByTemplate.get(tree.template).push(tree);
   });
 
-  // Trees use shared pre-generated meshes + instanced transforms so the
-  // million-voxel cost of repeated large crowns never reach the greedy voxel
-  // pipeline. Shrubs stay on the cheap voxel path below.
-  const treeMaterial = createTreeInstanceMaterial();
-  const treeDummy = new THREE.Object3D();
-  const treeMeshes = [];
-  let treeTriangles = 0;
+  // Tree placement is unchanged. The renderer buckets those accepted
+  // transforms into template × screen-space LOD instanced meshes.
   const treeStartedAt = now();
-  treesByTemplate.forEach((trees, templateId) => {
-    const geometry = buildTreeGeometry(templateId);
-    const mesh = new THREE.InstancedMesh(geometry, treeMaterial, trees.length);
-    mesh.name = `TreeInstances-${templateId}`;
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    const geometryTriangles = geometry.index ? geometry.index.count / 3 : geometry.attributes.position.count / 3;
-    treeTriangles += Math.round(geometryTriangles * trees.length);
-    trees.forEach((tree, index) => {
-      treeDummy.position.set(tree.x * VOXEL_SIZE, tree.y * VOXEL_SIZE, tree.z * VOXEL_SIZE);
-      treeDummy.rotation.set(0, tree.rotation, 0);
-      treeDummy.scale.setScalar(tree.scale);
-      treeDummy.updateMatrix();
-      mesh.setMatrixAt(index, treeDummy.matrix);
-      mesh.setColorAt(index, treeTint(tree));
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    mesh.computeBoundingSphere();
-    treeMeshes.push(mesh);
-    group.add(mesh);
-  });
+  const treeRenderer = createVoxelTreeLodRenderer(plan.trees);
+  const treeMeshes = treeRenderer.userData.treeMeshes;
+  const treeShadowMeshes = treeRenderer.userData.shadowMeshes;
+  group.add(treeRenderer);
   perf.treeInstanceMs = now() - treeStartedAt;
 
   const buffer = new VoxelInstanceBuffer(`${seed}:voxel-vegetation-shrubs`);
@@ -585,12 +564,14 @@ export function createAgentVoxelVegetationLayer({ state, grid, seed = "agent-veg
   perf.shrubMeshMs = now() - shrubMsStartedAt;
   shrubMeshes.forEach((mesh) => group.add(mesh));
 
-  const meshes = [...treeMeshes, ...shrubMeshes];
   perf.buildMs = now() - startedAt;
 
+  const treeStats = treeRenderer.userData.getDiagnostics();
+
   group.userData.contract = {
-    renderer: "state-aware-voxel-vegetation-v3-groves",
+    renderer: "state-aware-voxel-vegetation-v4-tree-lod",
     instancedTrees: true,
+    screenSpaceTreeLod: true,
     clusters: plan.clusters.length,
     clusterGroups: plan.clusters.reduce((total, cluster) => total + cluster.zoneGroups.length, 0),
     groveCount: plan.clusters.reduce((total, cluster) => total + cluster.zoneGroups.filter((group) => group.treeCount >= 2).length, 0),
@@ -604,48 +585,51 @@ export function createAgentVoxelVegetationLayer({ state, grid, seed = "agent-veg
     templateCounts,
     treeFamilies: Object.keys(archetypeCounts).sort(),
     treeMeshCount: treeMeshes.length,
+    treeLodMeshCount: treeMeshes.length,
+    treeShadowProxyMeshCount: treeShadowMeshes.length,
     storeyVoxels: TREE_STOREY_VOXELS,
     heightBands: {
       small: [Math.round(1.5 * TREE_STOREY_VOXELS) - 4, Math.round(2 * TREE_STOREY_VOXELS) + 4],
       regular: [Math.round(2 * TREE_STOREY_VOXELS), Math.round(3 * TREE_STOREY_VOXELS) + 2],
       dominant: [Math.round(3.4 * TREE_STOREY_VOXELS) - 1, Math.round(4.6 * TREE_STOREY_VOXELS)]
     },
-    templates: TEMPLATE_IDS.map((templateId) => {
-      const spec = TREE_TEMPLATES[templateId];
-      const widths = spec.mounds.map((mound) => mound.w);
-      const highest = spec.mounds.reduce((best, mound) => (mound.baseY > best.baseY ? mound : best), spec.mounds[0]);
-      return {
-        id: templateId,
-        family: spec.family,
-        moundCount: spec.mounds.length,
-        maxSteps: Math.max(...spec.mounds.map((mound) => mound.steps ?? 1)),
-        branches: (spec.branches ?? []).length,
-        taper: widths.length ? Number((highest.w / Math.max(...widths)).toFixed(3)) : 1
-      };
-    }),
+    templates: getVoxelTreeTemplateDiagnostics(),
     voxelCount: buffer.occupiedVoxelCount,
     renderStats: {
       trees: {
-        strategy: "instanced-tree-mesh",
-        drawCalls: treeMeshes.length,
-        instances: plan.trees.length,
+        strategy: treeStats.renderer,
+        drawCalls: treeStats.drawCalls,
+        shadowDrawCalls: treeStats.shadowDrawCalls,
+        instances: treeStats.instances,
         meshes: treeMeshes.length,
-        renderedTriangles: treeTriangles
+        sourceVoxelSize: treeStats.sourceVoxelSize,
+        visibleInstances: treeStats.visibleInstances,
+        levelCounts: treeStats.levelCounts,
+        renderedTriangles: treeStats.renderedTriangles,
+        maximumTriangles: treeStats.maximumTriangles
       },
       shrubs: buffer.renderStats
     },
     perf,
     clearsRoadsAndEntrances: true,
     exclusionRule: "Buildings, roads, infrastructure, reservations, non-buildable cells, and a one-cell safety margin suppress procedural vegetation.",
-    compositionRule: "Sculpted voxel broadleaf groves (broad, round, tall families, two shared templates each) with dominant/regular/support tiers; grid-aligned 90-degree rotation; low vegetation is subordinate grove detail."
+    compositionRule: "Sculpted British voxel groves with oak-like broad crowns, rounded beech/chestnut crowns, yew-like columns, airy silver birch, and irregular Scots pine; dominant/regular/support tiers; grid-aligned rotation; low vegetation is subordinate grove detail."
   };
   group.userData.updateDaylight = () => {};
-  group.userData.updateView = (camera) => {
-    if (!camera || !meshes.length) return;
+  group.userData.updateView = (camera, viewport = {}) => {
+    if (!camera) return;
+    const nextTreeStats = treeRenderer.userData.updateView(camera, viewport);
+    Object.assign(group.userData.contract.renderStats.trees, {
+      visibleInstances: nextTreeStats.visibleInstances,
+      levelCounts: { ...nextTreeStats.levelCounts },
+      renderedTriangles: nextTreeStats.renderedTriangles,
+      lodUpdates: nextTreeStats.lodUpdates
+    });
+    if (!shrubMeshes.length) return;
     const projectionView = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     const frustum = new THREE.Frustum().setFromProjectionMatrix(projectionView);
     const viewPosition = new THREE.Vector3();
-    meshes.forEach((mesh) => {
+    shrubMeshes.forEach((mesh) => {
       viewPosition.setFromMatrixPosition(mesh.matrixWorld).applyMatrix4(camera.matrixWorldInverse);
       mesh.visible = viewPosition.z < 0 && frustum.intersectsObject(mesh);
     });
@@ -674,7 +658,7 @@ function generateAgentTreeGroup(plan, record, anchor, biome, entries, seed, edge
     const treeX = clamp(centerX + (anchorX - centerX) * pull * 0.5 + randRange(rng, -9, 9), centerX - bound, centerX + bound);
     const treeZ = clamp(centerZ + (anchorZ - centerZ) * pull * 0.5 + randRange(rng, -9, 9), centerZ - bound, centerZ + bound);
     const treeY = Number(host.cell.surface?.maxElevationVoxels ?? 0) + 1;
-    const metrics = archetypeMetrics(templateId, scale);
+    const metrics = getVoxelTreeMetrics(templateId, scale);
     const tree = {
       cellId: host.cellId,
       biome: host.biome,
@@ -726,17 +710,6 @@ function agentShrubCountFor(biome, density, treeCount, rng) {
   return treeCount;
 }
 
-function archetypeMetrics(templateId, scale) {
-  const spec = TREE_TEMPLATES[templateId] ?? TREE_TEMPLATES["round-0"];
-  const baseHeight = Math.max(spec.trunkHeight, ...spec.mounds.map((mound) => mound.baseY + mound.h));
-  const baseCrownWidth = Math.max(4, ...spec.mounds.map((mound) => 2 * (Math.abs(mound.cx) + mound.w / 2)));
-  return {
-    height: Math.round(baseHeight * scale),
-    crownWidth: Math.round(baseCrownWidth * scale),
-    trunkWidth: Math.max(2, Math.round(spec.trunkWidth * scale))
-  };
-}
-
 function weightedAgentHost(entries, rng) {
   const total = entries.reduce((sum, entry) => sum + Math.max(0.05, entry.density), 0);
   let cursor = rng() * total;
@@ -765,7 +738,7 @@ function pickFamily(rng) {
 }
 
 function pickTemplate(rng, family) {
-  const ids = FAMILY_TEMPLATE_IDS[family] ?? FAMILY_TEMPLATE_IDS.broad;
+  const ids = TREE_FAMILY_TEMPLATE_IDS[family] ?? TREE_FAMILY_TEMPLATE_IDS.broad;
   return ids[Math.floor(rng() * ids.length) % ids.length];
 }
 
@@ -777,85 +750,14 @@ function assignTier(rng) {
 }
 
 function gridRotation(rng, family) {
-  const options = family === "tall" ? [0, Math.PI / 2, Math.PI, Math.PI * 1.5] : [0, Math.PI / 2];
+  const options = ["tall", "birch", "pine"].includes(family)
+    ? [0, Math.PI / 2, Math.PI, Math.PI * 1.5]
+    : [0, Math.PI / 2];
   return options[Math.floor(rng() * options.length) % options.length];
 }
 
 function now() {
   return globalThis.performance?.now?.() ?? Date.now();
-}
-
-const TREE_MATERIAL_COLORS = {
-  timber: "#273f3d",
-  foliageDark: "#355b43",
-  foliage: "#557748",
-  foliageLight: "#78965a"
-};
-
-function createTreeInstanceMaterial() {
-  return new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0, flatShading: true });
-}
-
-function buildTreeGeometry(templateId) {
-  const spec = TREE_TEMPLATES[templateId] ?? TREE_TEMPLATES["round-0"];
-  const boxes = [];
-  boxes.push(treeBox(0, 0, 0, spec.trunkWidth, spec.trunkHeight, spec.trunkWidth, TREE_MATERIAL_COLORS.timber));
-  (spec.branches ?? []).forEach((branch) => {
-    const thickness = 4;
-    const len = branch.len;
-    const y = branch.y;
-    const dir = branch.dir ?? 1;
-    if (branch.axis === "x") boxes.push(treeBox(dir * (spec.trunkWidth / 2 + len / 2), y, 0, len, thickness, 3, TREE_MATERIAL_COLORS.timber));
-    else boxes.push(treeBox(0, y, dir * (spec.trunkWidth / 2 + len / 2), 3, thickness, len, TREE_MATERIAL_COLORS.timber));
-  });
-  spec.mounds.forEach((mound) => addCrownMound(boxes, mound));
-  const geometry = mergeGeometries(boxes, false);
-  if (!geometry) return new THREE.BoxGeometry(1, 1, 1);
-  geometry.computeBoundingSphere();
-  geometry.computeVertexNormals();
-  return geometry;
-}
-
-function addCrownMound(boxes, mound) {
-  const steps = Math.max(1, mound.steps ?? 2);
-  const stepHeight = mound.h / steps;
-  for (let step = 0; step < steps; step += 1) {
-    const size = Math.max(2, mound.w * moundWidthFactor(step, steps));
-    const depthSize = Math.max(2, mound.d * moundWidthFactor(step, steps));
-    const height = Math.max(1, stepHeight);
-    const tone = step === 0 ? 0 : step === steps - 1 ? 2 : 1;
-    boxes.push(treeBox(mound.cx, Math.round(mound.baseY + step * stepHeight), mound.cz, Math.round(size), Math.round(height), Math.round(depthSize), FOLIAGE_TONES[tone]));
-  }
-}
-
-// A mound is narrower at the bottom, widest around the lower-middle, then
-// narrower toward the top so it reads as a rounded volume rather than a slab.
-function moundWidthFactor(step, steps) {
-  if (steps <= 2) return step === 0 ? 1 : 0.66;
-  const peak = 0.35;
-  const t = step / (steps - 1);
-  const dist = Math.abs(t - peak) / Math.max(peak, 1 - peak);
-  return 0.7 + 0.3 * (1 - dist);
-}
-
-function treeBox(cx, baseY, cz, width, height, depth, hexColor) {
-  const color = new THREE.Color(hexColor);
-  const geometry = new THREE.BoxGeometry(width * VOXEL_SIZE, height * VOXEL_SIZE, depth * VOXEL_SIZE);
-  geometry.translate(cx * VOXEL_SIZE, (baseY + height / 2) * VOXEL_SIZE, cz * VOXEL_SIZE);
-  const count = geometry.attributes.position.count;
-  const colors = new Float32Array(count * 3);
-  for (let index = 0; index < count; index += 1) {
-    colors[index * 3] = color.r;
-    colors[index * 3 + 1] = color.g;
-    colors[index * 3 + 2] = color.b;
-  }
-  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-  return geometry;
-}
-
-function treeTint(tree) {
-  const base = 0.82 + ((tree.shade % 24) / 24) * 0.3;
-  return new THREE.Color(base, base, base);
 }
 
 function addVoxelShrub(buffer, x, groundY, z, shade, write, blossom) {
@@ -872,89 +774,13 @@ const CLUSTER_RADIUS_FRACTION = 0.62;
 const CLUSTER_FALLOFF = 1.4;
 const SPARSE_POCKET_FRACTION = 0.22;
 const SPARSE_POCKET_DENSITY = 0.3;
-const TREE_FAMILIES = ["broad", "round", "tall"];
-const TEMPLATE_IDS = ["broad-0", "broad-1", "round-0", "round-1", "tall-0", "tall-1"];
-const FAMILY_TEMPLATE_IDS = {
-  broad: ["broad-0", "broad-1"],
-  round: ["round-0", "round-1"],
-  tall: ["tall-0", "tall-1"]
-};
-// Family share of the population: tall is an uncommon accent family.
-const FAMILY_WEIGHTS = { broad: 0.45, round: 0.4, tall: 0.15 };
+const TREE_FAMILIES = ["broad", "round", "tall", "birch", "pine"];
+// Broadleaf trees remain dominant. Birch and Scots pine are distinctive
+// British accents, while the dense yew-like column remains uncommon.
+const FAMILY_WEIGHTS = { broad: 0.34, round: 0.3, tall: 0.1, birch: 0.16, pine: 0.1 };
 const TIER_BASE_SCALE = { dominant: 1.62, regular: 1.05, small: 0.75 };
 // Building storey height (voxels) for the street-house scale the city uses.
 const TREE_STOREY_VOXELS = 20;
-const FOLIAGE_TONES = ["#2f4d38", "#55793d", "#7f9c5a"];
-
-// Each template is a family-specific silhouette: a trunk, a handful of coarse
-// branch stubs, and a set of overlapping crown "mounds". Each mound is emitted
-// as a stepped (inset) pair of grid-aligned boxes so crowns taper toward top
-// and outer edges instead of reading as full cuboids.
-const TREE_TEMPLATES = {
-  "broad-0": {
-    family: "broad", trunkHeight: 15, trunkWidth: 6,
-    branches: [{ axis: "x", y: 13, len: 6, dir: 1 }],
-    mounds: [
-      { cx: -8, cz: 2, baseY: 12, w: 19, d: 17, h: 10, steps: 2 },
-      { cx: 8, cz: -2, baseY: 13, w: 18, d: 16, h: 9, steps: 2 },
-      { cx: 0, cz: 0, baseY: 12, w: 25, d: 23, h: 14, steps: 3 },
-      { cx: -2, cz: 0, baseY: 25, w: 20, d: 18, h: 12, steps: 2 },
-      { cx: 0, cz: 0, baseY: 35, w: 13, d: 12, h: 9, steps: 2 }
-    ]
-  },
-  "broad-1": {
-    family: "broad", trunkHeight: 14, trunkWidth: 5,
-    branches: [{ axis: "z", y: 12, len: 6, dir: -1 }],
-    mounds: [
-      { cx: -9, cz: -1, baseY: 11, w: 17, d: 15, h: 9, steps: 2 },
-      { cx: 7, cz: 3, baseY: 12, w: 19, d: 17, h: 10, steps: 2 },
-      { cx: 0, cz: 0, baseY: 12, w: 23, d: 21, h: 13, steps: 3 },
-      { cx: 1, cz: 0, baseY: 22, w: 20, d: 18, h: 12, steps: 2 },
-      { cx: -3, cz: 0, baseY: 34, w: 13, d: 12, h: 9, steps: 2 }
-    ]
-  },
-  "round-0": {
-    family: "round", trunkHeight: 18, trunkWidth: 4,
-    branches: [],
-    mounds: [
-      { cx: 0, cz: 0, baseY: 16, w: 17, d: 16, h: 8, steps: 2 },
-      { cx: -3, cz: 0, baseY: 20, w: 17, d: 16, h: 11, steps: 2 },
-      { cx: 0, cz: 0, baseY: 20, w: 25, d: 23, h: 13, steps: 2 },
-      { cx: 0, cz: 0, baseY: 36, w: 10, d: 9, h: 8, steps: 2 }
-    ]
-  },
-  "round-1": {
-    family: "round", trunkHeight: 17, trunkWidth: 4,
-    branches: [],
-    mounds: [
-      { cx: 0, cz: 0, baseY: 15, w: 16, d: 15, h: 8, steps: 2 },
-      { cx: -1, cz: 0, baseY: 19, w: 24, d: 22, h: 14, steps: 2 },
-      { cx: -2, cz: 0, baseY: 32, w: 15, d: 14, h: 10, steps: 2 },
-      { cx: 0, cz: 0, baseY: 36, w: 10, d: 9, h: 8, steps: 2 }
-    ]
-  },
-  "tall-0": {
-    family: "tall", trunkHeight: 24, trunkWidth: 3,
-    branches: [],
-    mounds: [
-      { cx: 0, cz: 0, baseY: 22, w: 14, d: 14, h: 10, steps: 2 },
-      { cx: -1, cz: 0, baseY: 30, w: 17, d: 16, h: 11, steps: 2 },
-      { cx: 2, cz: 0, baseY: 40, w: 13, d: 12, h: 9, steps: 2 },
-      { cx: 0, cz: 0, baseY: 45, w: 9, d: 9, h: 7, steps: 2 }
-    ]
-  },
-  "tall-1": {
-    family: "tall", trunkHeight: 26, trunkWidth: 3,
-    branches: [],
-    mounds: [
-      { cx: 0, cz: 0, baseY: 24, w: 13, d: 13, h: 9, steps: 2 },
-      { cx: 1, cz: 0, baseY: 31, w: 18, d: 15, h: 11, steps: 2 },
-      { cx: -1, cz: 0, baseY: 42, w: 12, d: 12, h: 9, steps: 2 },
-      { cx: 0, cz: 0, baseY: 46, w: 8, d: 8, h: 6, steps: 2 }
-    ]
-  }
-};
-
 function lerp(a, b, ratio) {
   return a + (b - a) * ratio;
 }
