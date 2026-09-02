@@ -758,6 +758,7 @@ const initialCityScenario = createStarterCityWorkbench(getIsometricDevelopmentCo
 let cityWorkbench = initialCityScenario.workbench;
 let cityViewerAssets = [];
 let cityViewerArtifactManifest = [];
+let cityViewerArtifactManifestKey = "";
 const cityViewerArtifactCache = new Map();
 let cityViewerBakedArtifacts = {};
 let citySeed = configsByMode.map.seed;
@@ -1485,12 +1486,15 @@ async function loadCityViewerState({ force = false } = {}) {
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(`${payload.code ?? response.status}: ${payload.message ?? "无法读取城市"}`);
-    if (force || payload.city_version !== cityViewerLoadedVersion) {
-      cityViewerAssets = Array.isArray(payload.assets) ? payload.assets : [];
-      cityViewerArtifactManifest = Array.isArray(payload.artifact_manifest) ? payload.artifact_manifest : [];
-      // Always build the first frame from the authoritative runtime voxel
-      // source. Baked artifacts are an optional async enhancement.
-      cityViewerBakedArtifacts = {};
+    const nextAssets = Array.isArray(payload.assets) ? payload.assets : [];
+    const nextArtifactManifest = Array.isArray(payload.artifact_manifest) ? payload.artifact_manifest : [];
+    const nextArtifactManifestKey = getCityViewerArtifactManifestKey(nextArtifactManifest);
+    const snapshotChanged = force || payload.city_version !== cityViewerLoadedVersion;
+    const artifactManifestChanged = nextArtifactManifestKey !== cityViewerArtifactManifestKey;
+    if (snapshotChanged || artifactManifestChanged) {
+      cityViewerAssets = nextAssets;
+      cityViewerArtifactManifest = nextArtifactManifest;
+      cityViewerArtifactManifestKey = nextArtifactManifestKey;
       cityWorkbench = createCityWorkbench(payload.state);
       cityViewerRuntimeState = payload.state;
       citySeed = payload.state.mapSeed ?? configsByMode.agentcity.seed;
@@ -1511,10 +1515,13 @@ async function loadCityViewerState({ force = false } = {}) {
       modeControl.value = currentMode;
       rebuildPresetOptions();
       buildSliderUi();
+      // Preload the immutable building artifacts before the first scene build.
+      // Missing or failed entries stay absent and use the authoritative voxel
+      // source as a per-building fallback inside the renderer.
+      cityViewerBakedArtifacts = await loadCityBakedArtifacts(cityViewerArtifactManifest);
       await rebuildActive(viewerConfig);
       cityViewerLoadedVersion = payload.city_version;
       syncCityPlacementLayer();
-      void hydrateCityBakedArtifacts(cityViewerArtifactManifest, viewerConfig, payload.city_version);
     }
     renderCityViewerSummary(payload);
     document.documentElement.dataset.magicTownViewer = "ready";
@@ -1525,9 +1532,17 @@ async function loadCityViewerState({ force = false } = {}) {
   }
 }
 
-async function hydrateCityBakedArtifacts(manifest, viewerConfig, cityVersion) {
+function getCityViewerArtifactManifestKey(manifest) {
+  return manifest
+    .filter((entry) => entry?.buildingId && entry?.url)
+    .map((entry) => `${entry.cityId ?? cityViewerContext?.cityId ?? ""}/${entry.buildingId}/${entry.designRevision}/${entry.sha256 ?? ""}`)
+    .sort()
+    .join("|");
+}
+
+async function loadCityBakedArtifacts(manifest) {
   const entries = manifest.filter((entry) => entry?.buildingId && entry?.url);
-  if (!entries.length || !cityViewerContext?.token) return;
+  if (!entries.length || !cityViewerContext?.token) return {};
   const loaded = {};
   let nextIndex = 0;
   const worker = async () => {
@@ -1556,13 +1571,7 @@ async function hydrateCityBakedArtifacts(manifest, viewerConfig, cityVersion) {
     }
   };
   await Promise.all(Array.from({ length: Math.min(4, entries.length) }, () => worker()));
-  // A newer city snapshot wins. Failed or stale artifacts simply remain absent
-  // and the existing runtime voxel path renders those buildings.
-  if (cityViewerLoadedVersion !== cityVersion || cityViewerArtifactManifest !== manifest) return;
-  if (!Object.keys(loaded).length) return;
-  cityViewerBakedArtifacts = loaded;
-  await rebuildActive(viewerConfig);
-  syncCityPlacementLayer();
+  return loaded;
 }
 
 function renderCityViewerSummary(payload) {
