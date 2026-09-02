@@ -764,7 +764,7 @@ let citySeed = configsByMode.map.seed;
 let rebuildVersion = 0;
 let cityViewerLoadedVersion = null;
 let cityViewerLoading = false;
-let cityViewerRefreshTimer = null;
+let cityViewerRefreshInFlight = null;
 let cityViewerRuntimeState = null;
 let cityDayExperience = null;
 let cityDayController = null;
@@ -1378,29 +1378,32 @@ function initializeCityViewer() {
     if (!token) return;
     cityViewerContext.token = token;
     sessionStorage.setItem("mtToken", token);
-    loadCityViewerState({ force: true });
-    loadCityDayState();
+    void refreshCityViewer({ force: true });
   });
   window.addEventListener("focus", () => {
-    loadCityViewerState();
-    loadCityDayState();
+    void refreshCityViewer();
   });
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) return;
-    loadCityViewerState();
-    loadCityDayState();
+    void refreshCityViewer();
   });
   if (cityViewerContext.token) {
-    loadCityViewerState({ force: true });
-    loadCityDayState();
+    void refreshCityViewer({ force: true });
   } else {
     showCityViewerAuth("请输入玩家或只读访问凭证。");
   }
-  cityViewerRefreshTimer = window.setInterval(() => {
-    if (document.hidden) return;
-    loadCityViewerState();
-    loadCityDayState();
-  }, 5000);
+}
+
+function refreshCityViewer({ force = false } = {}) {
+  if (!cityViewerContext?.token) return Promise.resolve();
+  if (cityViewerRefreshInFlight) return cityViewerRefreshInFlight;
+  cityViewerRefreshInFlight = Promise.allSettled([
+    loadCityViewerState({ force }),
+    loadCityDayState()
+  ]).finally(() => {
+    cityViewerRefreshInFlight = null;
+  });
+  return cityViewerRefreshInFlight;
 }
 
 function initializeCityDayExperience() {
@@ -1415,9 +1418,6 @@ function initializeCityDayExperience() {
       } catch {
         // Acknowledgement failures are non-fatal for the viewer.
       }
-    },
-    onPlayerTurnComplete: () => {
-      cityViewerRefreshTimer && loadCityViewerState({ force: true });
     }
   });
   return cityDayExperience;
@@ -1441,7 +1441,7 @@ function initializeCityDayController() {
     },
     placementLayer: cityPlacementLayer,
     onPlayerTurnComplete: () => {
-      loadCityViewerState({ force: true });
+      void refreshCityViewer({ force: true });
     }
   });
   return cityDayController;
