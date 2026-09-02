@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { brotliCompressSync, brotliDecompressSync } from "node:zlib";
 import test from "node:test";
 import * as THREE from "three";
 import {
@@ -14,7 +15,11 @@ import {
   validateBakedArtifactManifest
 } from "../src/render/bakedBuildingArtifact.js";
 import { createApp } from "../apps/server/app.js";
+import { createOpenApiDocument } from "../apps/server/openapi.js";
 import { createMemoryRepository } from "../apps/server/memory-repository.js";
+import { createBuildingDesignDraft } from "../src/city/building-design.js";
+import { createRenderArtifactWorker, enqueueCityRenderArtifactBackfill, getBuildingSourceHash } from "../apps/server/render-artifact-service.js";
+import { createWorker } from "../apps/server/worker.js";
 
 const configBase = {
   publicBaseUrl: "http://127.0.0.1:4183",
@@ -122,6 +127,14 @@ test("client loader returns an explicit fallback for bad hash, bad version and u
   assert.equal(cryptoFailure.fallback, true);
 });
 
+test("OpenAPI documents binary artifact response, JSON errors and revision query", () => {
+  const operation = createOpenApiDocument("https://example.test").paths["/cities/{city_id}/render-artifacts/{building_id}"].get;
+  assert.equal(operation.responses["200"].content["application/octet-stream"].schema.format, "binary");
+  assert.equal(operation.responses["200"].content["application/json"], undefined);
+  assert.equal(operation.responses["400"].content["application/json"].schema.type, "object");
+  assert.equal(operation.parameters.find((parameter) => parameter.name === "revision").schema.type, "integer");
+});
+
 test("render-state stays compatible without a baked root and serves configured binary artifacts", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "magictown-baked-root-"));
   const config = { ...configBase, bakedArtifactRoot: root };
@@ -142,14 +155,18 @@ test("render-state stays compatible without a baked root and serves configured b
     };
     const bytes = fixtureArtifact();
     await mkdir(path.join(root, city.id, "building-1"), { recursive: true });
-    await writeFile(path.join(root, city.id, "building-1", "3.mtba"), bytes);
+    const sourceHash = createHash("sha256").update(bytes).digest("hex");
+    const compressed = brotliCompressSync(bytes);
+    await writeFile(path.join(root, city.id, "building-1", `3-${sourceHash}.mtba.br`), compressed);
     const state = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/render-state` }), 200);
     assert.equal(state.artifact_manifest.length, 1);
     assert.equal(state.artifact_manifest[0].designRevision, 3);
     assert.equal(state.artifact_manifest[0].byteLength, bytes.byteLength);
+    assert.equal(state.artifact_manifest[0].contentEncoding, "br");
     const artifact = await app.inject(auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/render-artifacts/building-1?revision=3` }));
     assert.equal(artifact.statusCode, 200);
-    assert.deepEqual(Buffer.from(artifact.rawPayload), Buffer.from(bytes));
+    assert.equal(artifact.headers["content-encoding"], "br");
+    assert.deepEqual(Buffer.from(artifact.rawPayload), compressed);
     const traversal = await app.inject(auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/render-artifacts/..%2Foutside?revision=3` }));
     assert.notEqual(traversal.statusCode, 200);
   } finally {
@@ -166,6 +183,167 @@ test("render-state defaults to an empty manifest when baked artifacts are not co
     const city = await json(app, auth(player, { method: "POST", url: "/api/v1/cities", payload: { name: "No Artifact City" } }), 201);
     const state = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/render-state` }), 200);
     assert.deepEqual(state.artifact_manifest, []);
+  } finally {
+    await app.close();
+  }
+});
+
+test("memory bake worker writes Brotli MTBA, persists READY manifest and is idempotent", { timeout: 30_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "magictown-bake-worker-"));
+  const config = { ...configBase, bakedArtifactRoot: root };
+  const repository = createMemoryRepository(config);
+  const player = await repository.createPlayer("Bake Worker Owner");
+  const principal = await repository.authenticate(player.access_token);
+  const city = await repository.createCity(principal, { name: "Bake Worker City" });
+  const record = await repository.getCity(principal, city.id);
+  const cell = Object.values(record.state.cells)[0];
+  const design = createBuildingDesignDraft({
+    generation_mode: "floor_stack",
+    intent: { name: "Bake Cottage", purpose: "residential", description: "A deterministic bake fixture" }
+    , site: { lot_id: cell.id, footprint: "1x1" }
+  }, { id: "design-bake-1", actor: "test" });
+  const building = {
+    id: "building-bake-1",
+    footprintCells: [cell.id],
+    site: { lotId: cell.id, footprint: "1x1" },
+    program: { name: "Bake Cottage", purpose: "residential" },
+    voxelDesign: { ...design, source: { kind: "new" } }
+  };
+  record.state.buildings[building.id] = building;
+  const sourceHash = getBuildingSourceHash(building);
+  const backfill = await enqueueCityRenderArtifactBackfill({ repository, cityId: city.id });
+  assert.equal(backfill.buildings, 1);
+  assert.equal(backfill.queued, 1);
+  assert.equal(backfill.artifactIds.length, 1);
+  const worker = createRenderArtifactWorker({ repository, config, logger: { error() {} } });
+  assert.equal(await worker.processNext(), true);
+  const manifest = (await repository.listRenderArtifactManifest(principal, city.id))[0];
+  assert.equal(manifest.status, "ready");
+  assert.equal(manifest.sourceHash, sourceHash);
+  const stored = await readFile(path.join(root, manifest.relativePath));
+  assert.ok(stored.byteLength < manifest.byteLength);
+  const decoded = decodeBakedBuildingArtifact(brotliDecompressSync(stored));
+  assert.equal(decoded.buildingId, building.id);
+  assert.deepEqual(decoded.levels.map((level) => level.lod), [0, 1, 2]);
+  await writeFile(path.join(root, city.id, building.id, `${design.revision}.mtba`), fixtureArtifact("legacy-fallback", design.revision));
+  const app = await createApp({ repository, config });
+  try {
+    const state = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/render-state` }), 200);
+    assert.equal(state.artifact_manifest.length, 1);
+    assert.equal(state.artifact_manifest[0].relativePath, manifest.relativePath);
+    assert.equal(state.artifact_manifest[0].sha256, manifest.sha256);
+    const listed = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/render-artifacts/manifest` }), 200);
+    assert.equal(listed.data.length, 1);
+    assert.equal(listed.data[0].relativePath, manifest.relativePath);
+    const artifact = await app.inject(auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/render-artifacts/${building.id}?revision=${design.revision}` }));
+    assert.equal(artifact.statusCode, 200);
+    assert.equal(artifact.headers["content-encoding"], "br");
+    assert.deepEqual(Buffer.from(artifact.rawPayload), stored);
+  } finally {
+    await app.close();
+  }
+  const replay = await repository.enqueueRenderArtifactBake({ cityId: city.id, buildingId: building.id, designId: design.id, designRevision: design.revision, sourceHash });
+  assert.equal(replay.status, "ready");
+  assert.equal(await worker.processNext(), false);
+});
+
+test("inline worker allowlist does not claim another city or outbox type", async () => {
+  const rows = new Map([
+    ["target-outbox", {
+      id: "target-outbox",
+      job_type: "render_artifact_bake_requested",
+      payload_jsonb: { render_artifact_id: "target-artifact", city_id: "target-city" },
+      status: "pending",
+      attempts: 0
+    }],
+    ["other-city-outbox", {
+      id: "other-city-outbox",
+      job_type: "render_artifact_bake_requested",
+      payload_jsonb: { render_artifact_id: "other-artifact", city_id: "other-city" },
+      status: "pending",
+      attempts: 0
+    }],
+    ["asset-outbox", {
+      id: "asset-outbox",
+      job_type: "asset_generation_requested",
+      payload_jsonb: { asset_job_id: "asset-job", city_id: "target-city" },
+      status: "pending",
+      attempts: 0
+    }]
+  ]);
+  let restrictedClaimSeen = false;
+  const database = {
+    async transaction(callback) {
+      return callback({
+        async query(sql, params = []) {
+          if (sql.includes("FROM outbox_jobs")) {
+            restrictedClaimSeen = sql.includes("ANY($1::text[])");
+            const allowed = params[0] ?? [];
+            const row = [...rows.values()].find((candidate) => candidate.status === "pending"
+              && (!restrictedClaimSeen || (candidate.job_type === "render_artifact_bake_requested" && allowed.includes(candidate.payload_jsonb.render_artifact_id))));
+            if (!row) return { rowCount: 0, rows: [] };
+            row.status = "processing";
+            row.attempts += 1;
+            return { rowCount: 1, rows: [structuredClone(row)] };
+          }
+          if (sql.startsWith("UPDATE outbox_jobs")) return { rowCount: 1, rows: [] };
+          throw new Error(`Unexpected transactional query: ${sql}`);
+        }
+      });
+    },
+    async query(sql, params = []) {
+      if (sql.includes("FROM render_artifacts")) return { rowCount: 1, rows: [{ id: params[0], status: "ready" }] };
+      if (sql.startsWith("UPDATE outbox_jobs")) {
+        const row = rows.get(params[0]);
+        if (row) row.status = "completed";
+        return { rowCount: 1, rows: [] };
+      }
+      throw new Error(`Unexpected query: ${sql}`);
+    }
+  };
+  const worker = createWorker({
+    repository: { database },
+    config: { workerPollMs: 1 },
+    onlyRenderArtifactIds: ["target-artifact"],
+    logger: { error() {} }
+  });
+  assert.equal(await worker.processNext(), true);
+  assert.equal(restrictedClaimSeen, true);
+  assert.equal(rows.get("target-outbox").status, "completed");
+  assert.equal(rows.get("other-city-outbox").status, "pending");
+  assert.equal(rows.get("asset-outbox").status, "pending");
+  assert.equal(await worker.processNext(), false);
+});
+
+test("design confirmation enqueues a waiting bake until a new building is landed", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "magictown-bake-confirm-"));
+  const config = { ...configBase, bakedArtifactRoot: root };
+  const repository = createMemoryRepository(config);
+  const app = await createApp({ repository, config });
+  try {
+    const player = await json(app, { method: "POST", url: "/api/v1/players", payload: { display_name: "Bake Confirm Owner" } }, 201);
+    const city = await json(app, auth(player, { method: "POST", url: "/api/v1/cities", payload: { name: "Bake Confirm City" } }), 201);
+    const principal = await repository.authenticate(player.access_token);
+    const cell = Object.values((await repository.getCity(principal, city.id)).state.cells)[0];
+    const draft = await json(app, auth(player, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/building-designs`,
+      payload: {
+        generation_mode: "floor_stack",
+        intent: { name: "Confirmed Cottage", purpose: "residential", description: "Bake after landing" },
+        site: { lot_id: cell.id, footprint: "1x1" }
+      }
+    }), 201);
+    const confirmed = await json(app, auth(player, {
+      method: "POST",
+      url: `/api/v1/cities/${city.id}/building-designs/${draft.id}/confirm`,
+      payload: { expected_revision: draft.revision }
+    }), 200);
+    assert.equal(confirmed.status, "confirmed");
+    const claimed = await repository.claimNextRenderArtifactJob();
+    assert.equal(claimed.job.status, "processing");
+    assert.equal(claimed.job.buildingId, null);
+    await repository.completeRenderArtifactJob(claimed.outbox.id, claimed.job.id, { status: "waiting_for_building" });
   } finally {
     await app.close();
   }

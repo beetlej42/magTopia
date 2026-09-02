@@ -6,6 +6,7 @@ import { createServiceWorldContract } from "./world.js";
 import { ACTIVE_TURN_STATUSES, SETTLED_TURN_STATUSES, initializeFreshCitySchedule } from "../../src/gameplay/turn.js";
 import { createId, createSecret, hashRequest } from "./ids.js";
 import { ServiceError } from "./errors.js";
+import { getBuildingSourceHash } from "./render-artifact-service.js";
 
 // A lightweight repository for black-box API acceptance and LAN demos. With a
 // storagePath it atomically snapshots every mutation and survives restarts;
@@ -22,10 +23,12 @@ export function createMemoryRepository(config, options = {}) {
   const receipts = new Map();
   const owlReports = new Map();
   const reportDismissals = new Map();
+  const renderArtifacts = new Map();
+  const renderOutbox = new Map();
   const assets = new Map(getAssetRegistry().map((asset) => [asset.assetId, asset]));
-  hydratePersistentState(storagePath, { players, credentials, capabilities, cities, designs, orders, receipts, owlReports, reportDismissals });
+  hydratePersistentState(storagePath, { players, credentials, capabilities, cities, designs, orders, receipts, owlReports, reportDismissals, renderArtifacts, renderOutbox });
 
-  const persist = () => persistState(storagePath, { players, credentials, capabilities, cities, designs, orders, receipts, owlReports, reportDismissals });
+  const persist = () => persistState(storagePath, { players, credentials, capabilities, cities, designs, orders, receipts, owlReports, reportDismissals, renderArtifacts, renderOutbox });
 
   const repository = {
     async createPlayer(displayName) {
@@ -179,6 +182,82 @@ export function createMemoryRepository(config, options = {}) {
       designs.set(design.id, value);
       persist();
       return structuredClone(value);
+    },
+
+    async listRenderArtifactManifest(principal, cityId) {
+      await this.getCity(principal, cityId);
+      if (!config.bakedArtifactRoot) return [];
+      return [...renderArtifacts.values()]
+        .filter((row) => row.cityId === cityId && row.status === "ready" && row.buildingId)
+        .sort((a, b) => a.buildingId.localeCompare(b.buildingId) || b.designRevision - a.designRevision)
+        .map((row) => structuredClone(row));
+    },
+
+    async getRenderArtifactManifest(principal, cityId, buildingId, revision) {
+      await this.getCity(principal, cityId);
+      if (!config.bakedArtifactRoot) return null;
+      const row = [...renderArtifacts.values()].find((entry) => entry.cityId === cityId && entry.buildingId === buildingId && entry.designRevision === Number(revision) && entry.status === "ready");
+      return row ? structuredClone(row) : null;
+    },
+
+    async enqueueRenderArtifactBake({ cityId, buildingId = null, designId = null, designRevision, sourceHash }) {
+      if (!config.bakedArtifactRoot) return null;
+      if (!Number.isInteger(Number(designRevision)) || !/^[a-f0-9]{64}$/i.test(String(sourceHash ?? ""))) return null;
+      const normalizedRevision = Number(designRevision);
+      const normalizedDesignId = designId ?? (buildingId ? `building:${buildingId}` : null);
+      const key = `${cityId}:${normalizedDesignId ?? ""}:${normalizedRevision}:${String(sourceHash).toLowerCase()}`;
+      const existing = renderArtifacts.get(key);
+      if (existing?.status === "ready" && existing.buildingId === buildingId) return structuredClone(existing);
+      const row = {
+        id: existing?.id ?? createId("render-artifact"), cityId, buildingId: buildingId ?? existing?.buildingId ?? null,
+        designId: normalizedDesignId, designRevision: normalizedRevision, sourceHash: String(sourceHash).toLowerCase(),
+        artifactVersion: 1, sha256: existing?.sha256 ?? null, byteLength: existing?.byteLength ?? null,
+        relativePath: existing?.relativePath ?? null, status: buildingId ? "queued" : "waiting_for_building",
+        attempts: existing?.attempts ?? 0, error: null, createdAt: existing?.createdAt ?? new Date().toISOString(), updatedAt: new Date().toISOString()
+      };
+      renderArtifacts.set(key, row);
+      const pending = [...renderOutbox.values()].some((job) => job.renderArtifactId === row.id && ["pending", "processing"].includes(job.status));
+      if (!pending && row.status !== "ready") {
+        const id = createId("outbox");
+        renderOutbox.set(id, { id, jobType: "render_artifact_bake_requested", renderArtifactId: row.id, status: "pending", attempts: 0, createdAt: new Date().toISOString() });
+      }
+      persist();
+      return structuredClone(row);
+    },
+
+    async enqueueRenderArtifactBakeForBuilding({ cityId, buildingId }) {
+      const row = cities.get(cityId);
+      const building = row?.state_jsonb?.buildings?.[buildingId];
+      if (!building?.voxelDesign?.generation?.sourceSpec) return null;
+      return this.enqueueRenderArtifactBake({ cityId, buildingId, designId: building.voxelDesign.id ?? null, designRevision: building.voxelDesign.revision, sourceHash: getBuildingSourceHash(building) });
+    },
+
+    async claimNextRenderArtifactJob() {
+      const outbox = [...renderOutbox.values()].find((job) => job.jobType === "render_artifact_bake_requested" && job.status === "pending");
+      if (!outbox) return null;
+      outbox.status = "processing";
+      outbox.attempts += 1;
+      const job = [...renderArtifacts.values()].find((row) => row.id === outbox.renderArtifactId);
+      if (!job) return { outbox, job: null };
+      job.status = "processing";
+      job.attempts = outbox.attempts;
+      return { outbox: structuredClone(outbox), job: structuredClone(job) };
+    },
+
+    async completeRenderArtifactJob(outboxId, artifactId, result) {
+      const outbox = renderOutbox.get(outboxId);
+      if (outbox) outbox.status = "completed";
+      const row = [...renderArtifacts.values()].find((entry) => entry.id === artifactId);
+      if (row && result) Object.assign(row, result, { status: result.status ?? "ready", updatedAt: new Date().toISOString() });
+      persist();
+    },
+
+    async failRenderArtifactJob(outboxId, artifactId, error, retryable = false) {
+      const outbox = renderOutbox.get(outboxId);
+      const row = [...renderArtifacts.values()].find((entry) => entry.id === artifactId);
+      if (outbox) outbox.status = retryable ? "pending" : "failed";
+      if (row) Object.assign(row, { status: retryable ? "queued" : "failed", error: { message: error.message }, updatedAt: new Date().toISOString() });
+      persist();
     },
 
     async getOrder(principal, cityId, orderId) { await this.getCity(principal, cityId); const order = orders.get(orderId); if (!order || order.city_id !== cityId) throw new ServiceError(404, "ORDER_NOT_FOUND", "Order not found"); return structuredClone(order); },
@@ -451,7 +530,7 @@ function hydratePersistentState(storagePath, stores) {
     throw new Error(`Failed to read persistent Agent LAN state at ${storagePath}: ${error.message}`);
   }
   if (snapshot.schemaVersion !== 1) throw new Error(`Unsupported Agent LAN state schema: ${snapshot.schemaVersion}`);
-  for (const name of ["players", "credentials", "cities", "designs", "orders", "receipts", "owlReports", "reportDismissals"]) {
+  for (const name of ["players", "credentials", "cities", "designs", "orders", "receipts", "owlReports", "reportDismissals", "renderArtifacts", "renderOutbox"]) {
     for (const [key, value] of snapshot[name] ?? []) stores[name].set(key, value);
   }
   for (const [key, value] of snapshot.capabilities ?? []) {
@@ -476,7 +555,9 @@ function persistState(storagePath, stores) {
     orders: [...stores.orders],
     receipts: [...stores.receipts],
     owlReports: [...stores.owlReports],
-    reportDismissals: [...stores.reportDismissals]
+    reportDismissals: [...stores.reportDismissals],
+    renderArtifacts: [...(stores.renderArtifacts ?? new Map())],
+    renderOutbox: [...(stores.renderOutbox ?? new Map())]
   };
   const temporaryPath = `${storagePath}.${process.pid}.tmp`;
   writeFileSync(temporaryPath, `${JSON.stringify(snapshot)}\n`, { mode: 0o600 });
