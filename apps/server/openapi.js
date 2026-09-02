@@ -1019,6 +1019,12 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}": { get: operation("Read a city summary", "cities") },
       "/cities/{city_id}/snapshot": { get: operation("Read the Agent decision snapshot", "queries") },
       "/cities/{city_id}/render-state": { get: operation("Read the authenticated city state for the visual viewer", "queries") },
+      "/cities/{city_id}/render-artifacts/manifest": { get: operation("Read optional versioned baked voxel building artifact metadata", "queries") },
+      "/cities/{city_id}/render-artifacts/{building_id}": {
+        get: operation("Read one immutable baked voxel building mesh artifact", "queries", null, json, true, [
+          queryParameter("revision", { type: "integer", minimum: 0 }, "Required design revision; the server rejects stale artifact requests.")
+        ])
+      },
       "/cities/{city_id}/events": {
         get: operation("Read incremental city events", "queries", null, json, true, [
           queryParameter("after_version", { type: "integer", default: 0 }, "Read events after this city version. Use the last seen city_version to incrementally sync what happened."),

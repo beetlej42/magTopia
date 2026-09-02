@@ -10,6 +10,7 @@ import {
   createVoxelMassingLab,
   createVoxelMassingLodLevels
 } from "./voxelBuildingLab.js";
+import { createBakedMeshLod } from "../render/bakedBuildingArtifact.js";
 
 const BUILDING_BASE_ELEVATION = 0.105;
 const FALLBACK_BASE_ANCHORS_UV = Object.freeze({
@@ -30,7 +31,7 @@ const EMISSIVE_STRENGTHS = Object.freeze({
   "starter-herbalist-001": 1.42
 });
 
-export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cityState, assetRegistry = [], parallaxStrength = 0.12, useHunyuanModels = 1, nightLighting = 0, enableVoxelLod = false }) {
+export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cityState, assetRegistry = [], bakedArtifacts = {}, parallaxStrength = 0.12, useHunyuanModels = 1, nightLighting = 0, enableVoxelLod = false }) {
   const root = new THREE.Group();
   root.name = "MagicLondonStarterDistrict";
   const cells = new Map(grid.cells.map((cell) => [cell.id, cell]));
@@ -55,7 +56,7 @@ export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cit
         skipped.push({ buildingId: building.id, assetId: null, cellId: building.footprintCells?.[0] ?? building.site.lotId, assetFound: true, cellFound: false, representation: "voxel" });
         return;
       }
-      const buildingObject = createRuntimeVoxelBuilding(building, renderCells, sampleGroundHeight, nightLighting, enableVoxelLod);
+      const buildingObject = createRuntimeVoxelBuilding(building, renderCells, sampleGroundHeight, nightLighting, enableVoxelLod, bakedArtifacts?.[building.id]);
       if (buildingObject.isLOD) voxelLods.push(buildingObject);
       voxelDaylightTargets.push(buildingObject);
       placements.push({
@@ -236,14 +237,18 @@ export function configureVoxelShadowOnlyLayer({ viewCamera, shadowLights = [] } 
   };
 }
 
-function createRuntimeVoxelBuilding(building, renderCells, sampleGroundHeight, nightLighting, enableVoxelLod = false) {
+function createRuntimeVoxelBuilding(building, renderCells, sampleGroundHeight, nightLighting, enableVoxelLod = false, bakedArtifact = null) {
   const design = building.voxelDesign;
-  const nearObject = design.generation.mode === "urban_massing"
-    ? createVoxelMassingLab({ spec: design.generation.sourceSpec, decorations: design.decorations, nightLighting, renderStrategy: "greedy" })
-    : createVoxelBuildingFromSpec(design.generation.sourceSpec, { decorations: design.decorations, nightLighting, renderStrategy: "greedy" });
-  const object = enableVoxelLod
-    ? createAgentVoxelBuildingLod(nearObject, design, nightLighting)
-    : nearObject;
+  const nearObject = bakedArtifact
+    ? createBakedRuntimeBuilding(bakedArtifact, building, nightLighting, enableVoxelLod)
+    : design.generation.mode === "urban_massing"
+      ? createVoxelMassingLab({ spec: design.generation.sourceSpec, decorations: design.decorations, nightLighting, renderStrategy: "greedy" })
+      : createVoxelBuildingFromSpec(design.generation.sourceSpec, { decorations: design.decorations, nightLighting, renderStrategy: "greedy" });
+  const object = bakedArtifact
+    ? nearObject
+    : enableVoxelLod
+      ? createAgentVoxelBuildingLod(nearObject, design, nightLighting)
+      : nearObject;
   const center = renderCells.reduce((sum, cell) => ({ x: sum.x + cell.center.x, z: sum.z + cell.center.z }), { x: 0, z: 0 });
   center.x /= renderCells.length;
   center.z /= renderCells.length;
@@ -260,9 +265,41 @@ function createRuntimeVoxelBuilding(building, renderCells, sampleGroundHeight, n
     buildingId: building.id,
     designId: design.id,
     designRevision: design.revision,
-    representation: `voxel-${design.generation.mode}`
+    representation: bakedArtifact ? "baked-voxel-mesh-lod" : `voxel-${design.generation.mode}`,
+    bakedArtifact: bakedArtifact ? { formatVersion: bakedArtifact.formatVersion, byteLength: bakedArtifact.byteLength } : null
   };
   return object;
+}
+
+function createBakedRuntimeBuilding(artifact, building, nightLighting, enableVoxelLod) {
+  const baked = createBakedMeshLod(artifact, {
+    name: `BakedVoxelBuilding-${building.id}`,
+    nightLighting
+  });
+  if (!enableVoxelLod) {
+    const near = baked.userData.levelObjects?.[0] ?? new THREE.Group();
+    near.userData.updateDaylight = baked.userData.updateDaylight;
+    return near;
+  }
+  const near = baked.userData.levelObjects?.[0] ?? new THREE.Group();
+  const nearShadowCasterCount = disableCastShadows(near);
+  const shadowSource = baked.userData.levelObjects?.[1] ?? baked.userData.levelObjects?.[0];
+  const shadowProxy = createShadowProxy(shadowSource);
+  const artifactDaylight = baked.userData.updateDaylight;
+  baked.userData = {
+    ...baked.userData,
+    sphereProjectionRoot: true,
+    currentLevel: null,
+    boundingRadius: getObjectBoundingRadius(near),
+    shadowPolicy: "low-lod-colorless-proxy",
+    nearShadowCasterCount: 0,
+    nearShadowCastersDisabled: nearShadowCasterCount,
+    shadowProxyMeshCount: shadowProxy.userData.shadowProxyMeshCount,
+    bakedArtifact: true
+  };
+  baked.userData.updateDaylight = (style) => artifactDaylight?.(style);
+  baked.add(shadowProxy);
+  return baked;
 }
 
 function createAgentVoxelBuildingLod(nearObject, design, nightLighting) {

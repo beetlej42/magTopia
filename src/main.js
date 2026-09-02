@@ -117,6 +117,7 @@ import { createCityDayExperience, phaseLightTarget } from "./ui/cityDayExperienc
 import { createCityDayController } from "./ui/cityDayController.js";
 import { createCityPlacementLayer } from "./ui/cityPlacementLayer.js";
 import { resolvePlacementTarget } from "./ui/placementTargetResolver.js";
+import { loadBakedBuildingArtifact } from "./render/bakedBuildingArtifact.js";
 
 const app = document.querySelector("#app");
 const pureViewToggle = document.querySelector("#pure-view-toggle");
@@ -756,6 +757,9 @@ const massingExplorer = createVoxelMassingExplorer({
 const initialCityScenario = createStarterCityWorkbench(getIsometricDevelopmentContract(configsByMode.map), { mapSeed: configsByMode.map.seed });
 let cityWorkbench = initialCityScenario.workbench;
 let cityViewerAssets = [];
+let cityViewerArtifactManifest = [];
+const cityViewerArtifactCache = new Map();
+let cityViewerBakedArtifacts = {};
 let citySeed = configsByMode.map.seed;
 let rebuildVersion = 0;
 let cityViewerLoadedVersion = null;
@@ -849,6 +853,7 @@ async function rebuildActive(config) {
       acceptanceSeed: currentConfig.seed,
       cityState: cityViewerRuntimeState,
       assetRegistry: cityViewerAssets,
+      bakedArtifacts: cityViewerBakedArtifacts,
       useHunyuanModels: 0
     });
   } else {
@@ -1482,6 +1487,10 @@ async function loadCityViewerState({ force = false } = {}) {
     if (!response.ok) throw new Error(`${payload.code ?? response.status}: ${payload.message ?? "无法读取城市"}`);
     if (force || payload.city_version !== cityViewerLoadedVersion) {
       cityViewerAssets = Array.isArray(payload.assets) ? payload.assets : [];
+      cityViewerArtifactManifest = Array.isArray(payload.artifact_manifest) ? payload.artifact_manifest : [];
+      // Always build the first frame from the authoritative runtime voxel
+      // source. Baked artifacts are an optional async enhancement.
+      cityViewerBakedArtifacts = {};
       cityWorkbench = createCityWorkbench(payload.state);
       cityViewerRuntimeState = payload.state;
       citySeed = payload.state.mapSeed ?? configsByMode.agentcity.seed;
@@ -1505,6 +1514,7 @@ async function loadCityViewerState({ force = false } = {}) {
       await rebuildActive(viewerConfig);
       cityViewerLoadedVersion = payload.city_version;
       syncCityPlacementLayer();
+      void hydrateCityBakedArtifacts(cityViewerArtifactManifest, viewerConfig, payload.city_version);
     }
     renderCityViewerSummary(payload);
     document.documentElement.dataset.magicTownViewer = "ready";
@@ -1513,6 +1523,46 @@ async function loadCityViewerState({ force = false } = {}) {
   } finally {
     cityViewerLoading = false;
   }
+}
+
+async function hydrateCityBakedArtifacts(manifest, viewerConfig, cityVersion) {
+  const entries = manifest.filter((entry) => entry?.buildingId && entry?.url);
+  if (!entries.length || !cityViewerContext?.token) return;
+  const loaded = {};
+  let nextIndex = 0;
+  const worker = async () => {
+    while (nextIndex < entries.length) {
+      const entry = entries[nextIndex++];
+      const key = `${entry.cityId}/${entry.buildingId}/${entry.designRevision}/${entry.sha256}`;
+      let pending = cityViewerArtifactCache.get(key);
+      if (!pending) {
+        pending = loadBakedBuildingArtifact(entry, {
+          expected: {
+            cityId: cityViewerContext.cityId,
+            buildingId: entry.buildingId,
+            designRevision: entry.designRevision
+          },
+          fetchImpl: (url, options = {}) => {
+            const requestUrl = new URL(url, window.location.href);
+            const headers = new Headers(options.headers ?? {});
+            if (requestUrl.origin === window.location.origin) headers.set("Authorization", `Bearer ${cityViewerContext.token}`);
+            return fetch(requestUrl, { ...options, headers });
+          }
+        }).then((result) => result.artifact ?? null).catch(() => null);
+        cityViewerArtifactCache.set(key, pending);
+      }
+      const artifact = await pending;
+      if (artifact) loaded[entry.buildingId] = artifact;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, entries.length) }, () => worker()));
+  // A newer city snapshot wins. Failed or stale artifacts simply remain absent
+  // and the existing runtime voxel path renders those buildings.
+  if (cityViewerLoadedVersion !== cityVersion || cityViewerArtifactManifest !== manifest) return;
+  if (!Object.keys(loaded).length) return;
+  cityViewerBakedArtifacts = loaded;
+  await rebuildActive(viewerConfig);
+  syncCityPlacementLayer();
 }
 
 function renderCityViewerSummary(payload) {

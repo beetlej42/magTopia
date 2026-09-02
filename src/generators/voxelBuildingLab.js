@@ -2162,6 +2162,13 @@ function createVoxelMaterial(definition, storybookOptions = {}) {
   return applyStorybookSurfaceMaterial(material, storybookOptions);
 }
 
+// Baked mesh artifacts use the same material palette as runtime voxel meshes.
+// Keep this small adapter public so decoding does not duplicate visual
+// material policy or silently drift from the occupancy fallback.
+export function createVoxelMaterialForArtifact(materialId, storybookOptions = {}) {
+  return createVoxelMaterial(MATERIAL_LIBRARY[materialId] ?? MATERIAL_LIBRARY.timber, storybookOptions);
+}
+
 function supportsDiffuseVoxelShader(definition) {
   return voxelMaterialMode !== "standard"
     && Number(definition.opacity ?? 1) >= 1
