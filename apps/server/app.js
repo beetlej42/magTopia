@@ -42,7 +42,11 @@ import { playbookGuidance } from "../../src/gameplay/guidance.js";
 import { isTurnResolveLocked, initializeTurnSchedule, normalizeTurnSchedule } from "../../src/gameplay/turn.js";
 import { arcaneOfficerCapacity, arcaneOfficerRecruitmentUnlocked, currentOfficerCandidates, hireArcaneOfficerCandidate, recruitmentConfigSummary } from "../../src/gameplay/arcane-officers.js";
 import { bootstrapGuidance, deriveBootstrapProgress, isBootstrapTurn } from "../../src/gameplay/bootstrap.js";
-import { getBuildingSourceHash } from "./render-artifact-service.js";
+import {
+  buildCityArtifactPack,
+  cityArtifactPackManifest,
+  getBuildingSourceHash
+} from "./render-artifact-service.js";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PLAYBOOK_PATH = path.resolve(SERVER_DIR, "../../docs/agent-playbook.md");
@@ -148,6 +152,9 @@ export async function createApp({ repository, config, logger = false, now = () =
       state,
       config
     });
+    const artifactPack = artifactManifest.length
+      ? cityArtifactPackManifest({ cityId: row.id, cityVersion: Number(row.city_version), manifest: artifactManifest })
+      : null;
     return {
       city_id: row.id,
       name: row.name,
@@ -155,6 +162,7 @@ export async function createApp({ repository, config, logger = false, now = () =
       state,
       assets,
       artifact_manifest: artifactManifest,
+      artifact_pack: artifactPack,
       render_contract: {
         mode: "agentcity",
         terrain: "base-voxel-heightfield",
@@ -174,6 +182,44 @@ export async function createApp({ repository, config, logger = false, now = () =
       city_version: Number(row.city_version),
       data: await readArtifactManifest(repository, principal, { cityId: row.id, cityVersion: Number(row.city_version), state, config })
     };
+  });
+
+  app.get("/api/v1/cities/:cityId/render-artifacts/pack", async (request, reply) => {
+    const principal = await authenticate(repository, request, "city:read");
+    const { row, state } = await repository.getCity(principal, request.params.cityId);
+    const cityVersion = Number(row.city_version);
+    const artifactManifest = await readArtifactManifest(repository, principal, {
+      cityId: request.params.cityId,
+      cityVersion,
+      state,
+      config
+    });
+    const descriptor = cityArtifactPackManifest({ cityId: row.id, cityVersion, manifest: artifactManifest });
+    if (request.query.version !== undefined && Number(request.query.version) !== cityVersion) {
+      throw new ServiceError(409, "CITY_ARTIFACT_PACK_VERSION_MISMATCH", "City artifact pack version does not match the current city");
+    }
+    if (request.query.manifest !== undefined && String(request.query.manifest).toLowerCase() !== descriptor.manifestSha256) {
+      throw new ServiceError(409, "CITY_ARTIFACT_PACK_MANIFEST_MISMATCH", "City artifact pack manifest does not match the current city");
+    }
+    const pack = await buildCityArtifactPack({
+      config,
+      cityId: row.id,
+      cityVersion,
+      state,
+      manifest: artifactManifest,
+      readArtifact: async (entry, building) => {
+        if (!building) return null;
+        const source = resolveBakedArtifactSource(config, row.id, building, entry);
+        return readBakedArtifactBytes(source, { decoded: true });
+      }
+    });
+    if (!pack) throw new ServiceError(404, "RENDER_ARTIFACT_PACK_NOT_FOUND", "No baked render artifacts are available for this city");
+    reply
+      .type("application/octet-stream")
+      .header("Cache-Control", "public, max-age=31536000, immutable")
+      .header("Content-Encoding", "br")
+      .header("Content-Length", pack.compressedByteLength);
+    return reply.send(pack.compressedBytes);
   });
 
   app.get("/api/v1/cities/:cityId/render-artifacts/:buildingId", async (request, reply) => {

@@ -1020,6 +1020,12 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}/snapshot": { get: operation("Read the Agent decision snapshot", "queries") },
       "/cities/{city_id}/render-state": { get: operation("Read the authenticated city state for the visual viewer", "queries") },
       "/cities/{city_id}/render-artifacts/manifest": { get: operation("Read optional versioned baked voxel building artifact metadata", "queries") },
+      "/cities/{city_id}/render-artifacts/pack": {
+        get: binaryOperation("Read one immutable Brotli-compressed city building artifact pack", "queries", true, [
+          queryParameter("version", { type: "integer", minimum: 0 }, "Expected city version for the immutable pack."),
+          queryParameter("manifest", { type: "string", pattern: "^[a-fA-F0-9]{64}$" }, "Expected artifact manifest digest for the immutable pack.")
+        ])
+      },
       "/cities/{city_id}/render-artifacts/{building_id}": {
         get: binaryOperation("Read one immutable baked voxel building mesh artifact", "queries", true, [
           queryParameter("revision", { type: "integer", minimum: 0 }, "Required design revision; the server rejects stale artifact requests.")

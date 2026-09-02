@@ -14,6 +14,11 @@ import {
   loadBakedBuildingArtifact,
   validateBakedArtifactManifest
 } from "../src/render/bakedBuildingArtifact.js";
+import {
+  CITY_ARTIFACT_PACK_VERSION,
+  decodeCityArtifactPack,
+  encodeCityArtifactPack
+} from "../src/render/cityArtifactPack.js";
 import { createApp } from "../apps/server/app.js";
 import { createOpenApiDocument } from "../apps/server/openapi.js";
 import { createMemoryRepository } from "../apps/server/memory-repository.js";
@@ -101,6 +106,26 @@ test("baked artifact encoder accepts Three.js BufferGeometry", () => {
   threeGeometry.dispose();
 });
 
+test("city artifact pack preserves identity, manifest digest and independent MTBA payloads", () => {
+  const first = fixtureArtifact("building-a", 2);
+  const second = fixtureArtifact("building-b", 4);
+  const pack = encodeCityArtifactPack({
+    cityId: "city-1",
+    cityVersion: 9,
+    manifestSha256: "a".repeat(64),
+    artifacts: [
+      { buildingId: "building-b", designRevision: 4, sha256: "b".repeat(64), bytes: second },
+      { buildingId: "building-a", designRevision: 2, sha256: "a".repeat(64), bytes: first }
+    ]
+  });
+  const decoded = decodeCityArtifactPack(pack, { cityId: "city-1", cityVersion: 9, manifestSha256: "a".repeat(64) });
+  assert.equal(decoded.packVersion, CITY_ARTIFACT_PACK_VERSION);
+  assert.deepEqual(decoded.entries.map((entry) => entry.buildingId), ["building-a", "building-b"]);
+  assert.equal(decodeBakedBuildingArtifact(decoded.entries[0].bytes).buildingId, "building-a");
+  assert.equal(decodeBakedBuildingArtifact(decoded.entries[1].bytes).buildingId, "building-b");
+  assert.throws(() => decodeCityArtifactPack(pack, { cityVersion: 10 }), /version mismatch/);
+});
+
 test("manifest validation rejects identity/version/hash/source mismatches", () => {
   const bytes = fixtureArtifact();
   const valid = manifestFor(bytes);
@@ -133,6 +158,9 @@ test("OpenAPI documents binary artifact response, JSON errors and revision query
   assert.equal(operation.responses["200"].content["application/json"], undefined);
   assert.equal(operation.responses["400"].content["application/json"].schema.type, "object");
   assert.equal(operation.parameters.find((parameter) => parameter.name === "revision").schema.type, "integer");
+  const packOperation = createOpenApiDocument("https://example.test").paths["/cities/{city_id}/render-artifacts/pack"].get;
+  assert.equal(packOperation.responses["200"].content["application/octet-stream"].schema.format, "binary");
+  assert.equal(packOperation.parameters.find((parameter) => parameter.name === "manifest").schema.pattern, "^[a-fA-F0-9]{64}$");
 });
 
 test("render-state stays compatible without a baked root and serves configured binary artifacts", async () => {
@@ -163,10 +191,21 @@ test("render-state stays compatible without a baked root and serves configured b
     assert.equal(state.artifact_manifest[0].designRevision, 3);
     assert.equal(state.artifact_manifest[0].byteLength, bytes.byteLength);
     assert.equal(state.artifact_manifest[0].contentEncoding, "br");
+    assert.equal(state.artifact_pack.count, 1);
     const artifact = await app.inject(auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/render-artifacts/building-1?revision=3` }));
     assert.equal(artifact.statusCode, 200);
     assert.equal(artifact.headers["content-encoding"], "br");
     assert.deepEqual(Buffer.from(artifact.rawPayload), compressed);
+    const pack = await app.inject(auth(player, { method: "GET", url: state.artifact_pack.url }));
+    assert.equal(pack.statusCode, 200);
+    assert.equal(pack.headers["content-encoding"], "br");
+    const decodedPack = decodeCityArtifactPack(brotliDecompressSync(pack.rawPayload), {
+      cityId: city.id,
+      cityVersion: state.city_version,
+      manifestSha256: state.artifact_pack.manifestSha256
+    });
+    assert.equal(decodedPack.entries.length, 1);
+    assert.equal(decodeBakedBuildingArtifact(decodedPack.entries[0].bytes).buildingId, "building-1");
     const traversal = await app.inject(auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/render-artifacts/..%2Foutside?revision=3` }));
     assert.notEqual(traversal.statusCode, 200);
   } finally {
@@ -183,6 +222,7 @@ test("render-state defaults to an empty manifest when baked artifacts are not co
     const city = await json(app, auth(player, { method: "POST", url: "/api/v1/cities", payload: { name: "No Artifact City" } }), 201);
     const state = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/render-state` }), 200);
     assert.deepEqual(state.artifact_manifest, []);
+    assert.equal(state.artifact_pack, null);
   } finally {
     await app.close();
   }
