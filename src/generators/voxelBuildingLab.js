@@ -879,6 +879,8 @@ export function createVoxelBuildingLodLevelsFromSpec(sourceSpec, options = {}, f
     chunkSizeVoxels: params.voxelChunkSize,
     maxMergeSpanVoxels: params.maxMergeSpanVoxels
   }, `VoxelBuildingSpecLOD-${building.id}`);
+  const decorationRoot = new THREE.Group();
+  addFloorStackDesignDecorations(decorationRoot, building, options.decorations?.items ?? []);
   const updateDaylight = (style) => {
     const night = clamp(Math.max(style.nightFactor, params.nightLighting), 0, 1);
     levels.flatMap((level) => level.meshes).forEach((mesh) => {
@@ -895,6 +897,7 @@ export function createVoxelBuildingLodLevelsFromSpec(sourceSpec, options = {}, f
     params,
     building,
     levels,
+    decorations: decorationRoot,
     updateDaylight
   };
 }
@@ -908,6 +911,8 @@ export function createVoxelMassingLodLevels(input = {}, factors = [1, 2, 3]) {
     chunkSizeVoxels: input.voxelChunkSize ?? 128,
     maxMergeSpanVoxels: input.maxMergeSpanVoxels ?? 16
   }, `VoxelMassingLOD-${spec.id}`);
+  const decorationRoot = new THREE.Group();
+  addMassingDesignDecorations(decorationRoot, spec, input.decorations?.items ?? []);
   const updateDaylight = (style) => {
     const night = clamp(Math.max(style.nightFactor, input.nightLighting ?? 0), 0, 1);
     levels.flatMap((level) => level.meshes).forEach((mesh) => {
@@ -922,6 +927,7 @@ export function createVoxelMassingLodLevels(input = {}, factors = [1, 2, 3]) {
     sourceOfTruth: "deterministic UrbanMassingSpec compiled into one occupancy field and fixed 2x/3x macrovoxels",
     spec,
     levels,
+    decorations: decorationRoot,
     updateDaylight
   };
 }
@@ -2160,6 +2166,13 @@ function createVoxelMaterial(definition, storybookOptions = {}) {
       ? new VoxelDiffuseMaterial(parameters)
       : new THREE.MeshStandardMaterial(parameters);
   return applyStorybookSurfaceMaterial(material, storybookOptions);
+}
+
+// Baked mesh artifacts use the same material palette as runtime voxel meshes.
+// Keep this small adapter public so decoding does not duplicate visual
+// material policy or silently drift from the occupancy fallback.
+export function createVoxelMaterialForArtifact(materialId, storybookOptions = {}) {
+  return createVoxelMaterial(MATERIAL_LIBRARY[materialId] ?? MATERIAL_LIBRARY.timber, storybookOptions);
 }
 
 function supportsDiffuseVoxelShader(definition) {

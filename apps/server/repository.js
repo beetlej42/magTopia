@@ -4,6 +4,7 @@ import { createId, createSecret, hashRequest, hashSecret } from "./ids.js";
 import { ServiceError } from "./errors.js";
 import { createServiceWorldContract } from "./world.js";
 import { initializeFreshCitySchedule } from "../../src/gameplay/turn.js";
+import { getBuildingSourceHash } from "./render-artifact-service.js";
 
 export function createRepository(database, config, { now = () => new Date() } = {}) {
   return {
@@ -384,6 +385,99 @@ export function createRepository(database, config, { now = () => new Date() } = 
       });
     },
 
+    async listRenderArtifactManifest(principal, cityId) {
+      await this.getCity(principal, cityId);
+      if (!config.bakedArtifactRoot) return [];
+      const result = await database.query(
+        `SELECT * FROM render_artifacts
+         WHERE city_id = $1 AND status = 'ready' AND building_id IS NOT NULL
+         ORDER BY building_id, design_revision DESC`,
+        [cityId]
+      );
+      return result.rows.map(renderArtifactResponse);
+    },
+
+    async getRenderArtifactManifest(principal, cityId, buildingId, revision) {
+      await this.getCity(principal, cityId);
+      if (!config.bakedArtifactRoot) return null;
+      const result = await database.query(
+        `SELECT * FROM render_artifacts
+         WHERE city_id = $1 AND building_id = $2 AND design_revision = $3 AND status = 'ready'
+         ORDER BY updated_at DESC LIMIT 1`,
+        [cityId, buildingId, Number(revision)]
+      );
+      return result.rowCount ? renderArtifactResponse(result.rows[0]) : null;
+    },
+
+    async enqueueRenderArtifactBake({ cityId, buildingId = null, designId = null, designRevision, sourceHash }) {
+      if (!config.bakedArtifactRoot) return null;
+      if (!Number.isInteger(Number(designRevision)) || !/^[a-f0-9]{64}$/i.test(String(sourceHash ?? ""))) return null;
+      const normalizedRevision = Number(designRevision);
+      const normalizedDesignId = designId ?? (buildingId ? `building:${buildingId}` : null);
+      return database.transaction(async (client) => {
+        const city = await client.query("SELECT id FROM cities WHERE id = $1 FOR UPDATE", [cityId]);
+        if (!city.rowCount) throw new ServiceError(404, "CITY_NOT_FOUND", "City not found");
+        const waiting = buildingId == null;
+        const existing = await client.query(
+          `SELECT * FROM render_artifacts
+           WHERE city_id = $1 AND design_id IS NOT DISTINCT FROM $2 AND design_revision = $3 AND source_hash = $4
+           FOR UPDATE`,
+          [cityId, normalizedDesignId, normalizedRevision, String(sourceHash).toLowerCase()]
+        );
+        let row;
+        if (existing.rowCount) {
+          row = existing.rows[0];
+          if (row.status === "ready" && row.building_id === buildingId) return renderArtifactResponse(row);
+          const updated = await client.query(
+            `UPDATE render_artifacts
+             SET building_id = COALESCE($2, building_id), status = $3, error_jsonb = NULL, updated_at = now()
+             WHERE id = $1 RETURNING *`,
+            [row.id, buildingId, waiting ? "waiting_for_building" : "queued"]
+          );
+          row = updated.rows[0];
+        } else {
+          const inserted = await client.query(
+            `INSERT INTO render_artifacts(
+               id, city_id, building_id, design_id, design_revision, source_hash, format_version, status
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+            [createId("render-artifact"), cityId, buildingId, normalizedDesignId, normalizedRevision, String(sourceHash).toLowerCase(), 1, waiting ? "waiting_for_building" : "queued"]
+          );
+          row = inserted.rows[0];
+        }
+        if (row.status !== "ready") {
+          const pending = await client.query(
+            `SELECT 1 FROM outbox_jobs
+             WHERE job_type = 'render_artifact_bake_requested'
+               AND status IN ('pending', 'processing')
+               AND payload_jsonb->>'render_artifact_id' = $1 LIMIT 1`,
+            [row.id]
+          );
+          if (!pending.rowCount) {
+            await client.query(
+              `INSERT INTO outbox_jobs(id, job_type, payload_jsonb)
+               VALUES ($1, 'render_artifact_bake_requested', $2)`,
+              [createId("outbox"), JSON.stringify({ render_artifact_id: row.id, city_id: cityId, building_id: buildingId, design_id: normalizedDesignId, design_revision: normalizedRevision, source_hash: String(sourceHash).toLowerCase() })]
+            );
+          }
+        }
+        return renderArtifactResponse(row);
+      });
+    },
+
+    async enqueueRenderArtifactBakeForBuilding({ cityId, buildingId }) {
+      const result = await database.query("SELECT state_jsonb FROM cities WHERE id = $1", [cityId]);
+      if (!result.rowCount) throw new ServiceError(404, "CITY_NOT_FOUND", "City not found");
+      const building = result.rows[0].state_jsonb?.buildings?.[buildingId];
+      if (!building?.voxelDesign?.generation?.sourceSpec) return null;
+      return this.enqueueRenderArtifactBake({
+        cityId,
+        buildingId,
+        designId: building.voxelDesign.id ?? null,
+        designRevision: building.voxelDesign.revision,
+        sourceHash: getBuildingSourceHash(building)
+      });
+    },
+
     async getOrder(principal, cityId, orderId) {
       await this.getCity(principal, cityId);
       const result = await database.query("SELECT * FROM construction_orders WHERE id = $1 AND city_id = $2", [orderId, cityId]);
@@ -643,6 +737,26 @@ function orderResponse(row) {
 
 function assetJobResponse(row) {
   return { id: row.id, city_id: row.city_id, status: row.status, provider: row.provider, spec: row.spec_jsonb, attempts: row.attempts, output: row.output_jsonb, error: row.error_jsonb, created_at: row.created_at, updated_at: row.updated_at };
+}
+
+function renderArtifactResponse(row) {
+  return {
+    id: row.id,
+    cityId: row.city_id,
+    buildingId: row.building_id,
+    designId: row.design_id,
+    designRevision: Number(row.design_revision),
+    sourceHash: row.source_hash,
+    artifactVersion: Number(row.format_version),
+    sha256: row.sha256,
+    byteLength: row.byte_length == null ? null : Number(row.byte_length),
+    relativePath: row.relative_path,
+    status: row.status,
+    attempts: Number(row.attempts ?? 0),
+    error: row.error_jsonb,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
 }
 
 function buildingDesignResponse(row) {

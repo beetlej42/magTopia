@@ -46,6 +46,7 @@ export function createAgentAcceptanceCity(config = {}) {
     sampleGroundHeight: constructionHeight,
     cityState: state,
     assetRegistry: config.assetRegistry ?? [],
+    bakedArtifacts: config.bakedArtifacts ?? {},
     useHunyuanModels: config.useHunyuanModels ?? 0,
     nightLighting: params.nightLighting,
     enableVoxelLod: true

@@ -46,7 +46,7 @@ export function chooseCardOrientation({ width = 0, height = 0 } = {}) {
   return width >= height && width >= 700 ? "landscape" : "portrait";
 }
 
-export function createCityDayExperience({ onPhaseChange = () => {}, onReportDismissed = () => {}, onPlayerTurnComplete = () => {} }) {
+export function createCityDayExperience({ onPhaseChange = () => {}, onReportDismissed = () => {} }) {
   const root = document.createElement("div");
   root.className = "city-day-experience";
   root.hidden = true;

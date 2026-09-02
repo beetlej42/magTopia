@@ -28,6 +28,9 @@ export function loadConfig(env = process.env) {
     dashscopeImageSize: env.DASHSCOPE_IMAGE_SIZE ?? "1024*1024",
     dashscopeStyleReferenceEnabled: env.DASHSCOPE_STYLE_REFERENCE_ENABLED === "1",
     assetOutputRoot: env.MAGICTOWN_ASSET_OUTPUT_ROOT ?? null,
+    // Optional immutable, pre-baked voxel building artifacts. When unset the
+    // render-state contract still returns an empty artifact manifest.
+    bakedArtifactRoot: env.MAGICTOWN_BAKED_ARTIFACT_ROOT ?? null,
     capabilityTtlMinutes: Number(env.MAGICTOWN_CAPABILITY_TTL_MINUTES ?? 30),
     credentialTtlDays: Number(env.MAGICTOWN_CREDENTIAL_TTL_DAYS ?? 90),
     workerPollMs: Number(env.MAGICTOWN_WORKER_POLL_MS ?? 1000),

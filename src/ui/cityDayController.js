@@ -200,6 +200,7 @@ export function createCityDayController({ experience, api, setLight, placementLa
       }, { idempotencyKey });
       if (payload.status !== "selected") throw new Error(payload.message ?? "卡牌选择被拒绝");
       if (decisionMode === "player_place") {
+        onPlayerTurnComplete();
         await openPendingPlacement();
       } else {
         closeChoiceLayers();
@@ -265,10 +266,10 @@ export function createCityDayController({ experience, api, setLight, placementLa
     const footprint = card?.structure?.footprint ?? "1x1";
     const cityVersion = cardsCurrent.city_version;
 
-    // The periodic city-day sync re-enters this path while a placement is
-    // pending. Reuse the live session (preserving building rotation and the
+    // A later on-demand city-day sync can re-enter this path while a placement
+    // is pending. Reuse the live session (preserving building rotation and the
     // FOV target) and only refresh the concurrency guard; presenting a second
-    // HUD would silently reset the player's rotation every few seconds.
+    // HUD would silently reset the player's rotation.
     const sameSession = placement
       && placement.placementId === placementId
       && placement.cardId === selectedCardId;
@@ -441,7 +442,7 @@ export function createCityDayController({ experience, api, setLight, placementLa
       onPlayerTurnComplete();
       // The command has already released the entitlement. A follow-up read
       // failure must not incorrectly restore a HUD for a placement that no
-      // longer exists; the next periodic sync will reconcile the view.
+      // longer exists; the next on-demand sync will reconcile the view.
       try {
         await sync();
       } catch (error) {
@@ -461,7 +462,7 @@ export function createCityDayController({ experience, api, setLight, placementLa
         });
         await refreshPlacementState();
       } catch {
-        // Keep the authoritative pending mandate for the next periodic sync.
+        // Keep the authoritative pending mandate for the next on-demand sync.
       }
     } finally {
       cancellingPlacementIds.delete(active.placementId);
@@ -483,6 +484,7 @@ export function createCityDayController({ experience, api, setLight, placementLa
           method: "POST",
           body: JSON.stringify({ report_turn: reportTurn })
         });
+        onPlayerTurnComplete();
       } catch {
         // Acknowledgement failures are non-fatal; the overlay still closes.
       }

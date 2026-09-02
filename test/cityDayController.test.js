@@ -213,6 +213,7 @@ test("special structure placement submits placement_id and a legal lot through /
 test("report dismissal posts report_turn to the ack endpoint once", async () => {
   const experience = createMockExperience();
   let dismissBody = null;
+  let completed = 0;
   const calls = stubFetch({
     "/api/v1/cities/city-1/city-day": { body: { phase: "dawn", settled: false, report: { ready: true, dismissed: false, turn: 3 }, card: { choicePending: true }, agent: { workStarted: false }, incident: { phaseActive: false } } },
     "/api/v1/cities/city-1/reports/report-x": { body: { report: { masthead: { title: "T" }, edition: "Day 3", headline: "H", lead: "L", articles: [] } } },
@@ -225,7 +226,7 @@ test("report dismissal posts report_turn to the ack endpoint once", async () => 
     experience,
     api: { baseUrl: "/api/v1", cityId: "city-1", token: "session" },
     setLight: () => {},
-    onPlayerTurnComplete: () => {}
+    onPlayerTurnComplete: () => { completed += 1; }
   });
   await controller.sync();
   assert.equal(experience.state.reportOpen, true, "the ready report is presented");
@@ -234,6 +235,7 @@ test("report dismissal posts report_turn to the ack endpoint once", async () => 
   assert.equal(dismissBody.report_turn, 3);
   const dismissCalls = calls.filter((call) => call.url.endsWith("/city-day/report-dismissed"));
   assert.equal(dismissCalls.length, 1, "the ack is recorded exactly once");
+  assert.equal(completed, 1, "a successful report acknowledgement signals an on-demand render refresh");
 });
 
 test("every controller JSON POST carries Content-Type: application/json", async () => {
@@ -633,7 +635,7 @@ test("fallback Idempotency-Keys stay distinct across independent commands", asyn
 //
 // The placement flow is now an in-world FOV-center session: the authoritative
 // candidate set is fetched once on entry and re-evaluation is local. These
-// tests lock in session survival across the periodic city-day sync, the
+// tests lock in session survival across a later on-demand city-day sync, the
 // rotation state, rejection recovery, and cancel semantics.
 
 const PENDING_PLACEMENT_DAY = {
@@ -674,7 +676,7 @@ function legalTarget() {
   };
 }
 
-test("placement session survives the periodic sync without re-presenting or re-fetching", async () => {
+test("placement session survives an on-demand sync without re-presenting or re-fetching", async () => {
   const experience = createMockExperience();
   let searchCount = 0;
   stubFetch(pendingPlacementRoutes({
@@ -695,9 +697,9 @@ test("placement session survives the periodic sync without re-presenting or re-f
   assert.equal(controller.getPlacementState().quarterTurns, 1, "rotation is tracked locally");
 
   await controller.sync();
-  assert.equal(experience.state.placementOpen, true, "the periodic sync keeps the session open");
-  assert.equal(experience.presentCount, 1, "the HUD is not re-presented by the periodic sync");
-  assert.equal(controller.getPlacementState().quarterTurns, 1, "rotation survives the periodic sync");
+  assert.equal(experience.state.placementOpen, true, "the on-demand sync keeps the session open");
+  assert.equal(experience.presentCount, 1, "the HUD is not re-presented by the on-demand sync");
+  assert.equal(controller.getPlacementState().quarterTurns, 1, "rotation survives the on-demand sync");
   assert.equal(searchCount, 1, "the candidate set is fetched once, not once per sync");
 });
 
@@ -812,7 +814,7 @@ test("cancel exits the session without placing or delegating", async () => {
   assert.equal(placeCount, 0, "cancel never submits a placement");
 });
 
-test("a cancelled placement is not silently reopened by the periodic sync", async () => {
+test("a cancelled placement is not silently reopened by an on-demand sync", async () => {
   const experience = createMockExperience();
   let searchCount = 0;
   stubFetch(pendingPlacementRoutes({ onSearch: () => { searchCount += 1; } }));
@@ -831,7 +833,7 @@ test("a cancelled placement is not silently reopened by the periodic sync", asyn
   assert.equal(controller.placementActive, false);
 
   await controller.sync();
-  assert.equal(experience.state.placementOpen, false, "the periodic sync does not reopen a locally cancelled placement");
+  assert.equal(experience.state.placementOpen, false, "the on-demand sync does not reopen a locally cancelled placement");
   assert.equal(experience.presentCount, 1, "no placement HUD is re-presented for the cancelled placement");
   assert.equal(searchCount, 1, "the cancelled placement is not re-fetched");
 

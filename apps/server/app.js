@@ -1,7 +1,8 @@
-import { randomInt } from "node:crypto";
+import { createHash, randomInt } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { brotliDecompressSync } from "node:zlib";
 import Fastify from "fastify";
 import { calculateDailyIncome, createEngineContext, executeCityCommand } from "../../src/city/engine.js";
 import { normalizeConstructionProposal } from "../../src/city/contracts.js";
@@ -41,6 +42,7 @@ import { playbookGuidance } from "../../src/gameplay/guidance.js";
 import { isTurnResolveLocked, initializeTurnSchedule, normalizeTurnSchedule } from "../../src/gameplay/turn.js";
 import { arcaneOfficerCapacity, arcaneOfficerRecruitmentUnlocked, currentOfficerCandidates, hireArcaneOfficerCandidate, recruitmentConfigSummary } from "../../src/gameplay/arcane-officers.js";
 import { bootstrapGuidance, deriveBootstrapProgress, isBootstrapTurn } from "../../src/gameplay/bootstrap.js";
+import { getBuildingSourceHash } from "./render-artifact-service.js";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PLAYBOOK_PATH = path.resolve(SERVER_DIR, "../../docs/agent-playbook.md");
@@ -140,19 +142,61 @@ export async function createApp({ repository, config, logger = false, now = () =
     const { row, state } = await repository.getCity(principal, request.params.cityId);
     const assetIds = Object.values(state.buildings ?? {}).map((building) => building.assetId ?? building.program?.assetId).filter(Boolean);
     const assets = await repository.getAssetsForCity(principal, request.params.cityId, assetIds);
+    const artifactManifest = await readArtifactManifest(repository, principal, {
+      cityId: request.params.cityId,
+      cityVersion: Number(row.city_version),
+      state,
+      config
+    });
     return {
       city_id: row.id,
       name: row.name,
       city_version: Number(row.city_version),
       state,
       assets,
+      artifact_manifest: artifactManifest,
       render_contract: {
         mode: "agentcity",
         terrain: "base-voxel-heightfield",
         buildings: "city-state-voxel-designs-with-runtime-asset-fallback",
+        bakedArtifacts: "versioned-binary-mesh-lod-v1",
+        artifactManifest: "render-state.artifact_manifest or /render-artifacts/manifest",
         ...AGENT_VOXEL_ROAD_RENDER_CONTRACT
       }
     };
+  });
+
+  app.get("/api/v1/cities/:cityId/render-artifacts/manifest", async (request) => {
+    const principal = await authenticate(repository, request, "city:read");
+    const { row, state } = await repository.getCity(principal, request.params.cityId);
+    return {
+      city_id: row.id,
+      city_version: Number(row.city_version),
+      data: await readArtifactManifest(repository, principal, { cityId: row.id, cityVersion: Number(row.city_version), state, config })
+    };
+  });
+
+  app.get("/api/v1/cities/:cityId/render-artifacts/:buildingId", async (request, reply) => {
+    const principal = await authenticate(repository, request, "city:read");
+    const { state } = await repository.getCity(principal, request.params.cityId);
+    const building = state.buildings?.[request.params.buildingId];
+    const expectedRevision = Number(request.query.revision ?? building?.voxelDesign?.revision);
+    if (!building?.voxelDesign?.generation?.sourceSpec) throw new ServiceError(404, "RENDER_ARTIFACT_NOT_FOUND", "Baked render artifact is not available for this building");
+    if (!Number.isInteger(expectedRevision)) throw new ServiceError(400, "INVALID_RENDER_ARTIFACT_REVISION", "Artifact revision must be an integer");
+    if (Number(building.voxelDesign.revision) !== expectedRevision) throw new ServiceError(409, "RENDER_ARTIFACT_REVISION_MISMATCH", "Baked render artifact revision does not match the current design");
+    const persistedCandidate = await repository.getRenderArtifactManifest?.(principal, request.params.cityId, request.params.buildingId, expectedRevision);
+    const persisted = persistedCandidate && persistedCandidate.sourceHash === getBuildingSourceHash(building)
+      ? persistedCandidate
+      : null;
+    const source = resolveBakedArtifactSource(config, request.params.cityId, building, persisted);
+    const bytes = source ? await readBakedArtifactBytes(source) : null;
+    if (!bytes) throw new ServiceError(404, "RENDER_ARTIFACT_NOT_FOUND", "Baked render artifact is not available for this building");
+    reply
+      .type("application/octet-stream")
+      .header("Cache-Control", "public, max-age=31536000, immutable")
+      .header("Content-Length", bytes.byteLength);
+    if (source.contentEncoding) reply.header("Content-Encoding", source.contentEncoding);
+    return reply.send(bytes);
   });
 
   app.get("/api/v1/cities/:cityId/events", async (request) => {
@@ -295,7 +339,9 @@ export async function createApp({ repository, config, logger = false, now = () =
     const current = await repository.getBuildingDesign(principal, request.params.cityId, request.params.designId);
     const expectedRevision = request.body?.expected_revision ?? request.body?.expectedRevision;
     const confirmed = designDomainCall(() => confirmBuildingDesign(current, request.body ?? {}, buildingDesignContext(principal)));
-    return repository.confirmBuildingDesign(principal, request.params.cityId, confirmed, expectedRevision);
+    const response = await repository.confirmBuildingDesign(principal, request.params.cityId, confirmed, expectedRevision);
+    await enqueueConfirmedRenderArtifact(repository, request.params.cityId, confirmed);
+    return response;
   });
 
   app.post("/api/v1/cities/:cityId/buildings/:buildingId/upgrade-designs", async (request, reply) => {
@@ -473,6 +519,9 @@ export async function createApp({ repository, config, logger = false, now = () =
         response: commandEnvelope(orderId, engineResult, { kind: "construction_order", id: orderId, status: "awaiting_asset", asset_job_id: jobId, reservation_id: reservationId })
       };
     });
+    if (body.asset?.mode === "voxel" && response.status === "completed") {
+      await enqueueRenderArtifactForBuilding(repository, request.params.cityId, response.resource?.building_id ?? response.resource?.buildingId);
+    }
     return reply.code(response.status === "rejected" ? 422 : response.status === "completed" ? 201 : 202).send(response);
   });
 
@@ -1531,6 +1580,70 @@ function numberParam(value, fallback) { const parsed = Number(value); return Num
 function subtract(a, b) { return { coins: a.coins - b.coins }; }
 function negativeKeys(value) { return value ? Object.entries(value).filter(([, amount]) => amount < 0).map(([key]) => key) : []; }
 
+async function enqueueConfirmedRenderArtifact(repository, cityId, design) {
+  if (!repository.enqueueRenderArtifactBake || !design?.generation?.sourceSpec) return null;
+  try {
+    return await repository.enqueueRenderArtifactBake({
+      cityId,
+      buildingId: design.source?.kind === "upgrade" ? design.source.buildingId : null,
+      designId: design.id,
+      designRevision: design.revision,
+      sourceHash: design.specHash
+    });
+  } catch {
+    // Queueing is deliberately best-effort. The design confirmation is the
+    // authoritative write and must not fail because rendering infrastructure
+    // is unavailable; backfill can enqueue it later.
+    return null;
+  }
+}
+
+async function enqueueRenderArtifactForBuilding(repository, cityId, buildingId) {
+  if (!buildingId || !repository.enqueueRenderArtifactBakeForBuilding) return null;
+  try {
+    return await repository.enqueueRenderArtifactBakeForBuilding({ cityId, buildingId });
+  } catch {
+    return null;
+  }
+}
+
+async function readArtifactManifest(repository, principal, { cityId, cityVersion, state, config }) {
+  if (repository.listRenderArtifactManifest) {
+    try {
+      const persisted = await repository.listRenderArtifactManifest(principal, cityId);
+      const currentBuildings = new Map(Object.values(state.buildings ?? {}).map((building) => [building.id, building]));
+      const currentReady = persisted.filter((entry) => {
+        const building = currentBuildings.get(entry.buildingId);
+        return building
+          && Number(building.voxelDesign?.revision) === Number(entry.designRevision)
+          && entry.sourceHash === getBuildingSourceHash(building);
+      });
+      if (currentReady.length) return currentReady.map((entry) => artifactManifestEntry(entry, cityId, cityVersion));
+    } catch {
+      // A deployment running before the migration keeps the old directory
+      // scan/empty-manifest behavior below.
+    }
+  }
+  return createBakedArtifactManifest({ cityId, cityVersion, state, config });
+}
+
+function artifactManifestEntry(entry, cityId, cityVersion) {
+  return {
+    schema: "baked-building-artifact-manifest-v1",
+    artifactVersion: Number(entry.artifactVersion),
+    cityId,
+    cityVersion: Number(cityVersion),
+    buildingId: entry.buildingId,
+    designRevision: Number(entry.designRevision),
+    sourceHash: entry.sourceHash ?? null,
+    sha256: entry.sha256,
+    byteLength: entry.byteLength == null ? null : Number(entry.byteLength),
+    relativePath: entry.relativePath,
+    contentEncoding: String(entry.relativePath ?? "").endsWith(".br") ? "br" : null,
+    url: `/api/v1/cities/${encodeURIComponent(cityId)}/render-artifacts/${encodeURIComponent(entry.buildingId)}?revision=${encodeURIComponent(String(entry.designRevision))}`
+  };
+}
+
 function summarizeCity(row, config) {
   const state = row.state_jsonb;
   return { ...agentSnapshot(row, state, [], [], config), recent_changes: undefined, needs: undefined };
@@ -1619,4 +1732,148 @@ async function readBuiltFile(target) {
     if (error.code === "ENOENT") throw new ServiceError(404, "ASSET_FILE_NOT_FOUND", "Built viewer asset was not found; run the frontend build first");
     throw error;
   }
+}
+
+const BAKED_ARTIFACT_MANIFEST_SCHEMA = "baked-building-artifact-manifest-v1";
+const BAKED_ARTIFACT_VERSION = 1;
+const BAKED_ARTIFACT_MAX_BYTES = 64 * 1024 * 1024;
+const SAFE_ARTIFACT_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+/** Build an identity/hash-only manifest; geometry stays in binary artifacts. */
+export async function createBakedArtifactManifest({ cityId, cityVersion, state, config = {} }) {
+  if (!config.bakedArtifactRoot && !config.bakedArtifacts) return [];
+  const entries = [];
+  for (const building of Object.values(state?.buildings ?? {})) {
+    if (!building?.voxelDesign?.generation?.sourceSpec) continue;
+    const revision = Number(building.voxelDesign.revision);
+    if (!Number.isInteger(revision)) continue;
+    const source = resolveBakedArtifactSource(config, cityId, building);
+    if (!source) continue;
+    try {
+      const bytes = await readBakedArtifactBytes(source, { decoded: true });
+      if (!bytes) continue;
+      entries.push({
+        schema: BAKED_ARTIFACT_MANIFEST_SCHEMA,
+        artifactVersion: BAKED_ARTIFACT_VERSION,
+        cityId,
+        cityVersion: Number(cityVersion),
+        buildingId: building.id,
+        designRevision: revision,
+        sourceHash: building.voxelDesign.generation.sourceHash ?? building.voxelDesign.generation.hash ?? null,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        byteLength: bytes.byteLength,
+        contentEncoding: source.contentEncoding ?? null,
+        url: `/api/v1/cities/${encodeURIComponent(cityId)}/render-artifacts/${encodeURIComponent(building.id)}?revision=${encodeURIComponent(String(revision))}`
+      });
+    } catch {
+      // Stale/corrupt artifacts are optional and must not make city state fail.
+    }
+  }
+  return entries;
+}
+
+/** Resolve only safe, deterministic artifact paths; existence is checked on read. */
+export function resolveBakedArtifactSource(config = {}, cityId, building, manifest = null) {
+  const buildingId = building?.id;
+  const revision = Number(building?.voxelDesign?.revision);
+  if (!isSafeArtifactSegment(cityId) || !isSafeArtifactSegment(buildingId) || !Number.isInteger(revision) || revision < 0) return null;
+  const fixture = resolveBakedArtifactFixture(config.bakedArtifacts, `${cityId}/${buildingId}/${revision}`, buildingId);
+  if (fixture !== undefined) return { kind: "fixture", bytes: fixture };
+  if (!config.bakedArtifactRoot) return null;
+  const root = path.resolve(config.bakedArtifactRoot);
+  if (manifest?.relativePath) {
+    const relativePath = String(manifest.relativePath);
+    const absolutePath = path.resolve(root, relativePath);
+    if (!isWithinPath(root, absolutePath) || path.isAbsolute(relativePath)) return null;
+    return { kind: "file", root, paths: [absolutePath] };
+  }
+  const directory = path.resolve(root, cityId, buildingId);
+  if (!isWithinPath(root, directory)) return null;
+  return {
+    kind: "file",
+    root,
+    directory,
+    revision,
+    paths: [path.join(directory, `${revision}.mtba.br`), path.join(directory, `${revision}.mtba`)]
+  };
+}
+
+/** Read a stored artifact; decoded=true inflates optional Brotli transport. */
+export async function readBakedArtifactBytes(source, { decoded = false } = {}) {
+  if (!source) return null;
+  if (source.kind === "fixture") return toBuffer(source.bytes);
+  for (const candidate of source.paths ?? []) {
+    if (!isWithinPath(source.root, candidate)) continue;
+    try {
+      const realRoot = await fs.realpath(source.root);
+      const realPath = await fs.realpath(candidate);
+      if (!isWithinPath(realRoot, realPath)) throw new ServiceError(404, "RENDER_ARTIFACT_NOT_FOUND", "Artifact path is outside the configured root");
+      const stored = await fs.readFile(realPath);
+      if (stored.byteLength > BAKED_ARTIFACT_MAX_BYTES) throw new ServiceError(413, "RENDER_ARTIFACT_TOO_LARGE", "Baked render artifact is too large");
+      source.path = realPath;
+      source.contentEncoding = realPath.endsWith(".br") ? "br" : null;
+      if (!decoded || !source.contentEncoding) return stored;
+      const inflated = brotliDecompressSync(stored);
+      if (inflated.byteLength > BAKED_ARTIFACT_MAX_BYTES) throw new ServiceError(413, "RENDER_ARTIFACT_TOO_LARGE", "Baked render artifact is too large");
+      return inflated;
+    } catch (error) {
+      if (error?.code === "ENOENT") continue;
+      throw error;
+    }
+  }
+  if (source.directory && Number.isInteger(source.revision)) {
+    let names = [];
+    try {
+      names = await fs.readdir(source.directory);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    const revisionPrefix = `${source.revision}-`;
+    const hashedNames = names
+      .filter((name) => name.startsWith(revisionPrefix) && (/^\d+-[a-f0-9]{64}\.mtba\.br$/i.test(name) || /^\d+-[a-f0-9]{64}\.mtba$/i.test(name)))
+      .sort();
+    for (const name of hashedNames) {
+      const candidate = path.join(source.directory, name);
+      if (!isWithinPath(source.root, candidate)) continue;
+      try {
+        const realRoot = await fs.realpath(source.root);
+        const realPath = await fs.realpath(candidate);
+        if (!isWithinPath(realRoot, realPath)) continue;
+        const stored = await fs.readFile(realPath);
+        if (stored.byteLength > BAKED_ARTIFACT_MAX_BYTES) throw new ServiceError(413, "RENDER_ARTIFACT_TOO_LARGE", "Baked render artifact is too large");
+        source.path = realPath;
+        source.contentEncoding = realPath.endsWith(".br") ? "br" : null;
+        if (!decoded || !source.contentEncoding) return stored;
+        return brotliDecompressSync(stored);
+      } catch (error) {
+        if (error?.code === "ENOENT") continue;
+        throw error;
+      }
+    }
+  }
+  return null;
+}
+
+function resolveBakedArtifactFixture(fixtures, key, buildingId) {
+  if (!fixtures) return undefined;
+  const value = fixtures instanceof Map ? (fixtures.has(key) ? fixtures.get(key) : fixtures.get(buildingId)) : fixtures[key] ?? fixtures[buildingId];
+  if (value === undefined) return undefined;
+  return value?.bytes ?? value;
+}
+
+function toBuffer(value) {
+  if (Buffer.isBuffer(value)) return value;
+  if (value instanceof Uint8Array) return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+  if (value instanceof ArrayBuffer) return Buffer.from(value);
+  if (typeof value === "string") return Buffer.from(value, "base64");
+  return Buffer.from(value ?? []);
+}
+
+function isSafeArtifactSegment(value) {
+  return typeof value === "string" && SAFE_ARTIFACT_SEGMENT.test(value) && value !== "." && value !== "..";
+}
+
+function isWithinPath(root, target) {
+  const relative = path.relative(path.resolve(root), path.resolve(target));
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
