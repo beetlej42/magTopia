@@ -22,8 +22,13 @@ export function normalizeConstructionProposal(input = {}, context = {}) {
   if (!input.program?.archetype) throw new Error("Construction proposal requires program.archetype");
   if (!input.design?.prompt?.trim()) throw new Error("Construction proposal requires design.prompt");
 
-  const derivedGameplayBuilding = deriveGameplayBuildingFromVoxelDesign(input.voxelDesign, footprint, input.program);
   const submittedGameplayBuilding = input.gameplayBuilding ?? input.gameplay ?? input.program.gameplay;
+  const derivedGameplayBuilding = deriveGameplayBuildingFromVoxelDesign(
+    input.voxelDesign,
+    footprint,
+    input.program,
+    submittedGameplayBuilding
+  );
 
   return {
     id: input.id ?? context.createId?.("proposal") ?? `proposal-${Date.now()}`,
@@ -44,10 +49,10 @@ export function normalizeConstructionProposal(input = {}, context = {}) {
       description: input.program.description ?? "",
       attributes: { ...(input.program.attributes ?? {}) }
     },
-    // Voxel construction has a confirmed design as its geometry authority.
-    // Gameplay floor area is therefore derived from that design instead of
-    // trusting an Agent-supplied area/cell count. Legacy non-voxel callers
-    // retain the old explicit gameplay grammar until they are migrated.
+    // A confirmed voxel design is the geometry authority. The Agent may still
+    // describe gameplay purpose/magicRatio per actual floor, but area/cells are
+    // never trusted: the gameplay normalizer derives one footprint-area worth
+    // of functional cells for each floor in this sanitized grammar.
     gameplayBuilding: derivedGameplayBuilding
       ?? (submittedGameplayBuilding ? structuredClone(submittedGameplayBuilding) : null),
     design: {
@@ -60,7 +65,7 @@ export function normalizeConstructionProposal(input = {}, context = {}) {
   };
 }
 
-function deriveGameplayBuildingFromVoxelDesign(voxelDesign, footprint, program = {}) {
+function deriveGameplayBuildingFromVoxelDesign(voxelDesign, footprint, program = {}, submittedGameplayBuilding = null) {
   const sourceSpec = voxelDesign?.generation?.sourceSpec;
   if (!sourceSpec) return null;
 
@@ -71,28 +76,55 @@ function deriveGameplayBuildingFromVoxelDesign(voxelDesign, footprint, program =
       ?? program.purpose,
     voxelDesign.generation?.mode === "urban_massing" ? "public_service" : "residential"
   );
-  const defaultMagicRatio = nearestMagicRatio(
-    voxelDesign.intent?.magicRatio
-      ?? voxelDesign.intent?.magicLevel
-      ?? program.attributes?.magicRatio
-      ?? program.attributes?.magicLevel
-  );
+  const submittedFloors = submittedFloorSemantics(submittedGameplayBuilding);
 
   if (voxelDesign.generation?.mode === "floor_stack" && Array.isArray(sourceSpec.floorSpecs) && sourceSpec.floorSpecs.length) {
+    assertSubmittedFloorCount(submittedFloors, sourceSpec.floorSpecs.length);
     return {
-      floors: sourceSpec.floorSpecs.map((floor) => ({
-        purpose: canonicalGameplayPurpose(floor.purpose, defaultPurpose),
-        magicRatio: nearestMagicRatio(floor.magicRatio ?? defaultMagicRatio)
-      }))
+      floors: sourceSpec.floorSpecs.map((floor, index) => sanitizeFloorSemantic(
+        submittedFloors?.[index],
+        canonicalGameplayPurpose(floor.purpose, defaultPurpose)
+      ))
     };
   }
 
   const floorCount = estimateMassingStoreys(sourceSpec);
+  assertSubmittedFloorCount(submittedFloors, floorCount);
   return {
-    floors: Array.from({ length: floorCount }, () => ({
-      purpose: defaultPurpose,
-      magicRatio: defaultMagicRatio
-    }))
+    floors: Array.from({ length: floorCount }, (_, index) => sanitizeFloorSemantic(
+      submittedFloors?.[index],
+      defaultPurpose
+    ))
+  };
+}
+
+function submittedFloorSemantics(value) {
+  if (!value || typeof value !== "object") return null;
+  for (const field of ["floors", "floorSpecs", "floorPrograms"]) {
+    if (Array.isArray(value[field])) return value[field];
+  }
+  const nested = value.grammar ?? value.massing;
+  if (nested && typeof nested === "object") {
+    for (const field of ["floors", "floorSpecs", "floorPrograms"]) {
+      if (Array.isArray(nested[field])) return nested[field];
+    }
+  }
+  // Old unit/mass grammars may still arrive from stale Agents. They are
+  // intentionally ignored for voxel construction because their area is not
+  // tied to the confirmed design. Visual floor purposes remain a safe fallback.
+  return null;
+}
+
+function assertSubmittedFloorCount(submittedFloors, actualFloorCount) {
+  if (submittedFloors && submittedFloors.length !== actualFloorCount) {
+    throw new Error(`Gameplay floor program count ${submittedFloors.length} does not match confirmed design floor count ${actualFloorCount}`);
+  }
+}
+
+function sanitizeFloorSemantic(value, fallbackPurpose) {
+  return {
+    purpose: canonicalGameplayPurpose(value?.purpose, fallbackPurpose),
+    magicRatio: normalizeMagicRatio(value?.magicRatio)
   };
 }
 
@@ -107,13 +139,14 @@ function canonicalGameplayPurpose(value, fallback = "residential") {
   return GAMEPLAY_PURPOSES.has(fallback) ? fallback : "residential";
 }
 
-function nearestMagicRatio(value) {
+function normalizeMagicRatio(value) {
+  if (value == null) return 0;
   const number = Number(value);
-  if (!Number.isFinite(number)) return 0;
-  const clamped = Math.min(1, Math.max(0, number));
-  return MAGIC_RATIOS.reduce((best, candidate) => (
-    Math.abs(candidate - clamped) < Math.abs(best - clamped) ? candidate : best
-  ), MAGIC_RATIOS[0]);
+  const match = MAGIC_RATIOS.find((candidate) => Math.abs(candidate - number) < Number.EPSILON * 8);
+  if (!Number.isFinite(number) || match == null) {
+    throw new Error(`magicRatio must be one of ${MAGIC_RATIOS.join(", ")}; received ${String(value)}`);
+  }
+  return match;
 }
 
 function estimateMassingStoreys(spec = {}) {
