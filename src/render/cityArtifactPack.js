@@ -106,6 +106,67 @@ export function decodeCityArtifactPack(bytes, expected = {}) {
   };
 }
 
+/**
+ * Read the browser-decoded pack stream while reporting progress against the
+ * exact raw size stored in the MTCP header. Content-Length cannot be used here
+ * because it describes the Brotli-compressed response on the wire.
+ */
+export async function readCityArtifactPackResponse(response, { onProgress } = {}) {
+  if (!response?.body?.getReader) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    onProgress?.(1);
+    return bytes;
+  }
+
+  const reader = response.body.getReader();
+  const pending = [];
+  let output = null;
+  let received = 0;
+  let expectedLength = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const chunk = toUint8Array(value);
+    if (output) output.set(chunk, received);
+    else pending.push(chunk);
+    received += chunk.byteLength;
+
+    if (!output && received >= HEADER_BYTES) {
+      const header = joinChunks(pending, received).subarray(0, HEADER_BYTES);
+      const magic = String.fromCharCode(header[0], header[1], header[2], header[3]);
+      const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
+      const candidateLength = HEADER_BYTES + view.getUint32(8, true) + view.getUint32(12, true);
+      if (magic === CITY_ARTIFACT_PACK_MAGIC && candidateLength >= received && candidateLength <= 1024 * 1024 * 1024) {
+        expectedLength = candidateLength;
+        output = new Uint8Array(expectedLength);
+        let offset = 0;
+        for (const pendingChunk of pending) {
+          output.set(pendingChunk, offset);
+          offset += pendingChunk.byteLength;
+        }
+        pending.length = 0;
+      }
+    }
+
+    if (expectedLength) onProgress?.(Math.min(1, received / expectedLength));
+  }
+
+  const bytes = output ?? joinChunks(pending, received);
+  onProgress?.(1);
+  return bytes;
+}
+
+function joinChunks(chunks, byteLength) {
+  const output = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return output;
+}
+
 function toUint8Array(value) {
   if (value instanceof Uint8Array) return value;
   if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
