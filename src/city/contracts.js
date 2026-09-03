@@ -4,6 +4,8 @@ const FOOTPRINTS = new Set(Array.from({ length: 6 }, (_, columnIndex) => (
   Array.from({ length: 6 }, (_, rowIndex) => `${columnIndex + 1}x${rowIndex + 1}`)
 )).flat());
 const ENTRANCES = new Set(["north", "east", "south", "west"]);
+const GAMEPLAY_PURPOSES = new Set(["residential", "commercial", "public_service", "production", "greenhouse"]);
+const MAGIC_RATIOS = Object.freeze([0, 0.25, 0.5, 0.75, 1]);
 
 export function normalizeFootprint(value = "1x1") {
   const footprint = String(value).toLowerCase();
@@ -19,6 +21,9 @@ export function normalizeConstructionProposal(input = {}, context = {}) {
   if (!input.site?.lotId) throw new Error("Construction proposal requires site.lot_id (camelCase site.lotId is also accepted)");
   if (!input.program?.archetype) throw new Error("Construction proposal requires program.archetype");
   if (!input.design?.prompt?.trim()) throw new Error("Construction proposal requires design.prompt");
+
+  const derivedGameplayBuilding = deriveGameplayBuildingFromVoxelDesign(input.voxelDesign, footprint, input.program);
+  const submittedGameplayBuilding = input.gameplayBuilding ?? input.gameplay ?? input.program.gameplay;
 
   return {
     id: input.id ?? context.createId?.("proposal") ?? `proposal-${Date.now()}`,
@@ -39,12 +44,12 @@ export function normalizeConstructionProposal(input = {}, context = {}) {
       description: input.program.description ?? "",
       attributes: { ...(input.program.attributes ?? {}) }
     },
-    // v0.3 gameplay semantics travel beside the visual/design contract. They
-    // are preserved verbatim for the gameplay normalizer; no renderer field
-    // is promoted into this authority.
-    gameplayBuilding: (input.gameplayBuilding ?? input.gameplay ?? input.program.gameplay)
-      ? structuredClone(input.gameplayBuilding ?? input.gameplay ?? input.program.gameplay)
-      : null,
+    // Voxel construction has a confirmed design as its geometry authority.
+    // Gameplay floor area is therefore derived from that design instead of
+    // trusting an Agent-supplied area/cell count. Legacy non-voxel callers
+    // retain the old explicit gameplay grammar until they are migrated.
+    gameplayBuilding: derivedGameplayBuilding
+      ?? (submittedGameplayBuilding ? structuredClone(submittedGameplayBuilding) : null),
     design: {
       districtStyle: input.design.districtStyle ?? "london_common",
       patterns: [...(input.design.patterns ?? [])],
@@ -53,6 +58,73 @@ export function normalizeConstructionProposal(input = {}, context = {}) {
     connectionRequest: input.connectionRequest ?? null,
     voxelDesign: input.voxelDesign ? structuredClone(input.voxelDesign) : null
   };
+}
+
+function deriveGameplayBuildingFromVoxelDesign(voxelDesign, footprint, program = {}) {
+  const sourceSpec = voxelDesign?.generation?.sourceSpec;
+  if (!sourceSpec) return null;
+
+  const defaultPurpose = canonicalGameplayPurpose(
+    voxelDesign.intent?.gameplayPurpose
+      ?? voxelDesign.intent?.purpose
+      ?? program.gameplayPurpose
+      ?? program.purpose,
+    voxelDesign.generation?.mode === "urban_massing" ? "public_service" : "residential"
+  );
+  const defaultMagicRatio = nearestMagicRatio(
+    voxelDesign.intent?.magicRatio
+      ?? voxelDesign.intent?.magicLevel
+      ?? program.attributes?.magicRatio
+      ?? program.attributes?.magicLevel
+  );
+
+  if (voxelDesign.generation?.mode === "floor_stack" && Array.isArray(sourceSpec.floorSpecs) && sourceSpec.floorSpecs.length) {
+    return {
+      floors: sourceSpec.floorSpecs.map((floor) => ({
+        purpose: canonicalGameplayPurpose(floor.purpose, defaultPurpose),
+        magicRatio: nearestMagicRatio(floor.magicRatio ?? defaultMagicRatio)
+      }))
+    };
+  }
+
+  const floorCount = estimateMassingStoreys(sourceSpec);
+  return {
+    floors: Array.from({ length: floorCount }, () => ({
+      purpose: defaultPurpose,
+      magicRatio: defaultMagicRatio
+    }))
+  };
+}
+
+function canonicalGameplayPurpose(value, fallback = "residential") {
+  const text = String(value ?? "").trim().toLowerCase();
+  if (GAMEPLAY_PURPOSES.has(text)) return text;
+  if (/greenhouse|conservatory|glasshouse/.test(text)) return "greenhouse";
+  if (/shop|commercial|retail|market|store|tailor|apothecary/.test(text)) return "commercial";
+  if (/workshop|production|atelier|storage|industry|industrial|laboratory|factory/.test(text)) return "production";
+  if (/public|civic|library|academy|school|hall|ministry|service|institution/.test(text)) return "public_service";
+  if (/home|house|housing|residential|townhouse|cottage|apartment|flat/.test(text)) return "residential";
+  return GAMEPLAY_PURPOSES.has(fallback) ? fallback : "residential";
+}
+
+function nearestMagicRatio(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  const clamped = Math.min(1, Math.max(0, number));
+  return MAGIC_RATIOS.reduce((best, candidate) => (
+    Math.abs(candidate - clamped) < Math.abs(best - clamped) ? candidate : best
+  ), MAGIC_RATIOS[0]);
+}
+
+function estimateMassingStoreys(spec = {}) {
+  const structuralMasses = Array.isArray(spec.masses)
+    ? spec.masses.filter((mass) => mass?.type !== "ground")
+    : [];
+  const highest = Math.max(
+    ...structuralMasses.map((mass) => Number(mass.baseYVoxels ?? 0) + Number(mass.heightVoxels ?? 0)),
+    20
+  );
+  return Math.max(1, Math.round(highest / 20));
 }
 
 export function normalizeConnectionEndpoint(input, label = "endpoint") {
