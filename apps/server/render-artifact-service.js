@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { brotliCompress, constants as zlibConstants } from "node:zlib";
 import { promisify } from "node:util";
@@ -11,6 +11,10 @@ import {
   BAKED_BUILDING_ARTIFACT_VERSION,
   encodeBakedBuildingArtifact
 } from "../../src/render/bakedBuildingArtifact.js";
+import {
+  CITY_ARTIFACT_PACK_VERSION,
+  encodeCityArtifactPack
+} from "../../src/render/cityArtifactPack.js";
 
 const compress = promisify(brotliCompress);
 export const RENDER_ARTIFACT_FORMAT_VERSION = BAKED_BUILDING_ARTIFACT_VERSION;
@@ -21,6 +25,87 @@ export const RENDER_ARTIFACT_STATUS = Object.freeze({
   ready: "ready",
   failed: "failed"
 });
+
+const cityArtifactPackBuilds = new Map();
+
+export function getCityArtifactManifestDigest(manifest = []) {
+  return createHash("sha256").update(JSON.stringify(manifest
+    .map((entry) => ({
+      buildingId: entry.buildingId,
+      designRevision: Number(entry.designRevision),
+      sha256: entry.sha256,
+      byteLength: entry.byteLength == null ? null : Number(entry.byteLength)
+    }))
+    .sort((left, right) => left.buildingId.localeCompare(right.buildingId)))).digest("hex");
+}
+
+export function cityArtifactPackManifest({ cityId, cityVersion, manifest = [] }) {
+  const manifestSha256 = getCityArtifactManifestDigest(manifest);
+  return {
+    schema: "baked-city-artifact-pack-v1",
+    packVersion: CITY_ARTIFACT_PACK_VERSION,
+    cityId,
+    cityVersion: Number(cityVersion),
+    manifestSha256,
+    count: manifest.length,
+    url: `/api/v1/cities/${encodeURIComponent(cityId)}/render-artifacts/pack?version=${encodeURIComponent(String(cityVersion))}&manifest=${encodeURIComponent(manifestSha256)}`
+  };
+}
+
+/**
+ * Build one immutable Brotli-compressed city pack. The callback lets the HTTP
+ * layer reuse its already-loaded city state without another per-building DB
+ * lookup. Missing files are omitted; the client keeps its voxel fallback for
+ * those buildings.
+ */
+export async function buildCityArtifactPack({ config, cityId, cityVersion, state, manifest = [], readArtifact }) {
+  if (!config?.bakedArtifactRoot || !manifest.length) return null;
+  if (typeof readArtifact !== "function") throw new Error("City artifact pack requires an artifact reader");
+  const descriptor = cityArtifactPackManifest({ cityId, cityVersion, manifest });
+  const digest = descriptor.manifestSha256;
+  const root = path.resolve(config.bakedArtifactRoot);
+  const relativePath = path.join(String(cityId), "packs", `${Number(cityVersion)}-${digest}.mtcp.br`);
+  const absolutePath = path.resolve(root, relativePath);
+  if (!isWithin(root, absolutePath)) throw new Error("City artifact pack path escaped configured root");
+  const key = `${absolutePath}`;
+  const pending = cityArtifactPackBuilds.get(key);
+  if (pending) return pending;
+  const build = (async () => {
+    try {
+      const compressedBytes = await readFile(absolutePath);
+      return { compressedBytes, relativePath, manifestSha256: digest, compressedByteLength: compressedBytes.byteLength };
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    const artifacts = (await Promise.all(manifest.map(async (entry) => {
+      try {
+        const building = state?.buildings?.[entry.buildingId];
+        const bytes = await readArtifact(entry, building);
+        return bytes ? { buildingId: entry.buildingId, designRevision: entry.designRevision, sha256: entry.sha256, bytes } : null;
+      } catch {
+        return null;
+      }
+    }))).filter(Boolean);
+    if (!artifacts.length) return null;
+    const rawBytes = encodeCityArtifactPack({ cityId, cityVersion, manifestSha256: digest, artifacts });
+    const compressedBytes = await compress(rawBytes, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 5 } });
+    await mkdir(path.dirname(absolutePath), { recursive: true });
+    const temporaryPath = `${absolutePath}.${process.pid}.${Date.now()}.tmp`;
+    await writeFile(temporaryPath, compressedBytes, { flag: "wx", mode: 0o600 });
+    try {
+      await rename(temporaryPath, absolutePath);
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+    }
+    return { rawBytes, compressedBytes, relativePath, manifestSha256: digest, compressedByteLength: compressedBytes.byteLength };
+  })();
+  cityArtifactPackBuilds.set(key, build);
+  try {
+    return await build;
+  } finally {
+    cityArtifactPackBuilds.delete(key);
+  }
+}
 
 export function getBuildingSourceHash(building) {
   const design = building?.voxelDesign;

@@ -117,7 +117,8 @@ import { createCityDayExperience, phaseLightTarget } from "./ui/cityDayExperienc
 import { createCityDayController } from "./ui/cityDayController.js";
 import { createCityPlacementLayer } from "./ui/cityPlacementLayer.js";
 import { resolvePlacementTarget } from "./ui/placementTargetResolver.js";
-import { loadBakedBuildingArtifact } from "./render/bakedBuildingArtifact.js";
+import { decodeCityArtifactPack } from "./render/cityArtifactPack.js";
+import { decodeBakedBuildingArtifact, sha256Hex } from "./render/bakedBuildingArtifact.js";
 
 const app = document.querySelector("#app");
 const pureViewToggle = document.querySelector("#pure-view-toggle");
@@ -759,7 +760,6 @@ let cityWorkbench = initialCityScenario.workbench;
 let cityViewerAssets = [];
 let cityViewerArtifactManifest = [];
 let cityViewerArtifactManifestKey = "";
-const cityViewerArtifactCache = new Map();
 let cityViewerBakedArtifacts = {};
 let citySeed = configsByMode.map.seed;
 let rebuildVersion = 0;
@@ -1518,7 +1518,7 @@ async function loadCityViewerState({ force = false } = {}) {
       // Preload the immutable building artifacts before the first scene build.
       // Missing or failed entries stay absent and use the authoritative voxel
       // source as a per-building fallback inside the renderer.
-      cityViewerBakedArtifacts = await loadCityBakedArtifacts(cityViewerArtifactManifest);
+      cityViewerBakedArtifacts = await loadCityBakedArtifacts(cityViewerArtifactManifest, payload.artifact_pack);
       await rebuildActive(viewerConfig);
       cityViewerLoadedVersion = payload.city_version;
       syncCityPlacementLayer();
@@ -1540,38 +1540,35 @@ function getCityViewerArtifactManifestKey(manifest) {
     .join("|");
 }
 
-async function loadCityBakedArtifacts(manifest) {
-  const entries = manifest.filter((entry) => entry?.buildingId && entry?.url);
-  if (!entries.length || !cityViewerContext?.token) return {};
-  const loaded = {};
-  let nextIndex = 0;
-  const worker = async () => {
-    while (nextIndex < entries.length) {
-      const entry = entries[nextIndex++];
-      const key = `${entry.cityId}/${entry.buildingId}/${entry.designRevision}/${entry.sha256}`;
-      let pending = cityViewerArtifactCache.get(key);
-      if (!pending) {
-        pending = loadBakedBuildingArtifact(entry, {
-          expected: {
-            cityId: cityViewerContext.cityId,
-            buildingId: entry.buildingId,
-            designRevision: entry.designRevision
-          },
-          fetchImpl: (url, options = {}) => {
-            const requestUrl = new URL(url, window.location.href);
-            const headers = new Headers(options.headers ?? {});
-            if (requestUrl.origin === window.location.origin) headers.set("Authorization", `Bearer ${cityViewerContext.token}`);
-            return fetch(requestUrl, { ...options, headers });
-          }
-        }).then((result) => result.artifact ?? null).catch(() => null);
-        cityViewerArtifactCache.set(key, pending);
-      }
-      const artifact = await pending;
-      if (artifact) loaded[entry.buildingId] = artifact;
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(4, entries.length) }, () => worker()));
-  return loaded;
+async function loadCityBakedArtifacts(manifest, pack) {
+  if (!manifest.length || !pack?.url || !cityViewerContext?.token) return {};
+  try {
+    const requestUrl = new URL(pack.url, window.location.href);
+    const response = await fetch(requestUrl, {
+      headers: { Authorization: `Bearer ${cityViewerContext.token}`, Accept: "application/octet-stream" },
+      cache: "force-cache"
+    });
+    if (!response.ok) throw new Error(`artifact pack HTTP ${response.status}`);
+    const packed = decodeCityArtifactPack(new Uint8Array(await response.arrayBuffer()), {
+      cityId: cityViewerContext.cityId,
+      cityVersion: pack.cityVersion,
+      manifestSha256: pack.manifestSha256
+    });
+    const manifestByBuilding = new Map(manifest.map((entry) => [entry.buildingId, entry]));
+    const loadedEntries = await Promise.all(packed.entries.map(async (entry) => {
+      const expected = manifestByBuilding.get(entry.buildingId);
+      if (!expected || expected.sha256.toLowerCase() !== String(entry.sha256).toLowerCase()) return null;
+      if (await sha256Hex(entry.bytes) !== String(entry.sha256).toLowerCase()) return null;
+      const artifact = decodeBakedBuildingArtifact(entry.bytes);
+      if (artifact.buildingId !== entry.buildingId || Number(artifact.designRevision) !== Number(entry.designRevision)) return null;
+      return [entry.buildingId, artifact];
+    }));
+    return Object.fromEntries(loadedEntries.filter(Boolean));
+  } catch {
+    // A missing or invalid pack leaves all buildings on the authoritative
+    // voxel source path; it must never make the city viewer unusable.
+    return {};
+  }
 }
 
 function renderCityViewerSummary(payload) {
