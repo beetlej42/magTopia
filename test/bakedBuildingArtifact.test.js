@@ -17,7 +17,8 @@ import {
 import {
   CITY_ARTIFACT_PACK_VERSION,
   decodeCityArtifactPack,
-  encodeCityArtifactPack
+  encodeCityArtifactPack,
+  readCityArtifactPackResponse
 } from "../src/render/cityArtifactPack.js";
 import { createApp } from "../apps/server/app.js";
 import { createOpenApiDocument } from "../apps/server/openapi.js";
@@ -124,6 +125,27 @@ test("city artifact pack preserves identity, manifest digest and independent MTB
   assert.equal(decodeBakedBuildingArtifact(decoded.entries[0].bytes).buildingId, "building-a");
   assert.equal(decodeBakedBuildingArtifact(decoded.entries[1].bytes).buildingId, "building-b");
   assert.throws(() => decodeCityArtifactPack(pack, { cityVersion: 10 }), /version mismatch/);
+});
+
+test("city artifact pack stream reports decoded byte progress from its own header", async () => {
+  const pack = encodeCityArtifactPack({
+    cityId: "city-progress",
+    cityVersion: 3,
+    manifestSha256: "c".repeat(64),
+    artifacts: [{ buildingId: "building-a", designRevision: 2, sha256: "a".repeat(64), bytes: fixtureArtifact("building-a", 2) }]
+  });
+  const progress = [];
+  const response = new Response(new ReadableStream({
+    start(controller) {
+      for (let offset = 0; offset < pack.byteLength; offset += 37) controller.enqueue(pack.slice(offset, offset + 37));
+      controller.close();
+    }
+  }));
+  const streamed = await readCityArtifactPackResponse(response, { onProgress: (value) => progress.push(value) });
+  assert.deepEqual(streamed, pack);
+  assert.ok(progress.length > 2);
+  assert.equal(progress.at(-1), 1);
+  assert.ok(progress.every((value, index) => index === 0 || value >= progress[index - 1]));
 });
 
 test("manifest validation rejects identity/version/hash/source mismatches", () => {

@@ -11,7 +11,7 @@ test("city viewer refreshes on demand instead of polling render-state", () => {
   assert.match(mainSource, /function refreshCityViewer\(\{ force = false \} = \{\}\)/);
   assert.match(mainSource, /cityViewerRefreshInFlight/);
   assert.match(mainSource, /artifactManifestChanged/);
-  assert.match(mainSource, /cityViewerBakedArtifacts = await loadCityBakedArtifacts\(cityViewerArtifactManifest, payload\.artifact_pack\);/);
+  assert.match(mainSource, /cityViewerBakedArtifacts = await loadCityBakedArtifacts\(\s*cityViewerArtifactManifest,\s*payload\.artifact_pack,/s);
   assert.match(mainSource, /await rebuildActive\(viewerConfig\);/);
   assert.match(mainSource, /decodeCityArtifactPack/);
   assert.doesNotMatch(mainSource, /Math\.min\(4, entries\.length\)/);
@@ -32,7 +32,9 @@ test("city routes show a dedicated loader and skip the default city build", () =
 
 test("city loader advances through artifacts, scene build, and first paint", () => {
   assert.match(mainSource, /setCityViewerLoadingProgress\(42, "正在加载建筑模型…"\);[\s\S]*loadCityBakedArtifacts/);
-  assert.match(mainSource, /setCityViewerLoadingProgress\(72, "正在构建城市地形…"\);[\s\S]*await rebuildActive\(viewerConfig\);/);
+  assert.match(mainSource, /startCityViewerLoadingProgressDrift\(68\)/);
+  assert.match(mainSource, /readCityArtifactPackResponse/);
+  assert.match(mainSource, /setCityViewerLoadingProgress\(72, "正在构建城市地形…"\);\s*await waitForAnimationFrame\(\);[\s\S]*await rebuildActive\(viewerConfig\);/);
   assert.match(mainSource, /setCityViewerLoadingProgress\(94, "正在绘制精细建筑与阴影…"\);\s*await waitForCityViewerFirstPaint\(\);\s*setCityViewerLoadingProgress\(100, "城市已就绪"\);\s*}\s*document\.documentElement\.dataset\.magicTownViewer = "ready";/s);
-  assert.match(mainSource, /requestAnimationFrame\(\(\) => requestAnimationFrame\(resolve\)\)/);
+  assert.match(mainSource, /return waitForAnimationFrame\(\)\.then\(waitForAnimationFrame\);/);
 });

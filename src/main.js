@@ -117,7 +117,7 @@ import { createCityDayExperience, phaseLightTarget } from "./ui/cityDayExperienc
 import { createCityDayController } from "./ui/cityDayController.js";
 import { createCityPlacementLayer } from "./ui/cityPlacementLayer.js";
 import { resolvePlacementTarget } from "./ui/placementTargetResolver.js";
-import { decodeCityArtifactPack } from "./render/cityArtifactPack.js";
+import { decodeCityArtifactPack, readCityArtifactPackResponse } from "./render/cityArtifactPack.js";
 import { decodeBakedBuildingArtifact, sha256Hex } from "./render/bakedBuildingArtifact.js";
 
 const app = document.querySelector("#app");
@@ -771,6 +771,8 @@ let rebuildVersion = 0;
 let cityViewerLoadedVersion = null;
 let cityViewerLoading = false;
 let cityViewerRefreshInFlight = null;
+let cityViewerLoadingProgressValue = 4;
+let cityViewerLoadingDriftFrame = null;
 let cityViewerRuntimeState = null;
 let cityDayExperience = null;
 let cityDayController = null;
@@ -1529,8 +1531,27 @@ async function loadCityViewerState({ force = false } = {}) {
       // Missing or failed entries stay absent and use the authoritative voxel
       // source as a per-building fallback inside the renderer.
       if (initialLoad) setCityViewerLoadingProgress(42, "正在加载建筑模型…");
-      cityViewerBakedArtifacts = await loadCityBakedArtifacts(cityViewerArtifactManifest, payload.artifact_pack);
-      if (initialLoad) setCityViewerLoadingProgress(72, "正在构建城市地形…");
+      const stopArtifactProgressDrift = initialLoad ? startCityViewerLoadingProgressDrift(68) : () => {};
+      let artifactProgressStart = null;
+      try {
+        cityViewerBakedArtifacts = await loadCityBakedArtifacts(
+          cityViewerArtifactManifest,
+          payload.artifact_pack,
+          initialLoad
+            ? (fraction) => {
+                artifactProgressStart ??= cityViewerLoadingProgressValue;
+                const progress = artifactProgressStart + (70 - artifactProgressStart) * fraction;
+                if (progress > cityViewerLoadingProgressValue) setCityViewerLoadingProgress(progress);
+              }
+            : null
+        );
+      } finally {
+        stopArtifactProgressDrift();
+      }
+      if (initialLoad) {
+        setCityViewerLoadingProgress(72, "正在构建城市地形…");
+        await waitForAnimationFrame();
+      }
       await rebuildActive(viewerConfig);
       cityViewerLoadedVersion = payload.city_version;
       syncCityPlacementLayer();
@@ -1552,16 +1573,39 @@ async function loadCityViewerState({ force = false } = {}) {
 function setCityViewerLoadingProgress(value, message) {
   if (!cityViewerContext || !cityLoadingScreen) return;
   const progress = Math.round(THREE.MathUtils.clamp(Number(value) || 0, 0, 100));
+  cityViewerLoadingProgressValue = progress;
   cityLoadingProgress.style.width = `${progress}%`;
   cityLoadingTrack.setAttribute("aria-valuenow", String(progress));
   cityLoadingPercent.textContent = `${progress}%`;
   if (message) cityLoadingStatus.textContent = message;
 }
 
+function startCityViewerLoadingProgressDrift(ceiling) {
+  stopCityViewerLoadingProgressDrift();
+  const startedAt = performance.now();
+  const startingProgress = cityViewerLoadingProgressValue;
+  const update = (now) => {
+    const elapsedSteps = Math.floor((now - startedAt) / 800);
+    const nextProgress = Math.min(ceiling, startingProgress + elapsedSteps);
+    if (nextProgress > cityViewerLoadingProgressValue) setCityViewerLoadingProgress(nextProgress);
+    if (cityViewerLoadingProgressValue < ceiling) cityViewerLoadingDriftFrame = requestAnimationFrame(update);
+  };
+  cityViewerLoadingDriftFrame = requestAnimationFrame(update);
+  return stopCityViewerLoadingProgressDrift;
+}
+
+function stopCityViewerLoadingProgressDrift() {
+  if (cityViewerLoadingDriftFrame === null) return;
+  cancelAnimationFrame(cityViewerLoadingDriftFrame);
+  cityViewerLoadingDriftFrame = null;
+}
+
+function waitForAnimationFrame() {
+  return new Promise((resolve) => requestAnimationFrame(resolve));
+}
+
 function waitForCityViewerFirstPaint() {
-  return new Promise((resolve) => {
-    requestAnimationFrame(() => requestAnimationFrame(resolve));
-  });
+  return waitForAnimationFrame().then(waitForAnimationFrame);
 }
 
 function getCityViewerArtifactManifestKey(manifest) {
@@ -1572,7 +1616,7 @@ function getCityViewerArtifactManifestKey(manifest) {
     .join("|");
 }
 
-async function loadCityBakedArtifacts(manifest, pack) {
+async function loadCityBakedArtifacts(manifest, pack, onProgress) {
   if (!manifest.length || !pack?.url || !cityViewerContext?.token) return {};
   try {
     const requestUrl = new URL(pack.url, window.location.href);
@@ -1581,20 +1625,32 @@ async function loadCityBakedArtifacts(manifest, pack) {
       cache: "force-cache"
     });
     if (!response.ok) throw new Error(`artifact pack HTTP ${response.status}`);
-    const packed = decodeCityArtifactPack(new Uint8Array(await response.arrayBuffer()), {
+    onProgress?.(0.08);
+    const packBytes = await readCityArtifactPackResponse(response, {
+      onProgress: (fraction) => onProgress?.(0.08 + fraction * 0.56)
+    });
+    onProgress?.(0.66);
+    const packed = decodeCityArtifactPack(packBytes, {
       cityId: cityViewerContext.cityId,
       cityVersion: pack.cityVersion,
       manifestSha256: pack.manifestSha256
     });
     const manifestByBuilding = new Map(manifest.map((entry) => [entry.buildingId, entry]));
+    let completedEntries = 0;
     const loadedEntries = await Promise.all(packed.entries.map(async (entry) => {
-      const expected = manifestByBuilding.get(entry.buildingId);
-      if (!expected || expected.sha256.toLowerCase() !== String(entry.sha256).toLowerCase()) return null;
-      if (await sha256Hex(entry.bytes) !== String(entry.sha256).toLowerCase()) return null;
-      const artifact = decodeBakedBuildingArtifact(entry.bytes);
-      if (artifact.buildingId !== entry.buildingId || Number(artifact.designRevision) !== Number(entry.designRevision)) return null;
-      return [entry.buildingId, artifact];
+      try {
+        const expected = manifestByBuilding.get(entry.buildingId);
+        if (!expected || expected.sha256.toLowerCase() !== String(entry.sha256).toLowerCase()) return null;
+        if (await sha256Hex(entry.bytes) !== String(entry.sha256).toLowerCase()) return null;
+        const artifact = decodeBakedBuildingArtifact(entry.bytes);
+        if (artifact.buildingId !== entry.buildingId || Number(artifact.designRevision) !== Number(entry.designRevision)) return null;
+        return [entry.buildingId, artifact];
+      } finally {
+        completedEntries += 1;
+        onProgress?.(0.66 + (completedEntries / Math.max(1, packed.entries.length)) * 0.34);
+      }
     }));
+    if (!packed.entries.length) onProgress?.(1);
     return Object.fromEntries(loadedEntries.filter(Boolean));
   } catch {
     // A missing or invalid pack leaves all buildings on the authoritative
