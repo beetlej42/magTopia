@@ -651,6 +651,11 @@ const cityViewerToken = document.querySelector("#city-viewer-token");
 const cityViewerConnect = document.querySelector("#city-viewer-connect");
 const cityViewerSummary = document.querySelector("#city-viewer-summary");
 const cityViewerResources = document.querySelector("#city-viewer-resources");
+const cityLoadingScreen = document.querySelector("#city-loading-screen");
+const cityLoadingTrack = document.querySelector("#city-loading-track");
+const cityLoadingProgress = document.querySelector("#city-loading-progress");
+const cityLoadingStatus = document.querySelector("#city-loading-status");
+const cityLoadingPercent = document.querySelector("#city-loading-percent");
 const districtCompass = document.querySelector("#district-compass");
 const districtCompassNeedle = document.querySelector("#district-compass-needle");
 const sliderInputs = new Map();
@@ -777,10 +782,10 @@ let lastRuntimeDiagnosticsAt = 0;
 
 initializeUi();
 bindUi();
-rebuildActive(currentConfig);
+if (cityViewerContext) initializeCityViewer();
+else void rebuildActive(currentConfig);
 if (frontendSurface === "studio") exposeAgentApi();
 animate();
-if (cityViewerContext) initializeCityViewer();
 
 function initializeUi() {
   panelTitle.textContent = frontendSurface === "player" ? "MAGTOPIA City" : "MAGTOPIA Studio";
@@ -1371,6 +1376,7 @@ function resolveCityViewerContext() {
 }
 
 function initializeCityViewer() {
+  setCityViewerLoadingProgress(8, "正在连接城市…");
   cityViewerPanel.hidden = false;
   cityViewerToken.value = cityViewerContext.token;
   cityDayExperienceActive = frontendSurface === "player";
@@ -1478,14 +1484,18 @@ function syncCityPlacementLayer() {
 async function loadCityViewerState({ force = false } = {}) {
   if (cityViewerLoading || !cityViewerContext?.token) return;
   cityViewerLoading = true;
+  const initialLoad = cityViewerLoadedVersion === null;
+  if (initialLoad) setCityViewerLoadingProgress(12, "正在读取城市存档…");
   cityViewerStatus.textContent = cityViewerLoadedVersion === null ? "正在连接城市存档…" : "正在检查城市变化…";
   try {
     const response = await fetch(`/api/v1/cities/${encodeURIComponent(cityViewerContext.cityId)}/render-state`, {
       headers: { Authorization: `Bearer ${cityViewerContext.token}` },
       cache: "no-store"
     });
+    if (initialLoad) setCityViewerLoadingProgress(25, "正在接收城市状态…");
     const payload = await response.json();
     if (!response.ok) throw new Error(`${payload.code ?? response.status}: ${payload.message ?? "无法读取城市"}`);
+    if (initialLoad) setCityViewerLoadingProgress(36, "正在整理城市布局…");
     const nextAssets = Array.isArray(payload.assets) ? payload.assets : [];
     const nextArtifactManifest = Array.isArray(payload.artifact_manifest) ? payload.artifact_manifest : [];
     const nextArtifactManifestKey = getCityViewerArtifactManifestKey(nextArtifactManifest);
@@ -1518,18 +1528,40 @@ async function loadCityViewerState({ force = false } = {}) {
       // Preload the immutable building artifacts before the first scene build.
       // Missing or failed entries stay absent and use the authoritative voxel
       // source as a per-building fallback inside the renderer.
+      if (initialLoad) setCityViewerLoadingProgress(42, "正在加载建筑模型…");
       cityViewerBakedArtifacts = await loadCityBakedArtifacts(cityViewerArtifactManifest, payload.artifact_pack);
+      if (initialLoad) setCityViewerLoadingProgress(72, "正在构建城市地形…");
       await rebuildActive(viewerConfig);
       cityViewerLoadedVersion = payload.city_version;
       syncCityPlacementLayer();
     }
     renderCityViewerSummary(payload);
+    if (initialLoad) {
+      setCityViewerLoadingProgress(94, "正在绘制精细建筑与阴影…");
+      await waitForCityViewerFirstPaint();
+      setCityViewerLoadingProgress(100, "城市已就绪");
+    }
     document.documentElement.dataset.magicTownViewer = "ready";
   } catch (error) {
     showCityViewerAuth(error.message);
   } finally {
     cityViewerLoading = false;
   }
+}
+
+function setCityViewerLoadingProgress(value, message) {
+  if (!cityViewerContext || !cityLoadingScreen) return;
+  const progress = Math.round(THREE.MathUtils.clamp(Number(value) || 0, 0, 100));
+  cityLoadingProgress.style.width = `${progress}%`;
+  cityLoadingTrack.setAttribute("aria-valuenow", String(progress));
+  cityLoadingPercent.textContent = `${progress}%`;
+  if (message) cityLoadingStatus.textContent = message;
+}
+
+function waitForCityViewerFirstPaint() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  });
 }
 
 function getCityViewerArtifactManifestKey(manifest) {
