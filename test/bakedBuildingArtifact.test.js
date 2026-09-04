@@ -403,12 +403,22 @@ test("design confirmation enqueues a waiting bake until a new building is landed
         site: { lot_id: cell.id, footprint: "1x1" }
       }
     }), 201);
+    assert.equal(draft.agent_handoff.next_action.url, `${config.publicBaseUrl}/api/v1/cities/${city.id}/building-designs/${draft.id}/confirm`);
+    assert.deepEqual(draft.agent_handoff.next_action.body, { expected_revision: draft.revision });
     const confirmed = await json(app, auth(player, {
       method: "POST",
       url: `/api/v1/cities/${city.id}/building-designs/${draft.id}/confirm`,
       payload: { expected_revision: draft.revision }
     }), 200);
     assert.equal(confirmed.status, "confirmed");
+    assert.deepEqual(confirmed.agent_handoff.preview.body, {
+      expected_city_version: city.city_version,
+      design_id: confirmed.id,
+      design_revision: confirmed.revision,
+      design_hash: confirmed.specHash
+    });
+    assert.deepEqual(confirmed.agent_handoff.order.body, confirmed.agent_handoff.preview.body);
+    assert.equal(confirmed.agent_handoff.order.headers["Idempotency-Key"], `build-${confirmed.id}-r${confirmed.revision}-v${city.city_version}`);
     const claimed = await repository.claimNextRenderArtifactJob();
     assert.equal(claimed.job.status, "processing");
     assert.equal(claimed.job.buildingId, null);

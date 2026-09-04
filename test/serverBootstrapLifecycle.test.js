@@ -30,6 +30,7 @@ test("bootstrap is a read-only no-card turn and Turn 1 receives the first canoni
     assert.equal(snapshot.bootstrap.progress.gatewayNodeId, "old_town_entry");
     assert.ok(snapshot.bootstrap.progress.gatewayLocation.cell_id);
     assert.equal(snapshot.agent_turn_plan.next_action.url.endsWith("/districts"), true);
+    assert.equal(snapshot.agent_turn_plan.next_action.headers["Idempotency-Key"], `bootstrap-district-v${snapshot.city_version}`);
     const starterBounds = snapshot.agent_turn_plan.next_action.body.bounds;
     assert.equal(starterBounds.maxColumn - starterBounds.minColumn + 1, 5);
     assert.equal(starterBounds.maxRow - starterBounds.minRow + 1, 6);
@@ -110,6 +111,7 @@ test("bootstrap is a read-only no-card turn and Turn 1 receives the first canoni
       payload: { expected_city_version: unlocked.city_version }
     }), 200);
     assert.equal(settled.status, "resolved");
+    assert.ok(settled.agent_turn_plan?.next_action, "resolve returns the next handoff without a follow-up strategy read");
     assert.equal(settled.facts.turnKind, "bootstrap");
     assert.equal(settled.facts.choiceStatus, "not_applicable");
     assert.equal(settled.facts.selectedCardId, null);

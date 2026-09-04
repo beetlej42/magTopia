@@ -393,7 +393,11 @@ export async function createApp({ repository, config, logger = false, now = () =
     const principal = await authenticate(repository, request, "city:build");
     const input = request.body ?? {};
     const draft = designDomainCall(() => createBuildingDesignDraft(input, buildingDesignContext(principal, createId("design"))));
-    return reply.code(201).send(await repository.createBuildingDesign(principal, request.params.cityId, draft));
+    const response = await repository.createBuildingDesign(principal, request.params.cityId, draft);
+    return reply.code(201).send({
+      ...response,
+      agent_handoff: designConfirmationHandoff(response, request.params.cityId, config)
+    });
   });
 
   app.get("/api/v1/cities/:cityId/building-designs/:designId", async (request) => {
@@ -406,7 +410,11 @@ export async function createApp({ repository, config, logger = false, now = () =
     const current = await repository.getBuildingDesign(principal, request.params.cityId, request.params.designId);
     const expectedRevision = request.body?.expected_revision ?? request.body?.expectedRevision;
     const revised = designDomainCall(() => reviseBuildingDesign(current, request.body ?? {}, buildingDesignContext(principal)));
-    return reply.code(201).send(await repository.appendBuildingDesignRevision(principal, request.params.cityId, revised, expectedRevision));
+    const response = await repository.appendBuildingDesignRevision(principal, request.params.cityId, revised, expectedRevision);
+    return reply.code(201).send({
+      ...response,
+      agent_handoff: designConfirmationHandoff(response, request.params.cityId, config)
+    });
   });
 
   app.post("/api/v1/cities/:cityId/building-designs/:designId/confirm", async (request) => {
@@ -416,7 +424,11 @@ export async function createApp({ repository, config, logger = false, now = () =
     const confirmed = designDomainCall(() => confirmBuildingDesign(current, request.body ?? {}, buildingDesignContext(principal)));
     const response = await repository.confirmBuildingDesign(principal, request.params.cityId, confirmed, expectedRevision);
     await enqueueConfirmedRenderArtifact(repository, request.params.cityId, confirmed);
-    return response;
+    const { row } = await repository.getCity(principal, request.params.cityId);
+    return {
+      ...response,
+      agent_handoff: confirmedDesignConstructionHandoff(response, request.params.cityId, Number(row.city_version), config)
+    };
   });
 
   app.post("/api/v1/cities/:cityId/buildings/:buildingId/upgrade-designs", async (request, reply) => {
@@ -813,9 +825,11 @@ export async function createApp({ repository, config, logger = false, now = () =
       // retries once the gate elapses. This is the same schedule the scheduler
       // would lazily seed, so whichever runs first wins and the other no-ops.
       if (!CLOSED_TURN_STATUSES.has(gameplay.turnStatus) && gameplay.nextTurnUnlockAt == null) {
-        const initialized = initializeTurnSchedule(state, now(), config);
+        const nowValue = now();
+        const initialized = initializeTurnSchedule(state, nowValue, config);
         if (initialized) {
           const gate = initialized.gameplay.nextTurnUnlockAt;
+          const wait = turnCooldownHandoff(request.params.cityId, initialized, gate, config, nowValue);
           return {
             nextState: initialized,
             response: {
@@ -825,13 +839,18 @@ export async function createApp({ repository, config, logger = false, now = () =
               message: "The turn was not scheduled yet, so its cooldown gate was written now. Wait until next_turn_unlock_at and resolve again.",
               next_turn_unlock_at: gate,
               city_version_after: initialized.version,
+              retryable: true,
+              retry_after_seconds: wait.retry_after_seconds,
+              agent_turn_plan: wait.agent_turn_plan,
               errors: [{ code: "TURN_NOT_UNLOCKED", message: `Turn ${state.turn} just received its cooldown gate; resolution unlocks at ${gate}` }]
             }
           };
         }
       }
-      if (isTurnResolveLocked(state, now())) {
+      const nowValue = now();
+      if (isTurnResolveLocked(state, nowValue)) {
         const nextTurnUnlockAt = state.gameplay?.nextTurnUnlockAt ?? null;
+        const wait = turnCooldownHandoff(request.params.cityId, state, nextTurnUnlockAt, config, nowValue);
         return {
           nextState: null,
           response: {
@@ -841,6 +860,9 @@ export async function createApp({ repository, config, logger = false, now = () =
             message: "The turn cannot be resolved before its cooldown gate elapses; wait until next_turn_unlock_at and resolve again.",
             next_turn_unlock_at: nextTurnUnlockAt,
             city_version_after: state.version,
+            retryable: true,
+            retry_after_seconds: wait.retry_after_seconds,
+            agent_turn_plan: wait.agent_turn_plan,
             errors: [{ code: "TURN_NOT_UNLOCKED", message: `Turn ${state.turn} is still cooling down; resolution unlocks at ${nextTurnUnlockAt ?? "a server-assigned time"}` }]
           }
         };
@@ -859,7 +881,8 @@ export async function createApp({ repository, config, logger = false, now = () =
           city_version_after: nextState.version,
           turn: nextState.turn,
           facts: result.facts,
-          strategy: strategyPayload(nextState)
+          strategy: strategyPayload(nextState),
+          agent_turn_plan: agentTurnPlan({ id: request.params.cityId, city_version: nextState.version }, nextState, config, now())
         }
       };
     });
@@ -1833,6 +1856,7 @@ function agentTurnPlan(row, state, config, nowValue) {
       ? {
           method: "POST",
           url: `${cityBase}/districts`,
+          headers: { "Idempotency-Key": `bootstrap-district-v${cityVersion}` },
           body: { expected_city_version: cityVersion, name: "Gateway Quarter", purpose: "starter housing and local commerce", bounds: starterDistrictBounds(state, gateway) },
           success: "Continue with the returned city_version_after and district.id."
         }
@@ -1840,6 +1864,7 @@ function agentTurnPlan(row, state, config, nowValue) {
         ? {
             method: "POST",
             url: `${cityBase}/connections`,
+            headers: { "Idempotency-Key": `bootstrap-gateway-road-v${cityVersion}` },
             body: { expected_city_version: cityVersion, from: { kind: "node", id: "old_town_entry" }, to: { kind: "cell", id: starterRoadTarget(state, gateway, activeDistrict) }, mode: "road", actor_note: "connect the starter quarter to the city gateway" },
             success: "Use city_version_after, then search a 1x1 site in the active district."
           }
@@ -1862,8 +1887,8 @@ function agentTurnPlan(row, state, config, nowValue) {
       ],
       construction_sequence: ["site-searches", "building-designs", "building-designs/{design_id}/confirm", "construction-previews", "construction-orders"],
       resolve_when_ready: progress.readyForMeaningfulFirstResolve
-        ? { method: "POST", url: `${cityBase}/strategy/resolve`, body: { expected_city_version: cityVersion, assignments: [] } }
-        : { method: "POST", url: `${cityBase}/strategy/resolve`, instruction: "After both starter builds succeed, use the latest city_version_after as expected_city_version and submit assignments: []." }
+        ? { method: "POST", url: `${cityBase}/strategy/resolve`, headers: { "Idempotency-Key": `resolve-turn-${state.turn}-v${cityVersion}` }, body: { expected_city_version: cityVersion, assignments: [] } }
+        : { method: "POST", url: `${cityBase}/strategy/resolve`, instruction: "After both starter builds succeed, use the latest city_version_after as expected_city_version and use a new Idempotency-Key containing that version." }
     };
   }
   const gameplay = state.gameplay ?? {};
@@ -1878,9 +1903,64 @@ function agentTurnPlan(row, state, config, nowValue) {
   } else if (isTurnResolveLocked(state, nowValue)) {
     nextAction = { method: "WAIT", until: gameplay.nextTurnUnlockAt, instruction: "The turn is complete but cooldown-locked; wait instead of adding low-value work." };
   } else {
-    nextAction = { method: "POST", url: `${cityBase}/strategy/resolve`, body: { expected_city_version: cityVersion, assignments: [] } };
+    nextAction = { method: "POST", url: `${cityBase}/strategy/resolve`, headers: { "Idempotency-Key": `resolve-turn-${state.turn}-v${cityVersion}` }, body: { expected_city_version: cityVersion, assignments: [] } };
   }
   return { objective: "Apply the player card, handle incidents or delegated placements, make one useful development step, then resolve.", version_rule: versionRule, next_action: nextAction };
+}
+
+function designConfirmationHandoff(design, cityId, config) {
+  return {
+    instruction: "Send this exact request next; do not retype the design id or revision.",
+    next_action: {
+      method: "POST",
+      url: `${config.publicBaseUrl}/api/v1/cities/${cityId}/building-designs/${design.id}/confirm`,
+      body: { expected_revision: design.revision }
+    }
+  };
+}
+
+function confirmedDesignConstructionHandoff(design, cityId, cityVersion, config) {
+  const cityBase = `${config.publicBaseUrl}/api/v1/cities/${cityId}`;
+  const body = {
+    expected_city_version: cityVersion,
+    design_id: design.id,
+    design_revision: design.revision,
+    design_hash: design.specHash
+  };
+  return {
+    instruction: "Copy this body unchanged: preview it once, then submit the same body as the construction order.",
+    preview: { method: "POST", url: `${cityBase}/construction-previews`, body },
+    order: {
+      method: "POST",
+      url: `${cityBase}/construction-orders`,
+      headers: { "Idempotency-Key": `build-${design.id}-r${design.revision}-v${cityVersion}` },
+      body
+    }
+  };
+}
+
+function turnCooldownHandoff(cityId, state, unlockAt, config, nowValue) {
+  const cityVersion = Number(state.version ?? 0);
+  const retryAfterSeconds = unlockAt
+    ? Math.max(1, Math.ceil((new Date(unlockAt).getTime() - new Date(nowValue).getTime()) / 1000))
+    : 1;
+  return {
+    retry_after_seconds: retryAfterSeconds,
+    agent_turn_plan: {
+      objective: "Wait for the authoritative cooldown. Do not retry before the stated time.",
+      next_action: {
+        method: "WAIT",
+        until: unlockAt,
+        duration_seconds: retryAfterSeconds,
+        then: {
+          method: "POST",
+          url: `${config.publicBaseUrl}/api/v1/cities/${cityId}/strategy/resolve`,
+          headers: { "Idempotency-Key": `resolve-turn-${state.turn}-v${cityVersion}` },
+          body: { expected_city_version: cityVersion, assignments: [] }
+        }
+      }
+    }
+  };
 }
 
 function starterDistrictBounds(state, gateway) {

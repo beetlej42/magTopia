@@ -114,6 +114,11 @@ test("a fresh city is gated by its cooldown from creation even before the first 
     assert.equal(locked.statusCode, 422);
     assert.equal(locked.json().code, "TURN_NOT_UNLOCKED");
     assert.equal(locked.json().next_turn_unlock_at, before.next_turn_unlock_at, "the gate is the one written at creation");
+    assert.equal(locked.json().retryable, true);
+    assert.equal(locked.json().retry_after_seconds, TURN_COOLDOWN_SECONDS);
+    assert.equal(locked.json().agent_turn_plan.next_action.method, "WAIT");
+    assert.equal(locked.json().agent_turn_plan.next_action.then.body.expected_city_version, before.city_version);
+    assert.equal(locked.json().agent_turn_plan.next_action.then.headers["Idempotency-Key"], `resolve-turn-0-v${before.city_version}`);
 
     const scheduled = await repository.getCityForScheduler(city.id);
     assert.equal(scheduled.state.gameplay.nextTurnUnlockAt, before.next_turn_unlock_at);
@@ -129,6 +134,7 @@ test("a fresh city is gated by its cooldown from creation even before the first 
     }), 200);
     assert.equal(settled.status, "resolved");
     assert.equal(settled.turn, 1);
+    assert.ok(settled.agent_turn_plan, "the resolved response carries the next turn handoff");
   } finally {
     await app.close();
   }
@@ -156,6 +162,8 @@ test("resolve before the cooldown elapses is rejected with TURN_NOT_UNLOCKED and
     assert.equal(locked.statusCode, 422, "a pre-unlock resolve is rejected");
     assert.equal(locked.json().code, "TURN_NOT_UNLOCKED");
     assert.equal(locked.json().next_turn_unlock_at, before.next_turn_unlock_at);
+    assert.equal(locked.json().retry_after_seconds, 10);
+    assert.equal(locked.json().agent_turn_plan.next_action.duration_seconds, 10);
 
     const untouched = await repository.getCityForScheduler(city.id);
     assert.equal(untouched.state.turn, 0, "a rejected resolve advances nothing");

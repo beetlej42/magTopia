@@ -34,10 +34,10 @@ The core loop is: `player choice → Agent planning/building → gameplay state 
 ## Recommended decision loop
 
 1. `GET /api/v1/cities/{city_id}/snapshot`.
-2. Follow `agent_turn_plan.next_action`; it already carries the current city version and the shortest safe next request.
+2. Follow `agent_turn_plan.next_action`; it already carries the current city version, a collision-safe `Idempotency-Key` for mutations, and the shortest safe next request.
 3. For construction, use only: `site-searches → building-designs → confirm → construction-previews → construction-orders`. Candidates are ordered by road frontage, road distance, then gateway proximity; start with `data[0]` unless the district intention requires another site.
 4. Pass the candidate's `anchor_cell_id`, `footprint`, and `recommendedEntrance` into the BuildingDesign. The confirmed design owns site, entrance, program, functional area, asset and visual data.
-5. Submit mutations with a unique `Idempotency-Key`, then carry `city_version_after` directly into the next mutation. Do not reread between successful mutations.
+5. Submit mutations with the supplied unique `Idempotency-Key`, then carry `city_version_after` directly into the next mutation. Do not reread between successful mutations. BuildingDesign responses expose `agent_handoff`; copy those URLs, bodies, and headers unchanged instead of transcribing design identifiers.
 6. On `CITY_VERSION_CONFLICT`, use `details.current_city_version`, reread `/strategy` once, rebuild the request, and retry once. Never blindly replay the old body.
 7. Read `/events?after_version=...` only when you need an audit trail; snapshot and strategy already provide the normal turn loop.
 
@@ -143,7 +143,7 @@ The Agent API exposes one construction contract. Create and confirm a BuildingDe
 }
 ```
 
-Do not submit `site`, `program`, `gameplay_building`, functional area, asset selection, cost, or renderer data here. The confirmed BuildingDesign is authoritative for those fields. The snapshot price guide is an estimate; the preview is the exact quote. If the preview is feasible, reuse this minimal body for the order with the latest `expected_city_version` and a unique `Idempotency-Key`.
+Do not submit `site`, `program`, `gameplay_building`, functional area, asset selection, cost, or renderer data here. The confirmed BuildingDesign is authoritative for those fields. The snapshot price guide is an estimate; the preview is the exact quote. The create/revise response's `agent_handoff.next_action` is the exact confirmation request. The confirmation response's `agent_handoff.preview` and `agent_handoff.order` contain the authoritative minimal body and order key; copy them unchanged to avoid design-id, hash, version, or idempotency transcription errors.
 
 ## Construction principles
 
@@ -228,9 +228,9 @@ The system settles the pending assignments through the same deterministic simula
 - `facts.exposureChanges` — per-building exposure movement;
 - `strategy` — the post-settlement incident and officer state.
 
-A resolved turn is never settled twice. Replaying an `Idempotency-Key` returns the original response, and a fresh resolve request after settlement is rejected with `TURN_ALREADY_RESOLVED`. Read `/strategy` again to inspect the frozen facts and the latest incident/officer state. Incidents generated during a settlement belong to the next turn.
+A resolved turn is never settled twice. Replaying an `Idempotency-Key` returns the original response, and a fresh resolve request after settlement is rejected with `TURN_ALREADY_RESOLVED`. A successful resolve response already includes the next `agent_turn_plan`, so do not fetch `/strategy` merely to learn the next action. Incidents generated during a settlement belong to the next turn.
 
-The turn is then `resolved` and waits for its cooldown slot. Resolving is a deliberate act: a turn can only be resolved once `nextTurnUnlockAt` has elapsed, and it must be resolved through the normal flow — the server never settles it automatically. If the turn is locked, the resolve request is rejected with `TURN_NOT_UNLOCKED` and its `next_turn_unlock_at`. Once you have resolved, the next turn opens at the unlock slot; many offline days never backfill many turns or many incomes.
+The turn is then `resolved` and waits for its cooldown slot. Resolving is a deliberate act: a turn can only be resolved once `nextTurnUnlockAt` has elapsed, and it must be resolved through the normal flow — the server never settles it automatically. If the turn is locked, the resolve request is rejected with `TURN_NOT_UNLOCKED`, `retry_after_seconds`, and an `agent_turn_plan` containing one exact WAIT-then-retry action with a fresh idempotency key. Do not retry before that time. Once you have resolved, the next turn opens at the unlock slot; many offline days never backfill many turns or many incomes.
 
 ## Owl Daily newspaper: report the city, don't reprint its ledger
 

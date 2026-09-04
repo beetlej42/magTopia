@@ -281,6 +281,8 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
       }
     }), 201);
     assert.equal(voxelDraft.generation.mode, "floor_stack");
+    assert.equal(voxelDraft.agent_handoff.next_action.url, `${config.publicBaseUrl}/api/v1/cities/${cityA.id}/building-designs/${voxelDraft.id}/confirm`);
+    assert.deepEqual(voxelDraft.agent_handoff.next_action.body, { expected_revision: voxelDraft.revision });
     const voxelRevision = await json(app, auth(playerA, {
       method: "POST",
       url: `/api/v1/cities/${cityA.id}/building-designs/${voxelDraft.id}/revisions`,
@@ -295,6 +297,14 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
       payload: { expected_revision: voxelRevision.revision }
     }), 200);
     assert.equal(voxelConfirmed.status, "confirmed");
+    assert.deepEqual(voxelConfirmed.agent_handoff.preview.body, {
+      expected_city_version: afterCancel.city_version,
+      design_id: voxelConfirmed.id,
+      design_revision: voxelConfirmed.revision,
+      design_hash: voxelConfirmed.specHash
+    });
+    assert.deepEqual(voxelConfirmed.agent_handoff.order.body, voxelConfirmed.agent_handoff.preview.body);
+    assert.equal(voxelConfirmed.agent_handoff.order.headers["Idempotency-Key"], `build-${voxelConfirmed.id}-r${voxelConfirmed.revision}-v${afterCancel.city_version}`);
     const voxelOrder = await json(app, auth(playerA, {
       method: "POST",
       url: `/api/v1/cities/${cityA.id}/construction-orders`,
