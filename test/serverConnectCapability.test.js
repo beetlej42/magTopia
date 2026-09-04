@@ -24,6 +24,11 @@ test("previewing a capability with GET or HEAD never consumes it", async () => {
     assert.match(browserPreview.headers["content-type"], /^text\/html/);
     assert.match(browserPreview.body, /has <strong>not<\/strong> been used yet/);
     assert.match(browserPreview.body, /method="post"/);
+    assert.match(browserPreview.body, /fetch\(form\.action/);
+    assert.match(browserPreview.body, /credential-result/);
+    const browserScript = browserPreview.body.match(/<script>([\s\S]+)<\/script>/)?.[1];
+    assert.ok(browserScript);
+    assert.doesNotThrow(() => new Function(browserScript));
 
     const machinePreview = await app.inject({
       method: "GET",
