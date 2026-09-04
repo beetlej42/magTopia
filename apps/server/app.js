@@ -99,7 +99,8 @@ export async function createApp({ repository, config, logger = false, now = () =
     chinese_name: "麦托邦",
     product_positioning: "AI Agent-driven magic city",
     version: "v1",
-    authentication: "one-time capability URL exchanged for Bearer token",
+    authentication: "preview the one-time capability URL with GET, then explicitly exchange it with POST for a Bearer token",
+    capability_exchange_method: "POST",
     api_base_url: `${config.publicBaseUrl}/api/v1`,
     playbook_url: `${config.publicBaseUrl}/agent/playbook.md`,
     openapi_url: `${config.publicBaseUrl}/openapi.json`
@@ -109,9 +110,32 @@ export async function createApp({ repository, config, logger = false, now = () =
   app.get("/.well-known/magictown-agent.json", async () => agentDiscovery());
   app.get("/openapi.json", async () => createOpenApiDocument(config.publicBaseUrl));
 
-  app.get("/connect/:capability", { logLevel: "silent" }, async (request, reply) => {
-    reply.header("Cache-Control", "no-store");
-    return repository.exchangeCapability(request.params.capability);
+  app.get("/connect/:capability", { logLevel: "silent", exposeHeadRoute: false }, async (request, reply) => {
+    setCapabilityResponseHeaders(reply);
+    const exchangeUrl = `${config.publicBaseUrl}/connect/${encodeURIComponent(request.params.capability)}`;
+    if (!acceptsHtml(request)) {
+      return {
+        status: "confirmation_required",
+        message: "This one-time link has not been used. POST this exact URL to exchange it for an Agent credential.",
+        exchange_method: "POST",
+        exchange_url: exchangeUrl
+      };
+    }
+    return reply.type("text/html; charset=utf-8").send(connectionConfirmationPage(request.params.capability));
+  });
+
+  app.head("/connect/:capability", { logLevel: "silent" }, async (_request, reply) => {
+    setCapabilityResponseHeaders(reply);
+    return reply.type("text/html; charset=utf-8").code(200).send();
+  });
+
+  app.post("/connect/:capability", { logLevel: "silent" }, async (request, reply) => {
+    setCapabilityResponseHeaders(reply);
+    const connection = await repository.exchangeCapability(request.params.capability);
+    if (acceptsHtml(request)) {
+      return reply.type("text/html; charset=utf-8").send(connectionSuccessPage(connection));
+    }
+    return connection;
   });
 
   app.post("/api/v1/players", async (request, reply) => {
@@ -1752,6 +1776,42 @@ async function completeManualAsset(repository, config, principal, job, body, ide
 
 function homePage(baseUrl) {
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>MAGTOPIA · 麦托邦 · Agent Service</title><style>body{max-width:760px;margin:64px auto;padding:0 24px;background:#14201c;color:#edf2df;font:17px/1.6 system-ui}a{color:#b9e39f}code{background:#24332c;padding:.15em .35em;border-radius:4px}.card{border:1px solid #496153;border-radius:14px;padding:20px;margin:20px 0}</style></head><body><h1>MAGTOPIA Agent City Service</h1><p>麦托邦是一座由 AI Agent 驱动的魔法城市。每位玩家拥有一座默认私有的城市，市政 Agent 通过专属的一次性链接接入，并以受限 API 读取、建设和解释城市。</p><div class="card"><h2>Agent 从这里开始</h2><p><a href="/agent/playbook.md">Playbook</a> · <a href="/openapi.json">OpenAPI 3.1</a> · <a href="/.well-known/magtopia-agent.json">机器发现清单</a></p><p>API base：<code>${baseUrl}/api/v1</code></p></div><div class="card"><h2>城市运营</h2><p><a href="/dashboard">打开城市与资产状态面板</a></p><p>创建玩家与私有城市 → 创建 Agent link → Agent 兑换凭证 → 查询城市 → 预览并提交建设 → 读取事件和异步资产状态。</p></div></body></html>`;
+}
+
+function acceptsHtml(request) {
+  return String(request.headers.accept ?? "").toLowerCase().includes("text/html");
+}
+
+function setCapabilityResponseHeaders(reply) {
+  reply
+    .header("Cache-Control", "no-store")
+    .header("Pragma", "no-cache")
+    .header("Referrer-Policy", "no-referrer")
+    .header("X-Robots-Tag", "noindex, nofollow")
+    .header("Vary", "Accept");
+}
+
+function connectionConfirmationPage(capability) {
+  const action = `/connect/${encodeURIComponent(capability)}`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex,nofollow"><title>Connect Agent · MAGTOPIA</title><style>${connectionPageStyles()}</style></head><body><main><p class="eyebrow">MAGTOPIA · Agent connection</p><h1>Confirm one-time connection</h1><p>This link has <strong>not</strong> been used yet. Continue only when you are ready to store the returned bearer token.</p><div class="notice">Opening, previewing, or checking this page never consumes the link. The link is consumed only after the exchange below succeeds.</div><form method="post" action="${escapeHtml(action)}"><button type="submit">Exchange link and show credential</button></form><p class="hint">API agents: send <code>POST ${escapeHtml(action)}</code> with <code>Accept: application/json</code>.</p></main></body></html>`;
+}
+
+function connectionSuccessPage(connection) {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex,nofollow"><title>Agent connected · MAGTOPIA</title><style>${connectionPageStyles()}</style></head><body><main><p class="eyebrow">MAGTOPIA · Agent connection</p><h1>Agent connected</h1><p>The one-time link has now been consumed. Store this credential before leaving the page.</p><dl><dt>City ID</dt><dd><code>${escapeHtml(connection.city_id)}</code></dd><dt>Bearer token</dt><dd><textarea readonly rows="4">${escapeHtml(connection.access_token)}</textarea></dd><dt>Scopes</dt><dd><code>${escapeHtml(connection.scopes.join(" "))}</code></dd><dt>Expires</dt><dd>${escapeHtml(connection.expires_at)}</dd></dl><p><a href="${escapeHtml(connection.playbook_url)}">Read the Agent Playbook</a> · <a href="${escapeHtml(connection.openapi_url)}">OpenAPI</a></p><p class="hint">Send <code>Authorization: Bearer &lt;token&gt;</code> to <code>${escapeHtml(connection.api_base_url)}</code>. Refreshing this page cannot issue the credential again.</p></main></body></html>`;
+}
+
+function connectionPageStyles() {
+  return "body{max-width:760px;margin:64px auto;padding:0 24px;background:#14201c;color:#edf2df;font:17px/1.6 system-ui}main{border:1px solid #496153;border-radius:16px;padding:28px;background:#192821}h1{line-height:1.15}a{color:#b9e39f}code,textarea{box-sizing:border-box;background:#24332c;color:#edf2df;border:1px solid #496153;border-radius:6px;padding:.25em .45em}textarea{display:block;width:100%;margin-top:6px;resize:vertical}button{border:0;border-radius:8px;padding:12px 18px;background:#b9e39f;color:#14201c;font:700 16px system-ui;cursor:pointer}.eyebrow{color:#b9e39f;text-transform:uppercase;letter-spacing:.08em;font-size:13px}.notice{border-left:4px solid #b9e39f;padding:12px 16px;margin:24px 0;background:#24332c}.hint{color:#bdc8bc;font-size:14px}dt{margin-top:14px;color:#b9e39f;font-weight:700}dd{margin:4px 0}";
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;"
+  })[character]);
 }
 
 function mimeType(file) {

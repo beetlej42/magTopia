@@ -145,6 +145,7 @@ const DENY_LIST = new Set([
   "get /dashboard",
   "get /cities/{p}",
   "get /connect/{p}",
+  "post /connect/{p}",
   "get /.well-known/magtopia-agent.json",
   "get /.well-known/magictown-agent.json",
   "get /openapi.json"

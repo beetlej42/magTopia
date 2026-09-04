@@ -58,7 +58,7 @@ async function openCity(repository, app) {
   }));
   city.turn = 1;
   const link = await json(app, auth(player, { method: "POST", url: `/api/v1/cities/${city.id}/agent-links`, payload: {} }), 201);
-  const agent = await json(app, { method: "GET", url: `/connect/${link.connect_url.split("/").at(-1)}` }, 200);
+  const agent = await json(app, { method: "POST", url: `/connect/${link.connect_url.split("/").at(-1)}` }, 200);
   const owner = await repository.authenticate(player.access_token);
   return { player, city, agent, owner };
 }

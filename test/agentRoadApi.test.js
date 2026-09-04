@@ -32,7 +32,7 @@ test("Agent API roads render with shared voxel assets and derive reciprocal dire
       payload: {}
     }), 201);
     const capability = link.connect_url.split("/").at(-1);
-    const agent = await json(app, { method: "GET", url: `/connect/${capability}` }, 200);
+    const agent = await json(app, { method: "POST", url: `/connect/${capability}` }, 200);
     const initial = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/render-state` }), 200);
 
     assert.equal(initial.render_contract.mode, "agentcity");

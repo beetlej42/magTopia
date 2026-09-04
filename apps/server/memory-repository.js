@@ -103,7 +103,14 @@ export function createMemoryRepository(config, options = {}) {
       const expiresAt = new Date(Date.now() + 30 * 60_000);
       capabilities.set(secret, { id, cityId, scopes, expiresAt, consumed: false });
       persist();
-      return { id, city_id: cityId, connect_url: `${config.publicBaseUrl}/connect/${secret}`, scopes, expires_at: expiresAt.toISOString() };
+      return {
+        id,
+        city_id: cityId,
+        connect_url: `${config.publicBaseUrl}/connect/${secret}`,
+        exchange_method: "POST",
+        scopes,
+        expires_at: expiresAt.toISOString()
+      };
     },
 
     async exchangeCapability(secret) {

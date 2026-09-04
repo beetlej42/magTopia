@@ -13,7 +13,7 @@ test("strategy officer recruitment is read-only on GET and candidate-only/idempo
     const player = await json(app, { method: "POST", url: "/api/v1/players", payload: { display_name: "Officer API" } }, 201);
     const city = await json(app, auth(player.access_token, { method: "POST", url: "/api/v1/cities", payload: { name: "Officer City", resources: { coins: 500 } } }), 201);
     const link = await json(app, auth(player.access_token, { method: "POST", url: `/api/v1/cities/${city.id}/agent-links`, payload: {} }), 201);
-    const agent = await json(app, { method: "GET", url: `/connect/${link.connect_url.split("/").at(-1)}` }, 200);
+    const agent = await json(app, { method: "POST", url: `/connect/${link.connect_url.split("/").at(-1)}` }, 200);
     const owner = await repository.authenticate(player.access_token);
     await repository.transactCity({ principal: owner, cityId: city.id, endpoint: "test/officer-seed", idempotencyKey: "seed", requestBody: {}, expectedVersion: 0 }, async ({ state }) => {
       state.gameplay.population.wizards.current = 30;
@@ -58,7 +58,7 @@ test("locked strategy context does not expose immediately recruitable candidates
     const player = await json(app, { method: "POST", url: "/api/v1/players", payload: { display_name: "Locked API" } }, 201);
     const city = await json(app, auth(player.access_token, { method: "POST", url: "/api/v1/cities", payload: { name: "Locked City" } }), 201);
     const link = await json(app, auth(player.access_token, { method: "POST", url: `/api/v1/cities/${city.id}/agent-links`, payload: {} }), 201);
-    const agent = await json(app, { method: "GET", url: `/connect/${link.connect_url.split("/").at(-1)}` }, 200);
+    const agent = await json(app, { method: "POST", url: `/connect/${link.connect_url.split("/").at(-1)}` }, 200);
     const strategy = await json(app, auth(agent.access_token, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
     assert.equal(strategy.strategy.arcane_officer_recruitment.unlocked, false);
     assert.deepEqual(strategy.strategy.arcane_officer_recruitment.candidates, []);

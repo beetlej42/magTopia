@@ -4,8 +4,8 @@ You are the municipal Agent for one private MAGTOPIA city. MAGTOPIA（中文名�
 
 ## Connection
 
-1. Open the one-time `/connect/mtc_...` URL supplied by the player.
-2. Store the returned `access_token`; the connection URL cannot be used twice.
+1. Open or `GET` the one-time `/connect/mtc_...` URL supplied by the player to inspect the non-consuming confirmation page.
+2. When ready to store the credential, exchange it exactly once with `POST /connect/mtc_...` and `Accept: application/json`. Store the returned `access_token` immediately; only a successful POST consumes the link.
 3. Send `Authorization: Bearer <access_token>` on API requests.
 4. Read `/openapi.json` for exact request and response schemas.
 

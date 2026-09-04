@@ -192,7 +192,14 @@ export function createRepository(database, config, { now = () => new Date() } = 
          VALUES ($1, $2, $3, $4, $5, $6)`,
         [id, cityId, hashSecret(secret), scopes, expiresAt, principal.id]
       );
-      return { id, city_id: cityId, connect_url: `${config.publicBaseUrl}/connect/${secret}`, scopes, expires_at: expiresAt.toISOString() };
+      return {
+        id,
+        city_id: cityId,
+        connect_url: `${config.publicBaseUrl}/connect/${secret}`,
+        exchange_method: "POST",
+        scopes,
+        expires_at: expiresAt.toISOString()
+      };
     },
 
     async exchangeCapability(secret) {

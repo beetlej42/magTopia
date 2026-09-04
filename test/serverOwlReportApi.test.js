@@ -44,7 +44,7 @@ async function openCity(repository, app) {
     payload: { name: "Owl City", map_seed: "owl-report-test" }
   }), 201);
   const link = await json(app, auth(player, { method: "POST", url: `/api/v1/cities/${city.id}/agent-links`, payload: {} }), 201);
-  const connected = await json(app, { method: "GET", url: `/connect/${link.connect_url.split("/").at(-1)}` }, 200);
+  const connected = await json(app, { method: "POST", url: `/connect/${link.connect_url.split("/").at(-1)}` }, 200);
   const agent = { access_token: connected.access_token };
   const owner = await repository.authenticate(player.access_token);
   return { player, city, agent, owner };

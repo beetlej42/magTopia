@@ -48,12 +48,12 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
 
     const link = await json(app, auth(playerA, { method: "POST", url: `/api/v1/cities/${cityA.id}/agent-links`, payload: {} }), 201);
     const capability = link.connect_url.split("/").at(-1);
-    const connected = await json(app, { method: "GET", url: `/connect/${capability}` }, 200);
-    assert.equal((await app.inject({ method: "GET", url: `/connect/${capability}` })).statusCode, 410);
+    const connected = await json(app, { method: "POST", url: `/connect/${capability}` }, 200);
+    assert.equal((await app.inject({ method: "POST", url: `/connect/${capability}` })).statusCode, 410);
     const agent = { access_token: connected.access_token };
 
     const linkB = await json(app, auth(playerB, { method: "POST", url: `/api/v1/cities/${cityB.id}/agent-links`, payload: {} }), 201);
-    const connectedB = await json(app, { method: "GET", url: `/connect/${linkB.connect_url.split("/").at(-1)}` }, 200);
+    const connectedB = await json(app, { method: "POST", url: `/connect/${linkB.connect_url.split("/").at(-1)}` }, 200);
     const agentB = { access_token: connectedB.access_token };
 
     assert.equal((await app.inject(auth(agent, { method: "GET", url: `/api/v1/cities/${cityA.id}/snapshot` }))).statusCode, 200);
@@ -389,7 +389,7 @@ test("Agent strategy API settles assignments through the authoritative simulatio
     const player = await json(app, { method: "POST", url: "/api/v1/players", payload: { display_name: "Strategy Integration Owner" } }, 201);
     const city = await json(app, auth(player, { method: "POST", url: "/api/v1/cities", payload: { name: "Strategy Integration City", map_seed: "strategy-integration-test" } }), 201);
     const link = await json(app, auth(player, { method: "POST", url: `/api/v1/cities/${city.id}/agent-links`, payload: {} }), 201);
-    const connected = await json(app, { method: "GET", url: `/connect/${link.connect_url.split("/").at(-1)}` }, 200);
+    const connected = await json(app, { method: "POST", url: `/connect/${link.connect_url.split("/").at(-1)}` }, 200);
     const agent = { access_token: connected.access_token };
     const owner = await repository.authenticate(player.access_token);
 
@@ -505,7 +505,7 @@ test("Owl Daily reports bind to resolved turns and stay canonical (PostgreSQL)",
     const player = await json(app, { method: "POST", url: "/api/v1/players", payload: { display_name: "Owl Integration Owner" } }, 201);
     const city = await json(app, auth(player, { method: "POST", url: "/api/v1/cities", payload: { name: "Owl Integration City", map_seed: "owl-integration-test" } }), 201);
     const link = await json(app, auth(player, { method: "POST", url: `/api/v1/cities/${city.id}/agent-links`, payload: {} }), 201);
-    const connected = await json(app, { method: "GET", url: `/connect/${link.connect_url.split("/").at(-1)}` }, 200);
+    const connected = await json(app, { method: "POST", url: `/connect/${link.connect_url.split("/").at(-1)}` }, 200);
     const agent = { access_token: connected.access_token };
     const owner = await repository.authenticate(player.access_token);
 

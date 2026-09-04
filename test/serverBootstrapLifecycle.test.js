@@ -24,7 +24,7 @@ test("bootstrap is a read-only no-card turn and Turn 1 receives the first canoni
     const city = await json(app, auth(player, { method: "POST", url: "/api/v1/cities", payload: { name: "Bootstrap City", map_seed: "bootstrap-lifecycle" } }), 201);
     const owner = await repository.authenticate(player.access_token);
     const link = await json(app, auth(player, { method: "POST", url: `/api/v1/cities/${city.id}/agent-links`, payload: {} }), 201);
-    const agent = await json(app, { method: "GET", url: `/connect/${link.connect_url.split("/").at(-1)}` }, 200);
+    const agent = await json(app, { method: "POST", url: `/connect/${link.connect_url.split("/").at(-1)}` }, 200);
 
     const first = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
     const second = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
