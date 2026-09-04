@@ -34,6 +34,8 @@ test("city loader advances through artifacts, scene build, and first paint", () 
   assert.match(mainSource, /setCityViewerLoadingProgress\(42, "正在加载建筑模型…"\);[\s\S]*loadCityBakedArtifacts/);
   assert.match(mainSource, /startCityViewerLoadingProgressDrift\(68\)/);
   assert.match(mainSource, /readCityArtifactPackResponse/);
+  assert.match(mainSource, /createCityArtifactDecodeBatches\(packed\.entries\)/);
+  assert.match(mainSource, /yieldControl: waitForAnimationFrame/);
   assert.match(mainSource, /setCityViewerLoadingProgress\(72, "正在构建城市地形…"\);\s*await waitForAnimationFrame\(\);[\s\S]*await rebuildActive\(viewerConfig\);/);
   assert.match(mainSource, /setCityViewerLoadingProgress\(94, "正在绘制精细建筑与阴影…"\);\s*await waitForCityViewerFirstPaint\(\);\s*setCityViewerLoadingProgress\(100, "城市已就绪"\);\s*}\s*document\.documentElement\.dataset\.magicTownViewer = "ready";/s);
   assert.match(mainSource, /return waitForAnimationFrame\(\)\.then\(waitForAnimationFrame\);/);

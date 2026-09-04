@@ -122,6 +122,7 @@ test("city artifact pack preserves identity, manifest digest and independent MTB
   const decoded = decodeCityArtifactPack(pack, { cityId: "city-1", cityVersion: 9, manifestSha256: "a".repeat(64) });
   assert.equal(decoded.packVersion, CITY_ARTIFACT_PACK_VERSION);
   assert.deepEqual(decoded.entries.map((entry) => entry.buildingId), ["building-a", "building-b"]);
+  assert.equal(decoded.entries[0].bytes.buffer, pack.buffer);
   assert.equal(decodeBakedBuildingArtifact(decoded.entries[0].bytes).buildingId, "building-a");
   assert.equal(decodeBakedBuildingArtifact(decoded.entries[1].bytes).buildingId, "building-b");
   assert.throws(() => decodeCityArtifactPack(pack, { cityVersion: 10 }), /version mismatch/);
@@ -141,9 +142,15 @@ test("city artifact pack stream reports decoded byte progress from its own heade
       controller.close();
     }
   }));
-  const streamed = await readCityArtifactPackResponse(response, { onProgress: (value) => progress.push(value) });
+  let yields = 0;
+  const streamed = await readCityArtifactPackResponse(response, {
+    onProgress: (value) => progress.push(value),
+    yieldAfterBytes: 128,
+    yieldControl: async () => { yields += 1; }
+  });
   assert.deepEqual(streamed, pack);
   assert.ok(progress.length > 2);
+  assert.ok(yields > 1);
   assert.equal(progress.at(-1), 1);
   assert.ok(progress.every((value, index) => index === 0 || value >= progress[index - 1]));
 });
