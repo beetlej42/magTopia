@@ -132,7 +132,8 @@ export function createMemoryRepository(config, options = {}) {
         expires_at: new Date(Date.now() + 90 * 86_400_000).toISOString(),
         api_base_url: `${config.publicBaseUrl}/api/v1`,
         playbook_url: `${config.publicBaseUrl}/agent/playbook.md`,
-        openapi_url: `${config.publicBaseUrl}/openapi.json`
+        openapi_url: `${config.publicBaseUrl}/openapi.json`,
+        browser_openapi_url: `${config.publicBaseUrl}/agent/openapi`
       };
     },
 
@@ -302,7 +303,7 @@ export function createMemoryRepository(config, options = {}) {
       const row = cities.get(cityId);
       if (!row) throw new ServiceError(404, "CITY_NOT_FOUND", "City not found");
       if (expectedVersion !== undefined && Number(expectedVersion) !== Number(row.state_jsonb.version)) {
-        throw new ServiceError(409, "CITY_VERSION_CONFLICT", "City changed since the scheduler read it", { expected: Number(expectedVersion), actual: Number(row.state_jsonb.version) });
+        throw cityVersionConflict("City changed since the scheduler read it", expectedVersion, row.state_jsonb.version);
       }
       const client = memoryClient({ cityId, row, designs, orders, assets });
       const handled = await handler({ client, state: row.state_jsonb, city: row });
@@ -325,7 +326,7 @@ export function createMemoryRepository(config, options = {}) {
         return { ...structuredClone(prior.response), idempotent_replay: true };
       }
       const { row, state } = await this.getCity(principal, cityId);
-      if (expectedVersion !== undefined && Number(expectedVersion) !== Number(state.version)) throw new ServiceError(409, "CITY_VERSION_CONFLICT", "City changed since the preview", { expected: Number(expectedVersion), actual: Number(state.version) });
+      if (expectedVersion !== undefined && Number(expectedVersion) !== Number(state.version)) throw cityVersionConflict("City changed since the preview", expectedVersion, state.version);
       const client = memoryClient({ cityId, row, designs, orders, assets });
       const handled = await handler({ client, state, city: row });
       if (handled.nextState) {
@@ -449,6 +450,18 @@ export function createMemoryRepository(config, options = {}) {
     async getAssetJob() { throw new ServiceError(404, "ASSET_JOB_NOT_FOUND", "Asset job not found"); }
   };
   return repository;
+}
+
+function cityVersionConflict(message, expected, actual) {
+  return new ServiceError(409, "CITY_VERSION_CONFLICT", message, {
+    expected: Number(expected),
+    actual: Number(actual),
+    current_city_version: Number(actual),
+    recovery: {
+      action: "reread_and_rebuild",
+      instruction: "GET the city strategy or snapshot, rebuild the request using current_city_version, then retry once with a new Idempotency-Key."
+    }
+  }, true);
 }
 
 function memoryClient({ cityId, row, designs, orders, assets }) {

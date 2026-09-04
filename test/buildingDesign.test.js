@@ -21,13 +21,14 @@ const context = {
 
 test("building design recommends floor-stack and exposes a shared editable envelope", () => {
   const design = createBuildingDesignDraft({
-    site: { lot_id: "cell-10-10", entrance: "south" },
+    site: { anchor_cell_id: "cell-10-10", entrance: "south" },
     intent: { name: "Moon & Needle", purpose: "enchanted clothing shop", frontage: "display", magic_level: 0.6 },
     requirements: { preferred_floors: 2 }
   }, context);
   assert.equal(design.generation.mode, "floor_stack");
   assert.equal(design.generation.sourceSpec.floors, 2);
   assert.equal(design.site.footprint, "1x1");
+  assert.equal(design.site.lotId, "cell-10-10");
   assert.ok(design.availableOperations.common.includes("add_decoration"));
   assert.ok(BUILDING_DECORATION_TYPES.includes("semantic_grid_sign"));
   assert.deepEqual(design.availableOperations.semanticGridSign.materials.emissive, ["tealMagic", "violetMagic", "warmWindow"]);

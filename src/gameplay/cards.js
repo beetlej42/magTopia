@@ -193,6 +193,13 @@ export function currentOffer(state) {
           choice_kind: definition.choiceKind,
           family: definition.family,
           unique: definition.unique,
+          choice_required: true,
+          recommended_action: "Select exactly one offered card through POST /cards/select before the Agent resolves the turn.",
+          available_decision_modes: definition.type === CARD_TYPES.special_structure
+            ? [CARD_DECISION_MODES.player_place, CARD_DECISION_MODES.delegate_to_agent]
+            : [CARD_DECISION_MODES.immediate],
+          effect_summary: summarizeCardEffect(definition),
+          skip_consequence: "If the turn is resolved while this choice is pending, no offered card effect is applied.",
           free_placement: Boolean(definition.effect?.freePlacement),
           placement_required: definition.type === CARD_TYPES.special_structure,
           duration: definition.duration,
@@ -201,6 +208,20 @@ export function currentOffer(state) {
         : { card_id: cardId };
     })
   };
+}
+
+function summarizeCardEffect(definition) {
+  const effect = definition.effect ?? {};
+  if (effect.kind === "grant_coins") return `Immediately add ${effect.coins} coins.`;
+  if (effect.kind === "grant_population") return `Immediately add up to ${effect.wizards} wizard residents, limited by housing capacity.`;
+  if (effect.kind === "construction_discount_once") return `The next successful ordinary construction costs ${Math.round((1 - effect.discountRate) * 100)}% of its normal coin price.`;
+  if (effect.kind === "recruit_officer") return "Immediately recruit one system-generated Arcane Officer when capacity allows.";
+  if (effect.kind === "special_structure") return `Create one free ${definition.structure?.name ?? "special structure"} placement entitlement.`;
+  if (effect.kind === "policy") {
+    const turns = typeof definition.duration === "object" ? definition.duration.turns : null;
+    return `Activate ${effect.policyId ?? definition.title}${turns ? ` for ${turns} turns` : ""}.`;
+  }
+  return definition.description;
 }
 
 export function currentChoice(state) {

@@ -96,6 +96,10 @@ test("Agent API roads render with shared voxel assets and derive reciprocal dire
     assert.ok(["continue_composition", "consider_shared_boundary"].includes(sites.district.suggested_next_focus));
     assert.ok(Array.isArray(sites.district.suggestions));
     assert.ok(sites.data.some((candidate) => candidate.context.adjacentRoad));
+    assert.equal(sites.data[0].context.adjacentRoad, true);
+    assert.equal(sites.planning.recommended_candidate_id, sites.data[0].anchor_cell_id);
+    assert.match(sites.planning.selection_rule, /road frontage/i);
+    assert.equal(sites.planning.price_guide.currency, "coins");
     assert.ok(sites.data.every((candidate) => candidate.context.blockId));
     assert.ok(sites.data.some((candidate) => candidate.context.blockRole === "interior"));
     assert.ok(sites.data.every((candidate) => !("score" in candidate) && !("score_explanation" in candidate)));

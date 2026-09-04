@@ -21,7 +21,7 @@ A short map of who owns what, so every decision you make is explainable and lega
 
 The core loop is: `player choice → Agent planning/building → gameplay state and exposure changes → incident response if needed → Agent resolves the turn when appropriate and unlocked → system settlement → Owl Daily → next turn`.
 
-**Bootstrap turn (turn 0).** A fresh city explicitly reports `turn_kind: bootstrap` in strategy responses. Turn 0 has no card offer and `GET /cards/current` is a pure read returning `offer: null` and choice status `not_applicable`; card selection is rejected. Read `strategy.bootstrap.progress` for system-derived gateway, roads, buildings, housing, income, and public-service progress. The guidance is advisory: begin at `old_town_entry` with a compact street frontage, low-cost housing, and an income building (add a small public service when affordable), but do not wait for every suggestion before resolving. Turn 0 resolution is still the normal cooldown-gated Agent resolve and creates the first immutable Owl ReportContext; its facts include accepted construction events, never Agent-submitted progress fields. After the scheduler opens turn 1, the normal card offer appears exactly once.
+**Bootstrap turn (turn 0).** A fresh city explicitly reports `turn_kind: bootstrap`. Read `snapshot.agent_turn_plan` first: it contains the current-version next action, exact `old_town_entry` cell and coordinates, and a safe 5×6 starter district. Turn 0 has no card offer. Connect the gateway, complete at least one low-cost residential BuildingDesign and one commercial BuildingDesign, then resolve when `readyForMeaningfulFirstResolve` is true. A small public service is optional when affordable. Turn 0 resolution creates the first immutable Owl ReportContext; its facts include accepted construction events, never Agent-submitted progress fields. After turn 1 opens, the normal card offer appears exactly once.
 
 **Cooldown, not deadline.** There is no automatic deadline settlement. `nextTurnUnlockAt` is the earliest wall-clock time the current turn may be resolved. Until then a `strategy/resolve` request is rejected with `TURN_NOT_UNLOCKED` and its `next_turn_unlock_at`; after it, the turn still needs you (the normal gameplay flow) to actively resolve it. The wall clock never settles a turn by itself, and many offline days never backfill many turns or incomes.
 
@@ -34,14 +34,12 @@ The core loop is: `player choice → Agent planning/building → gameplay state 
 ## Recommended decision loop
 
 1. `GET /api/v1/cities/{city_id}/snapshot`.
-2. Continue a suitable named development district whose `status` is `active`. If none exists, designate one small work package with a short name, purpose, and rectangular bounds through `POST /districts`.
-3. Query that district with `/spatial`. If it has no access, use connection previews and `/connections` to connect it to the city. Then shape the local streets according to the district intention; a complete perimeter is useful feedback, not a prerequisite.
-4. Search `/buildings` and `/assets`, then call `/site-searches` with `district_id`. Candidate results contain objective terrain, road-distance, exact road-frontage, and block-role facts; the server does not score or rank them.
-5. Choose a site whose intended entrance appears in `context.roadFrontageDirections`. Use `context.blockRole`, boundary coverage, and frontage facts to compose the area, then preview and submit construction with the same `district_id`.
-6. Submit mutations with `Idempotency-Key` and the latest `expected_city_version`.
-7. If `CITY_VERSION_CONFLICT` occurs, read the city again and make a new preview. Do not blindly retry the old plan.
-8. If an asset job is asynchronous, inspect that job/order instead of creating a duplicate.
-9. Read `/events?after_version=...` and record what actually happened.
+2. Follow `agent_turn_plan.next_action`; it already carries the current city version and the shortest safe next request.
+3. For construction, use only: `site-searches → building-designs → confirm → construction-previews → construction-orders`. Candidates are ordered by road frontage, road distance, then gateway proximity; start with `data[0]` unless the district intention requires another site.
+4. Pass the candidate's `anchor_cell_id`, `footprint`, and `recommendedEntrance` into the BuildingDesign. The confirmed design owns site, entrance, program, functional area, asset and visual data.
+5. Submit mutations with a unique `Idempotency-Key`, then carry `city_version_after` directly into the next mutation. Do not reread between successful mutations.
+6. On `CITY_VERSION_CONFLICT`, use `details.current_city_version`, reread `/strategy` once, rebuild the request, and retry once. Never blindly replay the old body.
+7. Read `/events?after_version=...` only when you need an audit trail; snapshot and strategy already provide the normal turn loop.
 
 ## District-first growth
 
@@ -130,62 +128,29 @@ For example, a library should not accidentally become a greenhouse. If the confl
 
 You may spend the city's entire currently available budget without player approval. Income is settled by resolving the turn through the cooldown-gated strategy flow, based on the productive buildings already operating in the city; there is no separate manual time-advance that grants income. Do not treat future income as currently spendable.
 
-## Reuse versus production
+## Confirmed-design construction
 
-Prefer `asset.mode = reuse` when an existing validated asset matches archetype, footprint, and city style. Choose `produce` only when the existing registry cannot express an important city intention. New production freezes the site and estimated cost until it completes, fails, or is cancelled.
-
-Choose scale deliberately. `footprint` controls occupied city cells and currently supports rectangular bases up to 3×3. For a new asset, `asset.spec.guide_volume` is an integer `width×depth×storeys` scale contract; its base must match `footprint`. One vertical unit always means one normal occupied storey with consistent human-scale doors and windows. Therefore `1x1x1` is always a small one-storey detached building, never a compressed two-storey house; use `1x1x2` for a substantial two-storey one-cell house. The generated guide image contains storey divisions and a standard door reference, and the production prompt repeats this contract. The runtime never rescales a finished building.
-
-The automatic Hunyuan provider composes three prompt blocks: immutable Magic London world/art direction, the agent's concrete building brief, and the geometry/render contract. Its first generation uses the guideplate as the geometry/scale/front-door edit target and the city concept as a style-only reference. A second edit changes only the existing windows to a lights-on state. A portable paired-image differ derives the aligned emissive contribution; no Apple Vision step is part of the service. The finished manifest records model, seed, input roles, prompt/light-pipeline versions, provider request IDs, pair alignment, and saved review artifacts.
-
-Use the exact construction envelope below for both `/construction-previews` and `/construction-orders`. A site search returns `lotId`; pass that value as `site.lot_id` (`site.lotId` is accepted as an alias).
-
-Reuse an asset only when its id, archetype, and footprint come from the same `/assets` result:
+The Agent API exposes one construction contract. Create and confirm a BuildingDesign, then send only its identity and the current city version to both `/construction-previews` and `/construction-orders`:
 
 ```json
 {
-  "expected_city_version": 0,
+  "expected_city_version": 4,
   "district_id": "district-moon-lantern",
-  "actor_note": "增加一间可达的住宅",
-  "site": { "lot_id": "cell-20-20", "footprint": "1x1", "entrance": "south" },
-  "program": { "archetype": "starter_residence", "purpose": "residential", "name": "月柳小屋", "attributes": {} },
-  "design": { "district_style": "london_common", "patterns": ["quiet_front_garden"], "creative_brief": "A compact warm brick cottage." },
-  "asset": { "mode": "reuse", "asset_id": "starter-cottage-001" }
+  "design_id": "design-...",
+  "design_revision": 1,
+  "design_hash": "hash returned by confirm",
+  "actor_note": "complete starter housing"
 }
 ```
 
-To produce a new asset, keep the site/program fields and provide a complete production spec:
-
-```json
-{
-  "expected_city_version": 0,
-  "district_id": "district-moon-lantern",
-  "actor_note": "现有资产无法表达月光花住宅",
-  "site": { "lot_id": "cell-21-20", "footprint": "1x1", "entrance": "south" },
-  "program": { "archetype": "moon_residence", "purpose": "residential", "name": "月光花屋", "attributes": {} },
-  "design": { "district_style": "willow_magic", "patterns": ["moonflower_garden"], "creative_brief": "A narrow magical London brick home surrounded by restrained moonflowers." },
-  "asset": {
-    "mode": "produce",
-    "spec": {
-      "archetype": "moon_residence",
-      "footprint": "1x1",
-      "district_style": "willow_magic",
-      "patterns": ["moonflower_garden"],
-      "guide_volume": "1x1x2",
-      "creative_brief": "A moonflower residence."
-    }
-  }
-}
-```
-
-Preview first. For the order request, reuse the same body with the latest `expected_city_version` and add a unique `Idempotency-Key` header.
+Do not submit `site`, `program`, `gameplay_building`, functional area, asset selection, cost, or renderer data here. The confirmed BuildingDesign is authoritative for those fields. The snapshot price guide is an estimate; the preview is the exact quote. If the preview is feasible, reuse this minimal body for the order with the latest `expected_city_version` and a unique `Idempotency-Key`.
 
 ## Construction principles
 
 - Buildings need legal footprints and routeable entrances.
 - The blank voxel world exposes water cells explicitly. Never build on `buildable: false` or `strictBuildable: false`; roads crossing `bridgeRequired: true` cells are returned as bridges.
 - Name a development district before starting a new cluster, establish its road network, then search with `district_id`.
-- Candidate sites are deterministic legal options with objective context, not a server-authored ranking. Use `roadFrontageDirections`, `nearestRoadDistance`, terrain, nearby buildings, and the district purpose to make the spatial decision yourself.
+- Candidate sites are deterministic legal options ordered by existing road frontage, shortest road distance, then gateway proximity. Use `roadFrontageDirections`, terrain, nearby buildings, and district purpose when overriding the first candidate.
 - Use the route solver between chosen endpoints; do not submit a hand-drawn cell path.
 - Treat the confirmed design's `primary_entrance.frontageCellId` as the authoritative road port. A successful connected district must place every entrance port in the road/bridge component reachable from `old_town_entry`.
 - Add a short factual `actor_note` explaining the city need behind each command.
@@ -197,7 +162,6 @@ Preview first. For the order request, reuse the same body with the latest `expec
 - `INSUFFICIENT_RESOURCES`: resolve an unlocked turn to settle income, or choose a smaller project.
 - `NO_ROUTE`: change entrance, endpoint, or site.
 - `DISTRICT_NOT_FOUND`: reread the snapshot and use an existing district id, or designate a new district.
-- `ASSET_NOT_COMPATIBLE`: search again or request production.
 - `CITY_VERSION_CONFLICT`: reread and re-preview.
 - `IDEMPOTENCY_KEY_REUSED`: use the original request or a new key for a genuinely new command.
 - `CAPABILITY_*` or `INVALID_CREDENTIAL`: ask the player for a new connection link.

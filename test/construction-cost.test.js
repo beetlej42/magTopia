@@ -5,8 +5,18 @@ import {
   ROAD_COST_BY_KIND,
   calculateBuildingConstructionCost,
   calculateRoadCost,
+  constructionPriceGuide,
   ordinaryResidentialHeightMultiplier
 } from "../src/gameplay/construction-cost.js";
+
+test("Agent price guide exposes stable estimates without accepting client-authored area", () => {
+  const guide = constructionPriceGuide();
+  assert.equal(guide.currency, "coins");
+  assert.equal(guide.building_rate_per_footprint_cell_per_floor.residential, 50);
+  assert.equal(guide.ordinary_residential_examples["1x1_two_floors"], 105);
+  assert.equal(guide.ordinary_residential_examples["2x2_two_floors"], 420);
+  assert.match(guide.note, /never submit functional area/i);
+});
 import { normalizeConstructionProposal } from "../src/city/contracts.js";
 import { deriveGameplayBuilding } from "../src/gameplay/building-metadata.js";
 import { normalizeGameplayBuilding } from "../src/gameplay/schema.js";

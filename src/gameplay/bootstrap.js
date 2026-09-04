@@ -48,9 +48,25 @@ export function deriveBootstrapProgress(state = {}) {
     started.add(String(building.id));
     if (building.status === "completed" || building.status === "active") completed.add(String(building.id));
   }
+  const milestones = {
+    gateway: gateway,
+    road: connected.length > 0,
+    housing: residential.length > 0,
+    income: commercial.length > 0,
+    publicService: publicService.length > 0
+  };
+  const recommendedBeforeResolve = ["gateway", "housing", "income"];
+  const missingRecommendedMilestones = recommendedBeforeResolve.filter((milestone) => !milestones[milestone]);
   return {
     gatewayConnected: gateway,
-    gatewayNodeId: gateway ? "old_town_entry" : null,
+    gatewayNodeId: gatewayNode ? "old_town_entry" : null,
+    gatewayCellId: gatewayCell?.id ?? gatewayNode?.cellId ?? null,
+    gatewayLocation: gatewayCell ? {
+      cell_id: gatewayCell.id,
+      column: gatewayCell.column,
+      row: gatewayCell.row,
+      center: gatewayCell.center ?? null
+    } : null,
     roadsConnected: connected,
     roadsConnectedCount: connected.length,
     buildingsStarted: [...started].sort(),
@@ -60,13 +76,10 @@ export function deriveBootstrapProgress(state = {}) {
     publicServiceBuildings: publicService,
     totalBuildings: buildings.length,
     // A compact objective signal for clients; it is descriptive, not a gate.
-    milestones: {
-      gateway: gateway,
-      road: connected.length > 0,
-      housing: residential.length > 0,
-      income: commercial.length > 0,
-      publicService: publicService.length > 0
-    }
+    milestones,
+    recommendedBeforeResolve,
+    missingRecommendedMilestones,
+    readyForMeaningfulFirstResolve: missingRecommendedMilestones.length === 0
   };
 }
 
@@ -77,7 +90,10 @@ export function bootstrapGuidance(progress) {
   if (!progress?.residentialBuildings?.length) missing.push("add low-cost housing");
   if (!progress?.commercialBuildings?.length) missing.push("add an income-producing building");
   if (!progress?.publicServiceBuildings?.length) missing.push("add a small public service when affordable");
-  return `Bootstrap guidance (advisory): start from old_town_entry with a compact street district; ${missing.length ? `consider ${missing.join(", ")}.` : "the suggested starter mix is already represented."} Resolve remains available regardless of these suggestions.`;
+  const location = progress?.gatewayLocation
+    ? `old_town_entry is ${progress.gatewayLocation.cell_id} at column ${progress.gatewayLocation.column}, row ${progress.gatewayLocation.row}`
+    : "old_town_entry location is unavailable";
+  return `Bootstrap objective: build a real starter neighborhood before the first resolve. ${location}. ${missing.length ? `Next, ${missing.join(", ")}.` : "The suggested starter mix is represented."} This remains advisory, but aim to complete gateway, housing, and income milestones before resolving; public service remains optional when funds are tight.`;
 }
 
 function purposeFamily(building) {

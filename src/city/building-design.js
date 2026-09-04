@@ -559,8 +559,8 @@ function recommendSite(site = {}, requestedFootprint, mode, intent) {
     }
   }
   parseFootprint(footprint);
-  const lotId = site.lot_id ?? site.lotId;
-  if (!lotId) throw new Error("Building design requires site.lot_id");
+  const lotId = site.anchor_cell_id ?? site.anchorCellId ?? site.site_candidate_id ?? site.siteCandidateId ?? site.lot_id ?? site.lotId;
+  if (!lotId) throw new Error("Building design requires site.anchor_cell_id from POST /site-searches");
   const entrance = String(site.entrance ?? "south").toLowerCase();
   if (!["north", "east", "south", "west"].includes(entrance)) throw new Error(`Unsupported entrance direction: ${entrance}`);
   return { lotId: String(lotId), footprint, entrance };

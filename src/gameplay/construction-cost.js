@@ -21,6 +21,22 @@ export const ROAD_COST_BY_KIND = Object.freeze({
 
 export const HEIGHT_MULTIPLIER_STEP = 0.05;
 
+export function constructionPriceGuide() {
+  return {
+    currency: "coins",
+    authority: "estimate_only; the confirmed-design construction preview is the exact quote",
+    building_rate_per_footprint_cell_per_floor: { ...BUILDING_COST_BY_PURPOSE },
+    ordinary_residential_examples: {
+      "1x1_one_floor": BUILDING_COST_BY_PURPOSE.residential,
+      "1x1_two_floors": roundCoins(BUILDING_COST_BY_PURPOSE.residential * 2 * ordinaryResidentialHeightMultiplier(2)),
+      "2x2_two_floors": roundCoins(BUILDING_COST_BY_PURPOSE.residential * 8 * ordinaryResidentialHeightMultiplier(2))
+    },
+    road_rate_per_cell: ROAD_COST_BY_KIND.standard,
+    bridge_rate_per_cell: ROAD_COST_BY_KIND.bridge,
+    note: "Footprint and floor count come from the confirmed BuildingDesign; Agents never submit functional area."
+  };
+}
+
 function integer(value, label, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
   const number = Number(value);
   if (!Number.isSafeInteger(number) || number < min || number > max) {

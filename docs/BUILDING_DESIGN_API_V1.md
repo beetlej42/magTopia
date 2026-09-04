@@ -28,7 +28,7 @@ POST /api/v1/cities/{city_id}/building-designs
 ```json
 {
   "generation_mode": "auto",
-  "site": { "lot_id": "cell-20-20", "footprint": "1x1", "entrance": "south" },
+  "site": { "anchor_cell_id": "cell-20-20", "footprint": "1x1", "entrance": "south" },
   "intent": {
     "name": "月柳药剂铺",
     "purpose": "一层经营药剂，楼上居住",

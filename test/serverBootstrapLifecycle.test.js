@@ -26,6 +26,22 @@ test("bootstrap is a read-only no-card turn and Turn 1 receives the first canoni
     const link = await json(app, auth(player, { method: "POST", url: `/api/v1/cities/${city.id}/agent-links`, payload: {} }), 201);
     const agent = await json(app, { method: "POST", url: `/connect/${link.connect_url.split("/").at(-1)}` }, 200);
 
+    const snapshot = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/snapshot` }), 200);
+    assert.equal(snapshot.bootstrap.progress.gatewayNodeId, "old_town_entry");
+    assert.ok(snapshot.bootstrap.progress.gatewayLocation.cell_id);
+    assert.equal(snapshot.agent_turn_plan.next_action.url.endsWith("/districts"), true);
+    const starterBounds = snapshot.agent_turn_plan.next_action.body.bounds;
+    assert.equal(starterBounds.maxColumn - starterBounds.minColumn + 1, 5);
+    assert.equal(starterBounds.maxRow - starterBounds.minRow + 1, 6);
+    assert.ok(starterBounds.maxColumn < snapshot.bootstrap.progress.gatewayLocation.column);
+    assert.equal(snapshot.construction_price_guide.currency, "coins");
+
+    const badSpatial = await app.inject(auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/spatial?min_col=-1&max_col=2&min_row=0&max_row=2` }));
+    assert.equal(badSpatial.statusCode, 400);
+    assert.equal(badSpatial.json().code, "SPATIAL_BOUNDS_OUT_OF_RANGE");
+    assert.equal(badSpatial.json().details.grid.columns, snapshot.world.grid.columns);
+    assert.match(badSpatial.json().details.recovery, /grid limits/i);
+
     const first = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
     const second = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
     assert.equal(first.turn, 0);

@@ -65,6 +65,10 @@ test("named districts persist simple intent while site search returns facts with
   });
   assert.ok(candidates.length > 0);
   assert.ok(candidates.some((candidate) => candidate.context.adjacentRoad));
+  assert.equal(candidates[0].context.adjacentRoad, true, "road-frontage candidates are returned first");
+  assert.equal(candidates[0].anchor_cell_id, candidates[0].lotId);
+  assert.equal(candidates[0].site_candidate_id, candidates[0].lotId);
+  assert.ok(candidates[0].recommendedEntrance);
   assert.ok(candidates.every((candidate) => candidate.context.districtId === "district-lantern"));
   assert.ok(candidates.every((candidate) => !("score" in candidate) && !("scoreExplanation" in candidate)));
 });

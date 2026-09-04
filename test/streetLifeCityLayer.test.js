@@ -17,6 +17,7 @@ function createLinearStreet(length = 10) {
     surface: { maxElevationVoxels: 0 }
   }));
   const state = {
+    gameplay: { population: { muggles: { current: 24 }, wizards: { current: 4 } } },
     cells: Object.fromEntries(cells.map((cell) => [cell.id, { ...cell, infrastructure: "road" }])),
     infrastructure: {},
     buildings: {
@@ -26,6 +27,19 @@ function createLinearStreet(length = 10) {
   };
   return { state, grid: { columns: length, rows: 1, cellWorldSize: 4, cells } };
 }
+
+test("street-life entities never exceed the authoritative population", () => {
+  const empty = createLinearStreet();
+  empty.state.gameplay.population = { muggles: { current: 0 }, wizards: { current: 0 } };
+  const emptyPlan = createStreetLifeCityPlan(empty);
+  assert.equal(emptyPlan.pedestrianCount, 0);
+  assert.equal(emptyPlan.vehicleCount, 0);
+
+  const small = createLinearStreet();
+  small.state.gameplay.population = { muggles: { current: 3 }, wizards: { current: 1 } };
+  const smallPlan = createStreetLifeCityPlan(small);
+  assert.ok(smallPlan.pedestrianCount + smallPlan.vehicleCount <= 4);
+});
 
 test("shortest road routes follow connected cardinal cells", () => {
   const adjacency = new Map([

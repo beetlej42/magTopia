@@ -407,6 +407,9 @@ test("a stale dispatch plan cannot silently overwrite a newer plan", async () =>
     }));
     assert.equal(stale.statusCode, 409);
     assert.equal(stale.json().code, "CITY_VERSION_CONFLICT");
+    assert.equal(stale.json().retryable, true);
+    assert.equal(stale.json().details.current_city_version, before.city_version + 1);
+    assert.equal(stale.json().details.recovery.action, "reread_and_rebuild");
 
     const after = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
     assert.equal(after.strategy.pending_assignments.length, 1, "the first plan is still the pending plan");

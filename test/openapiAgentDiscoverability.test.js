@@ -54,14 +54,20 @@ test("OpenAPI exposes /buildings search, filter, and bounds query parameters", (
   assert.match(minCol.description, /footprint cell/i);
 });
 
-test("OpenAPI exposes /assets search query parameters", () => {
-  const names = queryNames("/assets");
-  for (const name of ["archetype", "footprint", "district_style", "limit"]) {
-    assert.ok(names.includes(name), `expected /assets to expose query parameter ${name}`);
+test("OpenAPI exposes only the confirmed BuildingDesign construction contract", () => {
+  assert.equal(document.paths["/assets"], undefined);
+  for (const path of ["/cities/{city_id}/construction-previews", "/cities/{city_id}/construction-orders"]) {
+    const schema = operation(path, "post").requestBody.content["application/json"].schema;
+    assert.equal(schema.$ref, "#/components/schemas/BuildingDesignConstructionRequest");
+    assert.equal(schema.oneOf, undefined);
   }
-  const limit = queryParameters("/assets").find((entry) => entry.name === "limit");
-  assert.equal(limit.schema.default, 20);
-  assert.equal(limit.schema.maximum, 50);
+  const request = document.components.schemas.BuildingDesignConstructionRequest;
+  assert.deepEqual(request.required, ["expected_city_version", "design_id", "design_revision", "design_hash"]);
+  assert.equal(request.additionalProperties, false);
+  assert.equal(request.properties.gameplay_building, undefined);
+  assert.equal(document.components.schemas.ConstructionRequest, undefined);
+  assert.equal(document.components.schemas.AssetChoice, undefined);
+  assert.equal(document.components.schemas.GameplayGrammarContainer, undefined);
 });
 
 test("OpenAPI exposes /report-context turn query parameter", () => {
@@ -139,6 +145,8 @@ const DENY_LIST = new Set([
   "get /",
   "get /healthz",
   "get /agent/playbook.md",
+  "get /agent",
+  "get /agent/openapi",
   "get /agent/building-design-api-v1.md",
   "get /{p}",
   "get /style-reference/isometric-magic-london-city.jpg",
@@ -148,7 +156,11 @@ const DENY_LIST = new Set([
   "post /connect/{p}",
   "get /.well-known/magtopia-agent.json",
   "get /.well-known/magictown-agent.json",
-  "get /openapi.json"
+  "get /openapi.json",
+  "get /assets",
+  "post /cities/{p}/construction-orders/{p}/cancel",
+  "get /asset-jobs/{p}",
+  "post /asset-jobs/{p}/artifacts"
 ]);
 
 test("every eligible Agent-facing runtime route is present in OpenAPI", async () => {
@@ -202,7 +214,6 @@ const QUERY_CONTRACTS = {
   "/cities/{city_id}/spatial": ["min_col", "min_row", "max_col", "max_row"],
   "/cities/{city_id}/events": ["after_version", "limit"],
   "/cities/{city_id}/buildings": ["query", "archetype", "purpose", "limit", "min_col", "min_row", "max_col", "max_row"],
-  "/assets": ["archetype", "footprint", "district_style", "limit"],
   "/cities/{city_id}/report-context": ["turn"]
 };
 

@@ -15,6 +15,7 @@ const DIRECTION_OFFSETS = {
 export function findCandidateParcels(state, criteria = {}) {
   const footprint = criteria.footprint ?? "1x1";
   const candidates = [];
+  const gatewayCell = state.cells?.[state.nodes?.old_town_entry?.cellId] ?? null;
   for (const lot of Object.values(state.cells)) {
     const occupancy = canOccupyFootprint(state, lot.id, footprint);
     if (!occupancy.ok) continue;
@@ -23,20 +24,27 @@ export function findCandidateParcels(state, criteria = {}) {
     if (!entranceDirections.length) continue;
     const roadFrontageDirections = entranceDirections.filter((direction) => adjacentRoad(state, occupancy.cells, direction));
     const roadDistance = nearestRoadDistance(state, lot);
+    const gatewayDistance = gatewayCell
+      ? Math.abs(Number(lot.column) - Number(gatewayCell.column)) + Math.abs(Number(lot.row) - Number(gatewayCell.row))
+      : null;
     const block = criteria.layout ? districtBlockForCell(lot, criteria.layout) : null;
     const blockProgress = block ? criteria.blockProgress?.blocks?.find((entry) => entry.id === block.id) : null;
     const blockRole = block ? (isBlockPerimeterCell(lot, block) ? "perimeter" : "interior") : null;
     candidates.push({
       lotId: lot.id,
+      site_candidate_id: lot.id,
+      anchor_cell_id: lot.id,
       footprintCells: occupancy.cells,
       center: lot.center,
       entranceDirections,
+      recommendedEntrance: roadFrontageDirections[0] ?? entranceTowardCell(state, occupancy.cells, entranceDirections, gatewayCell),
       terrainSummary: summarizeTerrain(state, occupancy.cells),
       context: {
         districtId: criteria.districtId ?? null,
         adjacentRoad: roadFrontageDirections.length > 0,
         roadFrontageDirections,
         nearestRoadDistance: Number.isFinite(roadDistance) ? roadDistance : null,
+        nearestGatewayDistance: gatewayDistance,
         scenic: isNearWater(state, lot, 3) ? "waterfront" : "urban",
         boundsMatched: Boolean(criteria.bounds),
         blockId: block?.id ?? null,
@@ -60,10 +68,31 @@ export function findCandidateParcels(state, criteria = {}) {
     });
   }
   return candidates
-    .sort((left, right) => state.cells[left.lotId].row - state.cells[right.lotId].row
+    .sort((left, right) => Number(right.context.adjacentRoad) - Number(left.context.adjacentRoad)
+      || nullableDistance(left.context.nearestRoadDistance) - nullableDistance(right.context.nearestRoadDistance)
+      || nullableDistance(left.context.nearestGatewayDistance) - nullableDistance(right.context.nearestGatewayDistance)
+      || state.cells[left.lotId].row - state.cells[right.lotId].row
       || state.cells[left.lotId].column - state.cells[right.lotId].column
       || left.lotId.localeCompare(right.lotId))
     .slice(0, criteria.limit ?? 24);
+}
+
+function nullableDistance(value) {
+  return Number.isFinite(Number(value)) ? Number(value) : Number.MAX_SAFE_INTEGER;
+}
+
+function entranceTowardCell(state, footprintCells, directions, target) {
+  if (!target) return directions[0] ?? null;
+  return directions
+    .map((direction) => ({
+      direction,
+      distance: getEntranceFrontageCells(state, footprintCells, direction).reduce((best, cellId) => {
+        const cell = state.cells[cellId];
+        const distance = Math.abs(Number(cell?.column) - Number(target.column)) + Math.abs(Number(cell?.row) - Number(target.row));
+        return Math.min(best, distance);
+      }, Number.MAX_SAFE_INTEGER)
+    }))
+    .sort((left, right) => left.distance - right.distance || DIRECTIONS.indexOf(left.direction) - DIRECTIONS.indexOf(right.direction))[0]?.direction ?? null;
 }
 
 export function previewConstruction(state, proposal, options = {}) {

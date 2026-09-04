@@ -37,6 +37,11 @@ test("bootstrap progress uses live roads and canonical active building purposes"
   );
   const progress = deriveBootstrapProgress(state);
   assert.equal(progress.gatewayConnected, true);
+  assert.equal(progress.gatewayNodeId, "old_town_entry");
+  assert.equal(progress.gatewayCellId, gateway.cellId);
+  assert.deepEqual({ column: progress.gatewayLocation.column, row: progress.gatewayLocation.row }, { column: gatewayCell.column, row: gatewayCell.row });
+  assert.equal(progress.readyForMeaningfulFirstResolve, false);
+  assert.deepEqual(progress.missingRecommendedMilestones, ["income"]);
   assert.deepEqual(progress.residentialBuildings, ["home"], "canonical units take precedence over legacy text");
   assert.deepEqual(progress.commercialBuildings, [], "inactive buildings do not satisfy a milestone");
   assert.deepEqual(progress.buildingsStarted, ["home", "shop"], "an inactive building may still be an authoritative started build");

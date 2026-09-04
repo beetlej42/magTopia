@@ -22,62 +22,24 @@ export function createOpenApiDocument(baseUrl) {
             { type: "object", required: ["kind", "id"], properties: { kind: { const: "node" }, id: { type: "string" } } }
           ]
         },
-        AssetChoice: {
-          oneOf: [
-            {
-              type: "object",
-              required: ["mode", "asset_id"],
-              properties: {
-                mode: { const: "reuse" },
-                asset_id: { type: "string", description: "Exact id returned by GET /assets" }
-              }
-            },
-            {
-              type: "object",
-              required: ["mode", "spec"],
-              properties: {
-                mode: { const: "produce" },
-                spec: {
-                  type: "object",
-                  required: ["archetype", "footprint", "district_style", "creative_brief"],
-                  properties: {
-                    archetype: { type: "string" },
-                    footprint: { enum: ["1x1", "1x2", "1x3", "2x1", "2x2", "2x3", "3x1", "3x2", "3x3"] },
-                    district_style: { type: "string" },
-                    patterns: { type: "array", items: { type: "string" } },
-                    guide_volume: { type: "string", pattern: "^[1-9][0-9]*x[1-9][0-9]*x[1-9][0-9]*$", description: "Exact integer width×depth×storeys scale contract. Base must match footprint and be at most 3×3. 1x1x1 always means a small one-storey detached building; 1x1x2 means the same parcel with exactly two occupied storeys." },
-                    creative_brief: { type: "string", minLength: 1 }
-                  }
-                }
-              }
-            },
-            {
-              type: "object",
-              required: ["mode"],
-              properties: {
-                mode: { const: "voxel", description: "Resolved by the service from a confirmed BuildingDesign; clients do not submit this mode directly." }
-              }
-            }
-          ]
-        },
         BuildingDesignConstructionRequest: {
           type: "object",
-          required: ["expected_city_version", "design_id", "design_revision", "design_hash", "gameplay_building"],
+          additionalProperties: false,
+          required: ["expected_city_version", "design_id", "design_revision", "design_hash"],
           properties: {
             expected_city_version: { type: "integer", minimum: 0 },
             district_id: { type: "string", description: "Named development district this building contributes to" },
             design_id: { type: "string" },
             design_revision: { type: "integer", minimum: 1 },
             design_hash: { type: "string", description: "Exact hash returned when the design revision was confirmed" },
-            actor_note: { type: "string" },
-            gameplay_building: { $ref: "#/components/schemas/GameplayGrammarContainer", description: "Canonical v0.3 functional-unit grammar remains explicit even when site/program/design are resolved from a confirmed visual design." }
+            actor_note: { type: "string", description: "Optional factual construction reason. Site, footprint, entrance, program, asset, functional area, and exact cost are derived by the server from the confirmed BuildingDesign." }
           }
         },
         Site: {
           type: "object",
-          required: ["lot_id", "footprint", "entrance"],
+          required: ["anchor_cell_id", "footprint", "entrance"],
           properties: {
-            lot_id: { type: "string", description: "lotId returned by POST /site-searches" },
+            anchor_cell_id: { type: "string", description: "anchor_cell_id returned by POST /site-searches" },
             footprint: { enum: ["1x1", "1x2", "1x3", "2x1", "2x2", "2x3", "3x1", "3x2", "3x3"] },
             entrance: { enum: ["north", "east", "south", "west"] }
           }
@@ -277,114 +239,6 @@ export function createOpenApiDocument(baseUrl) {
             actor_note: { type: "string" }
           }
         },
-        GameplayFunctionalUnit: {
-          type: "object",
-          required: ["purpose"],
-          additionalProperties: false,
-          properties: {
-            purpose: { enum: ["residential", "commercial", "public_service", "production", "greenhouse"] },
-            area: { type: "integer", minimum: 1 },
-            functionalArea: { type: "integer", minimum: 1 },
-            cells: { type: "array", minItems: 1 },
-            magicRatio: { enum: [0, 0.25, 0.5, 0.75, 1] },
-            type: { type: "string" },
-            name: { type: "string" }
-          }
-        },
-        GameplayGrammarContainer: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            purpose: { enum: ["residential", "commercial", "public_service", "production", "greenhouse"] },
-            magicRatio: { enum: [0, 0.25, 0.5, 0.75, 1] },
-            defaultMagicRatio: { enum: [0, 0.25, 0.5, 0.75, 1] },
-            units: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
-            functionalUnits: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
-            floors: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
-            floorSpecs: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
-            floorPrograms: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
-            masses: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
-            massSpecs: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } }
-          },
-          oneOf: [
-            { required: ["units"] }, { required: ["functionalUnits"] },
-            { required: ["floors"] }, { required: ["floorSpecs"] },
-            { required: ["floorPrograms"] }, { required: ["masses"] },
-            { required: ["massSpecs"] }
-          ]
-        },
-        ConstructionRequest: {
-          type: "object",
-          required: ["expected_city_version", "site", "program", "gameplay_building", "design", "asset"],
-          properties: {
-            expected_city_version: { type: "integer", minimum: 0, description: "Version from the latest snapshot or preview" },
-            district_id: { type: "string", description: "Named development district this building contributes to" },
-            actor_note: { type: "string", description: "Short factual reason for this construction" },
-            site: {
-              type: "object",
-              required: ["lot_id", "footprint", "entrance"],
-              properties: {
-                lot_id: { type: "string", description: "lotId returned by POST /site-searches; site.lotId is also accepted" },
-                footprint: { enum: ["1x1", "1x2", "1x3", "2x1", "2x2", "2x3", "3x1", "3x2", "3x3"] },
-                entrance: { enum: ["north", "east", "south", "west"] }
-              }
-            },
-            program: {
-              type: "object",
-              required: ["archetype", "name"],
-              properties: {
-                archetype: { type: "string", description: "For reuse this must exactly match the selected asset archetype" },
-                purpose: { type: "string" },
-                name: { type: "string", minLength: 1 },
-                description: { type: "string" },
-                attributes: json
-              }
-            },
-            gameplay_building: {
-              type: "object",
-              description: "Canonical v0.3 functional-unit grammar. Costs use only these units; renderer or mesh fields are not gameplay authority. canonical and pricingFacts are server-owned and must not be submitted.",
-              additionalProperties: false,
-              properties: {
-                purpose: { enum: ["residential", "commercial", "public_service", "production", "greenhouse"] },
-                magicRatio: { enum: [0, 0.25, 0.5, 0.75, 1] },
-                defaultMagicRatio: { enum: [0, 0.25, 0.5, 0.75, 1] },
-                units: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
-                functionalUnits: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
-                floors: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
-                floorSpecs: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
-                floorPrograms: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
-                masses: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
-                massSpecs: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/GameplayFunctionalUnit" } },
-                grammar: { $ref: "#/components/schemas/GameplayGrammarContainer" },
-                massing: { $ref: "#/components/schemas/GameplayGrammarContainer" }
-              },
-              oneOf: [
-                { required: ["units"] }, { required: ["functionalUnits"] },
-                { required: ["floors"] }, { required: ["floorSpecs"] },
-                { required: ["floorPrograms"] }, { required: ["masses"] },
-                { required: ["massSpecs"] }, { required: ["grammar"] },
-                { required: ["massing"] }
-              ]
-            },
-            design: {
-              type: "object",
-              required: ["district_style", "creative_brief"],
-              properties: {
-                district_style: { type: "string" },
-                patterns: { type: "array", items: { type: "string" } },
-                creative_brief: { type: "string", minLength: 1 }
-              }
-            },
-            asset: { $ref: "#/components/schemas/AssetChoice" },
-            connection: {
-              type: "object",
-              properties: {
-                target: { $ref: "#/components/schemas/Endpoint" },
-                mode: { const: "road" }
-              }
-            }
-          }
-        },
         StrategyIncident: {
           type: "object",
           required: ["id", "building_id", "type", "attribute", "dc", "severity", "summary", "status"],
@@ -408,7 +262,7 @@ export function createOpenApiDocument(baseUrl) {
         },
         CardDefinition: {
           type: "object",
-          required: ["card_id", "type", "title", "description", "decision_mode", "duration", "choice_kind", "family", "unique", "free_placement", "placement_required"],
+          required: ["card_id", "type", "title", "description", "decision_mode", "duration", "choice_kind", "family", "unique", "free_placement", "placement_required", "choice_required", "recommended_action", "available_decision_modes", "effect_summary", "skip_consequence"],
           properties: {
             card_id: { type: "string" },
             type: { enum: ["special_structure", "resource", "personnel", "policy", "building", "people"] },
@@ -420,6 +274,11 @@ export function createOpenApiDocument(baseUrl) {
             unique: { type: "boolean" },
             free_placement: { type: "boolean", description: "System-owned entitlement; special structures are free to place." },
             placement_required: { type: "boolean" },
+            choice_required: { const: true, description: "The player must make this choice; the Agent never chooses a card." },
+            recommended_action: { type: "string" },
+            available_decision_modes: { type: "array", items: { enum: ["immediate", "player_place", "delegate_to_agent"] } },
+            effect_summary: { type: "string", description: "Compact server-owned consequences so the choice is understandable without reading another catalog." },
+            skip_consequence: { type: "string" },
             duration: { oneOf: [{ type: "string", const: "instant" }, { type: "object", properties: { type: { type: "string" }, turns: { type: "integer" } } }] },
             structure: { type: "object", nullable: true, description: "System-owned placement spec for special structure cards." },
             effect: json
@@ -712,13 +571,18 @@ export function createOpenApiDocument(baseUrl) {
         BootstrapProgress: {
           type: "object",
           additionalProperties: false,
-          required: ["gatewayConnected", "gatewayNodeId", "roadsConnected", "roadsConnectedCount", "buildingsStarted", "buildingsCompleted", "residentialBuildings", "commercialBuildings", "publicServiceBuildings", "totalBuildings", "milestones"],
+          required: ["gatewayConnected", "gatewayNodeId", "gatewayCellId", "gatewayLocation", "roadsConnected", "roadsConnectedCount", "buildingsStarted", "buildingsCompleted", "residentialBuildings", "commercialBuildings", "publicServiceBuildings", "totalBuildings", "milestones", "recommendedBeforeResolve", "missingRecommendedMilestones", "readyForMeaningfulFirstResolve"],
           properties: {
             gatewayConnected: { type: "boolean" }, gatewayNodeId: { type: ["string", "null"] },
+            gatewayCellId: { type: ["string", "null"] },
+            gatewayLocation: { oneOf: [{ type: "object", additionalProperties: false, required: ["cell_id", "column", "row"], properties: { cell_id: { type: "string" }, column: { type: "integer" }, row: { type: "integer" }, center: json } }, { type: "null" }] },
             roadsConnected: { type: "array", items: { type: "string" } }, roadsConnectedCount: { type: "integer", minimum: 0 },
             buildingsStarted: { type: "array", items: { type: "string" } }, buildingsCompleted: { type: "array", items: { type: "string" } },
             residentialBuildings: { type: "array", items: { type: "string" } }, commercialBuildings: { type: "array", items: { type: "string" } }, publicServiceBuildings: { type: "array", items: { type: "string" } }, totalBuildings: { type: "integer", minimum: 0 },
-            milestones: { type: "object", additionalProperties: false, required: ["gateway", "road", "housing", "income", "publicService"], properties: { gateway: { type: "boolean" }, road: { type: "boolean" }, housing: { type: "boolean" }, income: { type: "boolean" }, publicService: { type: "boolean" } } }
+            milestones: { type: "object", additionalProperties: false, required: ["gateway", "road", "housing", "income", "publicService"], properties: { gateway: { type: "boolean" }, road: { type: "boolean" }, housing: { type: "boolean" }, income: { type: "boolean" }, publicService: { type: "boolean" } } },
+            recommendedBeforeResolve: { type: "array", items: { enum: ["gateway", "housing", "income"] } },
+            missingRecommendedMilestones: { type: "array", items: { enum: ["gateway", "housing", "income"] } },
+            readyForMeaningfulFirstResolve: { type: "boolean" }
           }
         },
         BootstrapState: {
@@ -754,6 +618,7 @@ export function createOpenApiDocument(baseUrl) {
             settled_by: { type: ["string", "null"], description: "Which authority settled the last turn: agent, or deadline (historical only; deadline settlement no longer exists)." },
             gameplay_guidance: { type: "array", items: { type: "string" }, description: "Short progressive-disclosure hints (1-3) for the current context, derived from card/placement/incident/turn-lock state. Advisory only; the authoritative contract is the playbook." },
             playbook_url: { type: "string", description: "Stable URL of the authoritative MAGTOPIA Agent Playbook." },
+            agent_turn_plan: { type: "object", additionalProperties: true, description: "A compact current-version next action intended to minimize exploratory calls and stale retries." },
             strategy: { $ref: "#/components/schemas/StrategyPayload", properties: { incidents: { type: "array" }, arcane_officers: { type: "array" }, arcane_officer_recruitment: { $ref: "#/components/schemas/ArcaneOfficerRecruitment" }, pending_assignments: { type: "array" }, cards: { $ref: "#/components/schemas/StrategyCards" } } },
             last_turn_facts: { oneOf: [{ $ref: "#/components/schemas/TurnFacts" }, { type: "null" }] }
           }
@@ -1067,21 +932,12 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}/building-designs/{design_id}/confirm": { post: operation("Lock the current design revision for construction", "building-designs", { $ref: "#/components/schemas/BuildingDesignConfirmRequest" }) },
       "/cities/{city_id}/buildings/{building_id}/upgrade-designs": { post: operation("Create an editable upgrade design from a built voxel design", "building-designs", { $ref: "#/components/schemas/BuildingDesignUpgradeRequest" }) },
       "/cities/{city_id}/site-searches": { post: operation("List legal construction sites and objective road-frontage facts inside a named district", "construction", { $ref: "#/components/schemas/SiteSearchRequest" }) },
-      "/assets": {
-        get: operation("Search validated reusable assets", "assets", null, json, true, [
-          queryParameter("archetype", { type: "string" }, "Exact asset archetype filter."),
-          queryParameter("footprint", { type: "string" }, "Exact footprint filter, e.g. 2x3."),
-          queryParameter("district_style", { type: "string" }, "Exact district style filter."),
-          queryParameter("limit", { type: "integer", default: 20, maximum: 50 }, "Maximum number of assets to return.")
-        ])
-      },
-      "/cities/{city_id}/construction-previews": { post: operation("Preview a legacy asset request or confirmed voxel design", "construction", { oneOf: [{ $ref: "#/components/schemas/ConstructionRequest" }, { $ref: "#/components/schemas/BuildingDesignConstructionRequest" }] }) },
+      "/cities/{city_id}/construction-previews": { post: operation("Preview one confirmed BuildingDesign", "construction", { $ref: "#/components/schemas/BuildingDesignConstructionRequest" }) },
       "/cities/{city_id}/construction-orders": {
         get: operation("List construction orders", "construction"),
-        post: commandOperation("Submit an idempotent asset or confirmed voxel-design construction order", "construction", { oneOf: [{ $ref: "#/components/schemas/ConstructionRequest" }, { $ref: "#/components/schemas/BuildingDesignConstructionRequest" }] })
+        post: commandOperation("Submit one idempotent confirmed-BuildingDesign construction order", "construction", { $ref: "#/components/schemas/BuildingDesignConstructionRequest" })
       },
       "/cities/{city_id}/construction-orders/{order_id}": { get: operation("Read a construction order", "construction") },
-      "/cities/{city_id}/construction-orders/{order_id}/cancel": { post: commandOperation("Cancel an asset-waiting construction order and release its site and frozen resources", "construction") },
       "/cities/{city_id}/connection-previews": { post: operation("Preview a building/cell/node road connection", "roads", { $ref: "#/components/schemas/ConnectionRequest" }) },
       "/cities/{city_id}/connections": { post: commandOperation("Submit an idempotent road connection", "roads", { $ref: "#/components/schemas/ConnectionRequest" }) },
       "/cities/{city_id}/time-advances": { post: commandOperation("Manual time advance is disabled: income and turn progression flow through the cooldown-gated strategy resolve instead", "simulation") },
@@ -1108,9 +964,7 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}/city-day/report-dismissed": { post: operation("Record that the player dismissed the completed day's Owl Daily so it is never replayed", "city-day", { $ref: "#/components/schemas/ReportDismissRequest" }, { $ref: "#/components/schemas/ReportDismissResponse" }) },
       "/cities/{city_id}/agent-links": { post: operation("Create a one-time Agent connection link", "credentials", json) },
       "/cities/{city_id}/agent-credentials": { get: operation("List Agent credentials", "credentials") },
-      "/cities/{city_id}/agent-credentials/{credential_id}": { delete: operation("Revoke an Agent credential", "credentials") },
-      "/asset-jobs/{job_id}": { get: operation("Read asset production status", "assets") },
-      "/asset-jobs/{job_id}/artifacts": { post: commandOperation("Supply an image generated through the Codex/manual bridge", "assets") }
+      "/cities/{city_id}/agent-credentials/{credential_id}": { delete: operation("Revoke an Agent credential", "credentials") }
     }
   };
   for (const [route, pathItem] of Object.entries(document.paths)) {

@@ -24,16 +24,22 @@ export function createStreetLifeCityPlan({ state, grid, seed = "city-street-life
   const primaryIds = new Set(primaryComponent);
   const entranceIds = collectBuildingEntranceRoadIds(state, roadsById).filter((id) => primaryIds.has(id));
   const rng = createRng(`${seed}:plan`);
-  if (primaryComponent.length < 2 || stableDensity <= 0) {
+  const population = currentPopulation(state);
+  if (primaryComponent.length < 2 || stableDensity <= 0 || population <= 0) {
     return emptyStreetLifePlan(seed, roadCells.length, components.length);
   }
 
-  const pedestrianCount = Math.round(clamp(
+  const desiredPedestrians = Math.round(clamp(
     Math.max(6, entranceIds.length * 2, primaryComponent.length * 0.16) * stableDensity,
     0,
     28
   ));
-  const vehicleCount = Math.round(clamp(primaryComponent.length / 7 * stableDensity, 2, 12));
+  const desiredVehicles = Math.round(clamp(primaryComponent.length / 7 * stableDensity, 2, 12));
+  // Visible street life is a projection of the authoritative population, not
+  // decoration that can invent residents. Reserve at most one vehicle per four
+  // residents, then allocate the remaining visible population to pedestrians.
+  const vehicleCount = Math.min(desiredVehicles, Math.floor(population / 4));
+  const pedestrianCount = Math.min(desiredPedestrians, Math.max(0, population - vehicleCount));
   const pedestrianTargets = entranceIds.length >= 2 ? entranceIds : primaryComponent;
   const pedestrians = Array.from({ length: pedestrianCount }, (_, index) => {
     const routeIds = chooseRoundTripRoute(pedestrianTargets, adjacency, rng, index);
@@ -75,6 +81,13 @@ export function createStreetLifeCityPlan({ state, grid, seed = "city-street-life
     pedestrians,
     vehicles
   };
+}
+
+function currentPopulation(state) {
+  const population = state?.gameplay?.population ?? {};
+  return Math.max(0,
+    Math.floor(Number(population.muggles?.current ?? 0))
+    + Math.floor(Number(population.wizards?.current ?? 0)));
 }
 
 export function createStreetLifeCityLayer({

@@ -135,7 +135,7 @@ export function createRepository(database, config, { now = () => new Date() } = 
         const city = cityResult.rows[0];
         const actualVersion = Number(city.city_version);
         if (expectedVersion !== undefined && Number(expectedVersion) !== actualVersion) {
-          throw new ServiceError(409, "CITY_VERSION_CONFLICT", "City changed since the scheduler read it", { expected: Number(expectedVersion), actual: actualVersion });
+          throw cityVersionConflict("City changed since the scheduler read it", expectedVersion, actualVersion);
         }
         const state = city.state_jsonb;
         const eventCount = state.events?.length ?? 0;
@@ -231,7 +231,8 @@ export function createRepository(database, config, { now = () => new Date() } = 
           expires_at: expiresAt.toISOString(),
           api_base_url: `${config.publicBaseUrl}/api/v1`,
           playbook_url: `${config.publicBaseUrl}/agent/playbook.md`,
-          openapi_url: `${config.publicBaseUrl}/openapi.json`
+          openapi_url: `${config.publicBaseUrl}/openapi.json`,
+          browser_openapi_url: `${config.publicBaseUrl}/agent/openapi`
         };
       });
     },
@@ -524,7 +525,7 @@ export function createRepository(database, config, { now = () => new Date() } = 
         const city = cityResult.rows[0];
         const actualVersion = Number(city.city_version);
         if (expectedVersion !== undefined && Number(expectedVersion) !== actualVersion) {
-          throw new ServiceError(409, "CITY_VERSION_CONFLICT", "City changed since the preview", { expected: Number(expectedVersion), actual: actualVersion });
+          throw cityVersionConflict("City changed since the preview", expectedVersion, actualVersion);
         }
         const state = city.state_jsonb;
         const eventCount = state.events?.length ?? 0;
@@ -651,6 +652,18 @@ export function createRepository(database, config, { now = () => new Date() } = 
 
     database
   };
+}
+
+function cityVersionConflict(message, expected, actual) {
+  return new ServiceError(409, "CITY_VERSION_CONFLICT", message, {
+    expected: Number(expected),
+    actual: Number(actual),
+    current_city_version: Number(actual),
+    recovery: {
+      action: "reread_and_rebuild",
+      instruction: "GET the city strategy or snapshot, rebuild the request using current_city_version, then retry once with a new Idempotency-Key."
+    }
+  }, true);
 }
 
 function reportResponse(row) {

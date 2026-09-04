@@ -42,6 +42,7 @@ import { playbookGuidance } from "../../src/gameplay/guidance.js";
 import { isTurnResolveLocked, initializeTurnSchedule, normalizeTurnSchedule } from "../../src/gameplay/turn.js";
 import { arcaneOfficerCapacity, arcaneOfficerRecruitmentUnlocked, currentOfficerCandidates, hireArcaneOfficerCandidate, recruitmentConfigSummary } from "../../src/gameplay/arcane-officers.js";
 import { bootstrapGuidance, deriveBootstrapProgress, isBootstrapTurn } from "../../src/gameplay/bootstrap.js";
+import { constructionPriceGuide } from "../../src/gameplay/construction-cost.js";
 import {
   buildCityArtifactPack,
   cityArtifactPackManifest,
@@ -75,6 +76,8 @@ export async function createApp({ repository, config, logger = false, now = () =
     return { status: "ok", service: "MAGTOPIA", chinese_name: "麦托邦", voxel_only: config.voxelOnly };
   });
   app.get("/agent/playbook.md", async (_request, reply) => reply.type("text/markdown; charset=utf-8").send(await fs.readFile(PLAYBOOK_PATH, "utf8")));
+  app.get("/agent", async (_request, reply) => reply.type("text/html; charset=utf-8").send(agentStartPage(config.publicBaseUrl)));
+  app.get("/agent/openapi", async (_request, reply) => reply.type("text/html; charset=utf-8").send(agentOpenApiPage(createOpenApiDocument(config.publicBaseUrl))));
   app.get("/agent/building-design-api-v1.md", async (_request, reply) => reply.type("text/markdown; charset=utf-8").send(await fs.readFile(BUILDING_DESIGN_API_PATH, "utf8")));
   app.get("/style-reference/isometric-magic-london-city.jpg", async (_request, reply) =>
     reply.type("image/jpeg").header("Cache-Control", "public, max-age=86400").send(
@@ -103,7 +106,9 @@ export async function createApp({ repository, config, logger = false, now = () =
     capability_exchange_method: "POST",
     api_base_url: `${config.publicBaseUrl}/api/v1`,
     playbook_url: `${config.publicBaseUrl}/agent/playbook.md`,
-    openapi_url: `${config.publicBaseUrl}/openapi.json`
+    openapi_url: `${config.publicBaseUrl}/openapi.json`,
+    browser_start_url: `${config.publicBaseUrl}/agent`,
+    browser_openapi_url: `${config.publicBaseUrl}/agent/openapi`
   });
   app.get("/.well-known/magtopia-agent.json", async () => agentDiscovery());
   // Keep the pre-rebrand discovery URL readable for existing Agents.
@@ -446,6 +451,11 @@ export async function createApp({ repository, config, logger = false, now = () =
     return {
       city_version: state.version,
       district: district ? districtResponse(state, district) : null,
+      planning: {
+        recommended_candidate_id: candidates[0]?.site_candidate_id ?? null,
+        selection_rule: "Candidates are ordered by existing road frontage, shortest road distance, then gateway proximity.",
+        price_guide: constructionPriceGuide()
+      },
       data: candidates
     };
   });
@@ -694,6 +704,7 @@ export async function createApp({ repository, config, logger = false, now = () =
     const candidateState = currentOfficerCandidates(state, row.id);
     const strategyState = candidateState.state;
     const nowValue = now();
+    const turnPlan = agentTurnPlan(row, strategyState, config, nowValue);
     return {
       city_id: row.id,
       city_version: Number(row.city_version),
@@ -715,7 +726,8 @@ export async function createApp({ repository, config, logger = false, now = () =
       // Progressive playbook disclosure: a short context hint plus a pointer to
       // the authoritative playbook. Never the full document.
       gameplay_guidance: playbookGuidance(state, { turnLocked: isTurnResolveLocked(state, nowValue) ? gameplay.nextTurnUnlockAt : null }),
-      playbook_url: `${config.publicBaseUrl}/agent/playbook.md`
+      playbook_url: `${config.publicBaseUrl}/agent/playbook.md`,
+      agent_turn_plan: turnPlan
     };
   });
 
@@ -1562,11 +1574,32 @@ function engineContext(options = {}) {
 function actorId(principal) { return `${principal.kind}:${principal.id}`; }
 
 function spatialQuery(state, query) {
-  const minCol = numberParam(query.min_col, 0);
-  const minRow = numberParam(query.min_row, 0);
-  const maxCol = numberParam(query.max_col, minCol + 9);
-  const maxRow = numberParam(query.max_row, minRow + 9);
-  if (maxCol < minCol || maxRow < minRow) throw new ServiceError(400, "INVALID_BOUNDS", "Spatial bounds are reversed");
+  const columns = Number(state.world?.grid?.columns ?? Math.max(...Object.values(state.cells).map((cell) => cell.column)) + 1);
+  const rows = Number(state.world?.grid?.rows ?? Math.max(...Object.values(state.cells).map((cell) => cell.row)) + 1);
+  const minCol = spatialIntegerParam(query, "min_col", 0);
+  const minRow = spatialIntegerParam(query, "min_row", 0);
+  const maxCol = spatialIntegerParam(query, "max_col", Math.min(columns - 1, minCol + 9));
+  const maxRow = spatialIntegerParam(query, "max_row", Math.min(rows - 1, minRow + 9));
+  const invalidFields = [
+    ["min_col", minCol, 0, columns - 1],
+    ["max_col", maxCol, 0, columns - 1],
+    ["min_row", minRow, 0, rows - 1],
+    ["max_row", maxRow, 0, rows - 1]
+  ].filter(([, value, minimum, maximum]) => value < minimum || value > maximum)
+    .map(([field, value, minimum, maximum]) => ({ field, value, minimum, maximum }));
+  if (invalidFields.length) {
+    throw new ServiceError(400, "SPATIAL_BOUNDS_OUT_OF_RANGE", "Spatial bounds must stay inside the city grid", {
+      invalid_fields: invalidFields,
+      grid: { columns, rows },
+      recovery: "Use the returned grid limits or query the gateway-centered bounds from the city snapshot."
+    });
+  }
+  if (maxCol < minCol || maxRow < minRow) {
+    throw new ServiceError(400, "INVALID_BOUNDS", "Spatial bounds are reversed", {
+      received: { min_col: minCol, min_row: minRow, max_col: maxCol, max_row: maxRow },
+      recovery: "Ensure max_col >= min_col and max_row >= min_row."
+    });
+  }
   const area = (maxCol - minCol + 1) * (maxRow - minRow + 1);
   if (area > 400) throw new ServiceError(400, "SPATIAL_QUERY_TOO_LARGE", "Spatial query is limited to 400 logical cells", { area, maximum: 400 });
   const cells = Object.values(state.cells).filter((cell) => cell.column >= minCol && cell.column <= maxCol && cell.row >= minRow && cell.row <= maxRow);
@@ -1646,7 +1679,19 @@ function districtResponse(state, district) {
     recommended_next_action: suggestedNextFocus
   };
 }
-function numberParam(value, fallback) { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : fallback; }
+function spatialIntegerParam(query, name, fallback) {
+  const value = query[name];
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) {
+    throw new ServiceError(400, "INVALID_SPATIAL_PARAMETER", `${name} must be an integer`, {
+      field: name,
+      received: value,
+      recovery: "Send integer min_col, min_row, max_col, and max_row query parameters."
+    });
+  }
+  return parsed;
+}
 function subtract(a, b) { return { coins: a.coins - b.coins }; }
 function negativeKeys(value) { return value ? Object.entries(value).filter(([, amount]) => amount < 0).map(([key]) => key) : []; }
 
@@ -1737,6 +1782,7 @@ function agentSnapshot(row, state, events, orders, config) {
     bootstrap: isBootstrapTurn(state) ? { progress: deriveBootstrapProgress(state), guidance: bootstrapGuidance(deriveBootstrapProgress(state)) } : null,
     elapsed_hours: state.elapsedHours,
     resources: state.resources,
+    construction_price_guide: constructionPriceGuide(),
     world: state.world ?? null,
     daily_production: dailyProduction,
     counts: {
@@ -1752,17 +1798,114 @@ function agentSnapshot(row, state, events, orders, config) {
     recent_changes: events,
     districts,
     pending_orders: orders.filter((order) => !["completed", "failed", "cancelled"].includes(order.status)),
-    available_actions: { define_district: true, cancel_district: true, construct: true, connect: true, request_asset: true, spend_full_current_budget: true },
+    available_actions: { define_district: true, cancel_district: true, construct_confirmed_design: true, connect: true, spend_full_current_budget: true },
     links: {
       playbook: `${config.publicBaseUrl}/agent/playbook.md`,
+      strategy: `${config.publicBaseUrl}/api/v1/cities/${row.id}/strategy`,
+      cards_current: `${config.publicBaseUrl}/api/v1/cities/${row.id}/cards/current`,
+      districts: `${config.publicBaseUrl}/api/v1/cities/${row.id}/districts`,
+      site_searches: `${config.publicBaseUrl}/api/v1/cities/${row.id}/site-searches`,
+      building_designs: `${config.publicBaseUrl}/api/v1/cities/${row.id}/building-designs`,
+      construction_previews: `${config.publicBaseUrl}/api/v1/cities/${row.id}/construction-previews`,
+      construction_orders: `${config.publicBaseUrl}/api/v1/cities/${row.id}/construction-orders`,
+      connection_previews: `${config.publicBaseUrl}/api/v1/cities/${row.id}/connection-previews`,
+      connections: `${config.publicBaseUrl}/api/v1/cities/${row.id}/connections`,
       spatial_query: `${config.publicBaseUrl}/api/v1/cities/${row.id}/spatial`,
       buildings: `${config.publicBaseUrl}/api/v1/cities/${row.id}/buildings`,
       events: `${config.publicBaseUrl}/api/v1/cities/${row.id}/events?after_version=${row.city_version}`
     },
     // Progressive playbook disclosure: a short context-appropriate hint, never
     // the full playbook. The authoritative contract lives at links.playbook.
-    gameplay_guidance: playbookGuidance(state)
+    gameplay_guidance: playbookGuidance(state),
+    agent_turn_plan: agentTurnPlan(row, state, config, new Date())
   };
+}
+
+function agentTurnPlan(row, state, config, nowValue) {
+  const cityVersion = Number(state.version ?? row.city_version);
+  const cityBase = `${config.publicBaseUrl}/api/v1/cities/${row.id}`;
+  const versionRule = "After every mutation, use city_version_after for the next mutation. If another actor changed the city, reread /strategy and rebuild the request once.";
+  if (isBootstrapTurn(state)) {
+    const progress = deriveBootstrapProgress(state);
+    const activeDistrict = Object.values(state.districts ?? {}).find((district) => district.status !== "cancelled") ?? null;
+    const gateway = progress.gatewayLocation;
+    const nextAction = !activeDistrict
+      ? {
+          method: "POST",
+          url: `${cityBase}/districts`,
+          body: { expected_city_version: cityVersion, name: "Gateway Quarter", purpose: "starter housing and local commerce", bounds: starterDistrictBounds(state, gateway) },
+          success: "Continue with the returned city_version_after and district.id."
+        }
+      : !progress.gatewayConnected
+        ? {
+            method: "POST",
+            url: `${cityBase}/connections`,
+            body: { expected_city_version: cityVersion, from: { kind: "node", id: "old_town_entry" }, to: { kind: "cell", id: starterRoadTarget(state, gateway, activeDistrict) }, mode: "road", actor_note: "connect the starter quarter to the city gateway" },
+            success: "Use city_version_after, then search a 1x1 site in the active district."
+          }
+        : {
+            method: "POST",
+            url: `${cityBase}/site-searches`,
+            body: { district_id: activeDistrict.id, footprint: "1x1", limit: 3 },
+            success: "Use data[0].anchor_cell_id and recommendedEntrance in a BuildingDesign; build housing first, then commerce."
+          };
+    return {
+      objective: "Before the first resolve, connect the gateway and complete at least one residential and one commercial BuildingDesign.",
+      ready_to_resolve: progress.readyForMeaningfulFirstResolve,
+      missing_milestones: progress.missingRecommendedMilestones,
+      gateway: { node_id: progress.gatewayNodeId, ...gateway },
+      version_rule: versionRule,
+      next_action: nextAction,
+      starter_builds: [
+        { candidate_index: 0, intent: { name: "Gateway Row House", purpose: "residential", composition: "street", frontage: "residential", access: "private", prominence: "ordinary", magic_level: 0.15 }, requirements: { preferred_floors: 1 } },
+        { candidate_index: 1, intent: { name: "Gateway Corner Shop", purpose: "commercial shop", composition: "street", frontage: "display", access: "public", prominence: "ordinary", magic_level: 0.2 }, requirements: { preferred_floors: 1 } }
+      ],
+      construction_sequence: ["site-searches", "building-designs", "building-designs/{design_id}/confirm", "construction-previews", "construction-orders"],
+      resolve_when_ready: progress.readyForMeaningfulFirstResolve
+        ? { method: "POST", url: `${cityBase}/strategy/resolve`, body: { expected_city_version: cityVersion, assignments: [] } }
+        : { method: "POST", url: `${cityBase}/strategy/resolve`, instruction: "After both starter builds succeed, use the latest city_version_after as expected_city_version and submit assignments: []." }
+    };
+  }
+  const gameplay = state.gameplay ?? {};
+  const offer = currentOffer(state);
+  const choice = currentChoice(state);
+  const placements = pendingPlacements(state);
+  let nextAction;
+  if (offer && choice?.status === "pending") {
+    nextAction = { actor: "player", method: "POST", url: `${cityBase}/cards/select`, instruction: "Wait for the player to choose one offered card; the Agent must not choose it." };
+  } else if (placements.length) {
+    nextAction = { method: "POST", url: `${cityBase}/cards/place`, instruction: "Complete the delegated special-structure placement described in strategy.cards.pending_placements." };
+  } else if (isTurnResolveLocked(state, nowValue)) {
+    nextAction = { method: "WAIT", until: gameplay.nextTurnUnlockAt, instruction: "The turn is complete but cooldown-locked; wait instead of adding low-value work." };
+  } else {
+    nextAction = { method: "POST", url: `${cityBase}/strategy/resolve`, body: { expected_city_version: cityVersion, assignments: [] } };
+  }
+  return { objective: "Apply the player card, handle incidents or delegated placements, make one useful development step, then resolve.", version_rule: versionRule, next_action: nextAction };
+}
+
+function starterDistrictBounds(state, gateway) {
+  const columns = Number(state.world?.grid?.columns ?? 50);
+  const rows = Number(state.world?.grid?.rows ?? 50);
+  const gatewayColumn = Number(gateway?.column ?? columns - 1);
+  const gatewayRow = Number(gateway?.row ?? Math.floor(rows / 2));
+  const maxColumn = Math.max(4, Math.min(columns - 1, gatewayColumn - 1));
+  const minColumn = Math.max(0, maxColumn - 4);
+  const minRow = Math.max(0, Math.min(rows - 6, gatewayRow - 2));
+  return { minColumn, minRow, maxColumn, maxRow: minRow + 5 };
+}
+
+function starterRoadTarget(state, gateway, district) {
+  const gatewayColumn = Number(gateway?.column ?? state.world?.grid?.columns ?? 1) - 1;
+  const gatewayRow = Number(gateway?.row ?? 0);
+  const preferred = `cell-${Math.max(Number(district?.bounds?.minColumn ?? 0), gatewayColumn)}-${Math.min(Number(district?.bounds?.maxRow ?? gatewayRow), Math.max(Number(district?.bounds?.minRow ?? 0), gatewayRow))}`;
+  if (state.cells?.[preferred]?.buildable !== false && state.cells?.[preferred]?.strictBuildable !== false) return preferred;
+  const candidate = Object.values(state.cells ?? {}).filter((cell) => cell.buildable !== false && cell.strictBuildable !== false && !cell.node
+      && Number(cell.column) >= Number(district?.bounds?.minColumn ?? 0)
+      && Number(cell.column) <= Number(district?.bounds?.maxColumn ?? state.world?.grid?.columns ?? 50)
+      && Number(cell.row) >= Number(district?.bounds?.minRow ?? 0)
+      && Number(cell.row) <= Number(district?.bounds?.maxRow ?? state.world?.grid?.rows ?? 50))
+    .sort((left, right) => Math.abs(Number(left.column) - gatewayColumn) + Math.abs(Number(left.row) - gatewayRow) - (Math.abs(Number(right.column) - gatewayColumn) + Math.abs(Number(right.row) - gatewayRow)))[0];
+  return candidate?.id ?? preferred;
 }
 
 async function completeManualAsset(repository, config, principal, job, body, idempotencyKey) {
@@ -1775,7 +1918,19 @@ async function completeManualAsset(repository, config, principal, job, body, ide
 }
 
 function homePage(baseUrl) {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>MAGTOPIA · 麦托邦 · Agent Service</title><style>body{max-width:760px;margin:64px auto;padding:0 24px;background:#14201c;color:#edf2df;font:17px/1.6 system-ui}a{color:#b9e39f}code{background:#24332c;padding:.15em .35em;border-radius:4px}.card{border:1px solid #496153;border-radius:14px;padding:20px;margin:20px 0}</style></head><body><h1>MAGTOPIA Agent City Service</h1><p>麦托邦是一座由 AI Agent 驱动的魔法城市。每位玩家拥有一座默认私有的城市，市政 Agent 通过专属的一次性链接接入，并以受限 API 读取、建设和解释城市。</p><div class="card"><h2>Agent 从这里开始</h2><p><a href="/agent/playbook.md">Playbook</a> · <a href="/openapi.json">OpenAPI 3.1</a> · <a href="/.well-known/magtopia-agent.json">机器发现清单</a></p><p>API base：<code>${baseUrl}/api/v1</code></p></div><div class="card"><h2>城市运营</h2><p><a href="/dashboard">打开城市与资产状态面板</a></p><p>创建玩家与私有城市 → 创建 Agent link → Agent 兑换凭证 → 查询城市 → 预览并提交建设 → 读取事件和异步资产状态。</p></div></body></html>`;
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>MAGTOPIA · 麦托邦 · Agent Service</title><style>${agentPageStyles()}</style></head><body><h1>MAGTOPIA Agent City Service</h1><p>麦托邦是一座由 AI Agent 驱动的魔法城市。每位玩家拥有一座默认私有的城市，市政 Agent 通过专属的一次性链接接入，并以受限 API 读取、建设和解释城市。</p><div class="card"><h2>Agent 从这里开始</h2><p><a href="/agent">浏览器友好的 Agent 起点</a> · <a href="/agent/playbook.md">Playbook</a> · <a href="/agent/openapi">OpenAPI</a></p><p>API base：<code>${baseUrl}/api/v1</code></p></div><div class="card"><h2>城市运营</h2><p><a href="/dashboard">打开城市与资产状态面板</a></p><p>创建玩家与私有城市 → 创建 Agent link → Agent 兑换凭证 → 查询城市 → 按 snapshot 的 <code>agent_turn_plan.next_action</code> 建设并推进回合。</p></div></body></html>`;
+}
+
+function agentStartPage(baseUrl) {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex,nofollow"><title>Agent Start · MAGTOPIA</title><style>${agentPageStyles()}</style></head><body><h1>MAGTOPIA Agent quick start</h1><div class="card"><h2>Shortest reliable path</h2><ol><li>Register with <code>POST ${baseUrl}/api/v1/players</code> and store the returned player bearer token.</li><li>Create a city with <code>POST /api/v1/cities</code>.</li><li>Create an Agent link with <code>POST /api/v1/cities/{city_id}/agent-links</code>, then open its URL.</li><li>Exchange the one-time link once. The browser button performs the required POST without leaving the page.</li><li>Use the Agent token to <code>GET /api/v1/cities/{city_id}/snapshot</code>. Follow <code>agent_turn_plan.next_action</code> and carry forward every <code>city_version_after</code>.</li></ol></div><div class="card"><h2>Contracts</h2><p><a href="/agent/playbook.md">Playbook</a> · <a href="/agent/openapi">Browser OpenAPI</a> · <a href="/openapi.json">Raw OpenAPI JSON</a> · <a href="/.well-known/magtopia-agent.json">Discovery</a></p><p>Construction has one supported path: site search → BuildingDesign → confirm → preview → order. Do not search legacy assets or submit gameplay area/cost fields.</p></div></body></html>`;
+}
+
+function agentOpenApiPage(document) {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex,nofollow"><title>Agent OpenAPI · MAGTOPIA</title><style>${agentPageStyles()}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}</style></head><body><h1>MAGTOPIA Agent OpenAPI</h1><p><a href="/agent">Quick start</a> · <a href="/agent/playbook.md">Playbook</a> · <a href="/openapi.json">Raw JSON</a></p><pre>${escapeHtml(JSON.stringify(document, null, 2))}</pre></body></html>`;
+}
+
+function agentPageStyles() {
+  return "body{max-width:900px;margin:64px auto;padding:0 24px;background:#14201c;color:#edf2df;font:17px/1.6 system-ui}a{color:#b9e39f}code,pre{background:#24332c;padding:.15em .35em;border-radius:4px}.card{border:1px solid #496153;border-radius:14px;padding:20px;margin:20px 0}";
 }
 
 function acceptsHtml(request) {
@@ -1797,7 +1952,7 @@ function connectionConfirmationPage(capability) {
 }
 
 function connectionSuccessPage(connection) {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex,nofollow"><title>Agent connected · MAGTOPIA</title><style>${connectionPageStyles()}</style></head><body><main><p class="eyebrow">MAGTOPIA · Agent connection</p><h1>Agent connected</h1><p>The one-time link has now been consumed. Store this credential before leaving the page.</p><dl><dt>City ID</dt><dd><code>${escapeHtml(connection.city_id)}</code></dd><dt>Bearer token</dt><dd><textarea readonly rows="4">${escapeHtml(connection.access_token)}</textarea></dd><dt>Scopes</dt><dd><code>${escapeHtml(connection.scopes.join(" "))}</code></dd><dt>Expires</dt><dd>${escapeHtml(connection.expires_at)}</dd></dl><p><a href="${escapeHtml(connection.playbook_url)}">Read the Agent Playbook</a> · <a href="${escapeHtml(connection.openapi_url)}">OpenAPI</a></p><p class="hint">Send <code>Authorization: Bearer &lt;token&gt;</code> to <code>${escapeHtml(connection.api_base_url)}</code>. Refreshing this page cannot issue the credential again.</p></main></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex,nofollow"><title>Agent connected · MAGTOPIA</title><style>${connectionPageStyles()}</style></head><body><main><p class="eyebrow">MAGTOPIA · Agent connection</p><h1>Agent connected</h1><p>The one-time link has now been consumed. Store this credential before leaving the page.</p><dl><dt>City ID</dt><dd><code>${escapeHtml(connection.city_id)}</code></dd><dt>Bearer token</dt><dd><textarea readonly rows="4">${escapeHtml(connection.access_token)}</textarea></dd><dt>Scopes</dt><dd><code>${escapeHtml(connection.scopes.join(" "))}</code></dd><dt>Expires</dt><dd>${escapeHtml(connection.expires_at)}</dd></dl><p><a href="${escapeHtml(connection.playbook_url)}">Read the Agent Playbook</a> · <a href="${escapeHtml(connection.browser_openapi_url ?? connection.openapi_url)}">OpenAPI</a></p><p class="hint">Send <code>Authorization: Bearer &lt;token&gt;</code> to <code>${escapeHtml(connection.api_base_url)}</code>. Refreshing this page cannot issue the credential again.</p></main></body></html>`;
 }
 
 function connectionPageStyles() {
@@ -1805,7 +1960,7 @@ function connectionPageStyles() {
 }
 
 function connectionExchangeScript() {
-  return `const form=document.querySelector("#exchange-form");const button=document.querySelector("#exchange-button");const status=document.querySelector("#exchange-status");const result=document.querySelector("#credential-result");form.addEventListener("submit",async(event)=>{if(typeof fetch!=="function")return;event.preventDefault();button.disabled=true;status.textContent="Exchanging securely…";try{const response=await fetch(form.action,{method:"POST",headers:{Accept:"application/json"},credentials:"same-origin",cache:"no-store"});const payload=await response.json();if(!response.ok)throw new Error(payload.message||("Exchange failed (HTTP "+response.status+")"));document.querySelector("#city-id").textContent=payload.city_id;document.querySelector("#access-token").value=payload.access_token;document.querySelector("#scopes").textContent=Array.isArray(payload.scopes)?payload.scopes.join(" "):"";document.querySelector("#expires-at").textContent=payload.expires_at;document.querySelector("#api-base").textContent=payload.api_base_url;const playbook=document.querySelector("#playbook-link");playbook.href=payload.playbook_url;const openapi=document.querySelector("#openapi-link");openapi.href=payload.openapi_url;form.hidden=true;result.hidden=false;}catch(error){status.textContent="Exchange failed: "+error.message+". Do not retry blindly; the link is consumed only if the server returned a credential.";button.disabled=false;}});`;
+  return `const form=document.querySelector("#exchange-form");const button=document.querySelector("#exchange-button");const status=document.querySelector("#exchange-status");const result=document.querySelector("#credential-result");form.addEventListener("submit",async(event)=>{if(typeof fetch!=="function")return;event.preventDefault();button.disabled=true;status.textContent="Exchanging securely…";try{const response=await fetch(form.action,{method:"POST",headers:{Accept:"application/json"},credentials:"same-origin",cache:"no-store"});const payload=await response.json();if(!response.ok)throw new Error(payload.message||("Exchange failed (HTTP "+response.status+")"));document.querySelector("#city-id").textContent=payload.city_id;document.querySelector("#access-token").value=payload.access_token;document.querySelector("#scopes").textContent=Array.isArray(payload.scopes)?payload.scopes.join(" "):"";document.querySelector("#expires-at").textContent=payload.expires_at;document.querySelector("#api-base").textContent=payload.api_base_url;const playbook=document.querySelector("#playbook-link");playbook.href=payload.playbook_url;const openapi=document.querySelector("#openapi-link");openapi.href=payload.browser_openapi_url||payload.openapi_url;form.hidden=true;result.hidden=false;}catch(error){status.textContent="Exchange failed: "+error.message+". Do not retry blindly; the link is consumed only if the server returned a credential.";button.disabled=false;}});`;
 }
 
 function escapeHtml(value) {
