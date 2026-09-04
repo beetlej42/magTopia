@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
-import { createAgentAcceptanceCity } from "../src/generators/agentAcceptanceCity.js";
+import { createAgentAcceptanceCity, createAgentAcceptanceCityIncrementally } from "../src/generators/agentAcceptanceCity.js";
 import { createAgentVoxelRoadLayer, createAgentVoxelVegetationPlan, createAgentVoxelVegetationLayer, selectVictorianBridgeStyle } from "../src/generators/agentVoxelInfrastructure.js";
 import { runNonVisualAgentBuildScenario } from "../src/city/agent-district-simulation.js";
 import {
@@ -9,8 +9,18 @@ import {
   configureVoxelShadowOnlyLayer
 } from "../src/generators/magicLondonStarterDistrict.js";
 
-test("Agent acceptance city renders roads and vegetation entirely as voxel geometry", () => {
-  const city = createAgentAcceptanceCity({ acceptanceSeed: "voxel-infrastructure-test" });
+test("Agent acceptance city renders roads and vegetation entirely as voxel geometry", async () => {
+  const progress = [];
+  let yields = 0;
+  const city = await createAgentAcceptanceCityIncrementally(
+    { acceptanceSeed: "voxel-infrastructure-test" },
+    {
+      onProgress: (value) => progress.push(value),
+      yieldControl: async () => { yields += 1; }
+    }
+  );
+  assert.deepEqual(progress, [0.18, 0.3, 0.62, 0.7, 0.82, 0.94, 1]);
+  assert.equal(yields, progress.length);
   const diagnostics = city.userData.diagnostics;
   assert.equal(diagnostics.success, true);
   assert.equal(diagnostics.renderer, "agent-acceptance-city-v2-all-voxel");

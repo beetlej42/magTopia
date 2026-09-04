@@ -94,7 +94,7 @@ import { createStarterCityWorkbench } from "./city/scenarios.js";
 import { createVoxelSky } from "./city/voxel-sky.js";
 import { findAssetCandidates, getAssetRegistry, resolveAsset } from "./city/assets.js";
 import { getModelOrientationPreviewUrls } from "./generators/modelOrientation.js";
-import { createAgentAcceptanceCity } from "./generators/agentAcceptanceCity.js";
+import { createAgentAcceptanceCity, createAgentAcceptanceCityIncrementally } from "./generators/agentAcceptanceCity.js";
 import {
   VOXEL_VEGETATION_PRESETS,
   createVoxelVegetationLab,
@@ -856,14 +856,26 @@ async function rebuildActive(config) {
   } else if (currentMode === "district") {
     activeObject = createVoxelIntentDistrict(currentConfig);
   } else if (currentMode === "agentcity") {
-    activeObject = createAgentAcceptanceCity({
+    const cityConfig = {
       ...currentConfig,
       acceptanceSeed: currentConfig.seed,
       cityState: cityViewerRuntimeState,
       assetRegistry: cityViewerAssets,
       bakedArtifacts: cityViewerBakedArtifacts,
       useHunyuanModels: 0
-    });
+    };
+    if (cityViewerContext && cityViewerLoadedVersion === null) {
+      activeObject = await createAgentAcceptanceCityIncrementally(cityConfig, {
+        onProgress: (fraction) => setCityViewerLoadingProgress(72 + fraction * 20, "正在构建城市地形…"),
+        yieldControl: waitForAnimationFrame
+      });
+      if (version !== rebuildVersion) {
+        disposeObject(activeObject);
+        return;
+      }
+    } else {
+      activeObject = createAgentAcceptanceCity(cityConfig);
+    }
   } else {
     activeObject = createParcelBlueprint(currentConfig);
   }
@@ -1627,29 +1639,36 @@ async function loadCityBakedArtifacts(manifest, pack, onProgress) {
     if (!response.ok) throw new Error(`artifact pack HTTP ${response.status}`);
     onProgress?.(0.08);
     const packBytes = await readCityArtifactPackResponse(response, {
-      onProgress: (fraction) => onProgress?.(0.08 + fraction * 0.56)
+      onProgress: (fraction) => onProgress?.(0.08 + fraction * 0.56),
+      yieldControl: waitForAnimationFrame
     });
     onProgress?.(0.66);
+    await waitForAnimationFrame();
     const packed = decodeCityArtifactPack(packBytes, {
       cityId: cityViewerContext.cityId,
       cityVersion: pack.cityVersion,
       manifestSha256: pack.manifestSha256
     });
+    onProgress?.(0.68);
+    await waitForAnimationFrame();
     const manifestByBuilding = new Map(manifest.map((entry) => [entry.buildingId, entry]));
+    const loadedEntries = [];
+    const batches = createCityArtifactDecodeBatches(packed.entries);
     let completedEntries = 0;
-    const loadedEntries = await Promise.all(packed.entries.map(async (entry) => {
-      try {
+    for (const batch of batches) {
+      const loadedBatch = await Promise.all(batch.map(async (entry) => {
         const expected = manifestByBuilding.get(entry.buildingId);
         if (!expected || expected.sha256.toLowerCase() !== String(entry.sha256).toLowerCase()) return null;
         if (await sha256Hex(entry.bytes) !== String(entry.sha256).toLowerCase()) return null;
         const artifact = decodeBakedBuildingArtifact(entry.bytes);
         if (artifact.buildingId !== entry.buildingId || Number(artifact.designRevision) !== Number(entry.designRevision)) return null;
         return [entry.buildingId, artifact];
-      } finally {
-        completedEntries += 1;
-        onProgress?.(0.66 + (completedEntries / Math.max(1, packed.entries.length)) * 0.34);
-      }
-    }));
+      }));
+      loadedEntries.push(...loadedBatch);
+      completedEntries += batch.length;
+      onProgress?.(0.68 + (completedEntries / Math.max(1, packed.entries.length)) * 0.32);
+      await waitForAnimationFrame();
+    }
     if (!packed.entries.length) onProgress?.(1);
     return Object.fromEntries(loadedEntries.filter(Boolean));
   } catch {
@@ -1657,6 +1676,24 @@ async function loadCityBakedArtifacts(manifest, pack, onProgress) {
     // voxel source path; it must never make the city viewer unusable.
     return {};
   }
+}
+
+function createCityArtifactDecodeBatches(entries, { maxEntries = 8, maxBytes = 2 * 1024 * 1024 } = {}) {
+  const batches = [];
+  let batch = [];
+  let batchBytes = 0;
+  for (const entry of entries) {
+    const entryBytes = entry.bytes?.byteLength ?? 0;
+    if (batch.length && (batch.length >= maxEntries || batchBytes + entryBytes > maxBytes)) {
+      batches.push(batch);
+      batch = [];
+      batchBytes = 0;
+    }
+    batch.push(entry);
+    batchBytes += entryBytes;
+  }
+  if (batch.length) batches.push(batch);
+  return batches;
 }
 
 function renderCityViewerSummary(payload) {

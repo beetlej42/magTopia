@@ -14,6 +14,24 @@ const VOXEL_SIZE = 0.125;
 const NATURAL_DATUM = -0.0625;
 
 export function createAgentAcceptanceCity(config = {}) {
+  const steps = createAgentAcceptanceCitySteps(config);
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  return step.value;
+}
+
+export async function createAgentAcceptanceCityIncrementally(config = {}, { onProgress, yieldControl } = {}) {
+  const steps = createAgentAcceptanceCitySteps(config);
+  let step = steps.next();
+  while (!step.done) {
+    onProgress?.(step.value);
+    await yieldControl?.();
+    step = steps.next();
+  }
+  return step.value;
+}
+
+function* createAgentAcceptanceCitySteps(config = {}) {
   const params = normalizeVoxelIntentDistrictConfig(config);
   const suppliedState = config.cityState ?? null;
   const seed = String(config.acceptanceSeed ?? config.seed ?? suppliedState?.mapSeed ?? suppliedState?.world?.seed ?? "agent-district-test");
@@ -35,11 +53,13 @@ export function createAgentAcceptanceCity(config = {}) {
   // row - 1 = +Z, so mirror only the visual terrain layer.
   macro.group.scale.z = -1;
   root.add(macro.group);
+  yield 0.18;
 
   const constructionHeight = createHeightSampler(state, grid, true);
   const roads = createAgentVoxelRoadLayer({ state, grid, seed });
   roads.name = "AgentAcceptanceRoads";
   root.add(roads);
+  yield 0.3;
 
   const buildings = createMagicLondonStarterDistrict({
     grid,
@@ -53,6 +73,7 @@ export function createAgentAcceptanceCity(config = {}) {
   });
   buildings.name = "AgentAcceptanceBuildings";
   root.add(buildings);
+  yield 0.62;
 
   const contactAmbientOcclusion = createBuildingContactAmbientOcclusion({
     buildings: Object.values(state.buildings),
@@ -61,10 +82,12 @@ export function createAgentAcceptanceCity(config = {}) {
     sampleGroundHeight: constructionHeight
   });
   root.add(contactAmbientOcclusion);
+  yield 0.7;
 
   const vegetation = createAgentVoxelVegetationLayer({ state, grid, seed });
   vegetation.name = "AgentAcceptanceVegetation";
   root.add(vegetation);
+  yield 0.82;
 
   const sphericalProjection = projectDistrictOntoSphere(root, params.planetRadius);
   const streetLife = createStreetLifeCityLayer({
@@ -76,6 +99,7 @@ export function createAgentAcceptanceCity(config = {}) {
     density: config.streetLifeDensity ?? 1
   });
   root.add(streetLife);
+  yield 0.94;
 
   root.userData.config = { ...params, acceptanceSeed: seed };
   root.userData.acceptanceReport = structuredClone(report);
@@ -153,6 +177,7 @@ export function createAgentAcceptanceCity(config = {}) {
     buildings.userData.updateDaylight?.(style);
     vegetation.userData.updateDaylight?.(style);
   };
+  yield 1;
   return root;
 }
 

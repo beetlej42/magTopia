@@ -101,7 +101,9 @@ export function decodeCityArtifactPack(bytes, expected = {}) {
     ...metadata,
     entries: ranges.map(({ entry, offset, byteLength }) => ({
       ...entry,
-      bytes: input.slice(payloadStart + offset, payloadStart + offset + byteLength)
+      // Keep views into the immutable pack instead of synchronously copying
+      // every artifact before the browser can paint loading progress.
+      bytes: input.subarray(payloadStart + offset, payloadStart + offset + byteLength)
     }))
   };
 }
@@ -111,7 +113,7 @@ export function decodeCityArtifactPack(bytes, expected = {}) {
  * exact raw size stored in the MTCP header. Content-Length cannot be used here
  * because it describes the Brotli-compressed response on the wire.
  */
-export async function readCityArtifactPackResponse(response, { onProgress } = {}) {
+export async function readCityArtifactPackResponse(response, { onProgress, yieldControl, yieldAfterBytes = 2 * 1024 * 1024 } = {}) {
   if (!response?.body?.getReader) {
     const bytes = new Uint8Array(await response.arrayBuffer());
     onProgress?.(1);
@@ -123,6 +125,7 @@ export async function readCityArtifactPackResponse(response, { onProgress } = {}
   let output = null;
   let received = 0;
   let expectedLength = 0;
+  let lastYieldAt = 0;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -150,6 +153,10 @@ export async function readCityArtifactPackResponse(response, { onProgress } = {}
     }
 
     if (expectedLength) onProgress?.(Math.min(1, received / expectedLength));
+    if (yieldControl && received - lastYieldAt >= yieldAfterBytes) {
+      lastYieldAt = received;
+      await yieldControl();
+    }
   }
 
   const bytes = output ?? joinChunks(pending, received);
