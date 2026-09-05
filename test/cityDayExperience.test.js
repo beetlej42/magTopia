@@ -472,6 +472,9 @@ test("desktop card CSS gives the horizontal offer enough width for readable fact
   assert.match(css, /\.city-day-cards-grid\s*\{[^}]*width:\s*min\(1080px,\s*100%\)/s);
   assert.match(css, /\.city-day-card\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
   assert.match(css, /grid-template-areas:\s*"kind"\s*"title"\s*"description"\s*"effect"\s*"facts"/s);
+  assert.match(css, /\.city-day-placement-choice-actions\s*\{[^}]*display:\s*flex/s);
+  assert.doesNotMatch(css, /\.city-day-placement-choice-actions\s*\{[^}]*pointer-events:\s*none/s,
+    "special-choice buttons must remain hit-testable instead of inheriting the map HUD pass-through rule");
 });
 
 // ---- Fake DOM harness ------------------------------------------------------

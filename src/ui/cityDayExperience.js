@@ -370,7 +370,10 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     layers.cards.append(heading);
 
     const actions = document.createElement("div");
-    actions.className = "city-day-placement-actions";
+    // This is a modal choice, not the pass-through map placement HUD. Keep a
+    // distinct class so the HUD's intentional `pointer-events: none` cannot
+    // swallow these player buttons.
+    actions.className = "city-day-placement-choice-actions";
     const self = document.createElement("button");
     self.type = "button";
     self.className = "city-day-placement-action is-primary";
