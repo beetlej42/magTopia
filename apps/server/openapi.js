@@ -931,7 +931,14 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}/building-designs/{design_id}/revisions": { post: operation("Apply structured operations and create an immutable design revision", "building-designs", { $ref: "#/components/schemas/BuildingDesignRevisionRequest" }) },
       "/cities/{city_id}/building-designs/{design_id}/confirm": { post: operation("Lock the current design revision for construction", "building-designs", { $ref: "#/components/schemas/BuildingDesignConfirmRequest" }) },
       "/cities/{city_id}/buildings/{building_id}/upgrade-designs": { post: operation("Create an editable upgrade design from a built voxel design", "building-designs", { $ref: "#/components/schemas/BuildingDesignUpgradeRequest" }) },
-      "/cities/{city_id}/site-searches": { post: operation("List legal construction sites and objective road-frontage facts inside a named district", "construction", { $ref: "#/components/schemas/SiteSearchRequest" }) },
+      "/cities/{city_id}/site-searches": {
+        get: operation("List legal construction sites with query parameters (low-friction read fallback; POST remains canonical for structured bounds)", "construction", null, json, true, [
+          queryParameter("district_id", { type: "string" }, "Optional named district id."),
+          queryParameter("footprint", { enum: ["1x1", "1x2", "1x3", "2x1", "2x2", "2x3", "3x1", "3x2", "3x3"], default: "1x1" }, "Requested logical footprint."),
+          queryParameter("limit", { type: "integer", minimum: 1, maximum: 100, default: 12 }, "Maximum candidate count.")
+        ]),
+        post: operation("List legal construction sites and objective road-frontage facts inside a named district", "construction", { $ref: "#/components/schemas/SiteSearchRequest" })
+      },
       "/cities/{city_id}/construction-previews": { post: operation("Preview one confirmed BuildingDesign", "construction", { $ref: "#/components/schemas/BuildingDesignConstructionRequest" }) },
       "/cities/{city_id}/construction-orders": {
         get: operation("List construction orders", "construction"),

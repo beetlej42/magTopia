@@ -448,10 +448,9 @@ export async function createApp({ repository, config, logger = false, now = () =
     return reply.code(201).send(await repository.createBuildingDesign(principal, request.params.cityId, draft));
   });
 
-  app.post("/api/v1/cities/:cityId/site-searches", async (request) => {
+  const searchSites = async (request, input) => {
     const principal = await authenticate(repository, request, "city:read");
     const { state } = await repository.getCity(principal, request.params.cityId);
-    const input = request.body ?? {};
     const districtId = input.district_id ?? input.districtId ?? null;
     const district = districtId ? state.districts?.[districtId] : null;
     if (districtId && !district) throw new ServiceError(404, "DISTRICT_NOT_FOUND", `District ${districtId} was not found`);
@@ -474,7 +473,12 @@ export async function createApp({ repository, config, logger = false, now = () =
       },
       data: candidates
     };
-  });
+  };
+  // Site search is a pure read. POST remains canonical for structured bounds,
+  // while GET makes the discoverable link safe for low-reasoning clients that
+  // instinctively follow a read link without checking the method first.
+  app.get("/api/v1/cities/:cityId/site-searches", async (request) => searchSites(request, request.query ?? {}));
+  app.post("/api/v1/cities/:cityId/site-searches", async (request) => searchSites(request, request.body ?? {}));
 
   app.get("/api/v1/assets", async (request) => {
     const principal = await authenticate(repository, request, "city:read");
@@ -1958,7 +1962,7 @@ function agentTurnPlan(row, state, config, nowValue, suppliedSystems = null) {
   } else if (isTurnResolveLocked(state, nowValue)) {
     nextAction = { method: "WAIT", until: gameplay.nextTurnUnlockAt, instruction: "The turn is complete but cooldown-locked; wait instead of adding low-value work." };
   } else {
-    nextAction = { method: "POST", url: `${cityBase}/strategy/resolve`, headers: { "Idempotency-Key": `resolve-turn-${state.turn}-v${cityVersion}` }, body: { expected_city_version: cityVersion, assignments: [] } };
+    nextAction = { method: "POST", url: `${cityBase}/strategy/resolve`, headers: { "Idempotency-Key": `resolve-turn-${state.turn}-v${cityVersion}` }, body: { expected_city_version: cityVersion } };
   }
   return {
     objective: "Apply the player card, handle incidents or delegated placements, make one useful development step, publish the Owl Daily after settlement, then continue.",
@@ -2054,13 +2058,33 @@ function specialPlacementHandoff(state, placement, cityVersion, cityBase, actor)
 function owlReportHandoff(cityId, facts, config) {
   const cityBase = `${config.publicBaseUrl}/api/v1/cities/${cityId}`;
   return {
-    instruction: "Publish a concise, lively Owl Daily before moving on. Read the immutable context once; reference only its factRefs and never invent outcomes.",
+    instruction: "Publish a concise, lively Owl Daily before moving on. Read the immutable context once; reference only its factRefs and never invent outcomes. Start from body_template and use only the allowed values below; omit optional story sections when there is no matching fact.",
     context: { method: "GET", url: `${cityBase}/report-context?turn=${facts.turn}` },
     publish: {
       method: "POST",
       url: `${cityBase}/reports`,
       headers: { "Idempotency-Key": `owl-report-turn-${facts.turn}` },
-      body_template: { turn: facts.turn, facts_digest: "<copy factsDigest from context>", report: "<author OwlReport from context>" }
+      authoring_contract: {
+        article_importance: ["front_page", "secondary", "brief"],
+        suggested_categories: ["development", "exposure", "arcane_officer", "population", "economy", "community", "other"],
+        required_report_fields: ["masthead", "edition", "headline", "lead", "articles", "briefs"],
+        fact_refs: "Copy only values from context.factRefs. actionBox requires a context.incidents factRef; otherwise leave it empty."
+      },
+      body_template: {
+        turn: facts.turn,
+        facts_digest: "<copy factsDigest from context>",
+        report: {
+          masthead: { title: "The Hooting Herald", subtitle: "An Independent Daily of the Wizarding City" },
+          edition: `Day ${facts.turn} Edition`,
+          headline: "<author a concise headline from context facts>",
+          subheadline: "<optional supporting line>",
+          lead: "<author a lively lead from context facts>",
+          articles: [],
+          briefs: [],
+          actionBox: [],
+          tomorrowWatch: []
+        }
+      }
     }
   };
 }

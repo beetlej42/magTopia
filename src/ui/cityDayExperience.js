@@ -182,7 +182,10 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     const hint = document.createElement("p");
     hint.className = "city-day-paper-dismiss-hint";
     hint.textContent = "向任意方向滑动报纸以继续";
-    sheet.append(masthead, edition, headline, subheadline, lead, body, actionBox, tomorrow, hint);
+    sheet.append(masthead, edition, headline, subheadline, lead, body);
+    if ((report?.actionBox ?? []).length) sheet.append(actionBox);
+    if ((report?.tomorrowWatch ?? []).length) sheet.append(tomorrow);
+    sheet.append(hint);
     layers.newspaper.append(sheet);
   }
 

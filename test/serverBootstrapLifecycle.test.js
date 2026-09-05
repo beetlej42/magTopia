@@ -43,6 +43,10 @@ test("bootstrap is a read-only no-card turn and Turn 1 receives the first canoni
     assert.ok(snapshot.development_priorities.some((entry) => entry.system === "arcane_energy"));
     assert.equal(snapshot.links.viewer, `${config.publicBaseUrl}/cities/${city.id}`);
 
+    const getSites = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/site-searches?footprint=1x1&limit=2` }), 200);
+    assert.equal(getSites.city_version, snapshot.city_version);
+    assert.equal(getSites.data.length, 2, "the low-friction GET fallback returns candidates instead of a 404");
+
     const badSpatial = await app.inject(auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/spatial?min_col=-1&max_col=2&min_row=0&max_row=2` }));
     assert.equal(badSpatial.statusCode, 400);
     assert.equal(badSpatial.json().code, "SPATIAL_BOUNDS_OUT_OF_RANGE");

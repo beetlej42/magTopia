@@ -39,7 +39,7 @@ The core loop is: `player choice → Agent planning/building → gameplay state 
 
 1. `GET /api/v1/cities/{city_id}/snapshot`.
 2. Read `population`, `public_service`, `economy`, `risk`, and `development_priorities`, then follow `agent_turn_plan.next_action`. It already carries the current city version, a collision-safe `Idempotency-Key` for mutations, and the shortest safe next request.
-3. For construction, use only: `site-searches → building-designs → confirm → construction-previews → construction-orders`. Candidates are ordered by road frontage, road distance, then gateway proximity; start with `data[0]` unless the district intention requires another site.
+3. For construction, use only: `site-searches → building-designs → confirm → construction-previews → construction-orders`. `POST /site-searches` is canonical for structured bounds; a pure-read `GET /site-searches?footprint=1x1&limit=3` fallback is also accepted. Candidates are ordered by road frontage, road distance, then gateway proximity; start with `data[0]` unless the district intention requires another site.
 4. Pass the candidate's `anchor_cell_id`, `footprint`, and `recommendedEntrance` into the BuildingDesign. The confirmed design owns site, entrance, program, functional area, asset and visual data.
 5. Submit mutations with the supplied unique `Idempotency-Key`, then carry `city_version_after` directly into the next mutation. Do not reread between successful mutations. BuildingDesign responses expose `agent_handoff`; copy those URLs, bodies, and headers unchanged instead of transcribing design identifiers.
 6. On `CITY_VERSION_CONFLICT`, use `details.current_city_version`, reread `/strategy` once, rebuild the request, and retry once. Never blindly replay the old body.
@@ -210,7 +210,7 @@ The system validates the whole plan before accepting it:
 
 A successful submission is a real city mutation: the response returns `city_version_before`/`city_version_after` with `after = before + 1`. Because of optimistic concurrency, a submission built from a stale version is rejected with `CITY_VERSION_CONFLICT` — a stale plan can never silently overwrite a newer one. Always read `/strategy` again and use the latest version for the next command.
 
-The request body is strict: `POST /strategy/assignments` accepts only `expected_city_version`, `assignments`, and `actor_note`; `POST /strategy/resolve` accepts only `expected_city_version` and `actor_note`. Any other top-level field is rejected with `400 UNKNOWN_STRATEGY_REQUEST_FIELD` instead of being silently ignored.
+The request body is strict: `POST /strategy/assignments` accepts only `expected_city_version`, `assignments`, and `actor_note`; `POST /strategy/resolve` accepts only `expected_city_version` and `actor_note`. In particular, never send `assignments` to `/strategy/resolve`; submit them to `/strategy/assignments` first. Any other top-level field is rejected with `400 UNKNOWN_STRATEGY_REQUEST_FIELD` instead of being silently ignored.
 
 The system owns every number that affects an outcome. An assignment is rejected if it carries `roll`, `raw_roll`, `outcome`, `total`, `modifier`, `specialty_bonus`, `attribute`, `difficulty`, `success_probability`, an officer `profile`, `cost`, `price`, or any `options`/balance parameter. The API never accepts dice results, success probabilities, officer attributes/specialties, hire prices, or system balance inputs.
 

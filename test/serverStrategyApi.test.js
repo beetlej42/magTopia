@@ -135,6 +135,7 @@ test("an Agent completes the closed loop: read incidents, dispatch an officer, s
     assert.equal(settled.strategy.incidents.filter((incident) => incident.id === "incident-1").length, 0, "resolved incident is no longer listed as open");
     assert.equal(settled.owl_report_handoff.context.url, `${config.publicBaseUrl}/api/v1/cities/${city.id}/report-context?turn=${settled.facts.turn}`);
     assert.equal(settled.owl_report_handoff.publish.body_template.turn, settled.facts.turn);
+    assert.deepEqual(settled.owl_report_handoff.publish.authoring_contract.article_importance, ["front_page", "secondary", "brief"]);
 
     const after = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
     assert.equal(after.turn, 1);

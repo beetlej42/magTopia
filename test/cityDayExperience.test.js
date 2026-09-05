@@ -92,6 +92,8 @@ test("presentReport shows only the newspaper layer", async () => {
     assert.equal(experience.layers.placement.hidden, true);
     assert.equal(experience.root.hidden, false);
     assert.equal(visibleLayerCount(experience), 1);
+    assert.equal(experience.layers.newspaper.querySelector(".city-day-paper-action-box"), null, "an empty action box must not render as a blank rule");
+    assert.equal(experience.layers.newspaper.querySelector(".city-day-paper-tomorrow"), null, "an empty tomorrow section must not render");
   });
 });
 
