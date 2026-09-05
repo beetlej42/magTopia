@@ -256,7 +256,7 @@ The turn is then `resolved` and waits for its cooldown slot. Resolving is a deli
 
 ## Owl Daily newspaper: report the city, don't reprint its ledger
 
-Every settled turn freezes an immutable `TurnFacts` and keeps it available for reporting. Publishing an Owl Daily does not block the next turn, but it is part of your normal turn completion: the resolve response includes `owl_report_handoff` with the exact context request and publish template. Fetch context, edit an accurate and entertaining report, and publish it before moving on when possible. Until then the player UI explicitly reports that it is waiting for the Agent's newspaper.
+Every settled turn freezes an immutable `TurnFacts` and keeps it available for reporting. Publishing an Owl Daily does not block the next turn, but it is part of your normal turn completion: the resolve response includes `owl_report_handoff` with the exact context request and publish template. Fetch context, edit an accurate and entertaining report in natural Simplified Chinese (`zh-CN`), and publish it before moving on when possible. Until then the player UI explicitly reports that it is waiting for the Agent's newspaper.
 
 The newspaper has two strict authority layers:
 
@@ -271,8 +271,8 @@ Every fact you mention must be cited, never re-authored. The context assigns eac
   "turn": 3,
   "facts_digest": "…returned by report-context…",
   "report": {
-    "masthead": { "title": "The Hooting Herald", "subtitle": "An Independent Daily of the Wizarding City" },
-    "edition": "Day 3 Edition",
+    "masthead": { "title": "猫头鹰日报", "subtitle": "魔法城市独立日报" },
+    "edition": "第 3 日版",
     "headline": "灯塔街午夜异光被秘法官迅速控制",
     "subheadline": "北区新宅陆续入住，三户巫师家庭迁入",
     "lead": "昨夜，灯塔街一栋住宅连续出现异常蓝色闪光，引起附近麻瓜注意。",

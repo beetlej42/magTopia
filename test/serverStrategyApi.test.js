@@ -138,6 +138,9 @@ test("an Agent completes the closed loop: read incidents, dispatch an officer, s
     assert.deepEqual(settled.owl_report_handoff.publish.authoring_contract.article_importance, ["front_page", "secondary", "brief"]);
     assert.equal(settled.owl_report_handoff.same_service_submission, true);
     assert.equal(settled.owl_report_handoff.external_recipient, false);
+    assert.equal(settled.owl_report_handoff.publish.authoring_contract.language, "zh-CN");
+    assert.match(settled.owl_report_handoff.instruction, /Simplified Chinese/);
+    assert.equal(settled.owl_report_handoff.publish.body_template.report.masthead.title, "猫头鹰日报");
     assert.equal(settled.owl_report_handoff.publish.authoring_contract.entry_templates.article.id, "article-1");
     assert.equal(settled.owl_report_handoff.publish.authoring_contract.entry_templates.brief.text, "<required>");
     assert.equal(settled.owl_report_handoff.publish.authoring_contract.entry_templates.tomorrowWatch.id, "watch-1");
