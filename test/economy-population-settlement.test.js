@@ -265,6 +265,35 @@ test("zero migration rate leaves both inbound and outbound population unchanged"
   assert.deepEqual(migratePopulationBucket({ current: 4, capacity: 4 }, 0, 0), { current: 4, capacity: 4 });
 });
 
+test("an immediate wizard-arrival card survives its same-turn settlement", () => {
+  const state = {
+    cells: {},
+    buildings: {},
+    gameplay: {
+      population: { muggles: { current: 0, capacity: 0 }, wizards: { current: 2, capacity: 2 } },
+      cardState: {
+        choice: {
+          status: "selected",
+          selectedCardId: "ordinary-people-migration",
+          cardEffects: { grant: { kind: "population", requested: 2, granted: 1, capacity: 2 } }
+        }
+      }
+    }
+  };
+  const metadata = {
+    floo: { canonical: false, status: "completed", systemOwnedCardId: "floo-fireplace-station" }
+  };
+
+  const protectedSettlement = settlePopulation(state, metadata);
+  assert.equal(protectedSettlement.target.wizards, 1, "the ordinary support target remains honest");
+  assert.equal(protectedSettlement.before.wizards.current, 2);
+  assert.equal(protectedSettlement.after.wizards.current, 2, "the player's immediate grant is not removed at night");
+
+  const nextTurn = structuredClone(state);
+  nextTurn.gameplay.cardState.choice = { status: "pending", cardEffects: {} };
+  assert.equal(settlePopulation(nextTurn, metadata).after.wizards.current, 1, "later retention still follows public-service support");
+});
+
 test("wizard migration bonus is wizard-only and explicit wizard baselines still receive it", () => {
   const state = {
     cells: { home: { column: 0, row: 0 } },

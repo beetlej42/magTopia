@@ -244,7 +244,7 @@ export const CARD_CATALOG = Object.freeze([
     "ordinary-people-migration",
     CARD_TYPES.people,
     "Supported Wizard Arrivals",
-    "Immediately move around two wizard residents into supported available housing, clamped by authoritative capacity.",
+    "Immediately move around two wizard residents into available wizard housing. They stay through today's settlement; future growth and retention still benefit from nearby public services.",
     { kind: "grant_population", wizards: EFFECT_VALUES.ordinaryPopulation },
     { choiceKind: CARD_CHOICE_KINDS.ordinary, family: "ordinary_people", decisionMode: CARD_DECISION_MODES.immediate }
   ),
@@ -276,7 +276,7 @@ export const CARD_CATALOG = Object.freeze([
     "new-wizard-residents",
     CARD_TYPES.resource,
     "New Wizard Residents",
-    "A family of wizard settlers arrives and takes up residence, within the city's housing capacity.",
+    "A family of wizard settlers arrives within the city's housing capacity and stays through today's settlement; future growth and retention still benefit from nearby public services.",
     { kind: "grant_population", wizards: EFFECT_VALUES.newWizardResidents },
     { decisionMode: CARD_DECISION_MODES.immediate, duration: "instant" }
   ),

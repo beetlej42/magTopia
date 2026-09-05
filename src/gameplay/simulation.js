@@ -229,11 +229,24 @@ export function settlePopulation(state, metadataMap, options = {}) {
   const muggleOutboundRate = options.muggleOutboundMigrationRate ?? options.outboundMigrationRate ?? defaultOutbound;
   const wizardOutboundRate = options.wizardOutboundMigrationRate ?? options.outboundMigrationRate
     ?? (options.wizardMigrationRate != null ? options.wizardMigrationRate : defaultOutbound);
+  const muggles = migratePopulationBucket(before.muggles, targets.muggles, muggleRate, muggleOutboundRate);
+  const wizards = migratePopulationBucket(before.wizards, targets.wizards, wizardRate, wizardOutboundRate);
+  const immediateGrant = state.gameplay?.cardState?.choice?.status === "selected"
+    ? state.gameplay.cardState.choice.cardEffects?.grant
+    : null;
+  // A player's immediate population choice must survive the settlement that
+  // closes the same turn. Without this one-turn floor, the card can visibly add
+  // a resident in the morning and the generic attractiveness migration can
+  // remove that resident at night. Future turns still use the ordinary
+  // public-service target, so sustained growth continues to require coverage.
+  if (immediateGrant?.kind === "population" && Number(immediateGrant.granted ?? 0) > 0) {
+    wizards.current = Math.max(wizards.current, Math.min(before.wizards.current, capacities.wizards));
+  }
   return {
     before,
     after: {
-      muggles: { ...migratePopulationBucket(before.muggles, targets.muggles, muggleRate, muggleOutboundRate), capacity: capacities.muggles },
-      wizards: { ...migratePopulationBucket(before.wizards, targets.wizards, wizardRate, wizardOutboundRate), capacity: capacities.wizards }
+      muggles: { ...muggles, capacity: capacities.muggles },
+      wizards: { ...wizards, capacity: capacities.wizards }
     },
     capacityDelta: capacities,
     target: targets,

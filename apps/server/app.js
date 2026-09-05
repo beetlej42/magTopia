@@ -1866,7 +1866,7 @@ function agentSnapshot(row, state, events, orders, config) {
     risk: citySystems.risk,
     development_priorities: developmentPriorities(state, citySystems),
     system_rules: {
-      population: "Housing creates capacity. Nearby public_service within radius raises supported occupancy and migration speed; unsupported capacity alone does not fill quickly.",
+      population: "Housing creates capacity. Nearby public_service within radius raises supported occupancy and migration speed; unsupported capacity alone does not fill quickly. A player's immediate wizard-arrival card is protected through that same turn's settlement, but later retention again follows the normal support target.",
       economy: "Commercial, production and greenhouse units create fixed income. Residents add coin tax; wizards also add Arcane Energy. Officer maintenance is deducted from coin income.",
       magic_and_concealment: "Magic load creates exposure pressure and incident risk. Nearby ordinary/concealment structures and policies reduce pressure; repeated failures raise historical risk and can seal a building.",
       incidents: "Read strategy.incidents, assign available Arcane Officers by the incident attribute, then let the system own every roll and outcome."
