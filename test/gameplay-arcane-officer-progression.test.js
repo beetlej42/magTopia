@@ -57,6 +57,8 @@ test("governance unlock is exact and locked state has no candidates", () => {
   assert.equal(isGovernanceFacility({ status: "sealed", program: { canonicalProgram: "ministry_of_magic" } }), false);
   const locked = currentOfficerCandidates(state({ governance: false }), "locked-city");
   assert.equal(arcaneOfficerRecruitmentUnlocked(state({ governance: false })), false);
+  assert.equal(arcaneOfficerCapacity(state({ governance: true, wizards: 0 })), 1, "the Ministry makes its recruitment unlock immediately usable");
+  assert.equal(arcaneOfficerCapacity(state({ governance: false, wizards: 0 })), 0);
   assert.equal(locked.candidates.length, 3, "domain pool remains deterministic; API hides it while locked");
 });
 
@@ -77,7 +79,7 @@ test("candidate recruitment is candidate-only, atomic, authoritative, and capped
   assert.equal(duplicate.error.code, "ARCANE_OFFICER_CANDIDATE_INVALID");
   const locked = hireArcaneOfficerCandidate(state({ governance: false }), { candidate_id: pool.candidates[0].candidateId }, { cityId: original.cityId });
   assert.equal(locked.error.code, "ARCANE_OFFICER_RECRUITMENT_LOCKED");
-  const capped = state({ wizards: 10 });
+  const capped = state({ wizards: 0 });
   capped.gameplay.arcaneOfficers.existing = generateArcaneOfficerIdentity({ seed: "existing", id: "existing" });
   assert.equal(hireArcaneOfficerCandidate(capped, { candidate_id: "anything" }, { cityId: capped.cityId }).error.code, "ARCANE_OFFICER_CAPACITY_REACHED");
 });

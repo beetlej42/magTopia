@@ -129,6 +129,25 @@ test("presentPlacementChoice keeps using the cards layer and keeps the placement
   });
 });
 
+test("placement mode choice immediately shows progress and suppresses duplicate submissions", async () => {
+  await withFakeDom(async () => {
+    const experience = createCityDayExperience({});
+    let calls = 0;
+    experience.presentPlacementChoice({ card_id: "ministry-of-magic", title: "Ministry of Magic" }, async () => {
+      calls += 1;
+      return new Promise(() => {});
+    });
+    const self = collectButtons(experience.layers.cards).find((button) => button.textContent === "自己放置");
+    const delegate = collectButtons(experience.layers.cards).find((button) => button.textContent === "交给 Agent");
+    self.dispatchEvent({ type: "click" });
+    delegate.dispatchEvent({ type: "click" });
+    assert.equal(calls, 1, "a slow selection cannot be submitted twice");
+    assert.equal(self.disabled, true);
+    assert.equal(delegate.disabled, true);
+    assert.match(experience.layers.cards.querySelector(".city-day-placement-progress").textContent, /正在确认/);
+  });
+});
+
 test("presentPlacementMode shows only the placement layer", async () => {
   await withFakeDom(async () => {
     const experience = createCityDayExperience({});

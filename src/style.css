@@ -2002,6 +2002,19 @@ html[data-magtopia-surface="acceptance"] .city-day-experience {
   color: #2c2117;
 }
 
+.city-day-placement-action:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.city-day-placement-progress {
+  min-height: 1.3em;
+  margin: 0;
+  color: #fff1d6;
+  font-size: 0.82rem;
+  text-align: center;
+}
+
 .city-day-toast {
   position: fixed;
   left: 50%;

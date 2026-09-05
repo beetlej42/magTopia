@@ -148,6 +148,8 @@ The Agent API exposes one construction contract. When creating the BuildingDesig
 
 `gameplay_profile.purpose` is one of `residential`, `commercial`, `public_service`, `production`, or `greenhouse`; `magic_ratio` is one of `0`, `0.25`, `0.5`, `0.75`, or `1`. A wizard residence requires `purpose: residential` and `magic_ratio > 0`. A magical production or greenhouse profile produces Arcane Energy but also raises local magical load, so read the strategy risk projection and add concealment. The server derives the exact floor count and functional area; the Agent never submits area.
 
+Do not invent visual enum values from the gameplay purpose. Use these safe frontage mappings: residential → `residential`; commercial → `display`; production or greenhouse → `workshop`; public_service → `institutional`. `ordinary` is a valid prominence, not a frontage. The complete legal frontage set is `residential`, `display`, `workshop`, `institutional`, and `large_bay`. Prefer the copy-ready `agent_turn_plan.development_plan` when present; it already supplies a legal site, intent, frontage, and gameplay profile.
+
 After creation, confirm the BuildingDesign, then send only its identity and the current city version to both `/construction-previews` and `/construction-orders`:
 
 ```json
@@ -193,6 +195,8 @@ GET /api/v1/cities/{city_id}/strategy
 ```
 
 The response lists unresolved incidents (`id`, `type`, `attribute`, `difficulty`, `severity`, `status`, `building_id`, `summary`), every Arcane Officer with their attributes, `specialties`, and `status`, the current pending dispatch plan, and `last_turn_facts` from the last settlement. It also reports the server-owned cooldown schedule read-only: `turn_status`, `turn_opened_at`, `next_turn_unlock_at`, and `settled_by` (`agent`). `turn_deadline_at` is a deprecated legacy field that is always `null`. You cannot move these times. `nextTurnUnlockAt` is the earliest moment the current turn may be resolved; there is no deadline auto-settle, so the server never resolves a turn for you.
+
+A completed Ministry of Magic both unlocks recruitment and supplies the first officer slot; every additional 10 wizard residents add another slot. Read `arcane_officer_recruitment.status`, `capacity`, `roster_size`, and `next_capacity_at_wizards` instead of inferring availability. When an incident is open and no officer is available, `agent_turn_plan.next_action` contains one copy-ready recruitment request for the best current candidate whenever capacity and virtual coins allow it.
 
 Submit your dispatch plan (idempotent; each successful submission replaces the previous plan and advances the city version by one):
 
@@ -256,7 +260,7 @@ Every settled turn freezes an immutable `TurnFacts` and keeps it available for r
 
 The newspaper has two strict authority layers:
 
-- **ReportContext (system)** — `GET /api/v1/cities/{city_id}/report-context?turn=N` returns the immutable newspaper source for one resolved turn: the settlement source (normally `agent`; `deadline` only survives in history from before the cooldown consolidation), resource/population deltas, completed buildings, exposure changes, incidents (including any left unaddressed), Arcane Officer assignments with their frozen rationale, the system dice and outcomes, sealed buildings, and next risks. It contains no prose and cannot be edited. `?turn=` is optional; without it you get the most recent resolved turn.
+- **ReportContext (system)** — `GET /api/v1/cities/{city_id}/report-context?turn=N` returns the immutable newspaper source for one resolved turn: the settlement source (normally `agent`; `deadline` only survives in history from before the cooldown consolidation), resource/population deltas plus explicit `resources.before/after` and `population.before/after`, completed buildings, exposure changes, incidents (including any left unaddressed), Arcane Officer assignments with their frozen rationale, the system dice and outcomes, sealed buildings, and next risks. Use the `after` fields for end-of-day totals; a card grant or delta is only a movement and may be followed by settlement migration. It contains no prose and cannot be edited. `?turn=` is optional; without it you get the most recent resolved turn.
 - **OwlReport (you)** — `POST /api/v1/cities/{city_id}/reports` publishes the newspaper you edit: masthead, edition, headline, subheadline, lead, `articles[]`, `briefs[]`, an optional `actionBox` for featured Arcane Officer actions, and `tomorrowWatch` for what you plan to do next.
 You are the editor, not the ledger clerk. Decide what deserves the front page, which facts merge into one article, which facts are only a brief, and which unresolved risk belongs in `tomorrowWatch`. Do not translate every field of the context into prose.
 

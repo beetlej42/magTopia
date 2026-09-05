@@ -40,7 +40,13 @@ function validatedConfig(options = {}) {
 export function arcaneOfficerCapacity(state, options = {}) {
   const config = validatedConfig(options);
   const wizards = Number(state?.gameplay?.population?.wizards?.current ?? 0);
-  return Math.floor(Math.max(0, wizards) / config.capacityDivisor);
+  // Governance must make recruitment usable when it unlocks it.  The first
+  // Ministry/governance facility supplies one staffed office; wizard
+  // population then expands the roster by the existing divisor rule.  Without
+  // the base slot, the Turn-5 Ministry advertised recruitment while early
+  // cities remained hard-blocked until ten wizards, even as incidents opened.
+  const governanceBase = arcaneOfficerRecruitmentUnlocked(state, options) ? 1 : 0;
+  return governanceBase + Math.floor(Math.max(0, wizards) / config.capacityDivisor);
 }
 
 export function arcaneOfficerRoster(state) {

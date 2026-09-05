@@ -180,6 +180,8 @@ export function buildReportContext({ cityId = null, state = {}, facts, options =
   refs.add(factRef("turn"));
   refs.add(factRef("resource-delta"));
   refs.add(factRef("population-delta"));
+  refs.add(factRef("resource-state"));
+  refs.add(factRef("population-state"));
   refs.add(factRef("public-service"));
 
   const context = {
@@ -204,7 +206,17 @@ export function buildReportContext({ cityId = null, state = {}, facts, options =
     // Historical TurnFacts are immutable and may still contain `magic`; only
     // this read projection adopts the v0.3 canonical resource names.
     resourceDelta: { factRef: factRef("resource-delta"), ...normalizeGameplayResources(facts.resourceDelta) },
+    resources: {
+      factRef: factRef("resource-state"),
+      before: facts.resourceBefore ? normalizeGameplayResources(facts.resourceBefore) : null,
+      after: facts.resourceAfter ? normalizeGameplayResources(facts.resourceAfter) : null
+    },
     populationDelta: { factRef: factRef("population-delta"), ...facts.populationDelta },
+    population: {
+      factRef: factRef("population-state"),
+      before: facts.populationBefore ?? null,
+      after: facts.populationAfter ?? null
+    },
     publicService: { factRef: factRef("public-service"), ...(facts.publicService ?? {}) },
     buildingsStarted: buildingFacts(facts.buildingsStarted),
     buildingsCompleted: buildingFacts(facts.buildingsCompleted),

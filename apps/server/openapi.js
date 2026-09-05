@@ -450,7 +450,7 @@ export function createOpenApiDocument(baseUrl) {
         },
         ArcaneOfficerRecruitment: {
           type: "object", additionalProperties: false, required: ["unlocked", "status", "capacity", "roster_size", "config", "pool_window", "candidates"],
-          properties: { unlocked: { type: "boolean" }, status: { enum: ["available", "locked"] }, capacity: { type: "integer", minimum: 0 }, roster_size: { type: "integer", minimum: 0 }, config: { type: "object", additionalProperties: false, required: ["refresh_interval_turns", "candidate_count", "hire_cost_coins", "maintenance_coins_per_turn", "capacity_divisor", "growth_chance", "critical_growth_chance", "attribute_cap"], properties: { refresh_interval_turns: { type: "integer" }, candidate_count: { type: "integer", minimum: 2, maximum: 3 }, hire_cost_coins: { type: "integer", minimum: 120, maximum: 180 }, maintenance_coins_per_turn: { type: "integer", minimum: 8, maximum: 12 }, capacity_divisor: { type: "integer" }, growth_chance: { type: "number" }, critical_growth_chance: { type: "number" }, attribute_cap: { type: "integer", maximum: 5 } } }, pool_window: { type: ["integer", "null"] }, candidates: { type: "array", items: { $ref: "#/components/schemas/ArcaneOfficerCandidate" } } }
+          properties: { unlocked: { type: "boolean" }, status: { enum: ["available", "locked", "capacity_reached", "insufficient_coins"] }, capacity: { type: "integer", minimum: 0, description: "A governance facility supplies the first slot; each capacity_divisor wizard residents add one more." }, roster_size: { type: "integer", minimum: 0 }, next_capacity_at_wizards: { type: "integer", minimum: 0 }, config: { type: "object", additionalProperties: false, required: ["refresh_interval_turns", "candidate_count", "hire_cost_coins", "maintenance_coins_per_turn", "capacity_divisor", "growth_chance", "critical_growth_chance", "attribute_cap"], properties: { refresh_interval_turns: { type: "integer" }, candidate_count: { type: "integer", minimum: 2, maximum: 3 }, hire_cost_coins: { type: "integer", minimum: 120, maximum: 180 }, maintenance_coins_per_turn: { type: "integer", minimum: 8, maximum: 12 }, capacity_divisor: { type: "integer" }, growth_chance: { type: "number" }, critical_growth_chance: { type: "number" }, attribute_cap: { type: "integer", maximum: 5 } } }, pool_window: { type: ["integer", "null"] }, candidates: { type: "array", items: { $ref: "#/components/schemas/ArcaneOfficerCandidate" } } }
         },
         OfficerRecruitmentRequest: {
           type: "object", additionalProperties: false, required: ["candidate_id", "expected_city_version"],
@@ -487,7 +487,7 @@ export function createOpenApiDocument(baseUrl) {
         TurnFacts: {
           type: "object",
           description: "Immutable system-generated settlement record. Agents read rolls, outcomes, and state changes here; they never author them.",
-          required: ["turn", "turnKind", "bootstrapProgress", "resourceDelta", "netResourceDelta", "officerMaintenance", "populationDelta", "publicService", "buildingsStarted", "buildingsCompleted", "buildingFactRefs", "constructionRefs", "exposureChanges", "incidents", "incidentRolls", "unaddressedIncidents", "historicalRiskChanges", "assignments", "rolls", "outcomes", "sealedBuildings", "nextRisks", "choiceKind", "offerChoiceKind", "specialCadence", "eligibilityAudit"],
+          required: ["turn", "turnKind", "bootstrapProgress", "resourceDelta", "netResourceDelta", "resourceBefore", "resourceAfter", "officerMaintenance", "populationDelta", "populationBefore", "populationAfter", "publicService", "buildingsStarted", "buildingsCompleted", "buildingFactRefs", "constructionRefs", "exposureChanges", "incidents", "incidentRolls", "unaddressedIncidents", "historicalRiskChanges", "assignments", "rolls", "outcomes", "sealedBuildings", "nextRisks", "choiceKind", "offerChoiceKind", "specialCadence", "eligibilityAudit"],
           properties: {
             turn: { type: "integer" },
             turnKind: { enum: ["bootstrap", "normal"] },
@@ -499,8 +499,12 @@ export function createOpenApiDocument(baseUrl) {
             wallClock: { type: "object", nullable: true, additionalProperties: true },
             resourceDelta: { type: "object", properties: { coins: { type: "integer", minimum: 0 }, arcaneEnergy: { type: "number", minimum: 0 } }, required: ["coins", "arcaneEnergy"], additionalProperties: false },
             netResourceDelta: { type: "object", properties: { coins: { type: "integer" }, arcaneEnergy: { type: "number" } }, required: ["coins", "arcaneEnergy"], additionalProperties: false },
+            resourceBefore: { type: ["object", "null"], additionalProperties: true },
+            resourceAfter: { type: ["object", "null"], additionalProperties: true },
             officerMaintenance: { type: "object", additionalProperties: false, required: ["count", "rate", "total", "charged", "unpaid"], properties: { count: { type: "integer" }, rate: { type: "integer" }, total: { type: "integer" }, charged: { type: "integer" }, unpaid: { type: "integer" } } },
             populationDelta: { type: "object", additionalProperties: true },
+            populationBefore: { type: ["object", "null"], additionalProperties: true },
+            populationAfter: { type: ["object", "null"], additionalProperties: true },
             publicService: {
               type: "object",
               description: "System-derived spatial public-service coverage and supported population target for this settlement.",
@@ -655,7 +659,7 @@ export function createOpenApiDocument(baseUrl) {
         ReportContext: {
           type: "object",
           description: "SYSTEM-owned immutable newspaper source for one resolved turn. A deterministic projection of the frozen TurnFacts plus read-only city metadata. Never contains prose and never recomputes gameplay. The Agent edits an OwlReport from it and references facts through factRefs.",
-          required: ["schemaVersion", "cityId", "turn", "turnKind", "choiceKind", "offerChoiceKind", "specialCadence", "eligibilityAudit", "bootstrapProgress", "worldDay", "factsDigest", "settlement", "resourceDelta", "populationDelta", "publicService", "buildingsStarted", "buildingsCompleted", "buildingFactRefs", "constructionRefs", "incidents", "incidentRolls", "historicalRiskChanges", "factRefs"],
+          required: ["schemaVersion", "cityId", "turn", "turnKind", "choiceKind", "offerChoiceKind", "specialCadence", "eligibilityAudit", "bootstrapProgress", "worldDay", "factsDigest", "settlement", "resourceDelta", "resources", "populationDelta", "population", "publicService", "buildingsStarted", "buildingsCompleted", "buildingFactRefs", "constructionRefs", "incidents", "incidentRolls", "historicalRiskChanges", "factRefs"],
           properties: {
             schemaVersion: { type: "integer" },
             cityId: { type: "string" },
@@ -679,7 +683,9 @@ export function createOpenApiDocument(baseUrl) {
               }
             },
             resourceDelta: { type: "object", properties: { factRef: { type: "string" }, coins: { type: "integer", minimum: 0 }, arcaneEnergy: { type: "number", minimum: 0 } }, required: ["coins", "arcaneEnergy"] },
+            resources: { type: "object", properties: { factRef: { type: "string" }, before: { type: ["object", "null"], additionalProperties: true }, after: { type: ["object", "null"], additionalProperties: true } }, required: ["factRef", "before", "after"] },
             populationDelta: { type: "object", additionalProperties: true },
+            population: { type: "object", properties: { factRef: { type: "string" }, before: { type: ["object", "null"], additionalProperties: true }, after: { type: ["object", "null"], additionalProperties: true } }, required: ["factRef", "before", "after"] },
             publicService: { type: "object", additionalProperties: true },
             buildingsStarted: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, buildingId: { type: "string" }, name: { type: "string" }, archetype: { type: ["string", "null"] }, purpose: { type: ["string", "null"] } } } },
             buildingsCompleted: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, buildingId: { type: "string" }, name: { type: "string" }, archetype: { type: ["string", "null"] }, purpose: { type: ["string", "null"] } } } },

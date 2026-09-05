@@ -56,6 +56,13 @@ const DASHBOARD_PATH = path.join(SERVER_DIR, "dashboard.html");
 const GENERATED_ROOT = path.resolve(SERVER_DIR, "../../public/generated");
 const DIST_ROOT = path.resolve(SERVER_DIR, "../../dist");
 const DIST_ASSETS_ROOT = path.join(DIST_ROOT, "assets");
+const VIRTUAL_GAME_CONTEXT = Object.freeze({
+  environment: "MAGTOPIA fictional city-building game",
+  resources_are_virtual: true,
+  people_are_simulated_characters: true,
+  mutations_affect_only_this_game_city: true,
+  owl_reports_are_same_service_game_content: true
+});
 
 export async function createApp({ repository, config, logger = false, now = () => new Date() }) {
   const app = Fastify({ logger, bodyLimit: 12 * 1024 * 1024 });
@@ -188,11 +195,18 @@ export async function createApp({ repository, config, logger = false, now = () =
     const artifactPack = artifactManifest.length
       ? cityArtifactPackManifest({ cityId: row.id, cityVersion: Number(row.city_version), manifest: artifactManifest })
       : null;
+    const citySystems = previewCitySystems(state);
     return {
       city_id: row.id,
       name: row.name,
       city_version: Number(row.city_version),
       state,
+      resources: citySystems.economy.current,
+      // The player HUD must use the same authoritative next-settlement
+      // projection as the Agent snapshot.  Without this field the client
+      // silently rendered every city as +0/day even while settlement and the
+      // Owl Daily correctly reported positive income.
+      daily_production: citySystems.economy.net_next_income,
       assets,
       artifact_manifest: artifactManifest,
       artifact_pack: artifactPack,
@@ -741,6 +755,7 @@ export async function createApp({ repository, config, logger = false, now = () =
         progress: deriveBootstrapProgress(state),
         guidance: bootstrapGuidance(deriveBootstrapProgress(state))
       } : null,
+      simulation_context: VIRTUAL_GAME_CONTEXT,
       strategy: strategyPayload(strategyState),
       last_turn_facts: gameplay.lastTurnFacts ?? null,
       // Progressive playbook disclosure: a short context hint plus a pointer to
@@ -1575,7 +1590,18 @@ function officerRecruitmentPayload(state) {
   const unlocked = arcaneOfficerRecruitmentUnlocked(state);
   const config = recruitmentConfigSummary();
   const candidates = unlocked ? Object.values(recruitment.candidates ?? {}).filter((candidate) => candidate.status === "available").map((candidate) => ({ candidate_id: candidate.candidateId, identity: strategyOfficerResponse(candidate.identity), cost_coins: candidate.costCoins, window: candidate.window })) : [];
-  return { unlocked, status: unlocked ? "available" : "locked", capacity: arcaneOfficerCapacity(state), roster_size: Object.keys(gameplay.arcaneOfficers ?? {}).length, config, pool_window: unlocked ? recruitment.window : null, candidates };
+  const capacity = arcaneOfficerCapacity(state);
+  const rosterSize = Object.keys(gameplay.arcaneOfficers ?? {}).length;
+  const cheapest = candidates.length ? Math.min(...candidates.map((candidate) => Number(candidate.cost_coins))) : null;
+  const coins = Number(state.resources?.coins ?? gameplay.resources?.coins ?? 0);
+  const status = !unlocked
+    ? "locked"
+    : rosterSize >= capacity
+      ? "capacity_reached"
+      : cheapest != null && coins < cheapest
+        ? "insufficient_coins"
+        : "available";
+  return { unlocked, status, capacity, roster_size: rosterSize, next_capacity_at_wizards: Math.max(0, (capacity - (unlocked ? 1 : 0) + 1) * config.capacity_divisor), config, pool_window: unlocked ? recruitment.window : null, candidates };
 }
 
 function strategyIncidentResponse(state, incident) {
@@ -1833,6 +1859,7 @@ function agentSnapshot(row, state, events, orders, config) {
     bootstrap: isBootstrapTurn(state) ? { progress: deriveBootstrapProgress(state), guidance: bootstrapGuidance(deriveBootstrapProgress(state)) } : null,
     elapsed_hours: state.elapsedHours,
     resources: citySystems.economy.current,
+    simulation_context: VIRTUAL_GAME_CONTEXT,
     population: citySystems.population,
     public_service: citySystems.public_service,
     economy: citySystems.economy,
@@ -1950,6 +1977,9 @@ function agentTurnPlan(row, state, config, nowValue, suppliedSystems = null) {
   const choice = currentChoice(state);
   const placements = pendingPlacements(state);
   const incidentAction = incidentAssignmentHandoff(state, cityVersion, cityBase);
+  const recruitmentAction = incidentRecruitmentHandoff(state, row.id, cityVersion, cityBase);
+  const developmentPlan = recommendedDevelopmentHandoff(state, cityVersion, cityBase, citySystems);
+  const developedThisTurn = ordinaryBuildingCompletedThisTurn(state);
   let nextAction;
   if (offer && choice?.status === "pending") {
     nextAction = { actor: "player", method: "POST", url: `${cityBase}/cards/select`, instruction: "Wait for the player to choose one offered card; the Agent must not choose it." };
@@ -1959,6 +1989,15 @@ function agentTurnPlan(row, state, config, nowValue, suppliedSystems = null) {
     nextAction = specialPlacementHandoff(state, placements.find((placement) => placement.mode === "player_place"), cityVersion, cityBase, "player");
   } else if (incidentAction && !(state.gameplay?.pendingAssignments ?? []).length) {
     nextAction = incidentAction;
+  } else if (recruitmentAction && !(state.gameplay?.pendingAssignments ?? []).length) {
+    nextAction = recruitmentAction;
+  } else if (!developedThisTurn && developmentPlan?.next_action) {
+    // A normal-turn plan used to point straight at /strategy/resolve.  Low-
+    // reasoning Agents correctly treated that copy-ready action as more
+    // authoritative than the prose objective and skipped development.  Give
+    // the useful build the actual next-action slot and expose resolution as the
+    // explicit follow-up instead.
+    nextAction = developmentPlan.next_action;
   } else if (isTurnResolveLocked(state, nowValue)) {
     nextAction = { method: "WAIT", until: gameplay.nextTurnUnlockAt, instruction: "The turn is complete but cooldown-locked; wait instead of adding low-value work." };
   } else {
@@ -1968,7 +2007,111 @@ function agentTurnPlan(row, state, config, nowValue, suppliedSystems = null) {
     objective: "Apply the player card, handle incidents or delegated placements, make one useful development step, publish the Owl Daily after settlement, then continue.",
     version_rule: versionRule,
     development_priorities: developmentPriorities(state, citySystems),
+    development_completed_this_turn: developedThisTurn,
+    development_plan: developmentPlan,
+    resolve_after_development: {
+      method: "POST",
+      url: `${cityBase}/strategy/resolve`,
+      instruction: "After the construction order succeeds, copy its city_version_after into expected_city_version and use an Idempotency-Key containing that version. Do not send assignments in the resolve body."
+    },
     next_action: nextAction
+  };
+}
+
+function incidentRecruitmentHandoff(state, cityId, cityVersion, cityBase) {
+  const incidents = Object.values(state.gameplay?.incidents ?? {})
+    .filter((incident) => incident.status === "open")
+    .sort((left, right) => Number(right.severity ?? 0) - Number(left.severity ?? 0) || String(left.id).localeCompare(String(right.id)));
+  if (!incidents.length || !arcaneOfficerRecruitmentUnlocked(state)) return null;
+  const availableOfficers = Object.values(state.gameplay?.arcaneOfficers ?? {}).filter((officer) => officer.status === "available");
+  if (availableOfficers.length) return null;
+  const rosterSize = Object.keys(state.gameplay?.arcaneOfficers ?? {}).length;
+  const capacity = arcaneOfficerCapacity(state);
+  if (rosterSize >= capacity) {
+    return {
+      method: "BLOCKED",
+      code: "ARCANE_OFFICER_CAPACITY_REACHED",
+      instruction: `An incident is open, but the roster is at ${rosterSize}/${capacity}. Increase wizard population or add governance capacity before recruiting; do not guess an assignment.`
+    };
+  }
+  const target = incidents[0];
+  const field = target.attribute === "cover_up" ? "coverUp" : target.attribute;
+  const pool = currentOfficerCandidates(state, cityId).candidates;
+  const candidate = [...pool].sort((left, right) => Number(right.identity?.[field] ?? 0) - Number(left.identity?.[field] ?? 0) || String(left.candidateId).localeCompare(String(right.candidateId)))[0];
+  if (!candidate) return null;
+  const coins = Number(state.resources?.coins ?? state.gameplay?.resources?.coins ?? 0);
+  if (coins < Number(candidate.costCoins ?? 0)) {
+    return {
+      method: "BLOCKED",
+      code: "INSUFFICIENT_COINS",
+      instruction: `Incident ${target.id} needs an officer, but recruitment costs ${candidate.costCoins} virtual coins and the city has ${coins}. Build income or choose a resource card; do not retry recruitment.`
+    };
+  }
+  return {
+    method: "POST",
+    url: `${cityBase}/strategy/recruit-officer`,
+    headers: { "Idempotency-Key": `recruit-${candidate.candidateId}-v${cityVersion}` },
+    body: { expected_city_version: cityVersion, candidate_id: candidate.candidateId, actor_note: `Recruit the best available ${target.attribute} responder for ${target.id}.` },
+    instruction: `Recruit this system-generated candidate for open incident ${target.id}; after success, follow the returned agent_turn_plan to assign the new officer. All costs and outcomes are virtual game state.`
+  };
+}
+
+function ordinaryBuildingCompletedThisTurn(state) {
+  return Object.values(state.buildings ?? {}).some((building) => Number(building.createdAtTurn) === Number(state.turn)
+    && !building.specialStructure
+    && building.status !== "sealed");
+}
+
+function recommendedDevelopmentHandoff(state, cityVersion, cityBase, systems) {
+  const candidates = findCandidateParcels(state, { footprint: "1x1", limit: 100 });
+  if (!candidates.length) return null;
+  const exposed = (systems.risk?.buildings ?? [])
+    .filter((building) => Number(building.magic_load ?? 0) > 0 && Number(building.incident_chance ?? 0) > 0)
+    .sort((left, right) => Number(right.incident_chance ?? 0) - Number(left.incident_chance ?? 0));
+  const targetId = exposed[0]?.building_id ?? null;
+  const targetCells = (state.buildings?.[targetId]?.footprintCells ?? [])
+    .map((cellId) => state.cells?.[cellId])
+    .filter(Boolean);
+  const distance = (candidate) => {
+    if (!targetCells.length) return Number(candidate.context?.nearestRoadDistance ?? Number.MAX_SAFE_INTEGER);
+    const cell = state.cells?.[candidate.anchor_cell_id];
+    return Math.min(...targetCells.map((target) => Math.abs(Number(cell?.column) - Number(target.column)) + Math.abs(Number(cell?.row) - Number(target.row))));
+  };
+  const selected = [...candidates].sort((left, right) => distance(left) - distance(right)
+    || Number(right.context?.adjacentRoad) - Number(left.context?.adjacentRoad)
+    || String(left.anchor_cell_id).localeCompare(String(right.anchor_cell_id)))[0];
+  const needsConcealment = Boolean(targetId);
+  const needsService = Number(systems.public_service?.serviceCoverage ?? 0) < 1;
+  const purpose = needsConcealment ? "residential" : needsService ? "public_service" : "commercial";
+  const profile = { purpose, magic_ratio: 0 };
+  const intent = purpose === "public_service"
+    ? { name: "Neighbourhood Service Hall", purpose: "public service hall", composition: "hall", frontage: "institutional", access: "public", prominence: "important", magic_level: 0.05 }
+    : purpose === "commercial"
+      ? { name: "Everyday Corner Shop", purpose: "commercial shop", composition: "street", frontage: "display", access: "public", prominence: "ordinary", magic_level: 0.05 }
+      : { name: "Quiet Buffer House", purpose: "residential", composition: "street", frontage: "residential", access: "private", prominence: "ordinary", magic_level: 0.05 };
+  const body = {
+    site: { anchor_cell_id: selected.anchor_cell_id, footprint: "1x1", entrance: selected.recommendedEntrance },
+    intent,
+    gameplay_profile: profile,
+    generation_mode: "auto",
+    requirements: { preferred_floors: 1 }
+  };
+  return {
+    reason: needsConcealment
+      ? `Place a nonmagical buffer near ${targetId} to reduce local magic pressure.`
+      : needsService
+        ? "Add public-service coverage before expanding housing."
+        : "Add a low-risk income building before settlement.",
+    target_building_id: targetId,
+    selected_site: selected,
+    gameplay_profile: profile,
+    construction_sequence: ["building-designs", "confirm", "construction-preview", "construction-order"],
+    next_action: {
+      method: "POST",
+      url: `${cityBase}/building-designs`,
+      body,
+      instruction: "The server already selected a legal site, so do not call site-searches. Create this design, then follow each returned agent_handoff unchanged through confirm, preview, and order. All costs are virtual in-game coins."
+    }
   };
 }
 
@@ -2053,6 +2196,7 @@ function specialPlacementHandoff(state, placement, cityVersion, cityBase, actor)
   }
   return {
     actor,
+    simulation_context: VIRTUAL_GAME_CONTEXT,
     method: "POST",
     url: `${cityBase}/cards/place`,
     headers: { "Idempotency-Key": `place-${placement.placement_id}-v${cityVersion}` },
@@ -2074,7 +2218,10 @@ function specialPlacementHandoff(state, placement, cityVersion, cityBase, actor)
 function owlReportHandoff(cityId, facts, config) {
   const cityBase = `${config.publicBaseUrl}/api/v1/cities/${cityId}`;
   return {
-    instruction: "Publish a concise, lively Owl Daily before moving on. Read the immutable context once; reference only its factRefs and never invent outcomes. Start from body_template and use only the allowed values below; omit optional story sections when there is no matching fact.",
+    simulation_context: VIRTUAL_GAME_CONTEXT,
+    same_service_submission: true,
+    external_recipient: false,
+    instruction: "Publish a concise, lively Owl Daily to this same MAGTOPIA game service before moving on. This is fictional game content, not an external message. Read the immutable context once; reference only its factRefs and never invent outcomes. Start from body_template and use only the allowed values below; omit optional story sections when there is no matching fact.",
     context: { method: "GET", url: `${cityBase}/report-context?turn=${facts.turn}` },
     publish: {
       method: "POST",
@@ -2084,7 +2231,14 @@ function owlReportHandoff(cityId, facts, config) {
         article_importance: ["front_page", "secondary", "brief"],
         suggested_categories: ["development", "exposure", "arcane_officer", "population", "economy", "community", "other"],
         required_report_fields: ["masthead", "edition", "headline", "lead", "articles", "briefs"],
-        fact_refs: "Copy only values from context.factRefs. actionBox requires a context.incidents factRef; otherwise leave it empty."
+        fact_refs: "Copy only values from context.factRefs. actionBox requires a context.incidents factRef; otherwise leave it empty.",
+        final_state_rule: "When stating end-of-day balances or population, cite context.resources.after and context.population.after. Card grants and populationDelta are movements, not final totals.",
+        entry_templates: {
+          article: { id: "article-1", headline: "<required>", dek: "<optional>", body: "<required>", category: "development", importance: "front_page", relatedFactRefs: [] },
+          brief: { id: "brief-1", text: "<required>", category: "economy", relatedFactRefs: [] },
+          actionBox: { id: "action-1", incidentRef: "<required context incident factRef>", factRefs: [], reason: "<optional>" },
+          tomorrowWatch: { id: "watch-1", text: "<required>", factRefs: [] }
+        }
       },
       body_template: {
         turn: facts.turn,
@@ -2212,6 +2366,7 @@ function withPlayerCityHandoff(city, capability, playerToken, config) {
     handoff: {
       to_player: { url: playerCityUrl, role: "player", instruction: "Open this exact URL; no token transcription is required." },
       to_agent: {
+        simulation_context: VIRTUAL_GAME_CONTEXT,
         url: capability.connect_url,
         method: capability.exchange_method,
         expires_at: capability.expires_at,
@@ -2226,10 +2381,11 @@ function withAgentConnectionLinks(connection, config) {
   const snapshotUrl = `${config.publicBaseUrl}/api/v1/cities/${connection.city_id}/snapshot`;
   return {
     ...connection,
+    simulation_context: VIRTUAL_GAME_CONTEXT,
     agent_city_url: agentCityUrl,
     snapshot_url: snapshotUrl,
     agent_start: {
-      instruction: "Store the bearer token, then send this exact request and follow agent_turn_plan.next_action.",
+      instruction: "This credential controls only a fictional MAGTOPIA city. Store the bearer token, then send this exact request and follow agent_turn_plan.next_action; all resources, residents, risks, and reports are virtual game state.",
       next_action: {
         method: "GET",
         url: snapshotUrl,

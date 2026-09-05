@@ -890,6 +890,8 @@ function resolveTurnInternal(state, input = {}, context = {}, profile = "product
       coins: resourceSettlement.income.coins,
       arcaneEnergy: resourceSettlement.income.arcaneEnergy
     },
+    resourceBefore: resourceSettlement.before,
+    resourceAfter: resourceSettlement.after,
     netResourceDelta: {
       coins: resourceSettlement.after.coins - resourceSettlement.before.coins,
       arcaneEnergy: resourceSettlement.after.arcaneEnergy - resourceSettlement.before.arcaneEnergy
@@ -905,6 +907,8 @@ function resolveTurnInternal(state, input = {}, context = {}, profile = "product
         capacity: populationSettlement.after.wizards.capacity - populationSettlement.before.wizards.capacity
       }
     },
+    populationBefore: populationSettlement.before,
+    populationAfter: populationSettlement.after,
     publicService: populationSettlement.publicService,
     // Construction facts are derived from accepted state/events. Agent input
     // is intentionally ignored; these fields are authoritative audit data.

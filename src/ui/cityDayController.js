@@ -207,11 +207,13 @@ export function createCityDayController({ experience, api, setLight, placementLa
         onPlayerTurnComplete();
         await sync();
       }
+      return true;
     } catch (error) {
       experience.showIdleNote(error.message);
       // A version conflict / stale offer: refresh authoritative state.
       activeOffer = null;
       await sync();
+      return false;
     }
   }
 

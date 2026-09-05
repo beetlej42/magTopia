@@ -240,8 +240,10 @@ test("the player selects exactly one card per turn; a second selection is reject
     assert.equal(selected.status, "selected");
     assert.equal(selected.selected_card_id, target.card_id);
     assert.equal(selected.city_version_after, selected.city_version_before + 1);
-    assert.equal(selected.collaboration_handoff.url, `${config.publicBaseUrl}/api/v1/cities/${city.id}/strategy/resolve`);
-    assert.deepEqual(selected.collaboration_handoff.body, { expected_city_version: selected.city_version_after }, "copy-ready resolve must not carry the forbidden assignments field");
+    assert.equal(selected.collaboration_handoff.url, `${config.publicBaseUrl}/api/v1/cities/${city.id}/building-designs`);
+    assert.ok(selected.collaboration_handoff.body.site.anchor_cell_id, "the player handoff sends the Agent straight to a server-selected development site");
+    assert.equal(selected.collaboration_handoff.body.gameplay_profile.magic_ratio, 0);
+    assert.equal(Object.hasOwn(selected.collaboration_handoff.body, "assignments"), false, "the development handoff never carries strategy assignments");
 
     const second = await app.inject(auth(player, {
       method: "POST",

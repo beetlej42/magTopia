@@ -10,6 +10,8 @@ test("OpenAPI fully describes Arcane Officer recruitment request, response, cand
   assert.equal(schemas.OfficerRecruitmentRequest.additionalProperties, false);
   assert.equal(schemas.OfficerRecruitmentResponse.properties.officer.$ref, "#/components/schemas/ArcaneOfficer");
   assert.equal(schemas.ArcaneOfficerRecruitment.properties.candidates.items.$ref, "#/components/schemas/ArcaneOfficerCandidate");
+  assert.ok(schemas.ArcaneOfficerRecruitment.properties.status.enum.includes("capacity_reached"));
+  assert.ok(schemas.ArcaneOfficerRecruitment.properties.next_capacity_at_wizards);
   assert.ok(schemas.ArcaneOfficer.properties.history.items.$ref);
   assert.ok(schemas.ArcaneOfficerHistoryEntry.required.includes("growth_chance"));
   assert.ok(schemas.TurnFacts.required.includes("officerMaintenance"));

@@ -12,8 +12,8 @@ function state({ coins = 99999, wizards = 20 } = {}) {
 }
 
 test("capacity and config validation are bounded", () => {
-  assert.equal(arcaneOfficerCapacity(state({ wizards: 0 })), 0);
-  assert.equal(arcaneOfficerCapacity(state({ wizards: 25 }), { capacityDivisor: 5 }), 5);
+  assert.equal(arcaneOfficerCapacity(state({ wizards: 0 })), 1, "governance supplies the first officer slot");
+  assert.equal(arcaneOfficerCapacity(state({ wizards: 25 }), { capacityDivisor: 5 }), 6);
   assert.throws(() => recruitmentConfigSummary({ candidateCount: 99 }), /config/);
   assert.throws(() => recruitmentConfigSummary({ hireCostCoins: 119 }), /config/);
   assert.throws(() => recruitmentConfigSummary({ growthChance: 0.3, criticalGrowthChance: 0.2 }), /config/);

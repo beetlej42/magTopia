@@ -144,7 +144,11 @@ test("a resolved turn yields a complete immutable ReportContext derived from fro
     assert.equal(context.factsDigest, factsDigest(settled.facts), "digest derives from the frozen facts");
     assert.equal(context.settlement.settledBy, "agent");
     assert.deepEqual(context.resourceDelta.coins, settled.facts.resourceDelta.coins);
+    assert.deepEqual(context.resources.before, settled.facts.resourceBefore);
+    assert.deepEqual(context.resources.after, settled.facts.resourceAfter);
     assert.deepEqual(context.populationDelta.wizards.current, settled.facts.populationDelta.wizards.current);
+    assert.deepEqual(context.population.before, settled.facts.populationBefore);
+    assert.deepEqual(context.population.after, settled.facts.populationAfter);
     const dispatchedIncident = context.incidents.find((entry) => entry.id === "incident-1");
     assert.ok(dispatchedIncident, "the dispatched incident is part of the context");
     assert.equal(dispatchedIncident.factRef, "fact-incident-incident-1");
@@ -156,6 +160,7 @@ test("a resolved turn yields a complete immutable ReportContext derived from fro
     assert.ok(context.factRefs.includes("fact-incident-incident-1"));
     assert.ok(context.factRefs.includes("fact-resource-delta"));
     assert.ok(context.factRefs.includes("fact-population-delta"));
+    assert.ok(context.factRefs.includes("fact-population-state"));
 
     const replay = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/report-context` }), 200);
     assert.equal(replay.factsDigest, context.factsDigest, "the same resolved turn always projects the same context");

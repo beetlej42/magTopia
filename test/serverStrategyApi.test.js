@@ -136,6 +136,11 @@ test("an Agent completes the closed loop: read incidents, dispatch an officer, s
     assert.equal(settled.owl_report_handoff.context.url, `${config.publicBaseUrl}/api/v1/cities/${city.id}/report-context?turn=${settled.facts.turn}`);
     assert.equal(settled.owl_report_handoff.publish.body_template.turn, settled.facts.turn);
     assert.deepEqual(settled.owl_report_handoff.publish.authoring_contract.article_importance, ["front_page", "secondary", "brief"]);
+    assert.equal(settled.owl_report_handoff.same_service_submission, true);
+    assert.equal(settled.owl_report_handoff.external_recipient, false);
+    assert.equal(settled.owl_report_handoff.publish.authoring_contract.entry_templates.article.id, "article-1");
+    assert.equal(settled.owl_report_handoff.publish.authoring_contract.entry_templates.brief.text, "<required>");
+    assert.equal(settled.owl_report_handoff.publish.authoring_contract.entry_templates.tomorrowWatch.id, "watch-1");
 
     const after = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
     assert.equal(after.turn, 1);
@@ -145,6 +150,66 @@ test("an Agent completes the closed loop: read incidents, dispatch an officer, s
     assert.equal(after.last_turn_facts.assignments[0].rationale, "matched investigation specialty", "rationale stays readable from last_turn_facts after resolve");
     const vesper = after.strategy.arcane_officers.find((officer) => officer.id === "officer-vesper");
     assert.equal(vesper.status, outcome.arcaneOfficerStatus);
+  } finally {
+    await app.close();
+  }
+});
+
+test("a normal turn gives useful development the copy-ready next action before resolve", async () => {
+  const repository = createMemoryRepository(config);
+  const app = await createApp({ repository, config });
+  try {
+    const { city, agent, owner } = await openCity(repository, app);
+    await seedState(repository, owner, city.id, 0, { officers: {}, incidents: {}, turnStatus: "strategy" });
+    await repository.transactCity({
+      principal: owner,
+      cityId: city.id,
+      endpoint: "test/normal-development",
+      idempotencyKey: "normal-development",
+      requestBody: {},
+      expectedVersion: 0
+    }, async ({ state }) => {
+      state.turn = 1;
+      return { nextState: state, response: { seeded: true } };
+    });
+
+    const strategy = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
+    assert.equal(strategy.agent_turn_plan.development_completed_this_turn, false);
+    assert.equal(strategy.agent_turn_plan.next_action.url, `${config.publicBaseUrl}/api/v1/cities/${city.id}/building-designs`);
+    assert.ok(strategy.agent_turn_plan.next_action.body.site.anchor_cell_id, "strategy preselects a legal site and removes one site-search call");
+    assert.equal(strategy.agent_turn_plan.next_action.body.gameplay_profile.magic_ratio, 0);
+    assert.equal(strategy.agent_turn_plan.resolve_after_development.url, `${config.publicBaseUrl}/api/v1/cities/${city.id}/strategy/resolve`);
+  } finally {
+    await app.close();
+  }
+});
+
+test("an early Ministry supplies one officer slot and an exact recruitment action for an open incident", async () => {
+  const repository = createMemoryRepository(config);
+  const app = await createApp({ repository, config });
+  try {
+    const { city, agent, owner } = await openCity(repository, app);
+    await seedState(repository, owner, city.id, 0, { officers: {}, incidents: { "incident-1": openIncident() }, turnStatus: "strategy" });
+    await repository.transactCity({
+      principal: owner,
+      cityId: city.id,
+      endpoint: "test/early-ministry",
+      idempotencyKey: "early-ministry",
+      requestBody: {},
+      expectedVersion: 0
+    }, async ({ state }) => {
+      state.turn = 1;
+      state.gameplay.population.wizards.current = 0;
+      state.buildings.ministry = { id: "ministry", status: "completed", program: { canonicalProgram: "ministry_of_magic", name: "Ministry of Magic" } };
+      return { nextState: state, response: { seeded: true } };
+    });
+
+    const strategy = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
+    assert.equal(strategy.strategy.arcane_officer_recruitment.capacity, 1);
+    assert.equal(strategy.strategy.arcane_officer_recruitment.status, "available");
+    assert.equal(strategy.agent_turn_plan.next_action.url, `${config.publicBaseUrl}/api/v1/cities/${city.id}/strategy/recruit-officer`);
+    assert.ok(strategy.agent_turn_plan.next_action.body.candidate_id);
+    assert.match(strategy.agent_turn_plan.next_action.instruction, /virtual game state/i);
   } finally {
     await app.close();
   }

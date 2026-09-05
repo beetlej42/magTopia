@@ -375,14 +375,40 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     self.type = "button";
     self.className = "city-day-placement-action is-primary";
     self.textContent = "自己放置";
-    self.addEventListener("click", () => onDecide("player_place"));
     const delegate = document.createElement("button");
     delegate.type = "button";
     delegate.className = "city-day-placement-action";
     delegate.textContent = "交给 Agent";
-    delegate.addEventListener("click", () => onDecide("delegate_to_agent"));
+    const progress = document.createElement("p");
+    progress.className = "city-day-placement-progress";
+    progress.setAttribute("role", "status");
+    progress.hidden = true;
+    let deciding = false;
+    const decide = async (mode) => {
+      if (deciding) return;
+      deciding = true;
+      self.disabled = true;
+      delegate.disabled = true;
+      actions.setAttribute("aria-busy", "true");
+      progress.textContent = mode === "player_place"
+        ? "正在确认选择并载入可放置位置…"
+        : "正在确认选择并生成 Agent 放置委托…";
+      progress.hidden = false;
+      try {
+        const accepted = await onDecide(mode);
+        if (accepted !== false) return;
+      } catch (error) {
+        progress.textContent = error?.message ?? "提交失败，请重试。";
+      }
+      deciding = false;
+      self.disabled = false;
+      delegate.disabled = false;
+      actions.removeAttribute("aria-busy");
+    };
+    self.addEventListener("click", () => void decide("player_place"));
+    delegate.addEventListener("click", () => void decide("delegate_to_agent"));
     actions.append(self, delegate);
-    layers.cards.append(actions);
+    layers.cards.append(actions, progress);
     showLayer("cards");
     root.hidden = false;
   }

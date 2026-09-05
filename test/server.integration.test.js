@@ -49,6 +49,8 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
     const link = await json(app, auth(playerA, { method: "POST", url: `/api/v1/cities/${cityA.id}/agent-links`, payload: {} }), 201);
     const capability = link.connect_url.split("/").at(-1);
     const connected = await json(app, { method: "POST", url: `/connect/${capability}` }, 200);
+    assert.equal(connected.simulation_context.resources_are_virtual, true);
+    assert.equal(connected.simulation_context.owl_reports_are_same_service_game_content, true);
     assert.equal((await app.inject({ method: "POST", url: `/connect/${capability}` })).statusCode, 410);
     const agent = { access_token: connected.access_token };
 
@@ -61,6 +63,8 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
     assert.equal(renderState.city_id, cityA.id);
     assert.equal(renderState.city_version, 0);
     assert.ok(Object.keys(renderState.state.cells).length > 0);
+    assert.deepEqual(renderState.resources, { coins: 100000, arcaneEnergy: 0 });
+    assert.deepEqual(renderState.daily_production, { coins: 0, arcaneEnergy: 0 });
     assert.equal(renderState.render_contract.mode, "agentcity");
     assert.equal(renderState.render_contract.infrastructureRenderer, "state-driven-voxel-road-v2-victorian-bridges");
     assert.equal(renderState.render_contract.roadAsset, "shared-victorian-voxel-road-tile-v1");

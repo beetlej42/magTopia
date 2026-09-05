@@ -1703,9 +1703,14 @@ function renderCityViewerSummary(payload) {
     coins: {
       label: "金币",
       svg: `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.25"></circle><path d="M9.25 8.5h5.5M9.25 12h5.5M9.25 15.5h5.5"></path></svg>`
+    },
+    arcaneEnergy: {
+      label: "秘法能量",
+      svg: `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3.5 14.3 9l5.7.5-4.35 3.75L17 19l-5-3-5 3 1.35-5.75L4 9.5 9.7 9 12 3.5Z"></path></svg>`
     }
   };
-  cityViewerResources.replaceChildren(...Object.entries(state.resources ?? {}).map(([name, value]) => {
+  const resources = payload.resources ?? state.gameplay?.resources ?? state.resources ?? {};
+  cityViewerResources.replaceChildren(...Object.entries(resources).map(([name, value]) => {
     const item = document.createElement("div");
     item.className = "city-resource-item";
 
