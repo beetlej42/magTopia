@@ -199,6 +199,7 @@ export function currentOffer(state) {
             ? [CARD_DECISION_MODES.player_place, CARD_DECISION_MODES.delegate_to_agent]
             : [CARD_DECISION_MODES.immediate],
           effect_summary: summarizeCardEffect(definition),
+          effect_preview: previewCardEffect(state, definition),
           skip_consequence: "If the turn is resolved while this choice is pending, no offered card effect is applied.",
           free_placement: Boolean(definition.effect?.freePlacement),
           placement_required: definition.type === CARD_TYPES.special_structure,
@@ -222,6 +223,32 @@ function summarizeCardEffect(definition) {
     return `Activate ${effect.policyId ?? definition.title}${turns ? ` for ${turns} turns` : ""}.`;
   }
   return definition.description;
+}
+
+function previewCardEffect(state, definition) {
+  const effect = definition.effect ?? {};
+  if (effect.kind === "grant_population") {
+    const population = normalizePopulationState(state.gameplay?.population);
+    const requested = Number(effect.wizards ?? 0);
+    const current = Number(population.wizards.current ?? 0);
+    const capacity = Number(population.wizards.capacity ?? 0);
+    const availableCapacity = Math.max(0, capacity - current);
+    const projectedGrant = Math.max(0, Math.min(requested, availableCapacity));
+    return {
+      kind: "wizard_population",
+      requested,
+      projected_grant: projectedGrant,
+      current,
+      capacity,
+      warning: projectedGrant < requested
+        ? `Only ${projectedGrant} of ${requested} wizard residents can arrive with the current wizard housing capacity.`
+        : null
+    };
+  }
+  if (effect.kind === "grant_coins") {
+    return { kind: "coins", projected_grant: Number(effect.coins ?? 0), current: Number(state.gameplay?.resources?.coins ?? state.resources?.coins ?? 0) };
+  }
+  return null;
 }
 
 export function currentChoice(state) {

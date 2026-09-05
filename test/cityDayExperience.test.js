@@ -365,6 +365,29 @@ test("ordinary and special offers expose distinct headings and card facts withou
   });
 });
 
+test("population cards show the authoritative projected grant before selection", async () => {
+  await withFakeDom(async () => {
+    const experience = createCityDayExperience({});
+    experience.presentCards({
+      turn: 2,
+      choice_kind: "ordinary",
+      cards: [{
+        card_id: "ordinary-people-migration",
+        type: "people",
+        title: "Supported Wizard Arrivals",
+        description: "Wizard residents arrive within capacity.",
+        choice_kind: "ordinary",
+        family: "ordinary_people",
+        effect_preview: { kind: "wizard_population", requested: 2, projected_grant: 0, current: 0, capacity: 0 }
+      }]
+    }, () => {});
+    const card = collectButtons(experience.layers.cards).find((button) => button.className.includes("city-day-card"));
+    const warning = card.querySelector(".is-warning");
+    assert.match(warning.textContent, /预计迁入 0\/2 位巫师/);
+    assert.match(warning.textContent, /巫师住房 0\/0/);
+  });
+});
+
 test("controller and experience walk bootstrap through Turn 10 without duplicate card submissions", async () => {
   await withFakeDom(async () => {
     const experience = createCityDayExperience({});

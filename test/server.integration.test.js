@@ -277,10 +277,12 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
       payload: {
         site: { lot_id: site4.lotId, footprint: "1x1", entrance: site4.entranceDirections[0] },
         intent: { name: "Voxel Tea House", purpose: "tea shop", frontage: "display", style: "victorian_domestic" },
+        gameplay_profile: { purpose: "commercial", magic_ratio: 0 },
         requirements: { preferred_floors: 1 }
       }
     }), 201);
     assert.equal(voxelDraft.generation.mode, "floor_stack");
+    assert.deepEqual(voxelDraft.gameplayProfile, { purpose: "commercial", magicRatio: 0 });
     assert.equal(voxelDraft.agent_handoff.next_action.url, `${config.publicBaseUrl}/api/v1/cities/${cityA.id}/building-designs/${voxelDraft.id}/confirm`);
     assert.deepEqual(voxelDraft.agent_handoff.next_action.body, { expected_revision: voxelDraft.revision });
     const voxelRevision = await json(app, auth(playerA, {
@@ -313,10 +315,7 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
         expected_city_version: afterCancel.city_version,
         design_id: voxelConfirmed.id,
         design_revision: voxelConfirmed.revision,
-        design_hash: voxelConfirmed.specHash,
-        // Confirmed visual designs still need an explicit v0.3 gameplay
-        // grammar when they enter the construction-order endpoint.
-        gameplay_building: { units: [{ purpose: "commercial", area: 1, magicRatio: 0 }] }
+        design_hash: voxelConfirmed.specHash
       }
     }), 201);
     assert.equal(voxelOrder.status, "completed");
@@ -328,8 +327,7 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
         expected_city_version: afterCancel.city_version,
         design_id: voxelConfirmed.id,
         design_revision: voxelConfirmed.revision,
-        design_hash: voxelConfirmed.specHash,
-        gameplay_building: { units: [{ purpose: "commercial", area: 1, magicRatio: 0 }] }
+        design_hash: voxelConfirmed.specHash
       }
     }), 201);
     assert.equal(voxelReplay.idempotent_replay, true);

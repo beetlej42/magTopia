@@ -1935,6 +1935,12 @@ html[data-magtopia-surface="acceptance"] .city-day-experience {
   background: #f4eaff;
 }
 
+.city-day-card-facts span.is-warning {
+  border-color: #d58a55;
+  color: #7b351d;
+  background: #fff0df;
+}
+
 .city-day-cards.is-special-choice {
   background: radial-gradient(circle at 50% 46%, rgb(92 58 32 / 48%), rgb(28 16 32 / 84%));
 }

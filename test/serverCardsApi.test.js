@@ -179,6 +179,11 @@ test("Turn 1 gets the canonical ordinary BUILDING/PEOPLE/RESOURCE offer stable a
     assert.deepEqual(new Set(first.offer.cards.map((card) => card.choice_kind)), new Set(["ordinary"]));
     assert.deepEqual(new Set(first.offer.cards.map((card) => card.family)), new Set(["ordinary_building", "ordinary_people", "ordinary_resource"]));
     assert.ok(first.offer.cards.every((card) => card.free_placement === false && card.placement_required === false), "ordinary cards disclose non-placement semantics");
+    const people = first.offer.cards.find((card) => card.family === "ordinary_people");
+    assert.equal(people.effect_preview.kind, "wizard_population");
+    assert.equal(people.effect_preview.projected_grant, 0, "the offer warns when no wizard housing exists");
+    assert.equal(people.effect_preview.requested, 2);
+    assert.match(people.effect_preview.warning, /Only 0 of 2/);
     assert.ok(Array.isArray(first.pending_placements), "cards/current exposes the authoritative placement projection");
     const second = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/cards/current` }), 200);
     assert.deepEqual(second.offer.cards.map((card) => card.card_id), first.offer.cards.map((card) => card.card_id));

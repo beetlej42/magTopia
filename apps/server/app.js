@@ -1936,8 +1936,8 @@ function agentTurnPlan(row, state, config, nowValue, suppliedSystems = null) {
       version_rule: versionRule,
       next_action: nextAction,
       starter_builds: [
-        { candidate_index: 0, intent: { name: "Gateway Row House", purpose: "residential", composition: "street", frontage: "residential", access: "private", prominence: "ordinary", magic_level: 0.15 }, requirements: { preferred_floors: 1 } },
-        { candidate_index: 1, intent: { name: "Gateway Corner Shop", purpose: "commercial shop", composition: "street", frontage: "display", access: "public", prominence: "ordinary", magic_level: 0.2 }, requirements: { preferred_floors: 1 } }
+        { candidate_index: 0, intent: { name: "Gateway Row House", purpose: "residential", composition: "street", frontage: "residential", access: "private", prominence: "ordinary", magic_level: 0.15 }, gameplay_profile: { purpose: "residential", magic_ratio: 0 }, requirements: { preferred_floors: 1 } },
+        { candidate_index: 1, intent: { name: "Gateway Corner Shop", purpose: "commercial shop", composition: "street", frontage: "display", access: "public", prominence: "ordinary", magic_level: 0.2 }, gameplay_profile: { purpose: "commercial", magic_ratio: 0 }, requirements: { preferred_floors: 1 } }
       ],
       construction_sequence: ["site-searches", "building-designs", "building-designs/{design_id}/confirm", "construction-previews", "construction-orders"],
       resolve_when_ready: progress.readyForMeaningfulFirstResolve
@@ -2010,16 +2010,32 @@ function developmentPriorities(state, systems) {
   const openIncidents = Object.values(state.gameplay?.incidents ?? {}).filter((incident) => ["open", "assigned"].includes(incident.status));
   if (openIncidents.length) priorities.push({ priority: "urgent", system: "incidents", reason: `${openIncidents.length} incident(s) need an Arcane Officer assignment before settlement.` });
   const populationCapacity = Number(systems.population?.capacity?.muggles ?? 0) + Number(systems.population?.capacity?.wizards ?? 0);
+  const wizardCapacity = Number(systems.population?.capacity?.wizards ?? 0);
   const serviceCoverage = Number(systems.public_service?.serviceCoverage ?? 0);
   if (populationCapacity > 0 && serviceCoverage < 1) {
     priorities.push({ priority: "high", system: "population", suggested_purpose: "public_service", reason: `Public-service coverage is ${Math.round(serviceCoverage * 100)}%; nearby public_service raises supported occupancy from the 50% baseline toward 80% and speeds migration.` });
+  }
+  if (wizardCapacity <= 0) {
+    priorities.push({
+      priority: "high",
+      system: "wizard_population",
+      suggested_purpose: "residential",
+      building_design_gameplay_profile: { purpose: "residential", magic_ratio: 0.5 },
+      reason: "Wizard housing capacity is 0. In POST /building-designs, set gameplay_profile to residential with magic_ratio > 0; intent.magic_level is visual only and does not create wizard capacity."
+    });
   }
   const exposed = (systems.risk?.buildings ?? []).filter((building) => building.magic_load > 0 && (building.exposure_pressure > 0 || building.incident_chance > 0));
   if (exposed.length) {
     priorities.push({ priority: "high", system: "concealment", suggested_action: "place concealment near the listed magical buildings or choose a concealment policy", building_ids: exposed.map((entry) => entry.building_id), reason: "Magical activity is outpacing local concealment and can raise exposure or incidents." });
   }
   if (Number(systems.economy?.net_next_income?.coins ?? 0) <= 0) priorities.push({ priority: "normal", system: "economy", suggested_purpose: "commercial", reason: "The next settlement has no positive coin income; add a commercial or production unit before expanding costs." });
-  if (Number(systems.economy?.net_next_income?.arcaneEnergy ?? 0) <= 0) priorities.push({ priority: "normal", system: "arcane_energy", suggested_purpose: "greenhouse or magical commercial/production", reason: "The city currently has no projected Arcane Energy growth." });
+  if (Number(systems.economy?.net_next_income?.arcaneEnergy ?? 0) <= 0) priorities.push({
+    priority: "normal",
+    system: "arcane_energy",
+    suggested_purpose: "greenhouse or magical commercial/production",
+    building_design_gameplay_profile: { purpose: "greenhouse", magic_ratio: 1 },
+    reason: "The city currently has no projected Arcane Energy growth. Set an explicit gameplay_profile in POST /building-designs; magic_ratio also increases concealment pressure, so review the risk preview."
+  });
   return priorities.slice(0, 4);
 }
 

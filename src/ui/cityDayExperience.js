@@ -299,6 +299,15 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
       addFact(`${String(card.choice_kind).toUpperCase()} CHOICE`);
       if (card.family) addFact(`FAMILY · ${String(card.family).replaceAll("_", " ")}`);
     }
+    if (card.effect_preview?.kind === "wizard_population") {
+      const preview = card.effect_preview;
+      addFact(
+        `预计迁入 ${preview.projected_grant}/${preview.requested} 位巫师 · 当前巫师住房 ${preview.current}/${preview.capacity}`,
+        Number(preview.projected_grant) < Number(preview.requested) ? "is-warning" : "is-action"
+      );
+    } else if (card.effect_preview?.kind === "coins") {
+      addFact(`预计立即获得 ${card.effect_preview.projected_grant} 金币`, "is-action");
+    }
     element.append(kind, title, description, effect, facts);
     element.addEventListener("click", () => {
       if (element.dataset.selected === "true") return;

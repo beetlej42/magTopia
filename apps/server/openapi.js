@@ -46,7 +46,7 @@ export function createOpenApiDocument(baseUrl) {
         },
         BuildingIntent: {
           type: "object",
-          description: "Semantic building brief. Choose purpose first, then composition/frontage/access/style/prominence. The x-agent-catalog below explains how each option changes the generated architecture; use it as the design vocabulary rather than guessing from enum names.",
+          description: "Semantic and visual building brief. Choose purpose first, then composition/frontage/access/style/prominence. magic_level controls visual intensity only; use the sibling gameplay_profile to author wizard capacity, Arcane Energy production, and magical exposure. The x-agent-catalog below explains how each option changes the generated architecture; use it as the design vocabulary rather than guessing from enum names.",
           required: ["name", "purpose"],
           properties: {
             name: { type: "string", minLength: 1, description: "Human-readable building name." },
@@ -122,6 +122,20 @@ export function createOpenApiDocument(baseUrl) {
             residentialGuidance: "For residential floor_stack, read nearby buildings and district purpose, pass district_context, preserve two or three shared cues, and vary one or two structural cues."
           }
         },
+        BuildingGameplayProfile: {
+          type: "object",
+          additionalProperties: false,
+          required: ["purpose", "magic_ratio"],
+          description: "Authoritative gameplay semantics applied to every system-derived floor of this confirmed design. The server owns floor count and functional area. magic_ratio is the wizard-world share, not visual magic strength: residential creates wizard housing capacity; commercial/production/greenhouse can produce Arcane Energy and add concealment pressure.",
+          properties: {
+            purpose: { enum: ["residential", "commercial", "public_service", "production", "greenhouse"] },
+            magic_ratio: { type: "number", enum: [0, 0.25, 0.5, 0.75, 1], description: "Use 0 for entirely Muggle-facing space and a positive discrete value for magical use. A wizard residence needs residential plus magic_ratio > 0." }
+          },
+          examples: [
+            { purpose: "residential", magic_ratio: 0.5 },
+            { purpose: "greenhouse", magic_ratio: 1 }
+          ]
+        },
         Decoration: {
           type: "object",
           required: ["id", "type", "anchor"],
@@ -139,6 +153,7 @@ export function createOpenApiDocument(baseUrl) {
             generation_mode: { enum: ["auto", "floor_stack", "urban_massing"], description: "Prefer auto. See BuildingIntent.x-agent-catalog.generationModeRules for the exact recommendation rules." },
             site: { $ref: "#/components/schemas/Site" },
             intent: { $ref: "#/components/schemas/BuildingIntent" },
+            gameplay_profile: { $ref: "#/components/schemas/BuildingGameplayProfile" },
             requirements: { type: "object", properties: { preferred_floors: { type: "integer", minimum: 1, maximum: 8, description: "Optional initial floor count for floor_stack; defaults are derived from prominence." }, variant_id: { type: "string", description: "Optional public-building variant from the generated catalog returned by the design response." } } },
             district_context: {
               type: "object",
@@ -278,6 +293,7 @@ export function createOpenApiDocument(baseUrl) {
             recommended_action: { type: "string" },
             available_decision_modes: { type: "array", items: { enum: ["immediate", "player_place", "delegate_to_agent"] } },
             effect_summary: { type: "string", description: "Compact server-owned consequences so the choice is understandable without reading another catalog." },
+            effect_preview: { type: ["object", "null"], additionalProperties: true, description: "Authoritative current-state projection of an immediate effect. Check projected_grant before choosing a capacity-limited population card." },
             skip_consequence: { type: "string" },
             duration: { oneOf: [{ type: "string", const: "instant" }, { type: "object", properties: { type: { type: "string" }, turns: { type: "integer" } } }] },
             structure: { type: "object", nullable: true, description: "System-owned placement spec for special structure cards." },

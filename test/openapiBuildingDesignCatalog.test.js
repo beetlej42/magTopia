@@ -39,3 +39,14 @@ test("OpenAPI decoration catalog matches the runtime semantic grid sign support"
     /Prefer auto/
   );
 });
+
+test("OpenAPI separates visual magic from authoritative gameplay profiles", () => {
+  const document = createOpenApiDocument("https://example.test");
+  const profile = document.components.schemas.BuildingGameplayProfile;
+  const request = document.components.schemas.BuildingDesignCreateRequest;
+
+  assert.deepEqual(profile.required, ["purpose", "magic_ratio"]);
+  assert.deepEqual(profile.properties.magic_ratio.enum, [0, 0.25, 0.5, 0.75, 1]);
+  assert.equal(request.properties.gameplay_profile.$ref, "#/components/schemas/BuildingGameplayProfile");
+  assert.match(document.components.schemas.BuildingIntent.description, /visual intensity only/);
+});

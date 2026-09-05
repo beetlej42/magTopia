@@ -166,6 +166,39 @@ test("confirmed designs produce an exact voxel construction envelope", () => {
   assert.equal(body.voxel_design.generation.mode, "floor_stack");
 });
 
+test("an explicit gameplay profile creates system-owned wizard housing semantics", () => {
+  const draft = createBuildingDesignDraft({
+    site: { lot_id: "cell-11-10", entrance: "east" },
+    intent: { name: "Veiled Wizard Row", purpose: "residential", frontage: "residential", magic_level: 0.2 },
+    gameplay_profile: { purpose: "residential", magic_ratio: 0.5 },
+    requirements: { preferred_floors: 2 }
+  }, { ...context, id: "wizard-housing-design" });
+  assert.deepEqual(draft.gameplayProfile, { purpose: "residential", magicRatio: 0.5 });
+  const confirmed = confirmBuildingDesign(draft, { expected_revision: 1 }, context);
+  const body = buildingDesignToConstructionBody(confirmed, { expected_city_version: 11 });
+  assert.deepEqual(body.gameplay_building, {
+    floors: [
+      { purpose: "residential", magicRatio: 0.5 },
+      { purpose: "residential", magicRatio: 0.5 }
+    ]
+  });
+});
+
+test("gameplay profiles reject ambiguous purpose and non-discrete magic ratios", () => {
+  const base = {
+    site: { lot_id: "cell-11-11" },
+    intent: { name: "Test House", purpose: "residential" }
+  };
+  assert.throws(() => createBuildingDesignDraft({
+    ...base,
+    gameplay_profile: { purpose: "wizard_house", magic_ratio: 0.5 }
+  }, context), /gameplay_profile\.purpose/);
+  assert.throws(() => createBuildingDesignDraft({
+    ...base,
+    gameplay_profile: { purpose: "residential", magic_ratio: 0.63 }
+  }, context), /gameplay_profile\.magic_ratio/);
+});
+
 test("upgrade drafts reuse the same framework and translate add-floor by mode", () => {
   const initial = createBuildingDesignDraft({
     site: { lot_id: "cell-10-10" },

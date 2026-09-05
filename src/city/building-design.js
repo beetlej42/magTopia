@@ -42,6 +42,9 @@ export const SEMANTIC_GRID_SIGN_MICRO_VOXEL = Object.freeze({
   unit: "world_meter"
 });
 
+const GAMEPLAY_PURPOSES = Object.freeze(["residential", "commercial", "public_service", "production", "greenhouse"]);
+const GAMEPLAY_MAGIC_RATIOS = Object.freeze([0, 0.25, 0.5, 0.75, 1]);
+
 const COMMON_OPERATIONS = Object.freeze([
   "set_intent",
   "regenerate_from_intent",
@@ -74,6 +77,7 @@ export function createBuildingDesignDraft(input = {}, context = {}) {
   const requirements = input.requirements ?? {};
   const districtContext = createDistrictArchitectureContext(input.district_context ?? input.districtContext);
   const generation = recommendGeneration({ id, seed, intent, mode, site, requirements, districtContext });
+  const gameplayProfile = normalizeGameplayProfile(input.gameplay_profile ?? input.gameplayProfile);
   const design = {
     designVersion: BUILDING_DESIGN_VERSION,
     id,
@@ -81,6 +85,7 @@ export function createBuildingDesignDraft(input = {}, context = {}) {
     status: "editable",
     source: { kind: "new" },
     intent,
+    gameplayProfile,
     site,
     districtContext,
     generation,
@@ -181,6 +186,14 @@ export function buildingDesignToConstructionBody(design, input = {}) {
   const floors = design.generation.mode === "floor_stack"
     ? design.generation.sourceSpec.floors
     : estimateMassingStoreys(design.generation.sourceSpec);
+  const gameplayBuilding = design.gameplayProfile
+    ? {
+        floors: Array.from({ length: floors }, () => ({
+          purpose: design.gameplayProfile.purpose,
+          magicRatio: design.gameplayProfile.magicRatio
+        }))
+      }
+    : null;
   return {
     ...input,
     design_id: design.id,
@@ -208,8 +221,24 @@ export function buildingDesignToConstructionBody(design, input = {}) {
     agent_guidance: createAgentGuidance(design),
     actual_architecture: structuredClone(design.actualArchitecture ?? null),
     architecture_review: structuredClone(design.architectureReview ?? null),
+    ...(gameplayBuilding ? { gameplay_building: gameplayBuilding } : {}),
     voxel_design: structuredClone(design)
   };
+}
+
+function normalizeGameplayProfile(value) {
+  if (value == null) return null;
+  if (typeof value !== "object" || Array.isArray(value)) throw new Error("gameplay_profile must be an object");
+  const purpose = String(value.purpose ?? "").trim().toLowerCase();
+  if (!GAMEPLAY_PURPOSES.includes(purpose)) {
+    throw new Error(`gameplay_profile.purpose must be one of ${GAMEPLAY_PURPOSES.join(", ")}; received ${purpose || "(missing)"}`);
+  }
+  const requestedRatio = Number(value.magic_ratio ?? value.magicRatio);
+  const magicRatio = GAMEPLAY_MAGIC_RATIOS.find((candidate) => Math.abs(candidate - requestedRatio) < Number.EPSILON * 8);
+  if (!Number.isFinite(requestedRatio) || magicRatio == null) {
+    throw new Error(`gameplay_profile.magic_ratio must be one of ${GAMEPLAY_MAGIC_RATIOS.join(", ")}; received ${String(value.magic_ratio ?? value.magicRatio)}`);
+  }
+  return { purpose, magicRatio };
 }
 
 function recommendGeneration({ id, seed, intent, mode, site, requirements, districtContext = null }) {

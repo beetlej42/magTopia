@@ -41,6 +41,11 @@ test("bootstrap is a read-only no-card turn and Turn 1 receives the first canoni
     assert.equal(snapshot.economy.current.coins, snapshot.resources.coins);
     assert.ok(snapshot.development_priorities.some((entry) => entry.system === "economy"));
     assert.ok(snapshot.development_priorities.some((entry) => entry.system === "arcane_energy"));
+    assert.deepEqual(
+      snapshot.agent_turn_plan.starter_builds[0].gameplay_profile,
+      { purpose: "residential", magic_ratio: 0 },
+      "bootstrap examples separate system magic ratio from visual magic level"
+    );
     assert.equal(snapshot.links.viewer, `${config.publicBaseUrl}/cities/${city.id}`);
 
     const getSites = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/site-searches?footprint=1x1&limit=2` }), 200);

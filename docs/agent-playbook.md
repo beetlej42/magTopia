@@ -134,7 +134,21 @@ You may spend the city's entire currently available budget without player approv
 
 ## Confirmed-design construction
 
-The Agent API exposes one construction contract. Create and confirm a BuildingDesign, then send only its identity and the current city version to both `/construction-previews` and `/construction-orders`:
+The Agent API exposes one construction contract. When creating the BuildingDesign, set `gameplay_profile` whenever the intended system behavior matters. This is separate from visual `intent.magic_level`:
+
+```json
+{
+  "generation_mode": "auto",
+  "site": { "anchor_cell_id": "cell-47-23", "footprint": "1x1", "entrance": "east" },
+  "intent": { "name": "Veiled Wizard Row", "purpose": "residential", "frontage": "residential", "magic_level": 0.2 },
+  "gameplay_profile": { "purpose": "residential", "magic_ratio": 0.5 },
+  "requirements": { "preferred_floors": 1 }
+}
+```
+
+`gameplay_profile.purpose` is one of `residential`, `commercial`, `public_service`, `production`, or `greenhouse`; `magic_ratio` is one of `0`, `0.25`, `0.5`, `0.75`, or `1`. A wizard residence requires `purpose: residential` and `magic_ratio > 0`. A magical production or greenhouse profile produces Arcane Energy but also raises local magical load, so read the strategy risk projection and add concealment. The server derives the exact floor count and functional area; the Agent never submits area.
+
+After creation, confirm the BuildingDesign, then send only its identity and the current city version to both `/construction-previews` and `/construction-orders`:
 
 ```json
 {
@@ -147,7 +161,7 @@ The Agent API exposes one construction contract. Create and confirm a BuildingDe
 }
 ```
 
-Do not submit `site`, `program`, `gameplay_building`, functional area, asset selection, cost, or renderer data here. The confirmed BuildingDesign is authoritative for those fields. The snapshot price guide is an estimate; the preview is the exact quote. The create/revise response's `agent_handoff.next_action` is the exact confirmation request. The confirmation response's `agent_handoff.preview` and `agent_handoff.order` contain the authoritative minimal body and order key; copy them unchanged to avoid design-id, hash, version, or idempotency transcription errors.
+Do not submit `site`, `program`, `gameplay_building`, functional area, asset selection, cost, or renderer data to the preview/order endpoints. Put system intent in `gameplay_profile` when the BuildingDesign is created; the confirmed design then owns those fields. The snapshot price guide is an estimate; the preview is the exact quote. The create/revise response's `agent_handoff.next_action` is the exact confirmation request. The confirmation response's `agent_handoff.preview` and `agent_handoff.order` contain the authoritative minimal body and order key; copy them unchanged to avoid design-id, hash, version, or idempotency transcription errors.
 
 ## Construction principles
 
