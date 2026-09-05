@@ -53,11 +53,50 @@ test("previewing a capability with GET or HEAD never consumes it", async () => {
       headers: { accept: "application/json" }
     });
     assert.equal(exchanged.statusCode, 200, exchanged.body);
-    assert.match(exchanged.json().access_token, /^mta_/);
+    const connection = exchanged.json();
+    assert.match(connection.access_token, /^mta_/);
+    assert.equal(connection.agent_city_url, `https://example.test/cities/${link.city_id}#token=${encodeURIComponent(connection.access_token)}`);
+    assert.equal(connection.agent_start.next_action.url, `https://example.test/api/v1/cities/${link.city_id}/snapshot`);
+    assert.equal(connection.agent_start.next_action.headers.Authorization, `Bearer ${connection.access_token}`);
 
     const reused = await app.inject({ method: "POST", url });
     assert.equal(reused.statusCode, 410);
     assert.equal(reused.json().code, "CAPABILITY_CONSUMED");
+  } finally {
+    await app.close();
+  }
+});
+
+test("player self-service creation returns exact player and Agent handoff links", async () => {
+  const repository = createMemoryRepository(config);
+  const app = await createApp({ repository, config, logger: false });
+  try {
+    const start = await app.inject({ method: "GET", url: "/play" });
+    assert.equal(start.statusCode, 200);
+    assert.match(start.body, /创建城市与 Agent 链接/);
+    assert.match(start.body, /document\.execCommand\('copy'\)/, "plain HTTP deployments retain a clipboard fallback");
+    const script = start.body.match(/<script>([\s\S]+)<\/script>/)?.[1];
+    assert.ok(script);
+    assert.doesNotThrow(() => new Function(script));
+
+    const player = await json(app, { method: "POST", url: "/api/v1/players", payload: { display_name: "Link Owner" } }, 201);
+    const city = await json(app, {
+      method: "POST",
+      url: "/api/v1/cities",
+      headers: { authorization: `Bearer ${player.access_token}` },
+      payload: { name: "Link City" }
+    }, 201);
+    assert.equal(city.player_city_url, `https://example.test/cities/${city.id}#token=${encodeURIComponent(player.access_token)}`);
+    assert.match(city.agent_connect_url, /^https:\/\/example\.test\/connect\/mtc_/);
+    assert.equal(city.handoff.to_player.url, city.player_city_url);
+    assert.equal(city.handoff.to_agent.url, city.agent_connect_url);
+
+    const discovery = await json(app, { method: "GET", url: "/.well-known/magtopia-agent.json" }, 200);
+    assert.equal(discovery.player_start_url, "https://example.test/play");
+
+    const exchanged = await json(app, { method: "POST", url: new URL(city.agent_connect_url).pathname }, 200);
+    assert.equal(exchanged.city_id, city.id);
+    assert.equal(exchanged.agent_start.next_action.headers.Authorization, `Bearer ${exchanged.access_token}`);
   } finally {
     await app.close();
   }
@@ -93,4 +132,10 @@ async function fixture() {
   const link = await repository.createCapability(principal, city.id);
   const app = await createApp({ repository, config, logger: false });
   return { app, city, link };
+}
+
+async function json(app, request, statusCode) {
+  const response = await app.inject(request);
+  assert.equal(response.statusCode, statusCode, response.body);
+  return response.json();
 }

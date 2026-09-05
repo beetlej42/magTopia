@@ -128,6 +128,9 @@ async function resolveAndPublish(app, repository, { player, agent, city }, { tur
   }), 200);
   assert.equal(settled.status, "resolved");
   const factsTurn = settled.facts.turn;
+  const awaitingReport = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/city-day` }), 200);
+  assert.equal(awaitingReport.report.publication_status, "awaiting_agent");
+  assert.match(awaitingReport.report.message, new RegExp(`Turn ${factsTurn}.*waiting.*Agent`, "i"));
   const context = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/report-context?turn=${factsTurn}` }), 200);
   const report = {
     masthead: { title: "The Hooting Herald", subtitle: "An Independent Daily of the Wizarding City" },

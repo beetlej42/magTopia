@@ -572,6 +572,8 @@ test("a special structure card supports delegate_to_agent and the mandate appear
       payload: { expected_city_version: offer.city_version, offer_id: offer.offer.offer_id, selected_card_id: special.card_id, decision_mode: "delegate_to_agent" }
     }), 200);
     assert.equal(selected.choice.decision_mode, "delegate_to_agent");
+    assert.equal(selected.collaboration_handoff.actor, "agent");
+    assert.equal(selected.collaboration_handoff.url, `${config.publicBaseUrl}/api/v1/cities/${city.id}/cards/place`);
 
     const strategy = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
     assert.equal(strategy.strategy.cards.choice.selected_card_id, special.card_id);
@@ -580,15 +582,19 @@ test("a special structure card supports delegate_to_agent and the mandate appear
     assert.equal(mandate.card_id, special.card_id);
     assert.equal(mandate.mode, "delegate_to_agent");
     assert.equal(mandate.status, "deferred");
+    const handoff = strategy.agent_turn_plan.next_action;
+    assert.equal(handoff.actor, "agent");
+    assert.equal(handoff.body.placement_id, mandate.placement_id);
+    assert.equal(handoff.body.card_id, special.card_id);
+    assert.ok(handoff.body.lot_id);
+    assert.ok(handoff.body.entrance);
+    assert.match(handoff.headers["Idempotency-Key"], new RegExp(`^place-${mandate.placement_id}-v`));
 
-    const state = (await repository.getCity(owner, city.id)).state;
-    const lotId = findLegalLot(state, special.structure.footprint, "east");
-    assert.ok(lotId);
     const placed = await json(app, auth(agent, {
-      method: "POST",
-      url: `/api/v1/cities/${city.id}/cards/place`,
-      headers: { "idempotency-key": "special-delegate-place-1" },
-      payload: { expected_city_version: strategy.city_version, card_id: special.card_id, lot_id: lotId, footprint: special.structure.footprint, entrance: "east" }
+      method: handoff.method,
+      url: new URL(handoff.url).pathname,
+      headers: handoff.headers,
+      payload: handoff.body
     }), 200);
     assert.equal(placed.status, "placed");
     assert.equal(placed.city_version_after, placed.city_version_before + 1, "a placement is a single authoritative mutation");
@@ -597,7 +603,7 @@ test("a special structure card supports delegate_to_agent and the mandate appear
       method: "POST",
       url: `/api/v1/cities/${city.id}/cards/place`,
       headers: { "idempotency-key": "player-tries-delegated" },
-      payload: { expected_city_version: placed.city_version_after, card_id: special.card_id, lot_id: lotId, footprint: special.structure.footprint, entrance: "east" }
+      payload: { expected_city_version: placed.city_version_after, card_id: special.card_id, lot_id: handoff.body.lot_id, footprint: special.structure.footprint, entrance: handoff.body.entrance }
     }));
     assert.equal(playerBlocked.statusCode, 422);
     assert.equal(playerBlocked.json().code, "PLACEMENT_ACTOR_NOT_ALLOWED");

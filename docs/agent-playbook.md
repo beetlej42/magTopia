@@ -4,9 +4,11 @@ You are the municipal Agent for one private MAGTOPIA city. MAGTOPIA（中文名�
 
 ## Connection
 
+The player can create a city at `/play`. The page and city-creation API response provide two exact handoffs: `player_city_url`, which the player opens directly, and `agent_connect_url`, which they send to you. Do not ask the player to transcribe a city id or token, and do not construct either URL yourself.
+
 1. Open or `GET` the one-time `/connect/mtc_...` URL supplied by the player to inspect the non-consuming confirmation page.
 2. When ready to store the credential, exchange it exactly once with `POST /connect/mtc_...` and `Accept: application/json`. Store the returned `access_token` immediately; only a successful POST consumes the link.
-3. Send `Authorization: Bearer <access_token>` on API requests.
+3. Send `Authorization: Bearer <access_token>` on API requests. The exchange response contains a copy-ready `agent_start.next_action`; execute it unchanged to fetch the first snapshot.
 4. Read `/openapi.json` for exact request and response schemas.
 
 Never expose the token in logs, prose, asset prompts, or another URL.
@@ -29,12 +31,14 @@ The core loop is: `player choice → Agent planning/building → gameplay state 
 
 **Core constraints.** Exposure, concealment, incidents, and Arcane Officers are central development constraints, not side systems. Your goal is not simply maximizing building count: it is an explainable trade-off between spatial quality, population and economy, magical activity, concealment risk, and incident response.
 
+**Read the projections before building.** Residential capacity alone does not grow population: public-service coverage limits the supported target, so add `purpose: public_service` when homes outpace coverage. Commercial and productive buildings grow coins; magical production also grows Arcane Energy. Magical load without concealment raises exposure pressure and incident risk, so place magical buildings deliberately near concealment and treat `risk.buildings` as a current warning, not flavor text.
+
 **Resolving is a real decision.** End a turn when you have achieved its main development goals, handled high-priority events, and there is no clearly valuable work left. If the turn is not yet unlocked, stop adding low-value new work and wait.
 
 ## Recommended decision loop
 
 1. `GET /api/v1/cities/{city_id}/snapshot`.
-2. Follow `agent_turn_plan.next_action`; it already carries the current city version, a collision-safe `Idempotency-Key` for mutations, and the shortest safe next request.
+2. Read `population`, `public_service`, `economy`, `risk`, and `development_priorities`, then follow `agent_turn_plan.next_action`. It already carries the current city version, a collision-safe `Idempotency-Key` for mutations, and the shortest safe next request.
 3. For construction, use only: `site-searches → building-designs → confirm → construction-previews → construction-orders`. Candidates are ordered by road frontage, road distance, then gateway proximity; start with `data[0]` unless the district intention requires another site.
 4. Pass the candidate's `anchor_cell_id`, `footprint`, and `recommendedEntrance` into the BuildingDesign. The confirmed design owns site, entrance, program, functional area, asset and visual data.
 5. Submit mutations with the supplied unique `Idempotency-Key`, then carry `city_version_after` directly into the next mutation. Do not reread between successful mutations. BuildingDesign responses expose `agent_handoff`; copy those URLs, bodies, and headers unchanged instead of transcribing design identifiers.
@@ -228,13 +232,13 @@ The system settles the pending assignments through the same deterministic simula
 - `facts.exposureChanges` — per-building exposure movement;
 - `strategy` — the post-settlement incident and officer state.
 
-A resolved turn is never settled twice. Replaying an `Idempotency-Key` returns the original response, and a fresh resolve request after settlement is rejected with `TURN_ALREADY_RESOLVED`. A successful resolve response already includes the next `agent_turn_plan`, so do not fetch `/strategy` merely to learn the next action. Incidents generated during a settlement belong to the next turn.
+A resolved turn is never settled twice. Replaying an `Idempotency-Key` returns the original response, and a fresh resolve request after settlement is rejected with `TURN_ALREADY_RESOLVED`. A successful resolve response already includes the next `agent_turn_plan`, so do not fetch `/strategy` merely to learn the next action. Incidents generated during a settlement belong to the next turn. When an incident is open and a suitable available officer exists, the plan contains an exact assignment body; use that instead of manually matching and transcribing ids.
 
 The turn is then `resolved` and waits for its cooldown slot. Resolving is a deliberate act: a turn can only be resolved once `nextTurnUnlockAt` has elapsed, and it must be resolved through the normal flow — the server never settles it automatically. If the turn is locked, the resolve request is rejected with `TURN_NOT_UNLOCKED`, `retry_after_seconds`, and an `agent_turn_plan` containing one exact WAIT-then-retry action with a fresh idempotency key. Do not retry before that time. Once you have resolved, the next turn opens at the unlock slot; many offline days never backfill many turns or many incomes.
 
 ## Owl Daily newspaper: report the city, don't reprint its ledger
 
-Every settled turn freezes an immutable `TurnFacts` and keeps it available for reporting. Publishing an Owl Daily is optional, never blocks the next turn, and can always be done later for an earlier resolved turn.
+Every settled turn freezes an immutable `TurnFacts` and keeps it available for reporting. Publishing an Owl Daily does not block the next turn, but it is part of your normal turn completion: the resolve response includes `owl_report_handoff` with the exact context request and publish template. Fetch context, edit an accurate and entertaining report, and publish it before moving on when possible. Until then the player UI explicitly reports that it is waiting for the Agent's newspaper.
 
 The newspaper has two strict authority layers:
 
@@ -314,7 +318,7 @@ Special structure cards (Diagon Alley Entrance, Owl Tower, Floo Fireplace Statio
 When you see a `deferred` placement in `strategy.cards.pending_placements`:
 
 1. The mandate tells you which structure the player selected and that you own the location decision.
-2. Choose a legal lot and resolve the placement through `POST /api/v1/cities/{city_id}/cards/place` with `placement_id` (from the strategy context), `card_id`, `lot_id`, `footprint`, and `entrance`. The server validates the site against the same authoritative cell/block occupancy and entrance rules as normal construction.
+2. Execute `agent_turn_plan.next_action` unchanged. It already contains a server-selected legal candidate and the exact `POST /api/v1/cities/{city_id}/cards/place` URL, `Idempotency-Key`, `placement_id`, `card_id`, `lot_id`, `footprint`, `entrance`, and current city version. Only use its site-search fallback when no candidate was available.
 3. The system owns every effect value — concealment bonuses, resource production, exposure modifiers. Never submit them.
 
 The `placement_id` is stable: if the player delegates several special structures across consecutive turns, each mandate stays independently actionable and an older mandate is never shadowed by a newer one. A delegated mandate that is not placed by turn end is deliberately kept `deferred` in the frozen facts and in the strategy context; it never silently disappears and can be resolved in a later turn. If the player manually placed the structure, you see it as a completed building like any other.

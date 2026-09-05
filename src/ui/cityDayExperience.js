@@ -124,6 +124,10 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
     headline.className = "city-day-paper-headline";
     headline.textContent = report?.headline ?? reportMeta?.headline ?? "";
 
+    const subheadline = document.createElement("p");
+    subheadline.className = "city-day-paper-subheadline";
+    subheadline.textContent = report?.subheadline ?? "";
+
     const lead = document.createElement("p");
     lead.className = "city-day-paper-lead";
     lead.textContent = report?.lead ?? "";
@@ -134,9 +138,15 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
       const articleEl = document.createElement("article");
       const articleHeadline = document.createElement("h4");
       articleHeadline.textContent = article.headline;
+      const articleMeta = document.createElement("small");
+      articleMeta.className = "city-day-paper-article-meta";
+      articleMeta.textContent = [article.category, article.importance].filter(Boolean).join(" · ");
+      const articleDek = document.createElement("p");
+      articleDek.className = "city-day-paper-dek";
+      articleDek.textContent = article.dek ?? "";
       const articleBody = document.createElement("p");
       articleBody.textContent = article.body;
-      articleEl.append(articleHeadline, articleBody);
+      articleEl.append(articleHeadline, articleMeta, articleDek, articleBody);
       body.append(articleEl);
     }
     for (const brief of report?.briefs ?? []) {
@@ -145,10 +155,34 @@ export function createCityDayExperience({ onPhaseChange = () => {}, onReportDism
       briefEl.textContent = brief.text;
       body.append(briefEl);
     }
+    const actionBox = document.createElement("section");
+    actionBox.className = "city-day-paper-action-box";
+    if ((report?.actionBox ?? []).length) {
+      const title = document.createElement("h4");
+      title.textContent = "市政行动栏";
+      actionBox.append(title);
+      for (const action of report.actionBox) {
+        const entry = document.createElement("p");
+        entry.textContent = action.reason ?? `关注 ${action.incidentRef ?? "当前事件"}`;
+        actionBox.append(entry);
+      }
+    }
+    const tomorrow = document.createElement("section");
+    tomorrow.className = "city-day-paper-tomorrow";
+    if ((report?.tomorrowWatch ?? []).length) {
+      const title = document.createElement("h4");
+      title.textContent = "明日观察";
+      tomorrow.append(title);
+      for (const watch of report.tomorrowWatch) {
+        const entry = document.createElement("p");
+        entry.textContent = watch.text;
+        tomorrow.append(entry);
+      }
+    }
     const hint = document.createElement("p");
     hint.className = "city-day-paper-dismiss-hint";
     hint.textContent = "向任意方向滑动报纸以继续";
-    sheet.append(masthead, edition, headline, lead, body, hint);
+    sheet.append(masthead, edition, headline, subheadline, lead, body, actionBox, tomorrow, hint);
     layers.newspaper.append(sheet);
   }
 

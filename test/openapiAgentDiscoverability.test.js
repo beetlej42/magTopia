@@ -143,6 +143,7 @@ function parseRuntimeRoutes(app) {
 // capability exchange. Anything not listed here must appear in OpenAPI.
 const DENY_LIST = new Set([
   "get /",
+  "get /play",
   "get /healthz",
   "get /agent/playbook.md",
   "get /agent",

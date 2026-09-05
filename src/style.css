@@ -1719,6 +1719,14 @@ html[data-magtopia-surface="acceptance"] .city-day-experience {
   color: #3c2d1e;
 }
 
+.city-day-paper-subheadline {
+  margin: 0 0 10px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 0.9rem;
+  font-style: italic;
+  color: #6a4d30;
+}
+
 .city-day-paper-body {
   column-width: 240px;
   column-gap: 22px;
@@ -1739,6 +1747,20 @@ html[data-magtopia-surface="acceptance"] .city-day-experience {
   color: #241a10;
 }
 
+.city-day-paper-article-meta {
+  display: block;
+  margin: -2px 0 4px;
+  color: #8a6848;
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.city-day-paper-dek {
+  font-weight: 700;
+  color: #4c3825;
+}
+
 .city-day-paper-body p {
   margin: 0 0 10px;
 }
@@ -1746,6 +1768,26 @@ html[data-magtopia-surface="acceptance"] .city-day-experience {
 .city-day-paper-brief {
   font-style: italic;
   color: #5c4631;
+}
+
+.city-day-paper-action-box,
+.city-day-paper-tomorrow {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid #9a7955;
+  background: rgb(110 76 42 / 7%);
+}
+
+.city-day-paper-action-box h4,
+.city-day-paper-tomorrow h4 {
+  margin: 0 0 5px;
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+.city-day-paper-action-box p,
+.city-day-paper-tomorrow p {
+  margin: 4px 0;
+  font-size: 0.8rem;
 }
 
 .city-day-paper-dismiss-hint {

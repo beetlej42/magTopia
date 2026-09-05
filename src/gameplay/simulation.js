@@ -103,6 +103,73 @@ export function effectiveBuildings(metadataMap) {
     && metadata.status !== "sealed");
 }
 
+// Read-only projection for Agent planning. It deliberately reuses the same
+// metadata, economy, population, public-service, exposure and incident-risk
+// functions as settlement so the guidance can never drift into a second set
+// of gameplay rules.
+export function previewCitySystems(state, options = {}) {
+  const metadataMap = asMap(state, "metadata");
+  const policyEffects = collectPolicyEffects(state);
+  const resourcePreview = settleResources(state, metadataMap, {
+    ...options,
+    chargeOfficerMaintenance: true
+  });
+  const populationPreview = settlePopulation(state, metadataMap, {
+    ...options,
+    wizardMigrationRateBonus: policyEffects.wizardGrowthBonusRate
+  });
+  const riskByBuilding = new Map(inspectSpatialExposure(state, {
+    metadataOf: (building) => metadataMap[building.id]
+  }).map((entry) => [entry.buildingId, entry]));
+  const buildings = Object.entries(state.buildings ?? {}).sort(([left], [right]) => left.localeCompare(right)).map(([id, building]) => {
+    const metadata = metadataMap[id] ?? {};
+    const concealment = neighborhoodConcealment(state, { ...building, id }, { metadataOf: (neighbor) => metadataMap[neighbor.id] })
+      + Number(policyEffects.concealmentBonus ?? 0)
+      + specialStructureConcealment(state, { ...building, id });
+    const pressure = exposurePressure(metadata, concealment, {
+      modifier: specialStructureExposureModifier(state)
+    });
+    const risk = riskByBuilding.get(id) ?? {};
+    return {
+      building_id: id,
+      name: building.program?.name ?? id,
+      purpose: building.program?.purpose ?? null,
+      status: building.status ?? metadata.status ?? "active",
+      canonical: metadata.canonical === true,
+      units: (metadata.units ?? []).map((unit) => ({ purpose: unit.purpose, area: unit.area, magic_ratio: unit.magicRatio })),
+      magic_load: Number(risk.magicLoad ?? 0),
+      concealment,
+      exposure: Number(metadata.exposure ?? building.exposure ?? 0),
+      exposure_pressure: pressure,
+      historical_risk: Number(building.historicalRisk ?? 0),
+      incident_chance: Number(risk.finalIncidentChance ?? 0),
+      incident_chance_percent: Number(risk.finalIncidentChancePercent ?? 0),
+      risk_tier: risk.riskTier ?? "none"
+    };
+  });
+  return {
+    population: {
+      current: populationPreview.before,
+      capacity: populationPreview.capacityDelta,
+      supported_target: populationPreview.target,
+      projected_after_next_resolve: populationPreview.after
+    },
+    public_service: populationPreview.publicService,
+    economy: {
+      current: resourcePreview.before,
+      gross_next_income: resourcePreview.income,
+      officer_maintenance: resourcePreview.maintenance,
+      net_next_income: resourcePreview.netIncome,
+      projected_after_next_resolve: resourcePreview.after
+    },
+    risk: {
+      active_incidents: Object.values(state.gameplay?.incidents ?? {}).filter((incident) => ["open", "assigned"].includes(incident.status)).length,
+      policy_concealment_bonus: Number(policyEffects.concealmentBonus ?? 0),
+      buildings
+    }
+  };
+}
+
 export function settleResources(state, metadataMap, options = {}) {
   const hasOuterCoins = Object.prototype.hasOwnProperty.call(state.resources ?? {}, "coins");
   const outerCoins = Number(state.resources?.coins);

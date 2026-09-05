@@ -36,6 +36,12 @@ test("bootstrap is a read-only no-card turn and Turn 1 receives the first canoni
     assert.equal(starterBounds.maxRow - starterBounds.minRow + 1, 6);
     assert.ok(starterBounds.maxColumn < snapshot.bootstrap.progress.gatewayLocation.column);
     assert.equal(snapshot.construction_price_guide.currency, "coins");
+    assert.deepEqual(snapshot.population.current.muggles, { current: 0, capacity: 0 });
+    assert.equal(snapshot.public_service.serviceCoverage, 0);
+    assert.equal(snapshot.economy.current.coins, snapshot.resources.coins);
+    assert.ok(snapshot.development_priorities.some((entry) => entry.system === "economy"));
+    assert.ok(snapshot.development_priorities.some((entry) => entry.system === "arcane_energy"));
+    assert.equal(snapshot.links.viewer, `${config.publicBaseUrl}/cities/${city.id}`);
 
     const badSpatial = await app.inject(auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/spatial?min_col=-1&max_col=2&min_row=0&max_row=2` }));
     assert.equal(badSpatial.statusCode, 400);

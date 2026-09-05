@@ -95,6 +95,27 @@ test("presentReport shows only the newspaper layer", async () => {
   });
 });
 
+test("Owl Daily renders subheadline, article dek, action box, and tomorrow watch", async () => {
+  await withFakeDom(async () => {
+    const experience = createCityDayExperience({});
+    experience.presentReport({
+      masthead: { title: "猫头鹰日报", subtitle: "Owl Daily" },
+      edition: "第 5 日",
+      headline: "月光温室照亮东区",
+      subheadline: "秘法产量上涨，隐蔽压力也随之而来",
+      lead: "城市进入新的魔法经济阶段。",
+      articles: [{ id: "a1", headline: "温室开门", dek: "六点秘法能量进入账本。", body: "规划署提醒邻里补足隐蔽。", category: "economy", importance: "front_page" }],
+      briefs: [],
+      actionBox: [{ id: "act1", incidentRef: "fact-incident-1", factRefs: [], reason: "派遣掩护专员处理目击事件。" }],
+      tomorrowWatch: [{ id: "watch1", text: "观察公共服务覆盖后的巫师迁入。", factRefs: [] }]
+    }, { ready: true });
+    assert.equal(experience.layers.newspaper.querySelector(".city-day-paper-subheadline").textContent, "秘法产量上涨，隐蔽压力也随之而来");
+    assert.equal(experience.layers.newspaper.querySelector(".city-day-paper-dek").textContent, "六点秘法能量进入账本。");
+    assert.match(experience.layers.newspaper.querySelector(".city-day-paper-action-box").children[1].textContent, /掩护专员/);
+    assert.match(experience.layers.newspaper.querySelector(".city-day-paper-tomorrow").children[1].textContent, /巫师迁入/);
+  });
+});
+
 test("presentPlacementChoice keeps using the cards layer and keeps the placement layer hidden", async () => {
   await withFakeDom(async () => {
     const experience = createCityDayExperience({});
