@@ -34,7 +34,7 @@ test("bootstrap is a read-only no-card turn and Turn 1 receives the first canoni
     const starterBounds = snapshot.agent_turn_plan.next_action.body.bounds;
     assert.equal(starterBounds.maxColumn - starterBounds.minColumn + 1, 5);
     assert.equal(starterBounds.maxRow - starterBounds.minRow + 1, 6);
-    assert.ok(starterBounds.maxColumn < snapshot.bootstrap.progress.gatewayLocation.column);
+    assert.ok(starterBounds.minRow > snapshot.bootstrap.progress.gatewayLocation.row, "the starter district extends inward from the station forecourt");
     assert.equal(snapshot.construction_price_guide.currency, "coins");
     assert.deepEqual(snapshot.population.current.muggles, { current: 0, capacity: 0 });
     assert.equal(snapshot.public_service.serviceCoverage, 0);

@@ -216,6 +216,8 @@ export async function createApp({ repository, config, logger = false, now = () =
         buildings: "city-state-voxel-designs-with-runtime-asset-fallback",
         bakedArtifacts: "versioned-binary-mesh-lod-v1",
         artifactManifest: "render-state.artifact_manifest or /render-artifacts/manifest",
+        railwayGateway: "fixed-footprint-through-station-v1",
+        railwayGatewayNode: "state.nodes.old_town_entry",
         ...AGENT_VOXEL_ROAD_RENDER_CONTRACT
       }
     };
@@ -706,6 +708,27 @@ export async function createApp({ repository, config, logger = false, now = () =
       if (!result.accepted) return rejectedCommand(result);
       const commandId = createId("command");
       return { nextState: result.state, response: commandEnvelope(commandId, result, { kind: "connection", id: commandId, status: "completed" }) };
+    });
+    return reply.code(response.status === "rejected" ? 422 : 201).send(response);
+  });
+
+  app.post("/api/v1/cities/:cityId/gateways/:nodeId/upgrade", async (request, reply) => {
+    const principal = await authenticate(repository, request, "city:build");
+    const body = request.body ?? {};
+    const response = await repository.transactCity({
+      principal,
+      cityId: request.params.cityId,
+      endpoint: `gateways/${request.params.nodeId}/upgrade`,
+      idempotencyKey: request.headers["idempotency-key"],
+      requestBody: body,
+      expectedVersion: expectedCityVersion(request, body),
+      action: "upgrade_gateway",
+      reason: body.actor_note
+    }, async ({ state }) => {
+      const result = executeCityCommand(state, { type: "upgrade_gateway", nodeId: request.params.nodeId, actor: actorId(principal) }, engineContext());
+      if (!result.accepted) return rejectedCommand(result);
+      const commandId = createId("command");
+      return { nextState: result.state, response: commandEnvelope(commandId, result, { kind: "gateway_upgrade", id: request.params.nodeId, status: "completed", gateway: result.gateway, cost: result.cost }) };
     });
     return reply.code(response.status === "rejected" ? 422 : 201).send(response);
   });
@@ -1887,7 +1910,7 @@ function agentSnapshot(row, state, events, orders, config) {
     recent_changes: events,
     districts,
     pending_orders: orders.filter((order) => !["completed", "failed", "cancelled"].includes(order.status)),
-    available_actions: { define_district: true, cancel_district: true, construct_confirmed_design: true, connect: true, spend_full_current_budget: true },
+    available_actions: { define_district: true, cancel_district: true, construct_confirmed_design: true, connect: true, upgrade_gateway: Number(state.nodes?.old_town_entry?.stationLevel ?? 1) < 3, spend_full_current_budget: true },
     links: {
       playbook: `${config.publicBaseUrl}/agent/playbook.md`,
       viewer: `${config.publicBaseUrl}/cities/${encodeURIComponent(row.id)}`,
@@ -1900,6 +1923,7 @@ function agentSnapshot(row, state, events, orders, config) {
       construction_orders: `${config.publicBaseUrl}/api/v1/cities/${row.id}/construction-orders`,
       connection_previews: `${config.publicBaseUrl}/api/v1/cities/${row.id}/connection-previews`,
       connections: `${config.publicBaseUrl}/api/v1/cities/${row.id}/connections`,
+      railway_gateway_upgrade: `${config.publicBaseUrl}/api/v1/cities/${row.id}/gateways/old_town_entry/upgrade`,
       spatial_query: `${config.publicBaseUrl}/api/v1/cities/${row.id}/spatial`,
       buildings: `${config.publicBaseUrl}/api/v1/cities/${row.id}/buildings`,
       events: `${config.publicBaseUrl}/api/v1/cities/${row.id}/events?after_version=${row.city_version}`
@@ -2321,6 +2345,14 @@ function starterDistrictBounds(state, gateway) {
   const rows = Number(state.world?.grid?.rows ?? 50);
   const gatewayColumn = Number(gateway?.column ?? columns - 1);
   const gatewayRow = Number(gateway?.row ?? Math.floor(rows / 2));
+  const direction = String(state.nodes?.old_town_entry?.urbanDirection ?? "west");
+  if (direction === "south" || direction === "north") {
+    const minColumn = Math.max(0, Math.min(columns - 5, gatewayColumn - 2));
+    const minRow = direction === "south"
+      ? Math.max(0, Math.min(rows - 6, gatewayRow + 1))
+      : Math.max(0, Math.min(rows - 6, gatewayRow - 6));
+    return { minColumn, minRow, maxColumn: minColumn + 4, maxRow: minRow + 5 };
+  }
   const maxColumn = Math.max(4, Math.min(columns - 1, gatewayColumn - 1));
   const minColumn = Math.max(0, maxColumn - 4);
   const minRow = Math.max(0, Math.min(rows - 6, gatewayRow - 2));
@@ -2328,9 +2360,14 @@ function starterDistrictBounds(state, gateway) {
 }
 
 function starterRoadTarget(state, gateway, district) {
-  const gatewayColumn = Number(gateway?.column ?? state.world?.grid?.columns ?? 1) - 1;
+  const direction = String(state.nodes?.old_town_entry?.urbanDirection ?? "west");
+  const sourceColumn = Number(gateway?.column ?? state.world?.grid?.columns ?? 1);
+  const gatewayColumn = direction === "west" ? sourceColumn - 1 : direction === "east" ? sourceColumn + 1 : sourceColumn;
   const gatewayRow = Number(gateway?.row ?? 0);
-  const preferred = `cell-${Math.max(Number(district?.bounds?.minColumn ?? 0), gatewayColumn)}-${Math.min(Number(district?.bounds?.maxRow ?? gatewayRow), Math.max(Number(district?.bounds?.minRow ?? 0), gatewayRow))}`;
+  const targetRow = direction === "south"
+    ? gatewayRow + 1
+    : direction === "north" ? gatewayRow - 1 : gatewayRow;
+  const preferred = `cell-${Math.min(Number(district?.bounds?.maxColumn ?? gatewayColumn), Math.max(Number(district?.bounds?.minColumn ?? 0), gatewayColumn))}-${Math.min(Number(district?.bounds?.maxRow ?? targetRow), Math.max(Number(district?.bounds?.minRow ?? 0), targetRow))}`;
   if (state.cells?.[preferred]?.buildable !== false && state.cells?.[preferred]?.strictBuildable !== false) return preferred;
   const candidate = Object.values(state.cells ?? {}).filter((cell) => cell.buildable !== false && cell.strictBuildable !== false && !cell.node
       && Number(cell.column) >= Number(district?.bounds?.minColumn ?? 0)

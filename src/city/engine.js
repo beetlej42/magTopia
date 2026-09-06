@@ -5,6 +5,7 @@ import { deriveGameplayBuilding } from "../gameplay/building-metadata.js";
 import { incomeForSettlement, systemOwnedBonusForBuilding } from "../gameplay/economy.js";
 import { activeConstructionDiscountRate, consumeConstructionDiscount } from "../gameplay/cards.js";
 import { getCard } from "../gameplay/card-catalog.js";
+import { RAILWAY_STATION_LEVELS, nextRailwayStationLevel } from "./railway-gateway.js";
 
 export function createEngineContext(options = {}) {
   const sequences = new Map();
@@ -25,6 +26,7 @@ export function executeCityCommand(currentState, input, context = createEngineCo
     case "cancel_district": return cancelDistrict(currentState, input, context);
     case "construct_building": return constructBuilding(currentState, input, context);
     case "upgrade_building": return upgradeBuilding(currentState, input, context);
+    case "upgrade_gateway": return upgradeGateway(currentState, input, context);
     case "connect": return connect(currentState, input, context);
     case "reserve_construction": return reserveConstruction(currentState, input, context);
     case "complete_reserved_construction": return completeReservedConstruction(currentState, input, context);
@@ -32,6 +34,42 @@ export function executeCityCommand(currentState, input, context = createEngineCo
     case "advance_time": return advanceTime(currentState, input, context);
     default: return rejected(currentState, "UNSUPPORTED_COMMAND", `Unsupported city command: ${input.type}`);
   }
+}
+
+function upgradeGateway(currentState, input, context) {
+  const nodeId = String(input.nodeId ?? input.node_id ?? "old_town_entry");
+  const gateway = currentState.nodes?.[nodeId];
+  if (!gateway || gateway.type !== "railway_station_gateway") {
+    return rejected(currentState, "GATEWAY_NOT_UPGRADABLE", `Gateway ${nodeId} is not an upgradable railway station`);
+  }
+  const currentLevel = Number(gateway.stationLevel ?? gateway.railway?.station?.level ?? 1);
+  if (currentLevel >= 3) return rejected(currentState, "GATEWAY_MAX_LEVEL", `Gateway ${nodeId} is already level 3`);
+  const nextLevel = nextRailwayStationLevel(gateway);
+  const cost = { coins: RAILWAY_STATION_LEVELS[nextLevel].upgradeCost };
+  const resourcesAfter = subtract(currentState.resources, cost);
+  const shortages = negativeKeys(resourcesAfter);
+  if (shortages.length) return rejected(currentState, "INSUFFICIENT_RESOURCES", `Insufficient ${shortages.join(", ")}`, { cost, resourcesAfter });
+  const next = cloneCityState(currentState);
+  next.nodes[nodeId] = {
+    ...next.nodes[nodeId],
+    stationLevel: nextLevel,
+    railway: {
+      ...next.nodes[nodeId].railway,
+      station: { ...next.nodes[nodeId].railway.station, level: nextLevel }
+    }
+  };
+  next.resources = resourcesAfter;
+  bump(next, false);
+  appendEvent(next, {
+    type: "railway_station_upgraded",
+    actor: input.actor ?? "agent:unknown",
+    nodeId,
+    fromLevel: currentLevel,
+    toLevel: nextLevel,
+    cost,
+    summary: `${nodeId} upgraded to ${RAILWAY_STATION_LEVELS[nextLevel].name}.`
+  }, context);
+  return accepted(currentState, next, { gateway: structuredClone(next.nodes[nodeId]), cost, resourcesAfter });
 }
 
 function defineDistrict(currentState, input, context) {

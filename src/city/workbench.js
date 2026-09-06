@@ -32,6 +32,11 @@ export function createCityWorkbench(initialState) {
       if (result.accepted) state = result.state;
       return result;
     },
+    upgradeGateway({ nodeId = "old_town_entry", actor = "agent:unknown" } = {}) {
+      const result = executeCityCommand(state, { type: "upgrade_gateway", nodeId, actor }, context);
+      if (result.accepted) state = result.state;
+      return result;
+    },
     advanceTime({ hours = 24, actor = "system:clock" } = {}) {
       const result = executeCityCommand(state, { type: "advance_time", hours, actor }, context);
       if (result.accepted) state = result.state;

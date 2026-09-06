@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { createMagicLondonBaseTileKit, createRoadRenderPlan, createStarterDistrictPlan, getMagicLondonBaseTileContract } from "./magicLondonBaseTiles.js";
 import { createMagicLondonStarterDistrict } from "./magicLondonStarterDistrict.js";
 import { createMagicLondonVegetationLayer } from "./magicLondonVegetation.js";
+import { createRailwayGatewayLayer } from "./railwayAssets.js";
 
 const ASSET_BASE = "/generated/magic-london-wand-shop-001";
 const STARTER_ASSET_BASE = "/generated/magic-london-starter-001";
@@ -231,6 +232,10 @@ export function createIsometricDevelopmentWorld(config = {}) {
     roadPlan
   });
   root.add(baseTiles);
+  const railway = params.cityState
+    ? createRailwayGatewayLayer({ state: params.cityState, grid: terrain.grid, seed: `${params.seed}:gateway` })
+    : null;
+  if (railway) root.add(railway);
   const vegetation = createMagicLondonVegetationLayer({
     params,
     grid: terrain.grid,
@@ -256,13 +261,16 @@ export function createIsometricDevelopmentWorld(config = {}) {
   root.userData.baseTileContract = getMagicLondonBaseTileContract(params);
   root.userData.vegetationContract = vegetation.userData.contract;
   root.userData.starterDistrictContract = starterDistrict.userData.contract;
+  root.userData.railwayGatewayContract = railway?.userData.contract ?? null;
   root.userData.updateBaseFit = (camera, enabled, viewport) => starterDistrict.userData.updateBaseFit?.(camera, enabled, viewport);
   root.userData.getBaseFitDiagnostics = () => starterDistrict.userData.baseFitDiagnostics ?? null;
   root.userData.getModelDiagnostics = () => starterDistrict.userData.getModelDiagnostics?.() ?? [];
   root.userData.updateDaylight = (style) => {
     baseTiles.userData.updateDaylight?.(style, params.nightLighting);
+    railway?.userData.updateDaylight?.(style);
     starterDistrict.userData.updateDaylight?.(style);
   };
+  root.userData.update = (elapsed) => railway?.userData.update?.(elapsed);
   root.userData.updateDaylight(getDaylightStyle(params.sunTime));
   root.userData.maps = { previews: [["Development terrain", terrain.canvas]] };
   return root;

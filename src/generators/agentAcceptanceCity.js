@@ -3,6 +3,7 @@ import { runNonVisualAgentBuildScenario } from "../city/agent-district-simulatio
 import { createAgentVoxelRoadLayer, createAgentVoxelVegetationLayer } from "./agentVoxelInfrastructure.js";
 import { createMagicLondonStarterDistrict } from "./magicLondonStarterDistrict.js";
 import { createStreetLifeCityLayer } from "./streetLifeCityLayer.js";
+import { createRailwayGatewayLayer } from "./railwayAssets.js";
 import { createBuildingContactAmbientOcclusion } from "../render/buildingContactAmbientOcclusion.js";
 import {
   createVoxelDistrictMacroSurface,
@@ -61,6 +62,10 @@ function* createAgentAcceptanceCitySteps(config = {}) {
   root.add(roads);
   yield 0.3;
 
+  const railway = createRailwayGatewayLayer({ state, grid, seed: `${seed}:gateway` });
+  railway.name = "AgentAcceptanceRailwayGateway";
+  root.add(railway);
+
   const buildings = createMagicLondonStarterDistrict({
     grid,
     sampleGroundHeight: constructionHeight,
@@ -90,6 +95,7 @@ function* createAgentAcceptanceCitySteps(config = {}) {
   yield 0.82;
 
   const sphericalProjection = projectDistrictOntoSphere(root, params.planetRadius);
+  railway.userData.enableSphericalTrain?.(params.planetRadius);
   const streetLife = createStreetLifeCityLayer({
     state,
     grid,
@@ -119,6 +125,7 @@ function* createAgentAcceptanceCitySteps(config = {}) {
     terrain: macro.diagnostics,
     roadTopologies: roads.userData.contract?.renderedRoadTopologies ?? {},
     roadRenderer: roads.userData.contract,
+    railwayGateway: railway.userData.contract,
     vegetation: vegetation.userData.contract,
     streetLife: streetLife.userData.getDiagnostics(),
     contactAmbientOcclusion: {
@@ -163,6 +170,7 @@ function* createAgentAcceptanceCitySteps(config = {}) {
   root.userData.getPrefabLodSummaryDiagnostics = () => buildings.userData.getVoxelLodSummaryDiagnostics?.() ?? {};
   root.userData.getStreetLifeDiagnostics = () => streetLife.userData.getDiagnostics();
   root.userData.update = (elapsed) => {
+    railway.userData.update?.(elapsed);
     streetLife.userData.update(elapsed);
   };
   root.userData.updateView = (camera, _maxDynamicLights = 4, viewport = {}) => {
@@ -174,6 +182,7 @@ function* createAgentAcceptanceCitySteps(config = {}) {
   };
   root.userData.updateDaylight = (style) => {
     roads.userData.updateDaylight?.(style, params.nightLighting);
+    railway.userData.updateDaylight?.(style);
     buildings.userData.updateDaylight?.(style);
     vegetation.userData.updateDaylight?.(style);
   };

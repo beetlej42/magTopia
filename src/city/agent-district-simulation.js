@@ -79,17 +79,23 @@ export function runNonVisualAgentBuildScenario(options = {}) {
     else state = result.state;
   }
 
-  const roadTarget = pickRoadTarget(state, DISTRICT_PROGRAM.at(-1).bounds);
-  const roadResult = roadTarget ? executeCityCommand(state, {
-    type: "connect",
-    from: { kind: "node", id: "old_town_entry" },
-    to: { kind: "cell", id: roadTarget },
-    mode: "road",
-    actor: "agent:district-builder"
-  }, engineContext) : { accepted: false, code: "NO_ROAD_TARGET", errors: ["No routeable western road target"] };
-  actions.push({ type: "connect", purpose: "district_spine", accepted: roadResult.accepted, target: roadTarget, plan: roadResult.plan ?? null });
-  if (!roadResult.accepted) failures.push({ stage: "district_roads", error: roadResult.errors?.[0], code: roadResult.code });
-  else state = roadResult.state;
+  let roadSource = { kind: "node", id: "old_town_entry" };
+  for (const district of DISTRICT_PROGRAM) {
+    const roadTarget = pickRoadTarget(state, district.bounds);
+    const roadResult = roadTarget ? executeCityCommand(state, {
+      type: "connect",
+      from: roadSource,
+      to: { kind: "cell", id: roadTarget },
+      mode: "road",
+      actor: "agent:district-builder"
+    }, engineContext) : { accepted: false, code: "NO_ROAD_TARGET", errors: [`No routeable road target for ${district.id}`] };
+    actions.push({ type: "connect", purpose: "district_spine", districtId: district.id, accepted: roadResult.accepted, target: roadTarget, plan: roadResult.plan ?? null });
+    if (!roadResult.accepted) failures.push({ stage: "district_roads", districtId: district.id, error: roadResult.errors?.[0], code: roadResult.code });
+    else {
+      state = roadResult.state;
+      roadSource = { kind: "cell", id: roadTarget };
+    }
+  }
 
   for (const district of DISTRICT_PROGRAM) {
     const branch = pickDistrictRoadBranch(state, district.bounds);

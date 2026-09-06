@@ -1,13 +1,17 @@
 import { getFootprintCells } from "./contracts.js";
 import { GAMEPLAY_SCHEMA_VERSION } from "../gameplay/schema.js";
+import { applyRailwayGatewayToCells, planRailwayGateway } from "./railway-gateway.js";
 
 export function createCityState(worldContract, options = {}) {
   if (!worldContract?.grid?.cells?.length) throw new Error("CityState requires a world contract with valid cells");
   const cells = Object.fromEntries(worldContract.grid.cells.map((cell) => [cell.id, { ...cell, occupancy: null, infrastructure: null, reservation: null }]));
-  const gateway = pickEasternGateway(Object.values(cells), worldContract.grid.rows);
-  cells[gateway.id].node = "old_town_entry";
+  const supportsRailwayGateway = Number(worldContract.grid.columns) >= 24 && Number(worldContract.grid.rows) >= 24;
+  const railway = supportsRailwayGateway ? planRailwayGateway(worldContract) : null;
+  if (railway) applyRailwayGatewayToCells(cells, railway);
+  const gateway = cells[railway?.urbanConnectionPoint?.cellId] ?? pickEasternGateway(Object.values(cells), worldContract.grid.rows);
+  if (!railway) cells[gateway.id].node = "old_town_entry";
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     version: 0,
     cityId: options.cityId ?? null,
     rulesetVersion: options.rulesetVersion ?? "magic-london-mvp@1",
@@ -66,7 +70,9 @@ export function createCityState(worldContract, options = {}) {
     districts: {},
     buildings: {},
     infrastructure: {},
-    nodes: { old_town_entry: { id: "old_town_entry", type: "external_gateway", cellId: gateway.id } },
+    nodes: { old_town_entry: railway
+      ? { id: "old_town_entry", type: "railway_station_gateway", cellId: gateway.id, urbanDirection: railway.urbanDirection, stationLevel: 1, railway }
+      : { id: "old_town_entry", type: "external_gateway", cellId: gateway.id } },
     reservations: {},
     events: []
   };
@@ -75,7 +81,7 @@ export function createCityState(worldContract, options = {}) {
 export function cloneCityState(state) {
   return {
     ...state,
-    schemaVersion: Math.max(3, Number(state.schemaVersion ?? 0)),
+    schemaVersion: Math.max(4, Number(state.schemaVersion ?? 0)),
     resources: { ...state.resources },
     gameplay: structuredClone(state.gameplay ?? null),
     cells: Object.fromEntries(Object.entries(state.cells).map(([id, cell]) => [id, { ...cell }])),

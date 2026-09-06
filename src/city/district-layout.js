@@ -232,7 +232,11 @@ export function connectedRoadCellIds(state) {
   const gatewayId = state.nodes?.old_town_entry?.cellId;
   if (!gatewayId) return new Set();
   const gateway = state.cells[gatewayId];
-  const seeds = [gatewayId, ...CARDINALS.map(([dx, dy]) => `cell-${gateway.column + dx}-${gateway.row + dy}`)]
+  // The railway gateway owns one paved threshold cell. It becomes a city road
+  // network only after an adjacent road is built; otherwise every district
+  // containing the threshold would appear connected before the Agent learns
+  // the bootstrap road command.
+  const seeds = CARDINALS.map(([dx, dy]) => `cell-${gateway.column + dx}-${gateway.row + dy}`)
     .filter((cellId) => roadIds.has(cellId));
   if (!seeds.length) return new Set();
   const connected = new Set(seeds);

@@ -35,6 +35,15 @@ export function createOpenApiDocument(baseUrl) {
             actor_note: { type: "string", description: "Optional factual construction reason. Site, footprint, entrance, program, asset, functional area, and exact cost are derived by the server from the confirmed BuildingDesign." }
           }
         },
+        GatewayUpgradeRequest: {
+          type: "object",
+          additionalProperties: false,
+          required: ["expected_city_version"],
+          properties: {
+            expected_city_version: { type: "integer", minimum: 0 },
+            actor_note: { type: "string", description: "Optional factual reason for upgrading the fixed railway gateway." }
+          }
+        },
         Site: {
           type: "object",
           required: ["anchor_cell_id", "footprint", "entrance"],
@@ -969,6 +978,7 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}/construction-orders/{order_id}": { get: operation("Read a construction order", "construction") },
       "/cities/{city_id}/connection-previews": { post: operation("Preview a building/cell/node road connection", "roads", { $ref: "#/components/schemas/ConnectionRequest" }) },
       "/cities/{city_id}/connections": { post: commandOperation("Submit an idempotent road connection", "roads", { $ref: "#/components/schemas/ConnectionRequest" }) },
+      "/cities/{city_id}/gateways/{node_id}/upgrade": { post: commandOperation("Upgrade the fixed railway station gateway without changing its footprint; levels are capped at three", "construction", { $ref: "#/components/schemas/GatewayUpgradeRequest" }) },
       "/cities/{city_id}/time-advances": { post: commandOperation("Manual time advance is disabled: income and turn progression flow through the cooldown-gated strategy resolve instead", "simulation") },
       "/cities/{city_id}/strategy": { get: operation("Read the strategy context: open incidents, Arcane Officers, player card state, and the last frozen settlement facts", "strategy", null, { $ref: "#/components/schemas/StrategyContext" }) },
       "/cities/{city_id}/strategy/assignments": { post: commandOperation("Submit the Arcane Officer dispatch plan for the strategy phase", "strategy", { $ref: "#/components/schemas/StrategyAssignmentsRequest" }) },

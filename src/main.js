@@ -119,6 +119,11 @@ import { createCityPlacementLayer } from "./ui/cityPlacementLayer.js";
 import { resolvePlacementTarget } from "./ui/placementTargetResolver.js";
 import { decodeCityArtifactPack, readCityArtifactPackResponse } from "./render/cityArtifactPack.js";
 import { decodeBakedBuildingArtifact, sha256Hex } from "./render/bakedBuildingArtifact.js";
+import {
+  RAILWAY_ASSET_PRESETS,
+  createRailwayAssetLab,
+  normalizeRailwayAssetConfig
+} from "./generators/railwayAssets.js";
 
 const app = document.querySelector("#app");
 const pureViewToggle = document.querySelector("#pure-view-toggle");
@@ -167,7 +172,7 @@ const frontendSurface = isPresentationRequest
     : "studio";
 document.documentElement.dataset.magtopiaSurface = frontendSurface;
 if (isPresentationRequest) document.documentElement.dataset.magicTownPresentation = "true";
-const studioModes = ["map", "asset", "vanishing", "comparison", "voxel", "massing", "styles", "vegetation", "district", "agentcity", "parcel"];
+const studioModes = ["map", "asset", "vanishing", "comparison", "voxel", "massing", "styles", "railway", "vegetation", "district", "agentcity", "parcel"];
 let currentMode = frontendSurface === "studio" && studioModes.includes(startupMode)
   ? startupMode
   : frontendSurface === "player" || frontendSurface === "acceptance"
@@ -508,6 +513,19 @@ const MODES = {
       { key: "scale", label: "Study Scale", min: 0.58, max: 0.9, step: 0.01 }
     ]
   },
+  railway: {
+    label: "Railway Gateway Assets",
+    presets: RAILWAY_ASSET_PRESETS,
+    defaultPreset: "metropolitanStation",
+    normalize: normalizeRailwayAssetConfig,
+    randomize: (seed) => normalizeRailwayAssetConfig({ ...configsByMode.railway, seed, stationLevel: 1 + Math.floor(Math.random() * 3) }),
+    sliders: [
+      { key: "sunTime", label: "Sun Time", min: 0, max: 1, step: 0.01 },
+      { key: "nightLighting", label: "Night Lights", min: 0, max: 1, step: 0.01 },
+      { key: "stationLevel", label: "Station Level", min: 1, max: 3, step: 1 },
+      { key: "trainProgress", label: "Train Position", min: 0, max: 1, step: 0.01 }
+    ]
+  },
   vegetation: {
     label: "Voxel Vegetation Lab",
     presets: VOXEL_VEGETATION_PRESETS,
@@ -618,6 +636,9 @@ const presetLabels = {
   civicDome: "Massing · Civic Dome",
   agentQuarterDay: "Intent District · Day",
   agentQuarterEvening: "Intent District · Evening",
+  waysideStation: "Railway · Level 1 Wayside",
+  metropolitanStation: "Railway · Level 2 Metropolitan",
+  grandStation: "Railway · Level 3 Grand",
   familyCatalog: "Vegetation · Family Catalog",
   lodComparison: "Vegetation · LOD Comparison",
   cottage: "1 × 1 Cottage",
@@ -719,6 +740,11 @@ const configsByMode = {
     startupParams.get("time") === "evening"
       ? PUBLIC_BUILDING_STYLE_COMPARISON_PRESETS.fiveStyleEvening
       : PUBLIC_BUILDING_STYLE_COMPARISON_PRESETS.fiveStyleDay
+  ),
+  railway: normalizeRailwayAssetConfig(
+    startupParams.get("time") === "evening"
+      ? RAILWAY_ASSET_PRESETS.grandStation
+      : RAILWAY_ASSET_PRESETS.metropolitanStation
   ),
   vegetation: normalizeVoxelVegetationConfig(VOXEL_VEGETATION_PRESETS.familyCatalog),
   district: normalizeVoxelIntentDistrictConfig(VOXEL_INTENT_DISTRICT_PRESETS.agentQuarterDay),
@@ -851,6 +877,8 @@ async function rebuildActive(config) {
     activeObject = createVoxelMassingLab(currentConfig);
   } else if (currentMode === "styles") {
     activeObject = createPublicBuildingStyleComparison(currentConfig);
+  } else if (currentMode === "railway") {
+    activeObject = createRailwayAssetLab(currentConfig);
   } else if (currentMode === "vegetation") {
     activeObject = createVoxelVegetationLab(currentConfig);
   } else if (currentMode === "district") {
@@ -910,7 +938,7 @@ async function rebuildActive(config) {
   document.documentElement.dataset.magicTownComparison = currentMode === "comparison"
     ? JSON.stringify(activeObject.userData.getComparisonDiagnostics?.() ?? {})
     : "{}";
-  document.documentElement.dataset.magicTownVoxel = currentMode === "voxel" || currentMode === "massing" || currentMode === "styles" || currentMode === "vegetation" || currentMode === "district" || currentMode === "agentcity"
+  document.documentElement.dataset.magicTownVoxel = currentMode === "voxel" || currentMode === "massing" || currentMode === "styles" || currentMode === "railway" || currentMode === "vegetation" || currentMode === "district" || currentMode === "agentcity"
     ? JSON.stringify(activeObject.userData.getVoxelDiagnostics?.() ?? {})
     : "{}";
   document.documentElement.dataset.magicTownVanishingError = currentMode === "vanishing"
@@ -1865,6 +1893,8 @@ function syncApiPill() {
     apiPill.textContent = `Massing Explorer · ${currentConfig.masses.length} nodes · ${currentConfig.relations.length} relations · MAGTOPIA.getObject().userData.getVoxelDiagnostics()`;
   } else if (currentMode === "styles") {
     apiPill.textContent = "Five bounded public-building style grammars · silhouette + facade + material identity";
+  } else if (currentMode === "railway") {
+    apiPill.textContent = `Through railway + steam train + fixed-footprint station level ${currentConfig.stationLevel} · MAGTOPIA.previewRailwayGateway()`;
   } else if (currentMode === "vegetation") {
     apiPill.textContent = `Eight British tree templates · LOD ${currentConfig.previewLod} · MAGTOPIA.getObject().userData.getVoxelDiagnostics()`;
   } else if (currentMode === "district") {
@@ -1887,6 +1917,7 @@ function exposeAgentApi() {
       voxel: VOXEL_BUILDING_PRESETS,
       massing: VOXEL_MASSING_PRESETS,
       styles: PUBLIC_BUILDING_STYLE_COMPARISON_PRESETS,
+      railway: RAILWAY_ASSET_PRESETS,
       vegetation: VOXEL_VEGETATION_PRESETS,
       district: VOXEL_INTENT_DISTRICT_PRESETS,
       parcel: PARCEL_BLUEPRINT_PRESETS
@@ -1933,6 +1964,10 @@ function exposeAgentApi() {
     },
     comparePublicBuildingStyles(config = {}) {
       setMode("styles", { ...configsByMode.styles, ...config });
+      return this.getParams();
+    },
+    previewRailwayGateway(config = {}) {
+      setMode("railway", { ...configsByMode.railway, ...config });
       return this.getParams();
     },
     previewVoxelVegetation(config = {}) {
@@ -2109,6 +2144,11 @@ function exposeAgentApi() {
     },
     getCityState() {
       return cityWorkbench.getState();
+    },
+    upgradeRailwayStation(options = {}) {
+      const result = cityWorkbench.upgradeGateway({ nodeId: "old_town_entry", actor: options.actor ?? "studio:user" });
+      if (result.accepted && currentMode === "map") rebuildActive(currentConfig);
+      return result;
     },
     getAssetRegistry() {
       return getAssetRegistry();
@@ -2318,7 +2358,7 @@ function applyDistrictBokeh(strength = 1, blur = 1) {
 function collectAnimationObjects(root) {
   const objects = [];
   root?.traverse((object) => {
-    if (object.userData?.spin || object.userData?.float || object.userData?.waterWave) objects.push(object);
+    if (object.userData?.spin || object.userData?.float || object.userData?.waterWave || object.userData?.dynamic) objects.push(object);
   });
   return objects;
 }
@@ -2555,7 +2595,7 @@ function getSkyClockState() {
 }
 
 function isVoxelSkyMode() {
-  return ["map", "voxel", "massing", "styles", "vegetation", "district", "agentcity"].includes(currentMode);
+  return ["map", "voxel", "massing", "styles", "railway", "vegetation", "district", "agentcity"].includes(currentMode);
 }
 
 function onResize() {
@@ -2571,11 +2611,12 @@ function configureCameraForViewport() {
   const isVanishing = currentMode === "vanishing";
   const isMassing = currentMode === "massing";
   const isStyles = currentMode === "styles";
+  const isRailway = currentMode === "railway";
   const isVegetation = currentMode === "vegetation";
   const isDistrict = currentMode === "district";
   const isAgentCity = currentMode === "agentcity";
   const isSurfaceWorld = isDistrict || isAgentCity;
-  const isVoxel = currentMode === "voxel" || currentMode === "massing" || isStyles || isVegetation;
+  const isVoxel = currentMode === "voxel" || currentMode === "massing" || isStyles || isRailway || isVegetation;
   const perspective = isMap ? currentConfig?.perspective ?? 0 : 0;
   if (isParcel || isVanishing || isVoxel || (isMap && perspective <= 0.001)) {
     const aspect = window.innerWidth / window.innerHeight;
@@ -2585,6 +2626,8 @@ function configureCameraForViewport() {
         ? 10
         : isVegetation
           ? currentConfig.studyMode === "lod" ? 34 : 28
+        : isRailway
+          ? 76
         : isStyles
           ? 38
           : isVoxel
@@ -2611,8 +2654,8 @@ function configureCameraForViewport() {
         ? new THREE.Vector3(0.774, 0, -0.633)
           .multiplyScalar(currentConfig?.viewFraming?.horizontalOffset ?? 1.75)
         : new THREE.Vector3();
-      camera.position.set(isStyles ? 22 : isVegetation ? 24 : 18, isStyles ? 16 : isVegetation ? 18 : 14.5, isStyles ? 32 : isVegetation ? 30 : 22).add(framingOffset);
-      controls.target.set(0, isStyles ? 4.8 : isVegetation ? 3.2 : 5.4, isVegetation ? 0 : 0.4).add(framingOffset);
+      camera.position.set(isRailway ? 38 : isStyles ? 22 : isVegetation ? 24 : 18, isRailway ? 28 : isStyles ? 16 : isVegetation ? 18 : 14.5, isRailway ? -46 : isStyles ? 32 : isVegetation ? 30 : 22).add(framingOffset);
+      controls.target.set(0, isRailway ? 5.8 : isStyles ? 4.8 : isVegetation ? 3.2 : 5.4, isRailway ? -2.4 : isVegetation ? 0 : 0.4).add(framingOffset);
     } else {
       camera.position.set(isMap ? 124 : 11, isMap ? groundY + 152 : 22.2, isMap ? 124 : 11);
       controls.target.set(0, groundY, isMap ? -1 : 0);
