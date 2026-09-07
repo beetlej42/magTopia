@@ -328,7 +328,7 @@ test("first accepted meaningful Agent city work moves presentation to day", asyn
     const site = sites.data[0];
     const build = {
       expected_city_version: sites.city_version,
-      site: { lot_id: site.lotId, footprint: "1x1", entrance: "south" },
+      site: { lot_id: site.lotId, footprint: "1x1", entrance: site.recommendedEntrance },
       program: { archetype: "starter_residence", name: "Daylight House", purpose: "residential" },
       gameplay_building: { units: [{ purpose: "residential", area: 1, magicRatio: 0 }] },
       design: { district_style: "london_common", creative_brief: "A warm brick cottage." },
@@ -558,7 +558,7 @@ test("reload during morning/day/night restores the same phase without a second c
       headers: { "idempotency-key": "cityday-reload-build" },
       payload: {
         expected_city_version: sites.city_version,
-        site: { lot_id: sites.data[0].lotId, footprint: "1x1", entrance: "south" },
+        site: { lot_id: sites.data[0].lotId, footprint: "1x1", entrance: sites.data[0].recommendedEntrance },
         program: { archetype: "starter_residence", name: "Reload House", purpose: "residential" },
         gameplay_building: { units: [{ purpose: "residential", area: 1, magicRatio: 0 }] },
         design: { district_style: "london_common", creative_brief: "A brick cottage." },
@@ -680,7 +680,7 @@ test("integration walk: report -> dismiss -> card -> morning -> agent work -> da
       headers: { "idempotency-key": "walk-build-1" },
       payload: {
         expected_city_version: sites.city_version,
-        site: { lot_id: sites.data[0].lotId, footprint: "1x1", entrance: "south" },
+        site: { lot_id: sites.data[0].lotId, footprint: "1x1", entrance: sites.data[0].recommendedEntrance },
         program: { archetype: "starter_residence", name: "Walk House", purpose: "residential" },
         gameplay_building: { units: [{ purpose: "residential", area: 1, magicRatio: 0 }] },
         design: { district_style: "london_common", creative_brief: "A brick cottage." },
@@ -724,7 +724,7 @@ test("card offer and turn stay stable across construction/road/district mutation
     const build = {
       expected_city_version: sites.city_version,
       district_id: district.resource.district.id,
-      site: { lot_id: site.lotId, footprint: "1x1", entrance: "south" },
+      site: { lot_id: site.lotId, footprint: "1x1", entrance: site.recommendedEntrance },
       program: { archetype: "starter_residence", name: "Same Turn House", purpose: "residential" },
       gameplay_building: { units: [{ purpose: "residential", area: 1, magicRatio: 0 }] },
       design: { district_style: "london_common", creative_brief: "A brick cottage." },
@@ -760,7 +760,7 @@ test("construction APIs reject missing or invalid gameplay grammar without mutat
     const lotId = sites.data[0].lotId;
     const base = {
       expected_city_version: sites.city_version,
-      site: { lot_id: lotId, footprint: "1x1", entrance: "south" },
+      site: { lot_id: lotId, footprint: "1x1", entrance: sites.data[0].recommendedEntrance },
       program: { archetype: "starter_residence", name: "Boundary House", purpose: "residential" },
       design: { district_style: "london_common", creative_brief: "A compact brick cottage." },
       asset: { mode: "reuse", asset_id: "starter-cottage-001" }
@@ -832,7 +832,7 @@ test("construction preview derives pricing from submitted floor grammar, never f
       url: `/api/v1/cities/${city.id}/construction-previews`,
       payload: {
         expected_city_version: before.state.version,
-        site: { lot_id: sites.data[0].lotId, footprint: "1x1", entrance: "south" },
+        site: { lot_id: sites.data[0].lotId, footprint: "1x1", entrance: sites.data[0].recommendedEntrance },
         program: { archetype: "starter_residence", name: "Two Floor House", purpose: "residential" },
         gameplay_building: {
           canonical: true,
@@ -850,7 +850,7 @@ test("construction preview derives pricing from submitted floor grammar, never f
       url: `/api/v1/cities/${city.id}/construction-previews`,
       payload: {
         expected_city_version: before.state.version,
-        site: { lot_id: sites.data[0].lotId, footprint: "1x1", entrance: "south" },
+        site: { lot_id: sites.data[0].lotId, footprint: "1x1", entrance: sites.data[0].recommendedEntrance },
         program: { archetype: "starter_residence", name: "Two Floor House", purpose: "residential" },
         gameplay_building: {
           canonical: true,
@@ -868,7 +868,7 @@ test("construction preview derives pricing from submitted floor grammar, never f
       url: `/api/v1/cities/${city.id}/construction-previews`,
       payload: {
         expected_city_version: before.state.version,
-        site: { lot_id: sites.data[0].lotId, footprint: "1x1", entrance: "south" },
+        site: { lot_id: sites.data[0].lotId, footprint: "1x1", entrance: sites.data[0].recommendedEntrance },
         program: { archetype: "starter_residence", name: "Two Floor House", purpose: "residential" },
         gameplay_building: {
           massSpecs: [{ purpose: "residential" }, { purpose: "residential" }],
