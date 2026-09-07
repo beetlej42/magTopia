@@ -167,8 +167,24 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
     const afterDisabledTime = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${cityA.id}/snapshot` }), 200);
     assert.deepEqual(afterDisabledTime.resources, afterFirst.resources, "a rejected time advance changes nothing");
 
-    const candidates2 = await json(app, auth(agent, { method: "POST", url: `/api/v1/cities/${cityA.id}/site-searches`, payload: { footprint: "1x1", limit: 20 } }), 200);
-    const site2 = candidates2.data.find((entry) => entry.lotId !== site1.lotId);
+    const candidates2 = await json(app, auth(agent, { method: "POST", url: `/api/v1/cities/${cityA.id}/site-searches`, payload: { footprint: "1x1", limit: 100 } }), 200);
+    let site2 = null;
+    for (const candidate of candidates2.data) {
+      if (candidate.lotId === site1.lotId) continue;
+      const candidateRoad = await json(app, auth(agent, {
+        method: "POST",
+        url: `/api/v1/cities/${cityA.id}/connection-previews`,
+        payload: {
+          from: { kind: "cell", id: candidate.lotId, entrance: candidate.recommendedEntrance },
+          to: { kind: "building", id: order1.resource.building_id }
+        }
+      }), 200);
+      if (candidateRoad.plan.feasible) {
+        site2 = candidate;
+        break;
+      }
+    }
+    assert.ok(site2, "site search returns a second parcel routeable to the first building");
     const build2 = buildRequest(afterDisabledTime.city_version, site2.lotId, "Ivy Cottage", site2.recommendedEntrance);
     const order2 = await json(app, auth(agent, { method: "POST", url: `/api/v1/cities/${cityA.id}/construction-orders`, headers: { "idempotency-key": "build-2" }, payload: build2 }), 201);
     const roadPreview = await json(app, auth(agent, { method: "POST", url: `/api/v1/cities/${cityA.id}/connection-previews`, payload: { from: { kind: "building", id: order1.resource.building_id }, to: { kind: "building", id: order2.resource.building_id } } }), 200);
