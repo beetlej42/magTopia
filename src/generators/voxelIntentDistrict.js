@@ -646,17 +646,23 @@ export function addSharedVoxelRoadTile(buffer, {
       const [localX, localZ] = lamp;
       const x = minX + localX;
       const z = minZ + localZ;
-      buffer.addBox("iron", x - 1, surfaceY + 1, z - 1, 3, 1, 3, tileIndex, detailWrite);
-      buffer.addBox("iron", x, surfaceY + 2, z, 1, 11, 1, tileIndex + 1, detailWrite);
-      buffer.addBox("iron", x - 1, surfaceY + 13, z - 1, 3, 1, 3, tileIndex + 2, detailWrite);
-      buffer.addBox("warmWindow", x - 1, surfaceY + 14, z - 1, 3, 3, 3, tileIndex + 3, effectWrite);
-      buffer.addBox("iron", x - 2, surfaceY + 17, z - 2, 5, 1, 5, tileIndex + 4, detailWrite);
-      buffer.addVoxel("iron", x, surfaceY + 18, z, tileIndex + 5, detailWrite);
+      addSharedVoxelRoadLamp(buffer, { x, z, surfaceY, shade: tileIndex });
       lampCount = 1;
     }
   }
 
   return { topology, curbVoxels, markingVoxels, wearVoxels, lampCount };
+}
+
+export function addSharedVoxelRoadLamp(buffer, { x, z, surfaceY = -1, shade = 0 }) {
+  const detail = { priority: VOXEL_WRITE_PRIORITIES.decoration, owner: "shared-road-lamp" };
+  const effect = { priority: VOXEL_WRITE_PRIORITIES.effect, owner: "shared-road-lamp-glow" };
+  buffer.addBox("iron", x - 1, surfaceY + 1, z - 1, 3, 1, 3, shade, detail);
+  buffer.addBox("iron", x, surfaceY + 2, z, 1, 11, 1, shade + 1, detail);
+  buffer.addBox("iron", x - 1, surfaceY + 13, z - 1, 3, 1, 3, shade + 2, detail);
+  buffer.addBox("warmWindow", x - 1, surfaceY + 14, z - 1, 3, 3, 3, shade + 3, effect);
+  buffer.addBox("iron", x - 2, surfaceY + 17, z - 2, 5, 1, 5, shade + 4, detail);
+  buffer.addVoxel("iron", x, surfaceY + 18, z, shade + 5, detail);
 }
 
 function isSharedVoxelRoadLocalAt(ports, localX, localZ, northIsPositiveZ) {

@@ -2,7 +2,7 @@ const STATION_WIDTH_CELLS = 6;
 const STATION_DEPTH_CELLS = 3;
 const FORECOURT_DEPTH_CELLS = 3;
 
-export const RAILWAY_GATEWAY_VERSION = "railway-gateway@1";
+export const RAILWAY_GATEWAY_VERSION = "railway-gateway@2";
 export const RAILWAY_STATION_LEVELS = Object.freeze({
   1: Object.freeze({ name: "Wayside Station", upgradeCost: 0 }),
   2: Object.freeze({ name: "Metropolitan Station", upgradeCost: 480 }),
@@ -14,18 +14,20 @@ export function planRailwayGateway(worldContract = {}) {
   const rows = Number(worldContract.grid?.rows ?? 50);
   const cells = worldContract.grid?.cells ?? [];
   const byId = new Map(cells.map((cell) => [cell.id, cell]));
-  const centerColumn = Math.floor(columns / 2);
-  const targetTrackRow = clampInteger(Math.round(rows * 0.12), 1, rows - 8);
+  // Offset west along the far corridor so the 45-degree default camera frames
+  // the station on the skyline instead of clipping it at the right edge.
+  const centerColumn = Math.floor(columns * 0.30);
+  const targetTrackRow = clampInteger(rows - 1 - Math.round(rows * 0.12), 7, rows - 2);
   const startColumn = clampInteger(centerColumn - Math.floor(STATION_WIDTH_CELLS / 2), 0, columns - STATION_WIDTH_CELLS);
-  const candidateRows = Array.from({ length: Math.max(1, rows - 7) }, (_, row) => row + 1)
+  const candidateRows = Array.from({ length: Math.max(1, rows - 7) }, (_, row) => row + 7)
     .sort((left, right) => Math.abs(left - targetTrackRow) - Math.abs(right - targetTrackRow) || left - right);
   const trackRow = candidateRows.find((row) => gatewaySiteIsDry(byId, startColumn, row)) ?? targetTrackRow;
-  const stationCellIds = rectangleIds(startColumn, trackRow + 1, STATION_WIDTH_CELLS, STATION_DEPTH_CELLS)
+  const stationCellIds = rectangleIds(startColumn, trackRow - STATION_DEPTH_CELLS, STATION_WIDTH_CELLS, STATION_DEPTH_CELLS)
     .filter((id) => byId.has(id));
-  const forecourtCellIds = rectangleIds(startColumn, trackRow + 1 + STATION_DEPTH_CELLS, STATION_WIDTH_CELLS, FORECOURT_DEPTH_CELLS)
+  const forecourtCellIds = rectangleIds(startColumn, trackRow - STATION_DEPTH_CELLS - FORECOURT_DEPTH_CELLS, STATION_WIDTH_CELLS, FORECOURT_DEPTH_CELLS)
     .filter((id) => byId.has(id));
   const axisColumn = startColumn + Math.floor(STATION_WIDTH_CELLS / 2);
-  const urbanCellId = `cell-${axisColumn}-${trackRow + STATION_DEPTH_CELLS + FORECOURT_DEPTH_CELLS}`;
+  const urbanCellId = `cell-${axisColumn}-${trackRow - STATION_DEPTH_CELLS - FORECOURT_DEPTH_CELLS}`;
   const leftForecourtCellIds = forecourtCellIds.filter((id) => byId.get(id)?.column < axisColumn);
   const rightForecourtCellIds = forecourtCellIds.filter((id) => byId.get(id)?.column > axisColumn);
   const trackCellIds = cells.filter((cell) => cell.row === trackRow).map((cell) => cell.id);
@@ -33,8 +35,8 @@ export function planRailwayGateway(worldContract = {}) {
   return {
     version: RAILWAY_GATEWAY_VERSION,
     orientation: "east_west",
-    citySide: "south",
-    urbanDirection: "south",
+    citySide: "north",
+    urbanDirection: "north",
     trackRow,
     trackCellIds,
     station: {
@@ -42,7 +44,7 @@ export function planRailwayGateway(worldContract = {}) {
       maxLevel: 3,
       footprint: `${STATION_WIDTH_CELLS}x${STATION_DEPTH_CELLS}`,
       startColumn,
-      startRow: trackRow + 1,
+      startRow: trackRow - STATION_DEPTH_CELLS,
       cellIds: stationCellIds
     },
     forecourt: {
@@ -54,7 +56,7 @@ export function planRailwayGateway(worldContract = {}) {
     urbanConnectionPoint: {
       nodeId: "old_town_entry",
       cellId: byId.has(urbanCellId) ? urbanCellId : forecourtCellIds.at(-1),
-      direction: "south"
+      direction: "north"
     },
     train: {
       movement: "through_service",
@@ -92,7 +94,7 @@ export function nextRailwayStationLevel(node) {
 }
 
 function gatewaySiteIsDry(byId, startColumn, trackRow) {
-  return rectangleIds(startColumn, trackRow + 1, STATION_WIDTH_CELLS, STATION_DEPTH_CELLS + FORECOURT_DEPTH_CELLS)
+  return rectangleIds(startColumn, trackRow - STATION_DEPTH_CELLS - FORECOURT_DEPTH_CELLS, STATION_WIDTH_CELLS, STATION_DEPTH_CELLS + FORECOURT_DEPTH_CELLS)
     .every((id) => {
       const cell = byId.get(id);
       return cell && cell.buildable !== false && cell.strictBuildable !== false;

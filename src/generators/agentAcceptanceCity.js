@@ -168,6 +168,7 @@ function* createAgentAcceptanceCitySteps(config = {}) {
   root.userData.getVoxelContract = () => structuredClone(root.userData.contract);
   root.userData.getPrefabLodDiagnostics = () => buildings.userData.getVoxelLodDiagnostics?.() ?? {};
   root.userData.getPrefabLodSummaryDiagnostics = () => buildings.userData.getVoxelLodSummaryDiagnostics?.() ?? {};
+  root.userData.getRailwayLodDiagnostics = () => railway.userData.getRailwayLodDiagnostics?.() ?? [];
   root.userData.getStreetLifeDiagnostics = () => streetLife.userData.getDiagnostics();
   root.userData.update = (elapsed) => {
     railway.userData.update?.(elapsed);
@@ -176,6 +177,7 @@ function* createAgentAcceptanceCitySteps(config = {}) {
   root.userData.updateView = (camera, _maxDynamicLights = 4, viewport = {}) => {
     macro.group.userData.updateView?.(camera);
     buildings.userData.updateView?.(camera, _maxDynamicLights, viewport);
+    railway.userData.updateView?.(camera, _maxDynamicLights, viewport);
     vegetation.userData.updateView?.(camera, viewport);
     streetLife.userData.updateView(camera, viewport);
     root.userData.diagnostics.streetLife = streetLife.userData.getDiagnostics();

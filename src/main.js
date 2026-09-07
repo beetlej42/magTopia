@@ -2654,7 +2654,7 @@ function configureCameraForViewport() {
         ? new THREE.Vector3(0.774, 0, -0.633)
           .multiplyScalar(currentConfig?.viewFraming?.horizontalOffset ?? 1.75)
         : new THREE.Vector3();
-      camera.position.set(isRailway ? 38 : isStyles ? 22 : isVegetation ? 24 : 18, isRailway ? 28 : isStyles ? 16 : isVegetation ? 18 : 14.5, isRailway ? -46 : isStyles ? 32 : isVegetation ? 30 : 22).add(framingOffset);
+      camera.position.set(isRailway ? 38 : isStyles ? 22 : isVegetation ? 24 : 18, isRailway ? 28 : isStyles ? 16 : isVegetation ? 18 : 14.5, isRailway ? 46 : isStyles ? 32 : isVegetation ? 30 : 22).add(framingOffset);
       controls.target.set(0, isRailway ? 5.8 : isStyles ? 4.8 : isVegetation ? 3.2 : 5.4, isRailway ? -2.4 : isVegetation ? 0 : 0.4).add(framingOffset);
     } else {
       camera.position.set(isMap ? 124 : 11, isMap ? groundY + 152 : 22.2, isMap ? 124 : 11);

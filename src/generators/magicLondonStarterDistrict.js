@@ -319,6 +319,12 @@ function createAgentVoxelBuildingLod(nearObject, design, nightLighting) {
       voxelChunkSize: 128,
       maxMergeSpanVoxels: 16
     }, [2, 3]);
+  return createVoxelAssetLod(nearObject, pipeline);
+}
+
+// Shared by buildings and railway assets: identical screen-space thresholds,
+// hysteresis, fixed-grid mip levels and a persistent coarse shadow caster.
+export function createVoxelAssetLod(nearObject, pipeline) {
   const lod = new THREE.LOD();
   lod.name = `${nearObject.name}-LOD`;
   lod.autoUpdate = false;
@@ -337,6 +343,7 @@ function createAgentVoxelBuildingLod(nearObject, design, nightLighting) {
   lod.addLevel(nearObject, 0);
   pipeline.levels.forEach((level, index) => lod.addLevel(level.group, index + 1));
   lod.addLevel(new THREE.Group(), 3);
+  lod.levels.forEach((level, index) => { level.object.visible = index === 0; });
   // Keep a coarse, colorless copy active across LOD transitions. It participates
   // in the view traversal because Three.js reuses that layer mask for shadows,
   // but its material writes only through the shadow depth override.
@@ -437,7 +444,7 @@ function isVisibleThroughParents(object) {
   return true;
 }
 
-function updateVoxelLods(lods, camera, viewport = {}) {
+export function updateVoxelLods(lods, camera, viewport = {}) {
   if (!camera || !lods.length) return;
   const viewportHeight = Math.max(1, Number(viewport.height) || 720) * Math.max(1, Number(viewport.renderScale) || 1);
   const thresholds = getVoxelLodThresholds(viewport);

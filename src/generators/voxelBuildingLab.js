@@ -2020,7 +2020,7 @@ export class VoxelInstanceBuffer {
         renderedTriangles += quads * 2;
       }
     }
-    const mergedMeshes = mergeOpaqueGreedyMeshes(meshes);
+    const mergedMeshes = options.mergeOpaque === false ? meshes : mergeOpaqueGreedyMeshes(meshes);
     this.renderStats = {
       strategy: "greedy-chunks",
       sourceVoxelCount: this.instanceCount,

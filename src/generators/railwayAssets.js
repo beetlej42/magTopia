@@ -1,11 +1,15 @@
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { RAILWAY_STATION_LEVELS } from "../city/railway-gateway.js";
-import { VoxelInstanceBuffer, VOXEL_SIZE } from "./voxelBuildingLab.js";
-import { createVoxelMassingLab } from "./voxelBuildingLab.js";
+import { VoxelInstanceBuffer, VOXEL_SIZE, createVoxelMassingLodLevels } from "./voxelBuildingLab.js";
 import { createPublicBuildingStylePreset } from "./publicBuildingStyleComparison.js";
-import { getVoxelSphereFrame } from "./voxelIntentDistrict.js";
+import { createVoxelAssetLod, updateVoxelLods } from "./magicLondonStarterDistrict.js";
+import { createVoxelTreeLodRenderer, getVoxelTreeMetrics } from "./agentVoxelTrees.js";
+import { getVoxelSphereFrame, addSharedVoxelRoadLamp } from "./voxelIntentDistrict.js";
 
-const CELL_VOXELS = 32;
+// Match the runtime street-life scale while leaving the landmark station full size.
+export const RAILWAY_VEHICLE_SCALE = 0.65;
+const RAIL_TOP_WORLD_Y = 3.5 * VOXEL_SIZE * RAILWAY_VEHICLE_SCALE;
 
 export const RAILWAY_ASSET_PRESETS = Object.freeze({
   waysideStation: Object.freeze({ seed: "railway-wayside-001", stationLevel: 1, sunTime: 0.58, nightLighting: 0.08, trainProgress: 0.5 }),
@@ -32,89 +36,71 @@ export function createRailwayStationSpec(level = 1, options = {}) {
   const spec = createPublicBuildingStylePreset("victorian_gothic", {
     id: options.id ?? `railway-station-level-${stationLevel}`,
     seed: options.seed ?? `railway-station-level-${stationLevel}`,
-    widthCells: 6,
-    depthCells: 3,
-    sunTime: options.sunTime,
-    nightLighting: options.nightLighting
+    widthCells: 6, depthCells: 3,
+    sunTime: options.sunTime, nightLighting: options.nightLighting
   });
-  const hall = spec.masses.find((mass) => mass.id === "great-hall");
-  const tower = spec.masses.find((mass) => mass.id === "teaching-tower");
-  const entrance = spec.masses.find((mass) => mass.id === "pointed-gatehouse");
-
-  hall.id = "booking-hall";
-  hall.heightVoxels = [28, 38, 48][stationLevel - 1];
-  hall.cap = {
-    type: "gable",
-    heightVoxels: [10, 15, 20][stationLevel - 1],
-    orientation: "east_west",
-    ridgeRailHeightVoxels: stationLevel
-  };
-  hall.materials = { wall: "brickBrown", trim: "sandstone", roof: "slate", frame: "iron", window: "warmWindow", door: "timber" };
-  hall.facade = { ...hall.facade, openness: 0.34 + stationLevel * 0.07, entranceEmphasis: 0.58, bayWidthVoxels: stationLevel === 1 ? 10 : 8 };
-
-  entrance.id = "city-entrance";
-  entrance.heightVoxels = [20, 27, 34][stationLevel - 1];
-  entrance.cap.heightVoxels = [8, 12, 15][stationLevel - 1];
-  entrance.materials = { ...entrance.materials, wall: "brickRed", window: "warmWindow" };
-
-  if (stationLevel === 1) {
-    spec.masses = spec.masses.filter((mass) => !["teaching-tower", "west-buttress", "east-buttress"].includes(mass.id));
-  } else {
-    tower.id = "clock-tower";
-    tower.cells = [[3, 1]];
-    tower.dimensionsVoxels = { width: stationLevel === 2 ? 22 : 26, depth: stationLevel === 2 ? 22 : 26 };
-    tower.heightVoxels = stationLevel === 2 ? 72 : 94;
-    tower.cap = stationLevel === 2
-      ? { type: "hip", heightVoxels: 20, ridgeRatio: 0.5, finialHeightVoxels: 6 }
-      : { type: "spire", heightVoxels: 34, ribCount: 8, ringCount: 2, finialHeightVoxels: 9 };
-    tower.materials = { ...tower.materials, wall: "brickRed", window: "warmWindow", trim: stationLevel === 3 ? "limestone" : "sandstone" };
-  }
-
-  if (stationLevel === 3) {
-    spec.masses.push({
-      id: "grand-train-shed",
-      role: "platform_canopy",
-      type: "framed",
-      cells: [[1, 1], [2, 1], [3, 1], [4, 1]],
-      heightVoxels: 18,
-      cap: { type: "glass_barrel", heightVoxels: 15, orientation: "east_west", ribCount: 12, ringCount: 2, finialHeightVoxels: 4 },
-      framing: { baySpacingVoxels: 8, frameWidthVoxels: 2, floorBeamSpacingVoxels: 8, reliefDepthVoxels: 1 },
-      materials: { frame: "iron", trim: "gildedMetal", panel: "lightGlass", roof: "lightGlass" }
-    });
-  }
-
+  spec.masses = stationArchitecturalMasses(stationLevel);
+  spec.masses.push({
+    id: "grand-train-shed", role: "platform_canopy", type: "framed",
+    cells: [[0, 2], [1, 2], [2, 2], [3, 2], [4, 2], [5, 2]],
+    heightVoxels: [40, 48, 56][stationLevel - 1],
+    cap: { type: "glass_barrel", heightVoxels: [16, 20, 24][stationLevel - 1], orientation: "east_west" },
+    materials: { frame: "iron", trim: "limestone", panel: "lightGlass", roof: "lightGlass" }
+  });
+  spec.relations = [];
   spec.metadata = {
-    ...spec.metadata,
-    publicProgram: "railway_station",
-    stationLevel,
-    fixedFootprint: "6x3",
-    railwayFeatures: stationLevel === 1
-      ? ["booking_hall", "platform_canopy"]
-      : stationLevel === 2
-        ? ["booking_hall", "clock_tower", "iron_glass_canopy"]
-        : ["grand_hall", "clock_tower", "glazed_train_shed", "gilded_crest"]
+    ...spec.metadata, publicProgram: "railway_station", stationLevel, fixedFootprint: "6x3",
+    visualReference: "St Pancras Gothic Revival frontage and a longitudinal iron-glass train shed",
+    architectureGrammar: ["gothic", "mansard", "gable", "spire", "asymmetric_clock_tower"],
+    railwayFeatures: ["booking_hall", "pointed_entrance", "landscaped_forecourt", "longitudinal_train_shed", ...(stationLevel > 1 ? ["clock_tower", "gabled_dormers"] : [])]
   };
   return spec;
 }
 
-export function createVoxelRailTrack({ lengthWorld = 216, platformLengthWorld = 28, seed = "railway-track" } = {}) {
+export function createVoxelRailTrack({ lengthWorld = 216, platformLengthWorld = 28, platformCenterWorld = 0, seed = "railway-track" } = {}) {
   const buffer = new VoxelInstanceBuffer(seed);
   const length = Math.max(64, Math.round(lengthWorld / VOXEL_SIZE));
   const startX = -Math.round(length / 2);
-  const platformStart = -Math.round(platformLengthWorld / VOXEL_SIZE / 2);
+  const platformStart = Math.round((platformCenterWorld - platformLengthWorld / 2) / VOXEL_SIZE);
   const platformLength = Math.round(platformLengthWorld / VOXEL_SIZE);
 
-  buffer.addBox("stoneShadow", startX, -2, -11, length, 2, 22, 1);
-  for (let x = startX; x < startX + length; x += 8) buffer.addBox("timber", x, 0, -9, 4, 2, 18, x);
-  buffer.addBox("iron", startX, 2, -7, length, 2, 2, 3);
-  buffer.addBox("iron", startX, 2, 5, length, 2, 2, 4);
-  buffer.addBox("pavement", platformStart, 0, -24, platformLength, 5, 11, 5);
-  buffer.addBox("sandstone", platformStart, 0, -14, platformLength, 4, 2, 6);
+  buffer.addBox("stoneShadow", startX, -2, -12, length, 2, 24, 1);
+  buffer.addBox("pavement", startX, -1, -10, length, 1, 20, 2);
+  for (let x = startX; x < startX + length; x += 8) {
+    buffer.addBox("timber", x, 0, -10, 3, 1, 20, x);
+    for (const z of [-7, 5]) {
+      buffer.addBox("iron", x, 1, z - 1, 3, 1, 4, x);
+      buffer.addBox("stoneShadow", x + 1, 2, z - 1, 1, 1, 1, x);
+    }
+  }
+  for (const z of [-7, 5]) {
+    buffer.addBox("iron", startX, 1, z, length, 1, 2, 3);
+    buffer.addBox("iron", startX, 2, z, length, 1, 1, 4);
+    buffer.addBox("patinaMetal", startX, 3, z, length, 1, 2, 5);
+  }
+  // Keep the full station-length platform, with a human-scale boarding edge.
+  // Its coping sits within half a scaled voxel of the coach floor.
+  buffer.addBox("brickBrown", platformStart, 0, -46, platformLength, 14, 34, 5);
+  buffer.addBox("pavement", platformStart, 14, -46, platformLength, 1, 34, 6);
+  buffer.addBox("limestone", platformStart, 14, -14, platformLength, 1, 2, 7);
+  for (let step = 0; step < 4; step++) {
+    buffer.addBox("sandstone", platformStart, 0, -58 + step * 3, platformLength, (step + 1) * 3, 3, 8 + step);
+  }
+  for (const x of [platformStart - 12, platformStart + platformLength + 8]) {
+    buffer.addBox("iron", x, 0, -24, 2, 32, 2);
+    buffer.addBox("limestone", x - 1, 15, -25, 4, 10, 4);
+    buffer.addBox("brickRed", x - 1, 30, -25, 13, 3, 2);
+    buffer.addBox("warmWindow", x - 1, 27, -26, 3, 3, 1);
+  }
 
   const root = meshBuffer(buffer, "VoxelRailTrack");
+  root.scale.set(1, RAILWAY_VEHICLE_SCALE, RAILWAY_VEHICLE_SCALE);
   root.userData.contract = {
     asset: "victorian-through-railway-v1",
     gaugeVoxels: 12,
+    gaugeWorld: 12 * VOXEL_SIZE * RAILWAY_VEHICLE_SCALE,
+    railTopWorldY: RAIL_TOP_WORLD_Y,
+    platformTopWorldY: 14.5 * VOXEL_SIZE * RAILWAY_VEHICLE_SCALE,
     sleeperPitchVoxels: 8,
     platformLengthWorld,
     materialCounts: buffer.materialCounts(),
@@ -125,39 +111,120 @@ export function createVoxelRailTrack({ lengthWorld = 216, platformLengthWorld = 
 
 export function createVoxelSteamTrain({ seed = "steam-train", coachCount = 2 } = {}) {
   const buffer = new VoxelInstanceBuffer(seed);
-  const wheelCenters = [];
-  let x = -84;
-  addCoach(buffer, x, 48, 0, wheelCenters, 101);
-  x += 54;
-  addCoach(buffer, x, 48, 0, wheelCenters, 201);
-  x += 54;
-  addTender(buffer, x, wheelCenters);
-  x += 34;
-  addLocomotive(buffer, x, wheelCenters);
-  const root = meshBuffer(buffer, "VoxelSteamTrain");
+  const wheels = [];
+  const count = clampInteger(coachCount, 1, 2);
+  for (let i = 0; i < count; i++) addCoach(buffer, -92 + i * 58, 52, i, wheels, 100 + i * 100);
+  const tenderX = -92 + count * 58;
+  addTender(buffer, tenderX, wheels);
+  const engineX = tenderX + 36;
+  addLocomotive(buffer, engineX, wheels);
+  const root = meshBuffer(buffer, "VoxelSteamTrain", true);
+  root.scale.setScalar(RAILWAY_VEHICLE_SCALE);
   root.userData.sphereProjectionRoot = true;
   root.userData.dynamic = true;
-  root.userData.contract = {
-    asset: "victorian-voxel-steam-train-v1",
-    coachCount: clampInteger(coachCount, 1, 2),
-    lengthVoxels: 198,
-    wheelCount: wheelCenters.length,
-    steamEffects: "four reusable voxel puffs",
-    materialCounts: buffer.materialCounts(),
-    renderStats: structuredClone(buffer.renderStats)
+  const runningGear = new THREE.Group();
+  runningGear.name = "AnimatedRunningGear";
+  const steel = new THREE.MeshStandardMaterial({ color: "#b4b4a3", roughness: 0.4, metalness: 0.55 });
+  const wheelParts = [];
+  const rimGeometry = new THREE.CylinderGeometry(1, 1, 0.24, 16).rotateX(Math.PI / 2);
+  const hubGeometry = new THREE.CylinderGeometry(0.73, 0.73, 0.27, 12).rotateX(Math.PI / 2);
+  const colorPart = (geometry, color) => {
+    const rgb = new THREE.Color(color);
+    const values = new Float32Array(geometry.attributes.position.count * 3);
+    for (let i = 0; i < values.length; i += 3) rgb.toArray(values, i);
+    geometry.setAttribute("color", new THREE.BufferAttribute(values, 3));
+    wheelParts.push(geometry);
   };
+  colorPart(rimGeometry, "#252d32");
+  colorPart(hubGeometry, "#9d2636");
+  for (let i = 0; i < 4; i++) colorPart(new THREE.BoxGeometry(1.65, 0.12, 0.29).rotateZ(i * Math.PI / 4), "#b4b4a3");
+  const wheelGeometry = mergeGeometries(wheelParts);
+  wheelParts.forEach((part) => part.dispose());
+  const wheelMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.54, metalness: 0.3 });
+  const wheelMesh = new THREE.InstancedMesh(wheelGeometry, wheelMaterial, wheels.length);
+  wheelMesh.name = "SpokedWheels";
+  wheelMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  wheelMesh.castShadow = false;
+  runningGear.add(wheelMesh);
+  const wheelMeshes = [wheelMesh];
+  for (const segments of [10, 6]) {
+    const geometry = new THREE.CylinderGeometry(1, 1, 0.25, segments).rotateX(Math.PI / 2);
+    const colors = new Float32Array(geometry.attributes.position.count * 3);
+    const color = new THREE.Color("#772c36");
+    for (let i = 0; i < colors.length; i += 3) color.toArray(colors, i);
+    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    const mesh = new THREE.InstancedMesh(geometry, wheelMaterial, wheels.length);
+    mesh.name = `SteamTrainWheels-${segments}`;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.visible = false;
+    runningGear.add(mesh);
+    wheelMeshes.push(mesh);
+  }
+  const wheelShadow = wheelMeshes[1].clone();
+  wheelShadow.name = "SteamTrainWheelShadowProxy";
+  wheelShadow.geometry = wheelShadow.geometry.clone();
+  wheelShadow.material = wheelMaterial.clone();
+  wheelShadow.material.colorWrite = false;
+  wheelShadow.material.depthWrite = false;
+  wheelShadow.castShadow = true;
+  wheelShadow.visible = true;
+  wheelShadow.userData.shadowProxy = true;
+  runningGear.add(wheelShadow);
+  const wheelTransform = new THREE.Object3D();
+  const rods = [-8.6, 8.6].map((z) => {
+    const rod = new THREE.Mesh(new THREE.BoxGeometry(28 * VOXEL_SIZE, 1.6 * VOXEL_SIZE, VOXEL_SIZE), steel);
+    rod.position.set((engineX + 30) * VOXEL_SIZE, 8 * VOXEL_SIZE, z * VOXEL_SIZE);
+    runningGear.add(rod);
+    return rod;
+  });
+  root.add(runningGear);
   const puffs = createSteamPuffs();
-  puffs.position.set(8.6, 3.2, 0);
+  puffs.position.set((engineX + 50) * VOXEL_SIZE, 43 * VOXEL_SIZE, 0);
   root.add(puffs);
-  root.userData.updateSteam = (elapsed) => {
-    puffs.children.forEach((puff, index) => {
-      const phase = (elapsed * 0.32 + index / puffs.children.length) % 1;
-      puff.position.set(-phase * 2.2, phase * 2.5, Math.sin(phase * Math.PI * 2 + index) * 0.18);
-      const scale = 0.55 + phase * 1.25;
-      puff.scale.setScalar(scale);
-      puff.material.opacity = (1 - phase) * 0.58;
+  let wheelAngle = 0;
+  root.userData.updateSteam = (elapsed, distance = 0) => {
+    wheelAngle += distance / (8 * VOXEL_SIZE);
+    wheels.forEach(([x, y, z, radius], index) => {
+      wheelTransform.position.set(x * VOXEL_SIZE, y * VOXEL_SIZE, z * VOXEL_SIZE);
+      wheelTransform.scale.setScalar(radius * VOXEL_SIZE);
+      wheelTransform.rotation.z = -wheelAngle * 8 / radius;
+      wheelTransform.updateMatrix();
+      for (const mesh of [...wheelMeshes, wheelShadow]) mesh.setMatrixAt(index, wheelTransform.matrix);
     });
+    for (const mesh of [...wheelMeshes, wheelShadow]) {
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.computeBoundingSphere();
+    }
+    rods.forEach((rod) => {
+      rod.position.x = (engineX + 30 + Math.cos(wheelAngle) * 2.5) * VOXEL_SIZE;
+      rod.position.y = (9 + Math.sin(wheelAngle) * 2.5) * VOXEL_SIZE;
+    });
+    puffs.userData.update(elapsed);
   };
+  root.userData.contract = {
+    asset: "victorian-voxel-steam-train-v1", coachCount: count,
+    vehicleScale: RAILWAY_VEHICLE_SCALE,
+    lengthVoxels: count * 58 + 104, wheelCount: wheels.length,
+    steamEffects: "12 layered cloud clusters / 84 instanced lobes",
+    materialSpace: "model-attached enamel and metal; no world-space procedural highlights",
+    chimneyLocal: puffs.position.toArray(),
+    materialCounts: buffer.materialCounts(), renderStats: structuredClone(buffer.renderStats)
+  };
+  const bodyLods = root.children.filter((object) => object.isLOD);
+  root.userData.updateLodEffects = () => {
+    const level = bodyLods[0]?.userData.currentLevel ?? 0;
+    wheelMeshes.forEach((mesh, index) => { mesh.visible = index === level; });
+    rods.forEach((rod) => { rod.visible = level < 2; });
+    puffs.visible = level < 3;
+    const clusters = [12, 8, 4, 0][level];
+    puffs.children[0].count = clusters * 2;
+    puffs.children[1].count = clusters * 5;
+  };
+  root.userData.updateView = (camera, _maxLights = 4, viewport = {}) => {
+    updateVoxelLods(bodyLods, camera, viewport);
+    root.userData.updateLodEffects();
+  };
+  root.userData.updateSteam(0);
   return root;
 }
 
@@ -178,34 +245,35 @@ export function createRailwayGatewayLayer({ state, grid, seed = "railway-gateway
   const worldWidth = Number(grid.columns) * Number(grid.cellWorldSize);
   const level = clampInteger(state.nodes.old_town_entry.stationLevel ?? railway.station.level ?? 1, 1, 3);
   const stationScale = Number(grid.cellWorldSize) / 4;
+  const buildingOriginWorldY = Number(state.world?.constructionDatum?.buildingOriginWorldY ?? 0);
+  const roadSurfaceVoxelY = Number(state.world?.constructionDatum?.roadSurfaceVoxelY ?? -1);
 
-  const track = createVoxelRailTrack({ lengthWorld: worldWidth + 20, platformLengthWorld: Number(grid.cellWorldSize) * 7, seed: `${seed}:track` });
-  track.position.set(0, 0, trackZ);
-  track.scale.set(1, stationScale, stationScale);
+  const track = createVoxelRailTrack({ lengthWorld: worldWidth + 20, platformLengthWorld: Number(grid.cellWorldSize) * 7, platformCenterWorld: trackZ < stationZ ? -stationX : stationX, seed: `${seed}:track` });
+  track.position.set(0, buildingOriginWorldY, trackZ);
+  track.scale.multiply(new THREE.Vector3(1, stationScale, stationScale));
+  if (trackZ < stationZ) track.rotation.y = Math.PI;
   root.add(track);
 
-  const station = createVoxelMassingLab({
-    ...createRailwayStationSpec(level, { seed: `${seed}:station:${level}` }),
-    renderStrategy: "greedy",
-    maxMergeSpanVoxels: 12
-  });
+  const station = createVictorianStation(level, { seed: `${seed}:station:${level}`, trackOffsetVoxels: Math.abs(trackZ - stationZ) / (VOXEL_SIZE * stationScale) });
   station.name = `RailwayStation-Level-${level}`;
-  station.position.set(stationX, 0, stationZ);
+  station.position.set(stationX, buildingOriginWorldY, stationZ);
   station.scale.setScalar(stationScale);
+  // The authored facade looks toward -Z; new cities face +Z, toward the centre.
+  station.rotation.y = trackZ < stationZ ? Math.PI : 0;
   root.add(station);
-  addStationFixedDetails(root, { stationX, stationZ, trackZ, level, cellWorldSize: Number(grid.cellWorldSize), stationScale, seed });
-  addForecourts(root, railway, byId, Number(grid.cellWorldSize), seed);
+  const forecourt = addForecourts(root, railway, byId, Number(grid.cellWorldSize), seed, roadSurfaceVoxelY, level);
 
   const train = createVoxelSteamTrain({ seed: `${seed}:train` });
   train.name = "ThroughSteamTrain";
-  train.position.set(-worldWidth / 2 - 16, 0.55, trackZ);
-  train.scale.setScalar(stationScale);
+  train.position.set(-worldWidth / 2 - 16, buildingOriginWorldY + RAIL_TOP_WORLD_Y * stationScale, trackZ);
+  train.scale.multiplyScalar(stationScale);
   root.add(train);
   const fixedProgress = trainProgress == null ? null : clamp(trainProgress, 0, 1);
   let sphericalRadius = null;
   const trainBasis = new THREE.Matrix4();
+  let previousX = null;
   const updateTrain = (elapsed) => {
-    const progress = fixedProgress ?? (animateTrain ? (elapsed % 42) / 42 : 0.5);
+    const progress = fixedProgress ?? (animateTrain ? ((elapsed + 21) % 42) / 42 : 0.5);
     const west = -worldWidth / 2 - 18;
     const east = worldWidth / 2 + 18;
     let x;
@@ -216,11 +284,13 @@ export function createRailwayGatewayLayer({ state, grid, seed = "railway-gateway
       const frame = getVoxelSphereFrame(x, trackZ, sphericalRadius);
       trainBasis.makeBasis(frame.tangentX, frame.normal, frame.tangentZ);
       train.quaternion.setFromRotationMatrix(trainBasis);
-      train.position.copy(frame.surface).addScaledVector(frame.normal, 0.55);
+      train.position.copy(frame.surface).addScaledVector(frame.normal, buildingOriginWorldY + RAIL_TOP_WORLD_Y * stationScale);
     } else {
       train.position.x = x;
     }
-    train.userData.updateSteam?.(elapsed);
+    const distance = previousX == null || Math.abs(x - previousX) > 30 ? 0 : (x - previousX) / (stationScale * RAILWAY_VEHICLE_SCALE);
+    train.userData.updateSteam?.(elapsed, distance);
+    previousX = x;
   };
   updateTrain(0);
 
@@ -235,15 +305,27 @@ export function createRailwayGatewayLayer({ state, grid, seed = "railway-gateway
     urbanConnectionPoint: structuredClone(railway.urbanConnectionPoint),
     track: structuredClone(track.userData.contract),
     train: structuredClone(train.userData.contract),
-    station: structuredClone(station.userData.spec.metadata)
+    station: structuredClone(station.userData.spec.metadata),
+    constructionDatum: { buildingOriginWorldY, roadSurfaceVoxelY }
   };
+  const lods = [];
+  root.traverse((object) => { if (object.isLOD) lods.push(object); });
+  root.userData.updateView = (camera, _maxLights = 4, viewport = {}) => {
+    updateVoxelLods(lods, camera, viewport);
+    forecourt?.userData.updateTrees?.(camera, viewport);
+    train.userData.updateLodEffects?.();
+  };
+  root.userData.getRailwayLodDiagnostics = () => lods.map((lod) => ({ name: lod.name, level: lod.userData.currentLevel, factors: lod.userData.lodFactors, levels: lod.userData.levelDiagnostics }));
   root.userData.getVoxelDiagnostics = () => structuredClone(root.userData.contract);
   root.userData.update = (elapsed) => updateTrain(elapsed);
   root.userData.enableSphericalTrain = (radius) => {
     sphericalRadius = Number(radius) || null;
     updateTrain(0);
   };
-  root.userData.updateDaylight = (style) => station.userData.updateDaylight?.(style);
+  root.userData.updateDaylight = (style) => {
+    station.userData.updateDaylight?.(style);
+    forecourt?.userData.updateDaylight?.(style);
+  };
   return root;
 }
 
@@ -258,15 +340,15 @@ export function createRailwayAssetLab(config = {}) {
       cells.push({ id: `cell-${column}-${row}`, column, row, center: { x: (column + 0.5 - columns / 2) * cellWorldSize, z: (rows / 2 - row - 0.5) * cellWorldSize } });
     }
   }
-  const trackRow = 3;
-  const stationIds = rectangleIds(22, 4, 6, 3);
-  const forecourtIds = rectangleIds(22, 7, 6, 3);
+  const trackRow = 14;
+  const stationIds = rectangleIds(22, 11, 6, 3);
+  const forecourtIds = rectangleIds(22, 8, 6, 3);
   const railway = {
     orientation: "east_west",
     trackCellIds: cells.filter((cell) => cell.row === trackRow).map((cell) => cell.id),
-    station: { level: params.stationLevel, maxLevel: 3, footprint: "6x3", startColumn: 22, startRow: 4, cellIds: stationIds },
+    station: { level: params.stationLevel, maxLevel: 3, footprint: "6x3", startColumn: 22, startRow: 11, cellIds: stationIds },
     forecourt: { cellIds: forecourtIds, leftCellIds: forecourtIds.filter((id) => Number(id.split("-")[1]) < 25), rightCellIds: forecourtIds.filter((id) => Number(id.split("-")[1]) > 25) },
-    urbanConnectionPoint: { nodeId: "old_town_entry", cellId: "cell-25-9", direction: "south" }
+    urbanConnectionPoint: { nodeId: "old_town_entry", cellId: "cell-25-8", direction: "north" }
   };
   const state = { nodes: { old_town_entry: { stationLevel: params.stationLevel, railway } } };
   const root = createRailwayGatewayLayer({ state, grid: { columns, rows, cellWorldSize, cells }, seed: params.seed, animateTrain: false, trainProgress: params.trainProgress });
@@ -277,111 +359,362 @@ export function createRailwayAssetLab(config = {}) {
   return root;
 }
 
-function addStationFixedDetails(root, { stationX, stationZ, trackZ, level, cellWorldSize, stationScale, seed }) {
-  const buffer = new VoxelInstanceBuffer(`${seed}:station-fixed:${level}`);
-  const centerX = 0;
-  // The six-cell site is centred between cells 2 and 3; the clock tower sits
-  // on cell 3, one half-cell east of the site origin.
-  const towerCenterX = 16;
-  const canopyZ = Math.round((trackZ - stationZ) / (VOXEL_SIZE * stationScale));
-  const width = Math.round(cellWorldSize * (level === 1 ? 4.6 : level === 2 ? 5.3 : 5.8) / (VOXEL_SIZE * stationScale));
-  const startX = centerX - Math.round(width / 2);
-  const postHeight = level === 1 ? 16 : level === 2 ? 22 : 28;
-  for (let x = startX; x <= startX + width; x += level === 1 ? 24 : 18) {
-    buffer.addBox(level === 1 ? "timber" : "iron", x, 4, canopyZ - 4, 2, postHeight, 2, x);
+function stationArchitecturalMasses(level) {
+  const i = level - 1;
+  const gothic = createPublicBuildingStylePreset("victorian_gothic").masses[0].facade;
+  const materials = { wall: "brickRed", trim: "sandstone", roof: "slate", frame: "iron", window: "warmWindow", door: "timber" };
+  const mass = (id, x, z, width, depth, height, cap, extra = {}) => {
+    const column = Math.round((x + 80) / 32), row = Math.round((z + 32) / 32);
+    return {
+      id, railwayArchitecture: true, type: "solid", role: "secondary",
+      cells: [[column, row]], dimensionsVoxels: { width, depth },
+      placement: { offsetVoxels: { x: x - (column * 32 - 80), z: z - (row * 32 - 32) } },
+      baseYVoxels: 3, heightVoxels: height, cap, materials: { ...materials },
+      facade: { ...gothic, openness: 0.38, entranceEmphasis: 0, floorHeightVoxels: 20, bayWidthVoxels: 8, baseCourseHeightVoxels: 4, stringCourseHeightVoxels: 1, corniceHeightVoxels: 3, cornerPierWidthVoxels: 2, rooflineOrnaments: 2 },
+      ...extra
+    };
+  };
+  const height = [44, 62, 80][i];
+  const masses = [
+    mass("booking-hall", 0, -25, 172, 32, height,
+      { type: "mansard", heightVoxels: [14, 20, 26][i], dormerCount: [5, 7, 9][i], ridgeRailHeightVoxels: 2 }, { role: "primary" }),
+    mass("grand-gatehouse", 0, -29, 30, 34, height + 12,
+      { type: "gable", heightVoxels: [18, 24, 30][i], orientation: "north_south", finialHeightVoxels: 5 },
+      { role: "entrance", facade: { ...gothic, openness: 0.38, entranceEmphasis: 1, floorHeightVoxels: 22, bayWidthVoxels: 10, stringCourseHeightVoxels: 1, corniceHeightVoxels: 2, cornerPierWidthVoxels: 2, pedimentHeightVoxels: 10, pedimentWidthVoxels: 22 } })
+  ];
+  for (const side of [-1, 1]) {
+    masses.push(mass(`return-wing-${side}`, side * 77, 6, 22, 50, height - 14,
+      { type: "mansard", heightVoxels: 16, dormerCount: 3, ridgeRailHeightVoxels: 2 }));
+    masses.push(mass(`gabled-bay-${side}`, side * 34, -28, 19, 34, height + (side < 0 ? 4 : 10),
+      { type: "gable", heightVoxels: 19, orientation: "north_south", finialHeightVoxels: 4 }));
   }
-  buffer.addBox(level === 1 ? "slate" : "lightGlass", startX - 2, 4 + postHeight, canopyZ - 8, width + 4, 2, 10, 44);
-  if (level >= 2) {
-    const clockY = level === 2 ? 60 : 82;
-    buffer.addBox("limestone", towerCenterX - 7, clockY, -50, 14, 14, 2, 71);
-    buffer.addBox("iron", towerCenterX - 1, clockY + 3, -52, 2, 5, 1, 72);
-    buffer.addBox("iron", towerCenterX - 1, clockY + 7, -52, 5, 2, 1, 73);
-  }
-  if (level === 3) buffer.addBox("gildedMetal", towerCenterX - 8, 92, -50, 16, 3, 2, 91);
-  const lampXs = level === 3 ? [-72, -24, 24, 72] : [-64, 64];
-  for (const lampX of lampXs) {
-    buffer.addBox("iron", lampX, 1, -83, 2, 18, 2, lampX + 120);
-    buffer.addBox("warmWindow", lampX - 2, 18, -85, 6, 6, 6, lampX + 220);
-    buffer.addBox("iron", lampX - 3, 24, -86, 8, 2, 8, lampX + 320);
-  }
-  const details = meshBuffer(buffer, `RailwayStationFixedDetails-Level-${level}`);
-  details.position.set(stationX, 0, stationZ);
-  details.scale.setScalar(stationScale);
-  root.add(details);
+  const clockHeight = [68, 112, 150][i];
+  masses.push(mass(level === 1 ? "west-pavilion" : "clock-tower", -65, -27, 28, 34, clockHeight,
+    { type: "parapet", parapetHeightVoxels: 4 }, { role: "crown" }));
+  masses.push(mass("clock-crown", -65, -27, 24, 28, 10,
+    { type: "spire", heightVoxels: [20, 30, 42][i], ribCount: 4, ringCount: 2, finialHeightVoxels: 8 },
+    { baseYVoxels: clockHeight + 7, materials: { ...materials, trim: "limestone" } }));
+  masses.push(mass("east-octagonal-turret", 79, -27, 22, 28, [60, 82, 108][i],
+    { type: "spire", heightVoxels: [20, 28, 36][i], ribCount: 8, ringCount: 2, finialHeightVoxels: 6 }, { planShape: "octagonal" }));
+  return masses;
 }
 
-function addForecourts(root, railway, byId, cellWorldSize, seed) {
-  const buffer = new VoxelInstanceBuffer(`${seed}:forecourt`);
-  for (const id of railway.forecourt.cellIds) {
-    const cell = byId.get(id);
-    if (!cell) continue;
+export function createVictorianStation(level = 1, options = {}) {
+  level = clampInteger(level, 1, 3);
+  const spec = createRailwayStationSpec(level, options);
+  const root = new THREE.Group();
+  root.name = `VictorianStation-${level}`;
+  const architecturePipeline = createVoxelMassingLodLevels({ ...spec, masses: spec.masses.filter((mass) => mass.railwayArchitecture), renderStrategy: "greedy", maxMergeSpanVoxels: 12 });
+  const architecture = createVoxelAssetLod(architecturePipeline.levels[0].group, { ...architecturePipeline, levels: architecturePipeline.levels.slice(1) });
+  architecture.userData.lodFactors = [1, 2, 3];
+  architecture.name = "RailwayPublicArchitecture";
+  root.add(architecture);
+  const buffer = new VoxelInstanceBuffer(`${spec.seed}:bespoke`);
+  // Brick chimneys, striped stone string courses, and small corner pinnacles
+  // break up the mansard silhouette without replacing the massing grammar.
+  const height = [44, 62, 80][level - 1];
+  for (const x of [-46, -22, 22, 48, 66]) {
+    buffer.addBox("brickBrown", x, height + 12, -19, 5, 16, 6);
+    buffer.addBox("sandstone", x - 1, height + 24, -20, 7, 2, 8);
+    for (const dx of [0, 3]) buffer.addBox("brickRed", x + dx, height + 28, -18, 2, 4, 3);
+  }
+  for (let x = -84; x <= 84; x += 8) {
+    buffer.addBox("sandstone", x, height - 2, -43, 2, 3, 3);
+  }
+  // A recessed city entrance with a pointed archivolt and a glazed iron porch.
+  for (let dx = -11; dx <= 11; dx++) {
+    const archY = 13 + Math.round(12 * (1 - Math.abs(dx) / 12));
+    buffer.addBox("iron", dx, 3, -47, 1, archY - 3, 1);
+    buffer.addBox("sandstone", dx, archY, -49, 1, 3, 3);
+    if (dx % 4 === 0) buffer.addBox("gildedMetal", dx, 4, -48, 1, archY - 5, 1);
+  }
+  buffer.addBox("lightGlass", -20, 27, -48, 40, 2, 8);
+  for (const x of [-20, 18]) buffer.addBox("iron", x, 3, -48, 2, 24, 2);
+  if (level > 1) {
+    const cy = [0, 100, 138][level - 1];
+    for (const z of [-47, -8]) {
+      for (let dx = -10; dx <= 10; dx++) for (let dy = -10; dy <= 10; dy++) {
+        const rr = dx * dx + dy * dy;
+        if (rr <= 100) buffer.addVoxel(rr > 77 ? "sandstone" : "limestone", -65 + dx, cy + dy, z);
+      }
+      const face = z === -47 ? z - 1 : z + 1;
+      for (const [dx, dy] of [[0, 8], [8, 0], [0, -8], [-8, 0]]) buffer.addBox("iron", -65 + dx, cy + dy, face, 1, 2, 1);
+      buffer.addBox("iron", -65, cy, face, 1, 7, 1);
+      buffer.addBox("iron", -65, cy, face, 6, 1, 1);
+    }
+    for (const x of [-78, -54]) for (const z of [-43, -12]) {
+      buffer.addBox("sandstone", x, cy + 11, z, 2, 10, 2);
+      buffer.addBox("gildedMetal", x, cy + 21, z, 1, 4, 1);
+    }
+  }
+  const details = meshBuffer(buffer, "StPancrasBespokeDetails");
+  root.add(details);
+  const shed = createLongitudinalTrainShed(level, { seed: spec.seed, trackOffsetVoxels: options.trackOffsetVoxels ?? 64 });
+  root.add(shed);
+  root.userData.spec = spec;
+  root.userData.architectureDiagnostics = architecturePipeline.levels.map((level) => level.diagnostics);
+  root.userData.spec.metadata.trainShed = structuredClone(shed.userData.contract);
+  const windows = [];
+  root.traverse((object) => { if (object.userData.materialId === "warmWindow") windows.push(object.material); });
+  root.userData.updateDaylight = (style) => {
+    architecture.userData.updateDaylight?.(style);
+    const night = style.nightFactor ?? style.night ?? style.nightLighting ?? 0;
+    for (const material of windows) material.emissiveIntensity = 0.3 + night * 1.5;
+  };
+  return root;
+}
+
+export function createLongitudinalTrainShed(level = 1, { seed = "train-shed", trackOffsetVoxels = 64 } = {}) {
+  level = clampInteger(level, 1, 3);
+  const buffer = new VoxelInstanceBuffer(`${seed}:longitudinal-shed`);
+  const length = [176, 224, 256][level - 1], radius = 16;
+  const spring = [40, 48, 56][level - 1], rise = [16, 20, 24][level - 1];
+  const trackZ = Math.round(trackOffsetVoxels);
+  // Long axis X follows the railway. No end walls or cross-track columns:
+  // only the arched roof and posts outside the train's swept clearance box.
+  for (let dz = -radius; dz <= radius; dz++) {
+    const y = spring + Math.round(Math.sqrt(1 - dz * dz / (radius * radius)) * rise);
+    const adjacent = Math.min(radius, Math.abs(dz) + 1);
+    const lowerY = spring + Math.round(Math.sqrt(1 - adjacent * adjacent / (radius * radius)) * rise);
+    // Fill the vertical riser as well as its tread: adjacent samples can differ
+    // by several voxels near the eaves. A one-voxel strip leaves visible holes.
+    buffer.addBox("lightGlass", -length / 2, lowerY, trackZ + dz, length, y - lowerY + 2, 1);
+    for (let x = -length / 2; x <= length / 2; x += 16) buffer.addBox("iron", x, lowerY + 1, trackZ + dz, 2, y - lowerY + 3, 1);
+  }
+  for (const z of [trackZ - radius, trackZ + radius]) {
+    buffer.addBox("iron", -length / 2, spring, z, length, 2, 2);
+    for (let x = -length / 2; x <= length / 2; x += 32) {
+      buffer.addBox("iron", x, 0, z, 2, spring, 2);
+      buffer.addBox("sandstone", x - 1, 0, z - 1, 4, 5, 4);
+      for (let d = 0; d < 6; d++) buffer.addBox("iron", x - d, spring - 7 + d, z, 2 * d + 2, 1, 2);
+    }
+  }
+  // A raised continuous ridge vent gives the steam a visible escape route.
+  buffer.addBox("iron", -length / 2, spring + rise + 3, trackZ - 3, length, 2, 7);
+  for (let x = -length / 2; x <= length / 2; x += 16) buffer.addBox("iron", x, spring + rise, trackZ, 1, 4, 1);
+  const root = meshBuffer(buffer, "LongitudinalTrainShed", false, { preserveThinSurfaces: true });
+  root.userData.contract = { axis: "east_west", trackCenterLocalZ: trackZ * VOXEL_SIZE, lengthWorld: length * VOXEL_SIZE, halfWidthWorld: radius * VOXEL_SIZE, minimumRoofHeightWorld: spring * VOXEL_SIZE, openEnds: true };
+  return root;
+}
+
+function addForecourts(root, railway, byId, cellWorldSize, seed, roadSurfaceVoxelY = -1, level = 1) {
+  const paving = new VoxelInstanceBuffer(`${seed}:forecourt`);
+  const furniture = new VoxelInstanceBuffer(`${seed}:forecourt-gardens`);
+  const trees = [];
+  const cells = railway.forecourt.cellIds.map((id) => byId.get(id)).filter(Boolean);
+  if (!cells.length) return;
+  const cx = Math.round(average(cells.map((cell) => cell.center.x)) / VOXEL_SIZE);
+  const cz = Math.round(average(cells.map((cell) => cell.center.z)) / VOXEL_SIZE);
+  const groundY = roadSurfaceVoxelY + 1;
+  const halfX = Math.round(cellWorldSize * 3 / VOXEL_SIZE), halfZ = Math.round(cellWorldSize * 1.5 / VOXEL_SIZE);
+  for (const cell of cells) {
     const minX = Math.round((cell.center.x - cellWorldSize / 2) / VOXEL_SIZE);
     const minZ = Math.round((cell.center.z - cellWorldSize / 2) / VOXEL_SIZE);
-    const gateway = id === railway.urbanConnectionPoint.cellId;
-    buffer.addBox(gateway ? "road" : "pavement", minX, 0, minZ, CELL_VOXELS, 1, CELL_VOXELS, cell.column + cell.row * 97);
+    const size = Math.round(cellWorldSize / VOXEL_SIZE);
+    for (let x = minX; x < minX + size; x++) for (let z = minZ; z < minZ + size; z++) {
+      const dx = x - cx, dz = z - cz;
+      const border = Math.abs(dx) >= halfX - 3 || Math.abs(dz) >= halfZ - 3;
+      const axis = Math.abs(dx - 8) < 24;
+      const inlay = !axis && ((Math.abs(dx) + Math.abs(dz)) % 24 < 2);
+      const material = cell.id === railway.urbanConnectionPoint.cellId ? "road" : border ? "sandstone" : axis ? "limestone" : inlay ? "stoneShadow" : "pavement";
+      paving.addVoxel(material, x, roadSurfaceVoxelY, z);
+    }
   }
-  root.add(meshBuffer(buffer, "RailwayStationForecourts"));
+  const box = (material, x, y, z, w, h, d) => furniture.addBox(material, cx + x, groundY + y, cz + z, w, h, d);
+  const gardenX = Math.round(halfX * 0.66), gardenZ = Math.round(halfZ * 0.55);
+  for (const x of [-gardenX, gardenX]) for (const z of [-gardenZ, gardenZ]) {
+    box("sandstone", x - 13, 0, z - 9, 26, 3, 18);
+    box("soil", x - 11, 3, z - 7, 22, 1, 14);
+    box("foliageDark", x - 10, 4, z - 6, 20, 3, 12);
+    for (const dx of [-7, 6]) for (const dz of [-4, 3]) box("blossomPink", x + dx, 7, z + dz, 3, 2, 3);
+    const template = z < 0 ? "round-0" : "round-1";
+    const scale = 0.66;
+    const metrics = getVoxelTreeMetrics(template, scale);
+    trees.push({ x: cx + x, y: groundY + 4, z: cz + z, template, scale,
+      rotation: 0, shade: trees.length * 3, heightVoxels: metrics.height,
+      crownWidth: metrics.crownWidth, trunkWidth: metrics.trunkWidth });
+  }
+  for (const x of [-gardenX, gardenX]) {
+    box("iron", x - 10, 0, -4, 2, 5, 2); box("iron", x + 8, 0, -4, 2, 5, 2);
+    box("timber", x - 12, 5, -5, 24, 2, 6); box("timber", x - 12, 7, -5, 24, 6, 1);
+  }
+  for (const x of [-halfX + 9, halfX - 9]) for (const z of [-halfZ + 10, halfZ - 10]) {
+    addSharedVoxelRoadLamp(furniture, { x: cx + x, z: cz + z, surfaceY: roadSurfaceVoxelY, shade: x + z });
+  }
+  // Two low ornamental basins sit beside the clear central arrival route.
+  if (level >= 2) for (const x of [-gardenX + 23, gardenX - 21]) {
+    for (let dx = -8; dx <= 8; dx++) for (let dz = -8; dz <= 8; dz++) {
+      if (Math.abs(dx) + Math.abs(dz) > 12) continue;
+      box(Math.abs(dx) + Math.abs(dz) > 9 ? "sandstone" : "waterLight", x + dx, 1, dz, 1, 3, 1);
+    }
+    box("limestone", x - 1, 4, -1, 3, 5, 3);
+    box("waterLight", x, 9, 0, 1, 5, 1);
+  }
+  root.add(meshBuffer(paving, "RailwayStationForecourts"));
+  const gardens = meshBuffer(furniture, "RailwayForecourtGardens");
+  gardens.userData.contract = { clearArrivalAxis: true, gardens: 4, benches: 2, lamps: 4, fountains: level > 1 ? 2 : 0 };
+  const treeRenderer = createVoxelTreeLodRenderer(trees, { initialLod: 0 });
+  treeRenderer.name = "RailwayForecourtTrees";
+  root.add(treeRenderer);
+  gardens.userData.updateTrees = (camera, viewport) => treeRenderer.userData.updateView(camera, viewport);
+  gardens.userData.getTreeDiagnostics = () => treeRenderer.userData.getDiagnostics();
+  const lamps = [];
+  gardens.traverse((mesh) => { if (mesh.userData.materialId === "warmWindow") lamps.push(mesh.material); });
+  gardens.userData.updateDaylight = (style) => {
+    const night = style.nightFactor ?? style.night ?? 0;
+    for (const material of lamps) material.emissiveIntensity = 0.3 + night * 1.5;
+  };
+  root.add(gardens);
+  return gardens;
 }
 
 function addLocomotive(buffer, x, wheels) {
-  buffer.addBox("brickBrown", x, 7, -6, 38, 18, 12, 401);
-  buffer.addBox("iron", x + 2, 25, -5, 25, 6, 10, 402);
-  buffer.addBox("brickBrown", x + 26, 22, -6, 12, 20, 12, 403);
-  buffer.addBox("warmWindow", x + 29, 29, -7, 6, 6, 1, 404);
-  buffer.addBox("iron", x + 7, 31, -3, 7, 14, 6, 405);
-  buffer.addBox("iron", x + 4, 43, -5, 13, 3, 10, 406);
-  buffer.addBox("gildedMetal", x + 38, 11, -2, 6, 4, 4, 407);
-  for (const center of [x + 9, x + 27]) addWheelPair(buffer, center, 7, wheels, 410 + center);
+  buffer.addBox("iron", x, 9, -9, 64, 3, 18);
+  // Cab at the tender end; cylindrical boiler and chimney at the leading +X end.
+  buffer.addBox("brickRed", x + 1, 12, -9, 15, 23, 18);
+  for (const z of [-10, 9]) buffer.addBox("warmWindow", x + 4, 23, z, 9, 9, 1);
+  buffer.addBox("iron", x - 1, 35, -11, 19, 3, 22);
+  for (let y = -9; y <= 9; y++) {
+    const half = Math.floor(Math.sqrt(81 - y * y));
+    buffer.addBox("brickRed", x + 16, 23 + y, -half, 37, 1, Math.max(1, half * 2));
+    buffer.addBox("iron", x + 53, 23 + y, -half, 8, 1, Math.max(1, half * 2));
+    for (const band of [20, 35, 50]) buffer.addBox("gildedMetal", x + band, 23 + y, -half, 1, 1, Math.max(1, half * 2));
+  }
+  buffer.addBox("iron", x + 47, 30, -3, 6, 11, 6);
+  buffer.addBox("iron", x + 45, 40, -5, 10, 3, 10);
+  buffer.addBox("gildedMetal", x + 27, 31, -3, 6, 4, 6);
+  buffer.addBox("brickRed", x + 62, 10, -11, 3, 4, 22);
+  for (const z of [-8, 6]) buffer.addBox("iron", x + 65, 10, z, 3, 3, 3);
+  buffer.addBox("warmWindow", x + 61, 24, -2, 2, 4, 4);
+  for (const z of [-10, 9]) buffer.addBox("gildedMetal", x + 4, 17, z, 8, 3, 1);
+  for (const cx of [x + 17, x + 31, x + 45]) addWheelPair(buffer, cx, 8, wheels, 0, 8);
+  addWheelPair(buffer, x + 58, 5, wheels, 0, 5);
 }
 
 function addTender(buffer, x, wheels) {
-  buffer.addBox("iron", x, 8, -7, 29, 18, 14, 301);
-  buffer.addBox("brickBrown", x + 3, 23, -6, 23, 7, 12, 302);
-  addWheelPair(buffer, x + 8, 7, wheels, 303);
-  addWheelPair(buffer, x + 22, 7, wheels, 304);
+  buffer.addBox("iron", x, 8, -8, 30, 3, 16);
+  buffer.addBox("brickRed", x + 1, 11, -8, 28, 15, 16);
+  buffer.addBox("iron", x + 3, 25, -6, 24, 2, 12);
+  for (let dx = 4; dx < 26; dx += 5) buffer.addBox("iron", x + dx, 27, -4 + dx % 3, 4, 2 + dx % 4, 5);
+  for (const z of [-9, 8]) {
+    buffer.addBox("gildedMetal", x + 3, 13, z, 24, 1, 1);
+    buffer.addBox("gildedMetal", x + 12, 18, z, 7, 4, 1);
+  }
+  for (const dx of [6, 15, 24]) addWheelPair(buffer, x + dx, 5, wheels, 0, 5);
 }
 
 function addCoach(buffer, x, length, _index, wheels, shade) {
-  buffer.addBox("brickRed", x, 9, -8, length, 24, 16, shade);
-  buffer.addBox("slate", x - 2, 33, -9, length + 4, 4, 18, shade + 1);
-  for (let wx = x + 5; wx < x + length - 4; wx += 9) {
-    buffer.addBox("warmWindow", wx, 20, -9, 5, 7, 1, wx);
-    buffer.addBox("warmWindow", wx, 20, 8, 5, 7, 1, wx + 1);
+  buffer.addBox("iron", x - 2, 8, -7, length + 4, 3, 14, shade);
+  buffer.addBox("brickRed", x, 11, -9, length, 21, 18, shade);
+  for (let z = -10; z <= 10; z++) {
+    const roofY = 32 + Math.round(4 * Math.sqrt(Math.max(0, 1 - z * z / 100)));
+    buffer.addBox("slate", x - 1, roofY, z, length + 2, 2, 1, shade);
   }
-  buffer.addBox("gildedMetal", x, 17, -9, length, 2, 1, shade + 2);
-  addWheelPair(buffer, x + 9, 7, wheels, shade + 3);
-  addWheelPair(buffer, x + length - 10, 7, wheels, shade + 4);
+  for (const z of [-10, 9]) {
+    for (let wx = x + 5; wx < x + length - 4; wx += 9) {
+      buffer.addBox("sandstone", wx - 1, 21, z, 7, 9, 1, shade);
+      buffer.addBox("warmWindow", wx, 22, z, 5, 7, 1, shade);
+    }
+    buffer.addBox("gildedMetal", x + 1, 18, z, length - 2, 1, 1, shade);
+    buffer.addBox("gildedMetal", x + 1, 12, z, length - 2, 1, 1, shade);
+  }
+  for (const dx of [7, 15, length - 15, length - 7]) addWheelPair(buffer, x + dx, 5, wheels, shade, 5);
 }
 
-function addWheelPair(buffer, centerX, centerY, wheels, shade) {
-  for (const z of [-9, 7]) {
-    for (let y = -6; y <= 6; y += 1) {
-      for (let x = -6; x <= 6; x += 1) {
-        const radius = Math.hypot(x, y);
-        if (radius <= 6 && radius >= 3.3) buffer.addVoxel("iron", centerX + x, centerY + y, z, shade + y + x);
-      }
-    }
-    wheels.push([centerX, centerY, z]);
-  }
+function addWheelPair(_buffer, centerX, centerY, wheels, _shade, radius = 6) {
+  for (const z of [-7, 7]) wheels.push([centerX, centerY, z, radius]);
 }
 
 function createSteamPuffs() {
   const group = new THREE.Group();
-  const geometry = new THREE.BoxGeometry(0.55, 0.55, 0.55);
-  for (let index = 0; index < 4; index += 1) {
-    const material = new THREE.MeshStandardMaterial({ color: "#e9e4dc", roughness: 1, transparent: true, opacity: 0.5, depthWrite: false });
-    const puff = new THREE.Mesh(geometry, material);
-    puff.castShadow = false;
-    group.add(puff);
-  }
+  group.name = "LayeredSteamClouds";
+  const geometry = new THREE.BoxGeometry(1, 1, 1);
+  const light = new THREE.InstancedMesh(geometry, new THREE.MeshLambertMaterial({ color: "#fff5df", transparent: true, opacity: 0.64, depthWrite: false }), 60);
+  const shade = new THREE.InstancedMesh(geometry, new THREE.MeshLambertMaterial({ color: "#b9c7cf", transparent: true, opacity: 0.36, depthWrite: false }), 24);
+  group.add(shade, light);
+  const dummy = new THREE.Object3D();
+  for (const mesh of [light, shade]) { mesh.frustumCulled = false; mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); }
+  group.userData.update = (elapsed) => {
+    let li = 0, si = 0;
+    for (let i = 0; i < 12; i++) {
+      const phase = ((elapsed * 0.23 + i / 12) % 1 + 1) % 1;
+      const envelope = Math.sin(Math.PI * phase) ** 0.45;
+      const size = (0.4 + phase * 1.7) * envelope;
+      for (let j = 0; j < 7; j++) {
+        const angle = j * 2.399 + i * 0.7;
+        dummy.position.set(-phase * 5.5 + Math.cos(angle) * size * 0.65 + Math.sin(i * 1.9) * phase * 0.35, phase * 5.7 + Math.sin(angle) * size * 0.42, Math.sin(angle * 1.3) * size * 0.75);
+        dummy.scale.set(size * (0.8 + j % 3 * 0.16), size * (0.55 + j % 2 * 0.24), size * 0.85);
+        dummy.rotation.set(0, Math.sin(angle) * 0.12, 0);
+        dummy.updateMatrix();
+        if (j < 2) shade.setMatrixAt(si++, dummy.matrix); else light.setMatrixAt(li++, dummy.matrix);
+      }
+    }
+    light.instanceMatrix.needsUpdate = true;
+    shade.instanceMatrix.needsUpdate = true;
+  };
   return group;
 }
 
-function meshBuffer(buffer, name) {
+function meshBuffer(buffer, name, moving = false, { preserveThinSurfaces = false } = {}) {
   const group = new THREE.Group();
   group.name = name;
-  buffer.createMeshes({ strategy: "greedy", chunkSizeVoxels: 256, maxMergeSpanVoxels: 24 }).forEach((mesh) => {
-    mesh.castShadow = true;
+  // Rails are selected in short sections; one map-wide bounding sphere would
+  // permanently force the whole corridor to the finest building LOD.
+  const chunks = new Map();
+  for (const voxel of buffer.voxels.values()) {
+    const key = name === "VoxelRailTrack" ? Math.floor(voxel.x / 128) : 0;
+    if (!chunks.has(key)) chunks.set(key, []);
+    chunks.get(key).push(voxel);
+  }
+  const totals = { renderedTriangles: 0, meshCount: 0, sourceVoxelCount: buffer.voxels.size, strategy: "greedy-chunks-mip-lod" };
+  for (const [key, voxels] of chunks) {
+    const minX = Math.min(...voxels.map((v) => v.x)), maxX = Math.max(...voxels.map((v) => v.x));
+    const minZ = Math.min(...voxels.map((v) => v.z)), maxZ = Math.max(...voxels.map((v) => v.z));
+    // Align the local origin to all three mip grids so world anchoring survives
+    // the 1x/2x/3x aggregation and the spherical prefab projection.
+    const ox = Math.round((minX + maxX) / 12) * 6, oz = Math.round((minZ + maxZ) / 12) * 6;
+    const local = new VoxelInstanceBuffer(`${buffer.seed}:${key}`);
+    for (const v of voxels) local.addVoxel(v.materialId, v.x - ox, v.y, v.z - oz, v.shadeKey, { priority: v.priority, owner: v.owner });
+    const levels = [1, 2, 3].map((factor) => {
+      const field = factor === 1 ? local : local.createDownsampled(factor, preserveThinSurfaces ? { minimumOccupancy: 1 } : {});
+      const rendered = renderRailwayBuffer(field, `${name}-${factor}x`, moving);
+      rendered.userData.lodFactor = factor;
+      if (factor === 1) {
+        totals.renderedTriangles += field.renderStats.renderedTriangles;
+        totals.meshCount += field.renderStats.meshCount;
+      }
+      return { factor, group: rendered, meshes: rendered.children, diagnostics: structuredClone(field.renderStats) };
+    });
+    const lod = createVoxelAssetLod(levels[0].group, { levels: levels.slice(1) });
+    lod.name = `${name}-LOD-${key}`;
+    lod.position.set(ox * VOXEL_SIZE, 0, oz * VOXEL_SIZE);
+    lod.userData.lodFactors = [1, 2, 3];
+    lod.userData.levelDiagnostics = levels.map((level) => level.diagnostics);
+    group.add(lod);
+  }
+  buffer.renderStats = totals;
+  return group;
+}
+
+function renderRailwayBuffer(buffer, name, moving) {
+  const group = new THREE.Group();
+  group.name = name;
+  const palette = {
+    brickRed: ["#8d2433", 0.48, 0.18], iron: ["#252d32", 0.6, 0.35],
+    slate: ["#30383c", 0.82, 0.12], gildedMetal: ["#d5ad64", 0.4, 0.55],
+    sandstone: ["#c6a47b", 0.76, 0], warmWindow: ["#e5b773", 0.38, 0.08]
+  };
+  buffer.createMeshes({ strategy: "greedy", chunkSizeVoxels: 256, maxMergeSpanVoxels: 24, mergeOpaque: !moving }).forEach((mesh) => {
+    if (moving) {
+      const [color, roughness, metalness] = palette[mesh.userData.materialId] ?? ["#513c35", 0.8, 0];
+      mesh.material.dispose();
+      mesh.material = new THREE.MeshStandardMaterial({ color, roughness, metalness });
+      if (mesh.userData.materialId === "warmWindow") {
+        mesh.material.emissive.set("#b87836");
+        mesh.material.emissiveIntensity = 0.32;
+      }
+      mesh.material.userData.textureSpace = "local";
+    }
     group.add(mesh);
   });
   return group;
