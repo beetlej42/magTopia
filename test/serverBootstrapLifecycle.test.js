@@ -35,11 +35,11 @@ test("bootstrap is a read-only no-card turn and Turn 1 receives the first canoni
     assert.equal(starterBounds.maxColumn - starterBounds.minColumn + 1, 5);
     assert.equal(starterBounds.maxRow - starterBounds.minRow + 1, 6);
     const gatewayRow = snapshot.bootstrap.progress.gatewayLocation.row;
-        const mapMidRow = (snapshot.world.grid.rows - 1) / 2;
-        const starterExtendsInward = gatewayRow > mapMidRow
-          ? starterBounds.maxRow < gatewayRow
-          : starterBounds.minRow > gatewayRow;
-        assert.equal(starterExtendsInward, true, "the starter district extends inward from the station forecourt");
+    const mapMidRow = (snapshot.world.grid.rows - 1) / 2;
+    const starterExtendsInward = gatewayRow > mapMidRow
+      ? starterBounds.maxRow < gatewayRow
+      : starterBounds.minRow > gatewayRow;
+    assert.equal(starterExtendsInward, true, "the starter district extends inward from the station forecourt");
     assert.equal(snapshot.construction_price_guide.currency, "coins");
     assert.deepEqual(snapshot.population.current.muggles, { current: 0, capacity: 0 });
     assert.equal(snapshot.public_service.serviceCoverage, 0);
