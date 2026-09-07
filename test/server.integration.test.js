@@ -122,7 +122,7 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
 
     const candidates = await json(app, auth(agent, { method: "POST", url: `/api/v1/cities/${cityA.id}/site-searches`, payload: { footprint: "1x1", limit: 8 } }), 200);
     const site1 = candidates.data[0];
-    const build1 = buildRequest(cityA.city_version, site1.lotId, "Rose Cottage");
+    const build1 = buildRequest(cityA.city_version, site1.lotId, "Rose Cottage", site1.recommendedEntrance);
     const camelCasePreview = await json(app, auth(agent, {
       method: "POST",
       url: `/api/v1/cities/${cityA.id}/construction-previews`,
@@ -132,7 +132,7 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
         expectedCityVersion: cityA.city_version,
         actor_note: undefined,
         actorNote: build1.actor_note,
-        site: { lotId: site1.lotId, footprint: "1x1", entrance: "south" },
+        site: { lotId: site1.lotId, footprint: "1x1", entrance: site1.recommendedEntrance },
         design: { districtStyle: "london_common", patterns: ["quiet_front_garden"], creativeBrief: "A compact warm brick cottage." },
         asset: { mode: "reuse", assetId: "starter-cottage-001" }
       }
@@ -141,7 +141,7 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
     const missingLot = await app.inject(auth(agent, {
       method: "POST",
       url: `/api/v1/cities/${cityA.id}/construction-previews`,
-      payload: { ...build1, site: { footprint: "1x1", entrance: "south" } }
+      payload: { ...build1, site: { footprint: "1x1", entrance: build1.site.entrance } }
     }));
     assert.equal(missingLot.statusCode, 400);
     assert.equal(missingLot.json().code, "INVALID_CONSTRUCTION_PROPOSAL");
@@ -169,7 +169,7 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
 
     const candidates2 = await json(app, auth(agent, { method: "POST", url: `/api/v1/cities/${cityA.id}/site-searches`, payload: { footprint: "1x1", limit: 20 } }), 200);
     const site2 = candidates2.data.find((entry) => entry.lotId !== site1.lotId);
-    const build2 = buildRequest(afterDisabledTime.city_version, site2.lotId, "Ivy Cottage");
+    const build2 = buildRequest(afterDisabledTime.city_version, site2.lotId, "Ivy Cottage", site2.recommendedEntrance);
     const order2 = await json(app, auth(agent, { method: "POST", url: `/api/v1/cities/${cityA.id}/construction-orders`, headers: { "idempotency-key": "build-2" }, payload: build2 }), 201);
     const roadPreview = await json(app, auth(agent, { method: "POST", url: `/api/v1/cities/${cityA.id}/connection-previews`, payload: { from: { kind: "building", id: order1.resource.building_id }, to: { kind: "building", id: order2.resource.building_id } } }), 200);
     assert.equal(roadPreview.plan.feasible, true);
@@ -179,7 +179,7 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
     const beforeProduction = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${cityA.id}/snapshot` }), 200);
     const sites3 = await json(app, auth(agent, { method: "POST", url: `/api/v1/cities/${cityA.id}/site-searches`, payload: { footprint: "1x1", limit: 30 } }), 200);
     const site3 = sites3.data.find((entry) => ![site1.lotId, site2.lotId].includes(entry.lotId));
-    const produce = produceRequest(beforeProduction.city_version, site3.lotId, "Moonflower House");
+    const produce = produceRequest(beforeProduction.city_version, site3.lotId, "Moonflower House", site3.recommendedEntrance);
     const pending = await json(app, auth(agent, { method: "POST", url: `/api/v1/cities/${cityA.id}/construction-orders`, headers: { "idempotency-key": "produce-1" }, payload: produce }), 202);
     assert.equal(pending.status, "awaiting_asset");
     const frozen = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${cityA.id}/snapshot` }), 200);
@@ -218,7 +218,7 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
     const beforeFailure = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${cityA.id}/snapshot` }), 200);
     const sites4 = await json(app, auth(agent, { method: "POST", url: `/api/v1/cities/${cityA.id}/site-searches`, payload: { footprint: "1x1", limit: 40 } }), 200);
     const site4 = sites4.data.find((entry) => ![site1.lotId, site2.lotId, site3.lotId].includes(entry.lotId));
-    const failureRequest = produceRequest(beforeFailure.city_version, site4.lotId, "Failed House");
+    const failureRequest = produceRequest(beforeFailure.city_version, site4.lotId, "Failed House", site4.recommendedEntrance);
     const pendingFailure = await json(app, auth(agent, { method: "POST", url: `/api/v1/cities/${cityA.id}/construction-orders`, headers: { "idempotency-key": "produce-fail" }, payload: failureRequest }), 202);
     await database.query("UPDATE asset_jobs SET provider = 'unsupported' WHERE id = $1", [pendingFailure.resource.asset_job_id]);
     assert.equal(await worker.processNext(), true);
@@ -233,7 +233,7 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
     const beforeManual = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${cityA.id}/snapshot` }), 200);
     const sites5 = await json(app, auth(agent, { method: "POST", url: `/api/v1/cities/${cityA.id}/site-searches`, payload: { footprint: "1x1", limit: 50 } }), 200);
     const site5 = sites5.data.find((entry) => ![site1.lotId, site2.lotId, site3.lotId, site4.lotId].includes(entry.lotId));
-    const manualRequest = produceRequest(beforeManual.city_version, site5.lotId, "Codex House");
+    const manualRequest = produceRequest(beforeManual.city_version, site5.lotId, "Codex House", site5.recommendedEntrance);
     manualRequest.site.entrance = site5.entranceDirections[0];
     const manualPending = await json(app, auth(agent, { method: "POST", url: `/api/v1/cities/${cityA.id}/construction-orders`, headers: { "idempotency-key": "produce-codex" }, payload: manualRequest }), 202);
     assert.equal(await worker.processNext(), true);
@@ -253,7 +253,7 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
       method: "POST",
       url: `/api/v1/cities/${cityA.id}/construction-orders`,
       headers: { "idempotency-key": "produce-over-limit" },
-      payload: produceRequest(manualCompleted.city_version_after, site4.lotId, "Quota House")
+      payload: produceRequest(manualCompleted.city_version_after, site4.lotId, "Quota House", site4.recommendedEntrance)
     }));
     assert.equal(fourthProduction.statusCode, 429);
     assert.equal(fourthProduction.json().code, "ASSET_JOB_LIMIT_REACHED");
@@ -263,7 +263,7 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
       method: "POST",
       url: `/api/v1/cities/${cityA.id}/construction-orders`,
       headers: { "idempotency-key": "player-produce-cancel" },
-      payload: produceRequest(beforeCancel.city_version, site4.lotId, "Cancelled House")
+      payload: produceRequest(beforeCancel.city_version, site4.lotId, "Cancelled House", site4.recommendedEntrance)
     }), 202);
     const cancelled = await json(app, auth(playerA, {
       method: "POST",
@@ -627,11 +627,11 @@ async function json(app, request, statusCode) {
   return response.json();
 }
 
-function buildRequest(version, lotId, name) {
+function buildRequest(version, lotId, name, entrance) {
   return {
     expected_city_version: version,
     actor_note: "增加可达的居民住房",
-    site: { lot_id: lotId, footprint: "1x1", entrance: "south" },
+    site: { lot_id: lotId, footprint: "1x1", entrance },
     program: { archetype: "starter_residence", purpose: "residential", name, attributes: {} },
     // v0.3 construction is canonical: the server preview/settlement path
     // must receive functional units rather than infer economy from purpose.
@@ -641,11 +641,11 @@ function buildRequest(version, lotId, name) {
   };
 }
 
-function produceRequest(version, lotId, name) {
+function produceRequest(version, lotId, name, entrance) {
   return {
     expected_city_version: version,
     actor_note: "现有资产无法表达月光花住宅",
-    site: { lot_id: lotId, footprint: "1x1", entrance: "south" },
+    site: { lot_id: lotId, footprint: "1x1", entrance },
     program: { archetype: "moon_residence", purpose: "residential", name, attributes: { coinOutput: 7 } },
     gameplay_building: { units: [{ purpose: "residential", area: 1, magicRatio: 0.5 }] },
     design: { district_style: "willow_magic", patterns: ["quiet_front_garden"], creative_brief: "A narrow magical London brick home surrounded by restrained moonflowers." },
