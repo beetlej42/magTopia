@@ -521,7 +521,7 @@ test("construction spend survives settlement: balance after resolve is the debit
     const site = sites.data[0];
     const build = {
       expected_city_version: sites.city_version,
-      site: { lot_id: site.lotId, footprint: "1x1", entrance: "south" },
+      site: { lot_id: site.lotId, footprint: "1x1", entrance: site.recommendedEntrance },
       program: { archetype: "starter_residence", name: "Ledger Cottage", purpose: "residential" },
       gameplay_building: { units: [{ purpose: "residential", area: 1, magicRatio: 0 }] },
       design: { district_style: "london_common", creative_brief: "A warm brick cottage." },
