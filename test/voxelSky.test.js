@@ -58,6 +58,23 @@ test("city daylight keeps structures readable while making midnight darker", () 
   assert.ok(midnight.ambientIntensity >= 0.5);
   assert.equal(noon.nightFactor, 0);
   assert.equal(midnight.nightFactor, 1);
+  for (const color of [noon.sunColor, noon.skyColor, noon.ambientSky, noon.ambientGround]) {
+    assert.ok([color.r, color.g, color.b].every(Number.isFinite));
+  }
+  assert.ok(noon.sunColor.r > noon.sunColor.b, "midday sun should remain warm white");
+  assert.ok(noon.ambientSky.b >= noon.ambientSky.r, "midday sky ambient should remain cool");
+});
+
+test("midday sky stays bright and interpolates toward adjacent stops", () => {
+  const before = getVoxelSkyState(0.49);
+  const noon = getVoxelSkyState(0.5);
+  const after = getVoxelSkyState(0.51);
+  assert.equal(noon.daylight, 1);
+  assert.ok(noon.topColor.getHSL({}).l > 0.38);
+  assert.ok(noon.horizonColor.getHSL({}).l > noon.topColor.getHSL({}).l);
+  const colorDelta = (left, right) => Math.hypot(left.r - right.r, left.g - right.g, left.b - right.b);
+  assert.ok(colorDelta(before.topColor, noon.topColor) < 0.08);
+  assert.ok(colorDelta(after.topColor, noon.topColor) < 0.08);
 });
 
 test("sun and moon remain camera-facing while the surface camera moves", () => {

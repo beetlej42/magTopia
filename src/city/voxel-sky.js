@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { createRng } from "../utils/random.js";
+import { ACTIVE_VISUAL_THEME } from "../render/sunlitStorybookTheme.js";
 
 const TAU = Math.PI * 2;
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
@@ -13,7 +14,7 @@ const SKY_STOPS = Object.freeze([
   [0.16, "#111d3b", "#6d5573"],
   [0.23, "#31527a", "#e68a78"],
   [0.3, "#75a8cc", "#f1c6a7"],
-  [0.5, "#80bad9", "#d8edf2"],
+  [0.5, ACTIVE_VISUAL_THEME.environment.middaySkyTop, ACTIVE_VISUAL_THEME.environment.middayHorizon],
   [0.7, "#69a0c3", "#f4b789"],
   [0.77, "#3a4d79", "#d47d7e"],
   [0.84, "#151f42", "#594967"],
@@ -25,9 +26,9 @@ const SKY_STOP_COLORS = SKY_STOPS.map(([time, topColor, horizonColor]) => ({
   horizonColor: new THREE.Color(horizonColor)
 }));
 const CLOUD_NIGHT_COLOR = new THREE.Color("#7e87a5");
-const CLOUD_DAY_COLOR = new THREE.Color("#fff7e7");
+const CLOUD_DAY_COLOR = new THREE.Color(ACTIVE_VISUAL_THEME.environment.cloudLight);
 const CLOUD_SHADOW_NIGHT_COLOR = new THREE.Color("#39405f");
-const CLOUD_SHADOW_DAY_COLOR = new THREE.Color("#b9cbd3");
+const CLOUD_SHADOW_DAY_COLOR = new THREE.Color(ACTIVE_VISUAL_THEME.environment.cloudShadow);
 const MOON_NIGHT_COLOR = new THREE.Color("#dfe8ff");
 const MOON_TWILIGHT_COLOR = new THREE.Color("#fff0c7");
 
@@ -64,8 +65,8 @@ export function createVoxelSky(options = {}) {
     depthWrite: false,
     depthTest: false,
     uniforms: {
-      topColor: { value: new THREE.Color("#80bad9") },
-      horizonColor: { value: new THREE.Color("#d8edf2") },
+      topColor: { value: new THREE.Color(ACTIVE_VISUAL_THEME.environment.middaySkyTop) },
+      horizonColor: { value: new THREE.Color(ACTIVE_VISUAL_THEME.environment.middayHorizon) },
       bottomColor: { value: new THREE.Color("#adc8d2") }
     },
     vertexShader: `
