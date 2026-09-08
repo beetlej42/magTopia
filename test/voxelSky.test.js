@@ -58,11 +58,28 @@ test("city daylight keeps structures readable while making midnight darker", () 
   assert.ok(midnight.ambientIntensity >= 0.5);
   assert.equal(noon.nightFactor, 0);
   assert.equal(midnight.nightFactor, 1);
-  for (const color of [noon.sunColor, noon.skyColor, noon.ambientSky, noon.ambientGround]) {
+  for (const color of [noon.sunColor, noon.skyColor, noon.fogColor, noon.ambientSky, noon.ambientGround]) {
     assert.ok([color.r, color.g, color.b].every(Number.isFinite));
   }
   assert.ok(noon.sunColor.r > noon.sunColor.b, "midday sun should remain warm white");
   assert.ok(noon.ambientSky.b >= noon.ambientSky.r, "midday sky ambient should remain cool");
+});
+
+test("atmospheric fog follows the horizon across the day cycle", () => {
+  const colorDelta = (left, right) => Math.hypot(left.r - right.r, left.g - right.g, left.b - right.b);
+  for (const time of [0, 0.23, 0.5, 0.77]) {
+    const sky = getVoxelSkyState(time);
+    const style = voxelDaylightStyle(time);
+    const allowedDelta = sky.daylight > 0.9 ? 0.08 : 0.04;
+    assert.ok(
+      colorDelta(style.fogColor, sky.horizonColor) < allowedDelta,
+      `fog should follow horizon at time ${time}`
+    );
+  }
+  assert.ok(
+    voxelDaylightStyle(0).fogColor.getHSL({}).l < voxelDaylightStyle(0.5).fogColor.getHSL({}).l - 0.2,
+    "night fog should become substantially darker than midday fog"
+  );
 });
 
 test("midday sky stays bright and interpolates toward adjacent stops", () => {
