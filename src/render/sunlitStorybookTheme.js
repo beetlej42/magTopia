@@ -4,6 +4,10 @@ const freezeTheme = (theme) => Object.freeze({
   materialVariants: Object.freeze(Object.fromEntries(
     Object.entries(theme.materialVariants).map(([key, colors]) => [key, Object.freeze([...colors])])
   )),
+  terrain: Object.freeze({ ...theme.terrain }),
+  treePalettes: Object.freeze(Object.fromEntries(
+    Object.entries(theme.treePalettes).map(([key, colors]) => [key, Object.freeze([...colors])])
+  )),
   environment: Object.freeze({ ...theme.environment }),
   grading: Object.freeze({ ...theme.grading }),
   atmosphere: Object.freeze({ ...theme.atmosphere })
@@ -36,10 +40,29 @@ const legacyVariants = {
   pavement: ["#aaa49a", "#b9b2a6", "#96938e"], road: ["#686b70", "#74767a", "#5e6268"]
 };
 
+const legacyTerrain = {
+  grass: "#76925a", grassLight: "#91a967", grassDark: "#4f7047",
+  water: "#4389a8", waterLight: "#579bb5", shore: "#b99f78",
+  road: "#696c70", pavement: "#a8a198", parcel: "#8d9e69",
+  soil: "#765a45", stone: "#77766d"
+};
+
+const legacyTreePalettes = {
+  foliage: ["#244832", "#365d39", "#527842", "#779650"],
+  birchFoliage: ["#31543a", "#4c7042", "#72904e", "#9cac62"],
+  pineFoliage: ["#193b31", "#28503c", "#386348", "#53795a"],
+  yewFoliage: ["#112f28", "#1d4533", "#2d5c3d", "#47734c"],
+  timber: ["#493224", "#62442b", "#795735"],
+  birchTimber: ["#62635b", "#989687", "#cac6ad"],
+  pineTimber: ["#59321f", "#824a28", "#aa6733"]
+};
+
 export const LEGACY_VISUAL_THEME = freezeTheme({
   id: "legacy",
   materials: legacyMaterials,
   materialVariants: legacyVariants,
+  terrain: legacyTerrain,
+  treePalettes: legacyTreePalettes,
   environment: {
     middaySkyTop: "#80bad9", middayHorizon: "#d8edf2", cloudLight: "#fff7e7",
     cloudShadow: "#b9cbd3", fog: "#d8edf2", sun: "#fff0c7",
@@ -77,10 +100,29 @@ const sunlitVariants = {
   pavement: family(sunlitMaterials.pavement, "#afa99d", "#99948b"), road: family(sunlitMaterials.road, "#727474", "#5f6263")
 };
 
+const sunlitTerrain = {
+  grass: sunlitMaterials.grass, grassLight: sunlitMaterials.grassLight, grassDark: sunlitMaterials.grassDark,
+  water: sunlitMaterials.water, waterLight: sunlitMaterials.waterLight, shore: sunlitMaterials.sandstone,
+  road: sunlitMaterials.road, pavement: sunlitMaterials.pavement, parcel: sunlitMaterials.grassLight,
+  soil: sunlitMaterials.soil, stone: sunlitMaterials.stoneShadow
+};
+
+const sunlitTreePalettes = {
+  foliage: ["#3f5b40", "#526c47", "#667d53", "#7d8f65"],
+  birchFoliage: ["#48634a", "#5d7451", "#71865b", "#87966b"],
+  pineFoliage: ["#314f42", "#3e5f4b", "#4d7054", "#627e63"],
+  yewFoliage: ["#2c463a", "#385544", "#47664c", "#5b7556"],
+  timber: ["#47382e", "#554334", "#66523e"],
+  birchTimber: ["#6d6d66", "#9a988b", "#c6c0aa"],
+  pineTimber: ["#51382a", "#684630", "#805839"]
+};
+
 export const SUNLIT_STORYBOOK_THEME = freezeTheme({
   id: "sunlit-storybook",
   materials: sunlitMaterials,
   materialVariants: sunlitVariants,
+  terrain: sunlitTerrain,
+  treePalettes: sunlitTreePalettes,
   environment: {
     middaySkyTop: "#88b4ca", middayHorizon: "#d8dfd5", cloudLight: "#f7f1e4",
     cloudShadow: "#aebbc0", fog: "#d3dcd4", sun: "#fff1d3",
