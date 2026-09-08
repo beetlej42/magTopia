@@ -690,19 +690,19 @@ export function createVoxelDistrictMacroSurface(config = {}) {
   const terrainRows = params.worldRows * MACRO_TERRAIN_SUBDIVISIONS;
   const worldWidth = params.worldColumns * cellWorldSize;
   const worldDepth = params.worldRows * cellWorldSize;
-  const colors = ACTIVE_VISUAL_THEME.materials;
+  const colors = ACTIVE_VISUAL_THEME.terrain;
   const palette = {
     grass: new THREE.Color(colors.grass),
     grassLight: new THREE.Color(colors.grassLight),
     grassDark: new THREE.Color(colors.grassDark),
     water: new THREE.Color(colors.water),
     waterLight: new THREE.Color(colors.waterLight),
-    shore: new THREE.Color(colors.sandstone),
+    shore: new THREE.Color(colors.shore),
     road: new THREE.Color(colors.road),
     pavement: new THREE.Color(colors.pavement),
-    parcel: new THREE.Color(colors.grassLight),
+    parcel: new THREE.Color(colors.parcel),
     soil: new THREE.Color(colors.soil),
-    stone: new THREE.Color(colors.stoneShadow)
+    stone: new THREE.Color(colors.stone)
   };
   const material = applyStorybookSurfaceMaterial(new THREE.MeshStandardMaterial({
     vertexColors: true,
