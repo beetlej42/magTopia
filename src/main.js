@@ -926,6 +926,7 @@ async function rebuildActive(config) {
   skyClock.time = Number.isFinite(Number(currentConfig.sunTime)) ? Number(currentConfig.sunTime) : skyClock.time;
   voxelSky.visible = isVoxelSkyMode();
   applyWorldLighting(currentConfig.sunTime);
+  publishAtmosphereDiagnostics();
   applyDistrictBokeh(currentConfig.bokehStrength ?? 1, currentConfig.bokehBlur ?? 1);
   configureCameraForViewport();
   document.documentElement.dataset.magicTownMode = currentMode;
@@ -1064,7 +1065,7 @@ function applyWorldLighting(sunTime = 0.52, updateActiveObject = true) {
   const atmosphere = ACTIVE_VISUAL_THEME.atmosphere;
   if (isVoxelSkyMode() && atmosphere.enabled) {
     if (!scene.fog) scene.fog = new THREE.Fog(ACTIVE_VISUAL_THEME.environment.fog, atmosphere.near, atmosphere.far);
-    scene.fog.color.set(ACTIVE_VISUAL_THEME.environment.fog);
+    scene.fog.color.copy(style.fogColor);
     scene.fog.near = atmosphere.near;
     scene.fog.far = atmosphere.far;
   } else {
@@ -1089,6 +1090,12 @@ function applyWorldLighting(sunTime = 0.52, updateActiveObject = true) {
   worldLights.rim.color.copy(style.rgbTint);
   worldLights.rim.intensity = shadowDebugEnabled ? 0 : style.rimIntensity * voxelRimContrast;
   document.documentElement.dataset.magicTownVoxelSurfaceStrength = startupVoxelSurfaceStrength.toFixed(3);
+  if (updateActiveObject) activeObject?.userData.updateDaylight?.(style);
+  return style;
+}
+
+function publishAtmosphereDiagnostics() {
+  const atmosphere = ACTIVE_VISUAL_THEME.atmosphere;
   document.documentElement.dataset.magicTownAtmosphere = JSON.stringify({
     enabled: Boolean(scene.fog),
     color: ACTIVE_VISUAL_THEME.environment.fog,
@@ -1097,8 +1104,6 @@ function applyWorldLighting(sunTime = 0.52, updateActiveObject = true) {
     toneMapping: ACTIVE_VISUAL_THEME.grading.toneMapping,
     exposure: ACTIVE_VISUAL_THEME.grading.exposure
   });
-  if (updateActiveObject) activeObject?.userData.updateDaylight?.(style);
-  return style;
 }
 
 function updateWorldShadowForView(force = false) {
