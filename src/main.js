@@ -1073,7 +1073,7 @@ function applyWorldLighting(sunTime = 0.52, updateActiveObject = true) {
   const massingContrast = currentMode === "massing" || currentMode === "styles";
   const voxelWorldLighting = ["voxel", "vegetation", "district", "agentcity"].includes(currentMode);
   const voxelAmbientContrast = voxelWorldLighting
-    ? (ACTIVE_VISUAL_THEME.id === "legacy" ? 0.58 : 0.60)
+    ? (ACTIVE_VISUAL_THEME.id === "legacy" ? 0.58 : 0.53)
     : 1;
   const voxelRimContrast = voxelWorldLighting ? 0.72 : 1;
   worldLights.ambient.intensity = shadowDebugEnabled

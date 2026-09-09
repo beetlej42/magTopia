@@ -62,8 +62,14 @@ test("city daylight keeps structures readable while making midnight darker", () 
   for (const color of [noon.sunColor, noon.skyColor, noon.atmosphereColor, noon.ambientSky, noon.ambientGround]) {
     assert.ok([color.r, color.g, color.b].every(Number.isFinite));
   }
-  assert.ok(noon.sunColor.r > noon.sunColor.b, "midday sun should remain warm white");
-  assert.ok(noon.ambientSky.b >= noon.ambientSky.r, "midday sky ambient should remain cool");
+  assert.ok(noon.sunColor.r > noon.sunColor.g && noon.sunColor.g > noon.sunColor.b,
+    "midday sun should have a clear warm-gold ordering");
+  assert.ok(noon.ambientSky.b > noon.ambientSky.g && noon.ambientSky.g > noon.ambientSky.r,
+    "midday sky ambient should remain distinctly cool");
+  assert.ok(noon.ambientGround.b < noon.ambientGround.r,
+    "ground fill should stay neutral/sage rather than blue-white");
+  assert.ok(noon.sunIntensity > noon.ambientIntensity * 1.3,
+    "raw daylight should preserve a clearly dominant direct sun before the voxel ambient multiplier");
 });
 
 test("storybook twilight keeps colored ambient fill instead of crushing shadows", () => {
