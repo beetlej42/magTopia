@@ -66,12 +66,16 @@ test("city daylight keeps structures readable while making midnight darker", () 
 });
 
 test("storybook twilight keeps colored ambient fill instead of crushing shadows", () => {
-  const dawn = voxelDaylightStyle(0.3);
+  const dawn = voxelDaylightStyle(0.25);
   const noon = voxelDaylightStyle(0.5);
-  assert.ok(dawn.twilightFactor > 0, "0.3 should retain twilight influence");
+  const midnight = voxelDaylightStyle(0);
+  assert.ok(dawn.twilightFactor > 0.2, "sunrise should retain twilight influence");
   assert.ok(dawn.ambientSky.b > dawn.ambientSky.r, "dawn sky fill should stay cool");
   assert.ok(dawn.ambientGround.r >= dawn.ambientGround.b, "dawn ground fill should stay warm");
-  assert.ok(dawn.ambientSky.getHSL({}).l > 0.35, "dawn ambient fill should remain readable");
+  assert.ok(
+    dawn.ambientSky.getHSL({}).l > midnight.ambientSky.getHSL({}).l + 0.08,
+    "dawn ambient fill should lift materially above midnight"
+  );
   assert.ok(noon.ambientSky.getHSL({}).l >= dawn.ambientSky.getHSL({}).l);
 });
 
