@@ -9,7 +9,8 @@ import {
 } from "../src/render/storybookSurfaceMaterial.js";
 import {
   getVoxelEnvironmentShaderDiagnostics,
-  getVoxelFacetHighlightMode
+  getVoxelFacetHighlightMode,
+  updateVoxelEnvironmentView
 } from "../src/render/voxelCurvedWorldTwinkle.js";
 
 test("storybook surface categories distinguish brick, slate, plaster, and felt", () => {
@@ -118,6 +119,8 @@ test("storybook surface shader wraps existing material compilation", () => {
   assert.match(shader.fragmentShader, /dot\(normal, voxelGlintHalfDir\)/);
   assert.match(shader.fragmentShader, /voxelToonGrouped/);
   assert.match(shader.fragmentShader, /reflectedLight\.directDiffuse \*= mix/);
+  assert.match(shader.fragmentShader, /voxelAerialRelativeDepth/);
+  assert.match(shader.fragmentShader, /voxelAerialFocusDistance/);
   assert.match(shader.fragmentShader, /voxelAerialDistanceWeight/);
   assert.match(shader.fragmentShader, /voxelAerialHorizon/);
   assert.match(shader.fragmentShader, /outgoingLight = mix\(outgoingLight, voxelAerialColor, voxelAerialWeight\)/);
@@ -139,5 +142,7 @@ test("storybook surface shader wraps existing material compilation", () => {
   assert.equal(environment.traditionalFog, false);
   assert.equal(environment.extraPasses, 0);
   assert.equal(environment.outlinePass, false);
-  assert.ok(environment.aerialPerspective.strength < 0.25);
+  assert.ok(environment.aerialPerspective.strength < 0.1);
+  updateVoxelEnvironmentView({ cameraDistance: 123.5 });
+  assert.equal(getVoxelEnvironmentShaderDiagnostics().focusDistance, 123.5);
 });
