@@ -10,7 +10,8 @@ const freezeTheme = (theme) => Object.freeze({
   )),
   environment: Object.freeze({ ...theme.environment }),
   grading: Object.freeze({ ...theme.grading }),
-  atmosphere: Object.freeze({ ...theme.atmosphere })
+  aerialPerspective: Object.freeze({ ...theme.aerialPerspective }),
+  toon: Object.freeze({ ...theme.toon })
 });
 
 const legacyMaterials = {
@@ -65,19 +66,26 @@ export const LEGACY_VISUAL_THEME = freezeTheme({
   treePalettes: legacyTreePalettes,
   environment: {
     middaySkyTop: "#80bad9", middayHorizon: "#d8edf2", cloudLight: "#fff7e7",
-    cloudShadow: "#b9cbd3", fog: "#d8edf2", sun: "#fff0c7",
+    cloudShadow: "#b9cbd3", sun: "#fff0c7",
     ambientSky: "#dceef2", ambientGround: "#99a58f"
   },
   grading: { toneMapping: "none", exposure: 1 },
-  atmosphere: { enabled: false, near: 70, far: 210 }
+  aerialPerspective: {
+    enabled: false, near: 44, far: 185, strength: 0,
+    horizonStrength: 0, saturationReduction: 0, contrastReduction: 0, shadowLift: 0
+  },
+  toon: {
+    enabled: false, strength: 0, shadowLevel: 0.72, midLevel: 0.92,
+    highlightLevel: 1.08, transitionSoftness: 0.09
+  }
 });
 
 const sunlitMaterials = {
-  brickRed: "#985d4d", brickBrown: "#684b42", sandstone: "#c5b596",
-  limestone: "#d4cdbd", stoneShadow: "#8b8478", slate: "#46515e",
+  brickRed: "#a66454", brickBrown: "#704e43", sandstone: "#cbb99a",
+  limestone: "#dad1bf", stoneShadow: "#91877a", slate: "#515e69",
   timber: "#3b3931", iron: "#292f32", patinaMetal: "#536b66",
-  grass: "#73845b", grassLight: "#87956a", grassDark: "#596c4c",
-  foliage: "#607451", foliageLight: "#748560", foliageDark: "#465d43",
+  grass: "#7d8e6d", grassLight: "#879879", grassDark: "#5e7354",
+  foliage: "#687d5c", foliageLight: "#7b8d6b", foliageDark: "#4e6549",
   soil: "#715746", road: "#686b6b", pavement: "#a59f94",
   water: "#56879a", waterLight: "#78a5ae", warmWindow: "#e9ad5c",
   violetMagic: "#7d69a9", tealMagic: "#5b9d98"
@@ -85,14 +93,14 @@ const sunlitMaterials = {
 
 const family = (base, ...variants) => [base, ...variants];
 const sunlitVariants = {
-  brickRed: family(sunlitMaterials.brickRed, "#a36552", "#8d5548", "#9e6250"),
-  brickBrown: family(sunlitMaterials.brickBrown, "#725148", "#60463e"),
-  sandstone: family(sunlitMaterials.sandstone, "#cebea0", "#baa98b"), stoneShadow: family(sunlitMaterials.stoneShadow, "#958d80", "#80796f"),
-  limestone: family(sunlitMaterials.limestone, "#ddd5c5", "#c7c0b2"), slate: family(sunlitMaterials.slate, "#505c69", "#3e4955", "#56616d"),
+  brickRed: family(sunlitMaterials.brickRed, "#ad6c59", "#995b4d", "#a26252"),
+  brickBrown: family(sunlitMaterials.brickBrown, "#79554a", "#67483f"),
+  sandstone: family(sunlitMaterials.sandstone, "#d4c2a2", "#bfad8f"), stoneShadow: family(sunlitMaterials.stoneShadow, "#9b9183", "#867d72"),
+  limestone: family(sunlitMaterials.limestone, "#e2d9c8", "#cdc5b6"), slate: family(sunlitMaterials.slate, "#5b6873", "#485560", "#616d78"),
   timber: family(sunlitMaterials.timber, "#454137", "#33352f"),
-  foliage: family(sunlitMaterials.foliage, "#697b57", "#566b4b"), foliageDark: family(sunlitMaterials.foliageDark, "#506649", "#3e563e"),
-  foliageLight: family(sunlitMaterials.foliageLight, "#7e8e67", "#6b7d58"), grass: family(sunlitMaterials.grass, "#7c8b61", "#697a54"),
-  grassLight: family(sunlitMaterials.grassLight, "#909d72", "#7e8c63"), grassDark: family(sunlitMaterials.grassDark, "#627453", "#506548"),
+  foliage: family(sunlitMaterials.foliage, "#718565", "#5e7354"), foliageDark: family(sunlitMaterials.foliageDark, "#587052", "#465d43"),
+  foliageLight: family(sunlitMaterials.foliageLight, "#849574", "#718363"), grass: family(sunlitMaterials.grass, "#859576", "#748566"),
+  grassLight: family(sunlitMaterials.grassLight, "#909f81", "#7f9071"), grassDark: family(sunlitMaterials.grassDark, "#687b5c", "#566b4d"),
   soil: family(sunlitMaterials.soil, "#7b5f4c", "#685041"), water: family(sunlitMaterials.water, "#6091a2", "#4d7e91"),
   waterLight: family(sunlitMaterials.waterLight, "#82adb5", "#6e9ca7"), warmWindow: family(sunlitMaterials.warmWindow, "#f0ba69", "#d99e50"),
   violetMagic: family(sunlitMaterials.violetMagic, "#8b75b7", "#705c9b"), tealMagic: family(sunlitMaterials.tealMagic, "#68aaa3", "#4f918e"),
@@ -108,10 +116,10 @@ const sunlitTerrain = {
 };
 
 const sunlitTreePalettes = {
-  foliage: ["#3f5b40", "#526c47", "#667d53", "#7d8f65"],
-  birchFoliage: ["#48634a", "#5d7451", "#71865b", "#87966b"],
-  pineFoliage: ["#314f42", "#3e5f4b", "#4d7054", "#627e63"],
-  yewFoliage: ["#2c463a", "#385544", "#47664c", "#5b7556"],
+  foliage: ["#465f45", "#5a714f", "#6d825d", "#819270"],
+  birchFoliage: ["#50694f", "#647a59", "#788b66", "#8c9a76"],
+  pineFoliage: ["#355247", "#426153", "#52715c", "#66806b"],
+  yewFoliage: ["#30493e", "#3d5849", "#4d6953", "#617963"],
   timber: ["#47382e", "#554334", "#66523e"],
   birchTimber: ["#6d6d66", "#9a988b", "#c6c0aa"],
   pineTimber: ["#51382a", "#684630", "#805839"]
@@ -124,12 +132,19 @@ export const SUNLIT_STORYBOOK_THEME = freezeTheme({
   terrain: sunlitTerrain,
   treePalettes: sunlitTreePalettes,
   environment: {
-    middaySkyTop: "#88b4ca", middayHorizon: "#d8dfd5", cloudLight: "#f7f1e4",
-    cloudShadow: "#aebbc0", fog: "#d3dcd4", sun: "#fff1d3",
+    middaySkyTop: "#82afc5", middayHorizon: "#cdd5d5", cloudLight: "#f7f1e4",
+    cloudShadow: "#aebbc0", sun: "#fff1d3",
     ambientSky: "#d4e0df", ambientGround: "#96998a"
   },
   grading: { toneMapping: "aces-filmic", exposure: 1.05 },
-  atmosphere: { enabled: true, near: 72, far: 215 }
+  aerialPerspective: {
+    enabled: true, near: 44, far: 185, strength: 0.18,
+    horizonStrength: 0.68, saturationReduction: 0.2, contrastReduction: 0.14, shadowLift: 0.055
+  },
+  toon: {
+    enabled: true, strength: 0.44, shadowLevel: 0.72, midLevel: 0.94,
+    highlightLevel: 1.08, transitionSoftness: 0.09
+  }
 });
 
 export function resolveVisualTheme(value) {

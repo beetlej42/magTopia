@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import {
   LEGACY_VISUAL_THEME,
   SUNLIT_STORYBOOK_THEME,
@@ -36,8 +37,22 @@ test("Sunlit Storybook exposes immutable semantic roles and restrained variants"
     assert.ok(Object.isFrozen(SUNLIT_STORYBOOK_THEME.treePalettes[role]), `treePalettes.${role} immutable`);
   }
   assert.ok(Object.isFrozen(SUNLIT_STORYBOOK_THEME));
-  assert.equal(SUNLIT_STORYBOOK_THEME.atmosphere.enabled, true);
-  assert.ok(SUNLIT_STORYBOOK_THEME.atmosphere.near < SUNLIT_STORYBOOK_THEME.atmosphere.far);
+  const aerial = SUNLIT_STORYBOOK_THEME.aerialPerspective;
+  assert.equal(aerial.enabled, true);
+  assert.ok(aerial.near < aerial.far);
+  assert.ok(aerial.strength > 0 && aerial.strength < 0.25);
+  for (const value of Object.values(aerial).filter((value) => typeof value === "number")) assert.ok(Number.isFinite(value));
+  const toon = SUNLIT_STORYBOOK_THEME.toon;
+  assert.equal(toon.enabled, true);
+  assert.ok(toon.strength >= 0.35 && toon.strength <= 0.55);
+  for (const value of Object.values(toon).filter((value) => typeof value === "number")) assert.ok(Number.isFinite(value));
+  assert.equal(LEGACY_VISUAL_THEME.toon.enabled, false);
+});
+
+test("product runtime has no traditional fog or outline post-process", async () => {
+  const mainSource = await readFile(new URL("../src/main.js", import.meta.url), "utf8");
+  assert.doesNotMatch(mainSource, /THREE\.Fog|scene\.fog/);
+  assert.equal(SUNLIT_STORYBOOK_THEME.environment.fog, undefined);
 });
 
 test("legacy terrain roles preserve the pre-theme runtime baseline", () => {

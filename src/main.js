@@ -7,7 +7,11 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { AdaptiveBokehPass, calculateBokehViewAmount } from "./render/adaptiveBokehPass.js";
 import { setStorybookSurfaceStrength } from "./render/storybookSurfaceMaterial.js";
 import { ACTIVE_VISUAL_THEME } from "./render/sunlitStorybookTheme.js";
-import { getVoxelFacetHighlightMode } from "./render/voxelCurvedWorldTwinkle.js";
+import {
+  getVoxelEnvironmentShaderDiagnostics,
+  getVoxelFacetHighlightMode,
+  updateVoxelEnvironmentStyle
+} from "./render/voxelCurvedWorldTwinkle.js";
 import { chooseAdaptiveQuality, detectMobileRenderProfile, shouldEnableBokeh } from "./render/mobilePerformance.js";
 import {
   calculateShadowViewExtent,
@@ -1062,15 +1066,7 @@ function applyWorldLighting(sunTime = 0.52, updateActiveObject = true) {
     ? voxelDaylightStyle(sunTime)
     : getDaylightStyle(sunTime);
   scene.background.copy(style.skyColor);
-  const atmosphere = ACTIVE_VISUAL_THEME.atmosphere;
-  if (isVoxelSkyMode() && atmosphere.enabled) {
-    if (!scene.fog) scene.fog = new THREE.Fog(ACTIVE_VISUAL_THEME.environment.fog, atmosphere.near, atmosphere.far);
-    scene.fog.color.copy(style.fogColor);
-    scene.fog.near = atmosphere.near;
-    scene.fog.far = atmosphere.far;
-  } else {
-    scene.fog = null;
-  }
+  if (isVoxelSkyMode()) updateVoxelEnvironmentStyle(style);
   worldLights.ambient.color.copy(style.ambientSky);
   worldLights.ambient.groundColor.copy(style.ambientGround);
   const massingContrast = currentMode === "massing" || currentMode === "styles";
@@ -1095,12 +1091,8 @@ function applyWorldLighting(sunTime = 0.52, updateActiveObject = true) {
 }
 
 function publishAtmosphereDiagnostics() {
-  const atmosphere = ACTIVE_VISUAL_THEME.atmosphere;
   document.documentElement.dataset.magicTownAtmosphere = JSON.stringify({
-    enabled: Boolean(scene.fog),
-    color: ACTIVE_VISUAL_THEME.environment.fog,
-    near: atmosphere.near,
-    far: atmosphere.far,
+    ...getVoxelEnvironmentShaderDiagnostics(),
     toneMapping: ACTIVE_VISUAL_THEME.grading.toneMapping,
     exposure: ACTIVE_VISUAL_THEME.grading.exposure
   });
