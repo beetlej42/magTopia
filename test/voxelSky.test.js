@@ -66,8 +66,10 @@ test("city daylight keeps structures readable while making midnight darker", () 
     "midday sun should have a clear warm-gold ordering");
   assert.ok(noon.ambientSky.b > noon.ambientSky.g && noon.ambientSky.g > noon.ambientSky.r,
     "midday sky ambient should remain distinctly cool");
-  assert.ok(noon.ambientGround.b < noon.ambientGround.r,
-    "ground fill should stay neutral/sage rather than blue-white");
+  assert.ok(noon.ambientGround.b > noon.ambientGround.r,
+    "ground fill probe should stay visibly blue-grey rather than sage");
+  assert.ok(noon.ambientGround.getHSL({}).s < 0.35,
+    "ground fill should remain a low-saturation grey-blue, not a saturated blue light");
   assert.ok(noon.sunIntensity > noon.ambientIntensity * 1.3,
     "raw daylight should preserve a clearly dominant direct sun before the voxel ambient multiplier");
 });
