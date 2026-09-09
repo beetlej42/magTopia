@@ -119,6 +119,9 @@ test("storybook surface shader wraps existing material compilation", () => {
   assert.match(shader.fragmentShader, /dot\(normal, voxelGlintHalfDir\)/);
   assert.match(shader.fragmentShader, /voxelToonGrouped/);
   assert.match(shader.fragmentShader, /reflectedLight\.directDiffuse \*= mix/);
+  assert.match(shader.fragmentShader, /uniform float voxelLightSeparationEnabled/);
+  assert.match(shader.fragmentShader, /uniform float voxelDirectWarmth/);
+  assert.match(shader.fragmentShader, /uniform float voxelShadowCoolness/);
   assert.match(shader.fragmentShader, /voxelWarmDiffuseScale/);
   assert.match(shader.fragmentShader, /voxelCoolDiffuseScale/);
   assert.match(shader.fragmentShader, /reflectedLight\.directDiffuse \*= voxelWarmDiffuseScale/);
