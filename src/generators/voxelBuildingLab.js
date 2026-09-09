@@ -1513,7 +1513,7 @@ export function voxelDaylightStyle(sunTime = 0.52) {
     ambientSky,
     ambientGround,
     ambientIntensity: 0.68 + daylight * 1.66 + goldenHour * 0.68,
-    sunIntensity: 0.12 + daylight * 2.85 + goldenHour * 0.72,
+    sunIntensity: 0.12 + daylight * 3.08 + goldenHour * 0.72,
     rimIntensity: (ACTIVE_VISUAL_THEME.id === "legacy" ? 0.55 : 0.24) + moonlight * 0.95 + goldenHour * 0.28,
     nightFactor: state.night,
     daylightFactor: daylight,
