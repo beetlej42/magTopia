@@ -47,7 +47,7 @@ test("Sunlit Storybook exposes immutable semantic roles and restrained variants"
   assert.ok(toon.strength >= 0.35 && toon.strength <= 0.55);
   for (const value of Object.values(toon).filter((value) => typeof value === "number")) assert.ok(Number.isFinite(value));
   assert.equal(LEGACY_VISUAL_THEME.toon.enabled, false);
-  for (const role of ["sun", "twilightSun", "ambientSky", "ambientGround", "twilightAmbientSky", "twilightAmbientGround"]) {
+  for (const role of ["sun", "twilightSun", "dayLowSky", "ambientSky", "ambientGround", "twilightAmbientSky", "twilightAmbientGround"]) {
     assert.match(SUNLIT_STORYBOOK_THEME.environment[role], /^#[0-9a-f]{6}$/i, `environment.${role}`);
   }
 });

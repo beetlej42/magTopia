@@ -67,6 +67,7 @@ export const LEGACY_VISUAL_THEME = freezeTheme({
   environment: {
     middaySkyTop: "#80bad9", middayHorizon: "#d8edf2", cloudLight: "#fff7e7",
     cloudShadow: "#b9cbd3", sun: "#fff0c7", twilightSun: "#e17d5c",
+    dayLowSky: "#adc8d2",
     ambientSky: "#dceef2", ambientGround: "#99a58f",
     twilightAmbientSky: "#202a49", twilightAmbientGround: "#202738"
   },
@@ -133,8 +134,9 @@ export const SUNLIT_STORYBOOK_THEME = freezeTheme({
   terrain: sunlitTerrain,
   treePalettes: sunlitTreePalettes,
   environment: {
-    middaySkyTop: "#82afc5", middayHorizon: "#cdd5d5", cloudLight: "#f7f1e4",
-    cloudShadow: "#aebbc0", sun: "#fff3dc", twilightSun: "#f2aa7b",
+    middaySkyTop: "#87b5cc", middayHorizon: "#d9e2df", cloudLight: "#f7f1e4",
+    cloudShadow: "#aebbc0", sun: "#ffe6b8", twilightSun: "#f2aa7b",
+    dayLowSky: "#e2e7df",
     ambientSky: "#d8e5ec", ambientGround: "#b7ad95",
     twilightAmbientSky: "#a9bdd1", twilightAmbientGround: "#aa9b84"
   },

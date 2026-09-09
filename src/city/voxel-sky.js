@@ -11,12 +11,14 @@ const CLOUD_BASIS_CHANGE_THRESHOLD_SQ = 3e-6;
 
 const SKY_STOPS = Object.freeze([
   [0, "#091126", "#182543"],
-  [0.16, "#111d3b", "#6d5573"],
-  [0.23, "#31527a", "#e68a78"],
-  [0.3, "#75a8cc", "#f1c6a7"],
+  [0.16, "#111d3b", "#66536f"],
+  [0.22, "#2e5078", "#cc7e73"],
+  [0.25, "#557fa5", "#f0a982"],
+  [0.3, "#83b5d1", "#dfe6df"],
   [0.5, ACTIVE_VISUAL_THEME.environment.middaySkyTop, ACTIVE_VISUAL_THEME.environment.middayHorizon],
-  [0.7, "#69a0c3", "#f4b789"],
-  [0.77, "#3a4d79", "#d47d7e"],
+  [0.7, "#82aec6", "#dfe3dc"],
+  [0.75, "#6d94b2", "#efb486"],
+  [0.79, "#394d79", "#d57f7e"],
   [0.84, "#151f42", "#594967"],
   [1, "#091126", "#182543"]
 ]);
@@ -31,6 +33,9 @@ const CLOUD_SHADOW_NIGHT_COLOR = new THREE.Color("#39405f");
 const CLOUD_SHADOW_DAY_COLOR = new THREE.Color(ACTIVE_VISUAL_THEME.environment.cloudShadow);
 const MOON_NIGHT_COLOR = new THREE.Color("#dfe8ff");
 const MOON_TWILIGHT_COLOR = new THREE.Color("#fff0c7");
+const DAY_LOW_SKY_COLOR = new THREE.Color(
+  ACTIVE_VISUAL_THEME.environment.dayLowSky ?? ACTIVE_VISUAL_THEME.environment.middayHorizon
+);
 
 export function getVoxelSkyState(inputTime = 0.5, target = null) {
   const state = ensureSkyStateTarget(target);
@@ -153,7 +158,18 @@ export function createVoxelSky(options = {}) {
 
     domeMaterial.uniforms.topColor.value.copy(lastState.topColor);
     domeMaterial.uniforms.horizonColor.value.copy(lastState.horizonColor);
-    bottomColor.copy(lastState.horizonColor).multiplyScalar(0.68 + lastState.daylight * 0.2);
+    if (ACTIVE_VISUAL_THEME.id === "legacy") {
+      bottomColor.copy(lastState.horizonColor).multiplyScalar(0.68 + lastState.daylight * 0.2);
+    } else {
+      // Full daylight uses a dedicated neutral low-sky color so warm sunrise /
+      // sunset hues stay local to their short windows instead of staining the
+      // lower half of the sky all day.
+      const dayLowSkyBlend = smoothstep(0.65, 0.95, lastState.daylight);
+      bottomColor
+        .copy(lastState.horizonColor)
+        .multiplyScalar(0.72 + lastState.daylight * 0.12)
+        .lerp(DAY_LOW_SKY_COLOR, dayLowSkyBlend);
+    }
     domeMaterial.uniforms.bottomColor.value.copy(bottomColor);
 
     stars.material.opacity = lastState.starOpacity * (0.78 + Math.sin(normalizedElapsed * 1.6) * 0.1);
