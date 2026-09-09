@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import * as THREE from "three";
 import { createVoxelSky, getVoxelSkyState } from "../src/city/voxel-sky.js";
 import { voxelDaylightStyle } from "../src/generators/voxelBuildingLab.js";
+import { SUNLIT_STORYBOOK_THEME } from "../src/render/sunlitStorybookTheme.js";
 
 test("voxel sky exposes distinct noon, sunset, and midnight states", () => {
   const noon = getVoxelSkyState(0.5);
@@ -106,6 +107,29 @@ test("midday sky stays bright and interpolates toward adjacent stops", () => {
   const colorDelta = (left, right) => Math.hypot(left.r - right.r, left.g - right.g, left.b - right.b);
   assert.ok(colorDelta(before.topColor, noon.topColor) < 0.08);
   assert.ok(colorDelta(after.topColor, noon.topColor) < 0.08);
+});
+
+test("full daylight horizon stays neutral while sunrise warmth remains brief", () => {
+  const neutralTimes = [0.35, 0.5, 0.65];
+  for (const time of neutralTimes) {
+    const horizon = getVoxelSkyState(time).horizonColor;
+    assert.ok(horizon.g >= horizon.r - 0.03, `day horizon should not turn red at ${time}`);
+    assert.ok(horizon.b >= horizon.r - 0.03, `day horizon should stay blue-neutral at ${time}`);
+  }
+  const sunriseHorizon = getVoxelSkyState(0.25).horizonColor;
+  assert.ok(sunriseHorizon.r > sunriseHorizon.b + 0.08, "sunrise should still have a short warm horizon");
+});
+
+test("sunlit dome uses the dedicated neutral low-sky color in full daylight", () => {
+  const sky = createVoxelSky({ seed: "low-sky-test" });
+  const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 500);
+  camera.position.set(0, 18, 42);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld(true);
+  sky.userData.update({ time: 0.5, elapsed: 0, camera });
+  const bottom = sky.getObjectByName("VoxelSkyDome").material.uniforms.bottomColor.value;
+  assert.equal(bottom.getHexString(), new THREE.Color(SUNLIT_STORYBOOK_THEME.environment.dayLowSky).getHexString());
+  sky.userData.dispose();
 });
 
 test("sun and moon remain camera-facing while the surface camera moves", () => {
