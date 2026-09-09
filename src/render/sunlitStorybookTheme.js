@@ -11,7 +11,8 @@ const freezeTheme = (theme) => Object.freeze({
   environment: Object.freeze({ ...theme.environment }),
   grading: Object.freeze({ ...theme.grading }),
   aerialPerspective: Object.freeze({ ...theme.aerialPerspective }),
-  toon: Object.freeze({ ...theme.toon })
+  toon: Object.freeze({ ...theme.toon }),
+  lightingSeparation: Object.freeze({ ...theme.lightingSeparation })
 });
 
 const legacyMaterials = {
@@ -79,6 +80,9 @@ export const LEGACY_VISUAL_THEME = freezeTheme({
   toon: {
     enabled: false, strength: 0, shadowLevel: 0.72, midLevel: 0.92,
     highlightLevel: 1.08, transitionSoftness: 0.09
+  },
+  lightingSeparation: {
+    enabled: false, directWarmth: 0, shadowCoolness: 0
   }
 });
 
@@ -148,6 +152,9 @@ export const SUNLIT_STORYBOOK_THEME = freezeTheme({
   toon: {
     enabled: true, strength: 0.44, shadowLevel: 0.72, midLevel: 0.94,
     highlightLevel: 1.08, transitionSoftness: 0.09
+  },
+  lightingSeparation: {
+    enabled: true, directWarmth: 0.72, shadowCoolness: 0.58
   }
 });
 
