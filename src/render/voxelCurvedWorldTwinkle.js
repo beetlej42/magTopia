@@ -13,6 +13,7 @@ export const VOXEL_FACET_DECLARATIONS_MARKER = "/* voxel-facet-declarations-end 
 
 const aerialConfig = ACTIVE_VISUAL_THEME.aerialPerspective;
 const toonConfig = ACTIVE_VISUAL_THEME.toon;
+const lightingSeparationConfig = ACTIVE_VISUAL_THEME.lightingSeparation;
 const SHARED_ENVIRONMENT_UNIFORMS = {
   voxelAerialEnabled: { value: aerialConfig.enabled ? 1 : 0 },
   voxelAerialColor: { value: new Color(ACTIVE_VISUAL_THEME.environment.middayHorizon).multiplyScalar(0.88) },
@@ -29,7 +30,10 @@ const SHARED_ENVIRONMENT_UNIFORMS = {
   voxelToonShadowLevel: { value: toonConfig.shadowLevel },
   voxelToonMidLevel: { value: toonConfig.midLevel },
   voxelToonHighlightLevel: { value: toonConfig.highlightLevel },
-  voxelToonTransitionSoftness: { value: toonConfig.transitionSoftness }
+  voxelToonTransitionSoftness: { value: toonConfig.transitionSoftness },
+  voxelLightSeparationEnabled: { value: lightingSeparationConfig.enabled ? 1 : 0 },
+  voxelDirectWarmth: { value: lightingSeparationConfig.directWarmth },
+  voxelShadowCoolness: { value: lightingSeparationConfig.shadowCoolness }
 };
 
 export function updateVoxelEnvironmentStyle(style = {}) {
@@ -48,6 +52,7 @@ export function getVoxelEnvironmentShaderDiagnostics() {
     traditionalFog: false,
     aerialPerspective: { ...aerialConfig },
     toon: { ...toonConfig },
+    lightingSeparation: { ...lightingSeparationConfig },
     atmosphereColor: `#${SHARED_ENVIRONMENT_UNIFORMS.voxelAerialColor.value.getHexString()}`,
     focusDistance: SHARED_ENVIRONMENT_UNIFORMS.voxelAerialFocusDistance.value,
     extraPasses: 0,
@@ -374,6 +379,28 @@ uniform float voxelAerialFocusDistance;\nuniform float voxelToonEnabled;\nunifor
     voxelToonRatio,
     voxelToonEnabled * voxelToonStrength * voxelToonMaterialResponse
   );
+
+  // Warm/cool separation is deliberately chromatic rather than another
+  // brightness boost. Direct diffuse leans warm; hemisphere/indirect diffuse
+  // leans cool. Both multipliers stay close to unit luminance so the scene
+  // gains color-temperature separation without turning yellow or darker.
+  float voxelLightSeparationMaterialResponse = 1.0;
+  if (vVoxelSurfaceKind > 4.5 && vVoxelSurfaceKind < 5.5) voxelLightSeparationMaterialResponse = 0.72;
+  if (vVoxelSurfaceKind > 6.5) voxelLightSeparationMaterialResponse = 0.18;
+  float voxelDirectWarm = voxelLightSeparationEnabled * voxelDirectWarmth * voxelLightSeparationMaterialResponse;
+  float voxelShadowCool = voxelLightSeparationEnabled * voxelShadowCoolness * voxelLightSeparationMaterialResponse;
+  vec3 voxelWarmDiffuseScale = vec3(
+    1.0 + 0.12 * voxelDirectWarm,
+    1.0 + 0.025 * voxelDirectWarm,
+    1.0 - 0.10 * voxelDirectWarm
+  );
+  vec3 voxelCoolDiffuseScale = vec3(
+    1.0 - 0.08 * voxelShadowCool,
+    1.0 + 0.005 * voxelShadowCool,
+    1.0 + 0.10 * voxelShadowCool
+  );
+  reflectedLight.directDiffuse *= voxelWarmDiffuseScale;
+  reflectedLight.indirectDiffuse *= voxelCoolDiffuseScale;
 #endif`
       )
       .replace(

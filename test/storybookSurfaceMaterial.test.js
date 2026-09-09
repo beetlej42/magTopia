@@ -119,6 +119,10 @@ test("storybook surface shader wraps existing material compilation", () => {
   assert.match(shader.fragmentShader, /dot\(normal, voxelGlintHalfDir\)/);
   assert.match(shader.fragmentShader, /voxelToonGrouped/);
   assert.match(shader.fragmentShader, /reflectedLight\.directDiffuse \*= mix/);
+  assert.match(shader.fragmentShader, /voxelWarmDiffuseScale/);
+  assert.match(shader.fragmentShader, /voxelCoolDiffuseScale/);
+  assert.match(shader.fragmentShader, /reflectedLight\.directDiffuse \*= voxelWarmDiffuseScale/);
+  assert.match(shader.fragmentShader, /reflectedLight\.indirectDiffuse \*= voxelCoolDiffuseScale/);
   assert.match(shader.fragmentShader, /voxelAerialRelativeDepth/);
   assert.match(shader.fragmentShader, /voxelAerialFocusDistance/);
   assert.match(shader.fragmentShader, /voxelAerialDistanceWeight/);
@@ -143,6 +147,10 @@ test("storybook surface shader wraps existing material compilation", () => {
   assert.equal(environment.extraPasses, 0);
   assert.equal(environment.outlinePass, false);
   assert.ok(environment.aerialPerspective.strength < 0.1);
+  assert.equal(environment.lightingSeparation.enabled, true);
+  assert.ok(environment.lightingSeparation.directWarmth > environment.lightingSeparation.shadowCoolness);
+  assert.ok(environment.lightingSeparation.directWarmth < 1);
+  assert.ok(environment.lightingSeparation.shadowCoolness < 1);
   updateVoxelEnvironmentView({ cameraDistance: 123.5 });
   assert.equal(getVoxelEnvironmentShaderDiagnostics().focusDistance, 123.5);
 });
