@@ -1493,17 +1493,23 @@ export function voxelDaylightStyle(sunTime = 0.52) {
   const skyColor = state.topColor.clone().lerp(state.horizonColor, 0.36);
   const environment = ACTIVE_VISUAL_THEME.environment;
   const atmosphereColor = state.horizonColor.clone().multiplyScalar(0.68 + daylight * 0.2);
-  const sunColor = new THREE.Color("#e17d5c")
+  const sunColor = new THREE.Color(environment.twilightSun ?? "#e17d5c")
     .lerp(new THREE.Color(environment.sun), daylight)
     .lerp(new THREE.Color("#b8c9ff"), moonlight * 0.34);
+  const ambientSky = new THREE.Color("#202a49")
+    .lerp(new THREE.Color(environment.ambientSky), daylight)
+    .lerp(new THREE.Color(environment.twilightAmbientSky ?? "#202a49"), goldenHour * 0.42);
+  const ambientGround = new THREE.Color("#202738")
+    .lerp(new THREE.Color(environment.ambientGround), daylight)
+    .lerp(new THREE.Color(environment.twilightAmbientGround ?? "#202738"), goldenHour * 0.36);
   return {
     sunColor,
     skyColor,
     atmosphereColor,
     rgbTint: new THREE.Color("#8192c5").lerp(new THREE.Color(environment.ambientSky), daylight),
     rgbStrength: 0.68 + daylight * 0.39,
-    ambientSky: new THREE.Color("#202a49").lerp(new THREE.Color(environment.ambientSky), daylight),
-    ambientGround: new THREE.Color("#202738").lerp(new THREE.Color(environment.ambientGround), daylight),
+    ambientSky,
+    ambientGround,
     ambientIntensity: 0.68 + daylight * 1.66 + goldenHour * 0.68,
     sunIntensity: 0.12 + daylight * 2.65 + goldenHour * 0.72,
     rimIntensity: (ACTIVE_VISUAL_THEME.id === "legacy" ? 0.55 : 0.24) + moonlight * 0.95 + goldenHour * 0.28,

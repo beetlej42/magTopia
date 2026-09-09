@@ -1071,7 +1071,9 @@ function applyWorldLighting(sunTime = 0.52, updateActiveObject = true) {
   worldLights.ambient.groundColor.copy(style.ambientGround);
   const massingContrast = currentMode === "massing" || currentMode === "styles";
   const voxelWorldLighting = ["voxel", "vegetation", "district", "agentcity"].includes(currentMode);
-  const voxelAmbientContrast = voxelWorldLighting ? 0.58 : 1;
+  const voxelAmbientContrast = voxelWorldLighting
+    ? (ACTIVE_VISUAL_THEME.id === "legacy" ? 0.58 : 0.68)
+    : 1;
   const voxelRimContrast = voxelWorldLighting ? 0.72 : 1;
   worldLights.ambient.intensity = shadowDebugEnabled
     ? 0.04

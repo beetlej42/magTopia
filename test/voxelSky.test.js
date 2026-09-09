@@ -65,6 +65,20 @@ test("city daylight keeps structures readable while making midnight darker", () 
   assert.ok(noon.ambientSky.b >= noon.ambientSky.r, "midday sky ambient should remain cool");
 });
 
+test("storybook twilight keeps colored ambient fill instead of crushing shadows", () => {
+  const dawn = voxelDaylightStyle(0.25);
+  const noon = voxelDaylightStyle(0.5);
+  const midnight = voxelDaylightStyle(0);
+  assert.ok(dawn.twilightFactor > 0.2, "sunrise should retain twilight influence");
+  assert.ok(dawn.ambientSky.b > dawn.ambientSky.r, "dawn sky fill should stay cool");
+  assert.ok(dawn.ambientGround.r >= dawn.ambientGround.b, "dawn ground fill should stay warm");
+  assert.ok(
+    dawn.ambientSky.getHSL({}).l > midnight.ambientSky.getHSL({}).l + 0.08,
+    "dawn ambient fill should lift materially above midnight"
+  );
+  assert.ok(noon.ambientSky.getHSL({}).l >= dawn.ambientSky.getHSL({}).l);
+});
+
 test("aerial perspective color follows the rendered low sky across the day cycle", () => {
   const colorDelta = (left, right) => Math.hypot(left.r - right.r, left.g - right.g, left.b - right.b);
   for (const time of [0, 0.23, 0.5, 0.77]) {
