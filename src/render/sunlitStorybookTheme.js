@@ -135,9 +135,9 @@ export const SUNLIT_STORYBOOK_THEME = freezeTheme({
   treePalettes: sunlitTreePalettes,
   environment: {
     middaySkyTop: "#9bc7d8", middayHorizon: "#e5ebe6", cloudLight: "#f7f1e4",
-    cloudShadow: "#aebbc0", sun: "#ffe6b8", twilightSun: "#f2aa7b",
+    cloudShadow: "#aebbc0", sun: "#ffdda3", twilightSun: "#f2aa7b",
     dayLowSky: "#eef1ea",
-    ambientSky: "#d8e5ec", ambientGround: "#b7ad95",
+    ambientSky: "#c8dce8", ambientGround: "#a8aa9a",
     twilightAmbientSky: "#a9bdd1", twilightAmbientGround: "#aa9b84"
   },
   grading: { toneMapping: "aces-filmic", exposure: 1.08 },
