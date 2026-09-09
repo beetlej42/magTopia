@@ -370,11 +370,12 @@ export function applyVoxelCurvedWorldTwinkle(material, {
         "#include <opaque_fragment>",
         `// Partial aerial perspective: retain material identity instead of fading
 // geometry into a fog color. Horizontal sight lines receive more atmosphere.
-float voxelAerialDistance = distance(cameraPosition, vVoxelWorldPosition);
+vec3 voxelAerialToFragment = vVoxelWorldPosition - cameraPosition;
+float voxelAerialDistance = length(voxelAerialToFragment);
 float voxelAerialRange = max(voxelAerialFar - voxelAerialNear, 0.001);
 float voxelAerialDistanceWeight = smoothstep(0.0, 1.0, (voxelAerialDistance - voxelAerialNear) / voxelAerialRange);
-vec3 voxelAerialViewRay = normalize(vVoxelWorldPosition - cameraPosition);
-float voxelAerialHorizon = 1.0 - smoothstep(0.24, 0.78, abs(voxelAerialViewRay.y));
+float voxelAerialVertical = abs(voxelAerialToFragment.y) / max(voxelAerialDistance, 0.001);
+float voxelAerialHorizon = 1.0 - smoothstep(0.24, 0.78, voxelAerialVertical);
 float voxelAerialWeight = voxelAerialEnabled * voxelAerialStrength * voxelAerialDistanceWeight
   * mix(1.0 - voxelAerialHorizonStrength, 1.0, voxelAerialHorizon);
 float voxelAerialLuma = dot(outgoingLight, vec3(0.2126, 0.7152, 0.0722));
