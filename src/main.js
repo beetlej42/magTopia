@@ -10,7 +10,8 @@ import { ACTIVE_VISUAL_THEME } from "./render/sunlitStorybookTheme.js";
 import {
   getVoxelEnvironmentShaderDiagnostics,
   getVoxelFacetHighlightMode,
-  updateVoxelEnvironmentStyle
+  updateVoxelEnvironmentStyle,
+  updateVoxelEnvironmentView
 } from "./render/voxelCurvedWorldTwinkle.js";
 import { chooseAdaptiveQuality, detectMobileRenderProfile, shouldEnableBokeh } from "./render/mobilePerformance.js";
 import {
@@ -2267,6 +2268,11 @@ function animate() {
     updateInteractivePlacement();
   }
   camera.updateMatrixWorld();
+  if (isSurfaceVoxelWorld()) {
+    updateVoxelEnvironmentView({
+      cameraDistance: camera.position.distanceTo(controls.target)
+    });
+  }
   updateWorldShadowForView();
   if (voxelSky.visible) {
     voxelSky.userData.update({

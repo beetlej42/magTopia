@@ -134,16 +134,16 @@ export const SUNLIT_STORYBOOK_THEME = freezeTheme({
   terrain: sunlitTerrain,
   treePalettes: sunlitTreePalettes,
   environment: {
-    middaySkyTop: "#87b5cc", middayHorizon: "#d9e2df", cloudLight: "#f7f1e4",
+    middaySkyTop: "#9bc7d8", middayHorizon: "#e5ebe6", cloudLight: "#f7f1e4",
     cloudShadow: "#aebbc0", sun: "#ffe6b8", twilightSun: "#f2aa7b",
-    dayLowSky: "#e2e7df",
+    dayLowSky: "#eef1ea",
     ambientSky: "#d8e5ec", ambientGround: "#b7ad95",
     twilightAmbientSky: "#a9bdd1", twilightAmbientGround: "#aa9b84"
   },
   grading: { toneMapping: "aces-filmic", exposure: 1.08 },
   aerialPerspective: {
-    enabled: true, near: 44, far: 185, strength: 0.18,
-    horizonStrength: 0.68, saturationReduction: 0.2, contrastReduction: 0.14, shadowLift: 0.055
+    enabled: true, near: 6, far: 96, strength: 0.085,
+    horizonStrength: 0.52, saturationReduction: 0.08, contrastReduction: 0.05, shadowLift: 0.018
   },
   toon: {
     enabled: true, strength: 0.44, shadowLevel: 0.72, midLevel: 0.94,
