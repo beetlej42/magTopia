@@ -80,19 +80,21 @@ test("storybook twilight keeps colored ambient fill instead of crushing shadows"
   assert.ok(noon.ambientSky.getHSL({}).l >= dawn.ambientSky.getHSL({}).l);
 });
 
-test("aerial perspective color follows the rendered low sky across the day cycle", () => {
+test("aerial perspective color stays blue-grey and follows the sky across the day cycle", () => {
   const colorDelta = (left, right) => Math.hypot(left.r - right.r, left.g - right.g, left.b - right.b);
   for (const time of [0, 0.23, 0.5, 0.77]) {
     const sky = getVoxelSkyState(time);
     const style = voxelDaylightStyle(time);
-    const expectedLowSky = sky.horizonColor.clone().multiplyScalar(0.68 + sky.daylight * 0.2);
+    const expectedAtmosphere = sky.topColor.clone().lerp(sky.horizonColor, 0.58).multiplyScalar(0.92);
     assert.ok(
-      colorDelta(style.atmosphereColor, expectedLowSky) < 1e-8,
-      `atmosphere should match the visible low sky at time ${time}`
+      colorDelta(style.atmosphereColor, expectedAtmosphere) < 1e-8,
+      `atmosphere should follow the authored sky family at time ${time}`
     );
   }
+  const noon = voxelDaylightStyle(0.5).atmosphereColor;
+  assert.ok(noon.b >= noon.r, "midday aerial tint should remain blue-neutral rather than white/cream");
   assert.ok(
-    voxelDaylightStyle(0).atmosphereColor.getHSL({}).l < voxelDaylightStyle(0.5).atmosphereColor.getHSL({}).l - 0.2,
+    voxelDaylightStyle(0).atmosphereColor.getHSL({}).l < noon.getHSL({}).l - 0.2,
     "night atmosphere should become substantially darker than midday"
   );
 });
