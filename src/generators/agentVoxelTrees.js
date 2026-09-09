@@ -2,6 +2,10 @@ import * as THREE from "three";
 import { VOXEL_SIZE } from "./voxelBuildingLab.js";
 import { getVoxelLodThresholds, selectScreenSpaceVoxelLod } from "../render/voxelLodQuality.js";
 import { ACTIVE_VISUAL_THEME } from "../render/sunlitStorybookTheme.js";
+import {
+  STORYBOOK_SURFACE_KINDS,
+  applyStorybookSurfaceMaterial
+} from "../render/storybookSurfaceMaterial.js";
 
 export const TREE_DETAIL_SCALE = 1;
 export const TREE_DETAIL_VOXEL_SIZE = VOXEL_SIZE / TREE_DETAIL_SCALE;
@@ -225,7 +229,20 @@ export function getVoxelTreeTemplateDiagnostics() {
 }
 
 export function createVoxelTreeMaterial() {
-  return new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0, flatShading: true });
+  const material = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    roughness: 1,
+    metalness: 0,
+    flatShading: true
+  });
+  // Trees share one vertex-colored material for foliage and timber. Treat the
+  // combined tree mass as an organic/felt surface so it receives the shared
+  // aerial-perspective shader and the gentler Toon-lite response without
+  // changing geometry, LOD, draw calls, or the shadow proxy.
+  return applyStorybookSurfaceMaterial(material, {
+    surfaceKind: STORYBOOK_SURFACE_KINDS.felt,
+    strength: 0
+  });
 }
 
 export function createVoxelTreeLodRenderer(trees, { initialLod = 2 } = {}) {

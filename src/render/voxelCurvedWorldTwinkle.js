@@ -1,3 +1,6 @@
+import { Color } from "three";
+import { ACTIVE_VISUAL_THEME } from "./sunlitStorybookTheme.js";
+
 const VOXEL_FACET_HIGHLIGHT_QUERY_PARAM = "facetHighlight";
 const VOXEL_GLINT_QUERY_PARAM = "voxelGlint";
 const VOXEL_FACET_STRENGTH_QUERY_PARAM = "facetStrength";
@@ -7,6 +10,41 @@ const VOXEL_FACET_HIGHLIGHT_MODES = new Set(["facet", "glint", "combined"]);
 const DEFAULT_FACET_STRENGTH = 1.15;
 const DEFAULT_GLINT_STRENGTH = 1.0;
 export const VOXEL_FACET_DECLARATIONS_MARKER = "/* voxel-facet-declarations-end */";
+
+const aerialConfig = ACTIVE_VISUAL_THEME.aerialPerspective;
+const toonConfig = ACTIVE_VISUAL_THEME.toon;
+const SHARED_ENVIRONMENT_UNIFORMS = {
+  voxelAerialEnabled: { value: aerialConfig.enabled ? 1 : 0 },
+  voxelAerialColor: { value: new Color(ACTIVE_VISUAL_THEME.environment.middayHorizon).multiplyScalar(0.88) },
+  voxelAerialNear: { value: aerialConfig.near },
+  voxelAerialFar: { value: aerialConfig.far },
+  voxelAerialStrength: { value: aerialConfig.strength },
+  voxelAerialHorizonStrength: { value: aerialConfig.horizonStrength },
+  voxelAerialSaturationReduction: { value: aerialConfig.saturationReduction },
+  voxelAerialContrastReduction: { value: aerialConfig.contrastReduction },
+  voxelAerialShadowLift: { value: aerialConfig.shadowLift },
+  voxelToonEnabled: { value: toonConfig.enabled ? 1 : 0 },
+  voxelToonStrength: { value: toonConfig.strength },
+  voxelToonShadowLevel: { value: toonConfig.shadowLevel },
+  voxelToonMidLevel: { value: toonConfig.midLevel },
+  voxelToonHighlightLevel: { value: toonConfig.highlightLevel },
+  voxelToonTransitionSoftness: { value: toonConfig.transitionSoftness }
+};
+
+export function updateVoxelEnvironmentStyle(style = {}) {
+  if (style.atmosphereColor?.isColor) SHARED_ENVIRONMENT_UNIFORMS.voxelAerialColor.value.copy(style.atmosphereColor);
+}
+
+export function getVoxelEnvironmentShaderDiagnostics() {
+  return {
+    traditionalFog: false,
+    aerialPerspective: { ...aerialConfig },
+    toon: { ...toonConfig },
+    atmosphereColor: `#${SHARED_ENVIRONMENT_UNIFORMS.voxelAerialColor.value.getHexString()}`,
+    extraPasses: 0,
+    outlinePass: false
+  };
+}
 
 function queryScalar(name, fallback, minimum = 0, maximum = 2) {
   if (typeof globalThis.location?.search !== "string") return fallback;
@@ -74,6 +112,7 @@ export function applyVoxelCurvedWorldTwinkle(material, {
     shader.uniforms.voxelFacetCellSize = { value: VOXEL_CELL_SIZE };
     shader.uniforms.voxelFacetStrength = { value: facetStrength };
     shader.uniforms.voxelGlintStrength = { value: glintStrength };
+    Object.assign(shader.uniforms, SHARED_ENVIRONMENT_UNIFORMS);
 
     const kindSource = usesKindAttribute
       ? "attribute float voxelSurfaceKind;"
@@ -185,7 +224,7 @@ export function applyVoxelCurvedWorldTwinkle(material, {
     shader.fragmentShader = shader.fragmentShader
       .replace(
         "#include <common>",
-        `#include <common>\nuniform float voxelFacetSurfaceKind;\nuniform float voxelFacetCellSize;\nuniform float voxelFacetStrength;\nuniform float voxelGlintStrength;\nvarying float vVoxelSurfaceKind;\nvarying vec3 vVoxelWorldPosition;\nvarying vec3 vVoxelWorldNormal;\nvarying vec3 vVoxelViewNormal;\nfloat voxelFacetMode = ${mode === "facet" ? "0.0" : mode === "glint" ? "1.0" : "2.0"};\n\nfloat voxelFacetHash(vec2 p) {\n  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);\n}\n\nvec2 voxelFacetPlanarUv(vec3 position, vec3 normal) {\n  vec3 axis = abs(normalize(normal));\n  if (axis.y > axis.x && axis.y > axis.z) return position.xz;\n  if (axis.x > axis.z) return position.zy;\n  return position.xy;\n}\n\n// Quantized, clustered height field: most cells share the cluster baseline while\n// a small deterministic minority is raised or recessed. Values are voxel fractions.\nfloat voxelHeightField(vec2 cell) {\n  vec2 cluster = floor(cell / 3.0);\n  float clusterBaseline = (voxelFacetHash(cluster + vec2(53.1, 17.7)) - 0.5) * 0.022;\n  float minority = step(0.76, voxelFacetHash(cell + vec2(11.7, 29.3)));\n  float direction = mix(-1.0, 1.0, step(0.52, voxelFacetHash(cell + vec2(37.1, 5.9))));\n  return clusterBaseline + minority * direction * 0.085;\n}\n\nfloat voxelHeightCavity(vec2 cell) {\n  float center = voxelHeightField(cell);\n  float neighbours = voxelHeightField(cell + vec2(-1.0, 0.0))\n    + voxelHeightField(cell + vec2(1.0, 0.0))\n    + voxelHeightField(cell + vec2(0.0, -1.0))\n    + voxelHeightField(cell + vec2(0.0, 1.0));\n  return clamp((neighbours * 0.25 - center) * 5.5, -1.0, 1.0);\n}\n${VOXEL_FACET_DECLARATIONS_MARKER}`
+        `#include <common>\nuniform float voxelFacetSurfaceKind;\nuniform float voxelFacetCellSize;\nuniform float voxelFacetStrength;\nuniform float voxelGlintStrength;\nuniform float voxelAerialEnabled;\nuniform vec3 voxelAerialColor;\nuniform float voxelAerialNear;\nuniform float voxelAerialFar;\nuniform float voxelAerialStrength;\nuniform float voxelAerialHorizonStrength;\nuniform float voxelAerialSaturationReduction;\nuniform float voxelAerialContrastReduction;\nuniform float voxelAerialShadowLift;\nuniform float voxelToonEnabled;\nuniform float voxelToonStrength;\nuniform float voxelToonShadowLevel;\nuniform float voxelToonMidLevel;\nuniform float voxelToonHighlightLevel;\nuniform float voxelToonTransitionSoftness;\nvarying float vVoxelSurfaceKind;\nvarying vec3 vVoxelWorldPosition;\nvarying vec3 vVoxelWorldNormal;\nvarying vec3 vVoxelViewNormal;\nfloat voxelFacetMode = ${mode === "facet" ? "0.0" : mode === "glint" ? "1.0" : "2.0"};\n\nfloat voxelFacetHash(vec2 p) {\n  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);\n}\n\nvec2 voxelFacetPlanarUv(vec3 position, vec3 normal) {\n  vec3 axis = abs(normalize(normal));\n  if (axis.y > axis.x && axis.y > axis.z) return position.xz;\n  if (axis.x > axis.z) return position.zy;\n  return position.xy;\n}\n\n// Quantized, clustered height field: most cells share the cluster baseline while\n// a small deterministic minority is raised or recessed. Values are voxel fractions.\nfloat voxelHeightField(vec2 cell) {\n  vec2 cluster = floor(cell / 3.0);\n  float clusterBaseline = (voxelFacetHash(cluster + vec2(53.1, 17.7)) - 0.5) * 0.022;\n  float minority = step(0.76, voxelFacetHash(cell + vec2(11.7, 29.3)));\n  float direction = mix(-1.0, 1.0, step(0.52, voxelFacetHash(cell + vec2(37.1, 5.9))));\n  return clusterBaseline + minority * direction * 0.085;\n}\n\nfloat voxelHeightCavity(vec2 cell) {\n  float center = voxelHeightField(cell);\n  float neighbours = voxelHeightField(cell + vec2(-1.0, 0.0))\n    + voxelHeightField(cell + vec2(1.0, 0.0))\n    + voxelHeightField(cell + vec2(0.0, -1.0))\n    + voxelHeightField(cell + vec2(0.0, 1.0));\n  return clamp((neighbours * 0.25 - center) * 5.5, -1.0, 1.0);\n}\n${VOXEL_FACET_DECLARATIONS_MARKER}`
       )
       .replace("#include <normal_fragment_maps>", facetInjection)
       .replace(
@@ -304,7 +343,47 @@ export function applyVoxelCurvedWorldTwinkle(material, {
     * voxelGlintShoulder
     * 0.045
     * voxelGlintFarEnergy;
+
+  // Toon-lite groups only direct diffuse light. AO, indirect light, specular,
+  // and emissive energy remain continuous. Organic surfaces are gentler;
+  // water and glass opt out to preserve their existing response.
+  float voxelToonMaterialResponse = 1.0;
+  if (vVoxelSurfaceKind > 2.5 && vVoxelSurfaceKind < 4.5) voxelToonMaterialResponse = 0.78;
+  if (vVoxelSurfaceKind > 4.5 && vVoxelSurfaceKind < 5.5) voxelToonMaterialResponse = 0.48;
+  if (vVoxelSurfaceKind > 6.5) voxelToonMaterialResponse = 0.0;
+  float voxelToonNdotL = saturate(dot(normal, directionalLights[0].direction));
+  float voxelToonSoftness = max(voxelToonTransitionSoftness, 0.001);
+  float voxelToonMidGate = smoothstep(0.28 - voxelToonSoftness, 0.28 + voxelToonSoftness, voxelToonNdotL);
+  float voxelToonLightGate = smoothstep(0.68 - voxelToonSoftness, 0.68 + voxelToonSoftness, voxelToonNdotL);
+  float voxelToonGrouped = mix(voxelToonShadowLevel, voxelToonMidLevel, voxelToonMidGate);
+  voxelToonGrouped = mix(voxelToonGrouped, voxelToonHighlightLevel, voxelToonLightGate);
+  float voxelToonContinuous = mix(voxelToonShadowLevel, voxelToonHighlightLevel, voxelToonNdotL);
+  float voxelToonRatio = voxelToonGrouped / max(voxelToonContinuous, 0.2);
+  reflectedLight.directDiffuse *= mix(
+    1.0,
+    voxelToonRatio,
+    voxelToonEnabled * voxelToonStrength * voxelToonMaterialResponse
+  );
 #endif`
+      )
+      .replace(
+        "#include <opaque_fragment>",
+        `// Partial aerial perspective: retain material identity instead of fading
+// geometry into a fog color. Horizontal sight lines receive more atmosphere.
+vec3 voxelAerialToFragment = vVoxelWorldPosition - cameraPosition;
+float voxelAerialDistance = length(voxelAerialToFragment);
+float voxelAerialRange = max(voxelAerialFar - voxelAerialNear, 0.001);
+float voxelAerialDistanceWeight = smoothstep(0.0, 1.0, (voxelAerialDistance - voxelAerialNear) / voxelAerialRange);
+float voxelAerialVertical = abs(voxelAerialToFragment.y) / max(voxelAerialDistance, 0.001);
+float voxelAerialHorizon = 1.0 - smoothstep(0.24, 0.78, voxelAerialVertical);
+float voxelAerialWeight = voxelAerialEnabled * voxelAerialStrength * voxelAerialDistanceWeight
+  * mix(1.0 - voxelAerialHorizonStrength, 1.0, voxelAerialHorizon);
+float voxelAerialLuma = dot(outgoingLight, vec3(0.2126, 0.7152, 0.0722));
+outgoingLight = mix(outgoingLight, vec3(voxelAerialLuma), voxelAerialSaturationReduction * voxelAerialWeight);
+outgoingLight = mix(outgoingLight, vec3(0.22), voxelAerialContrastReduction * voxelAerialWeight);
+outgoingLight += vec3(voxelAerialShadowLift * voxelAerialWeight * (1.0 - smoothstep(0.12, 0.55, voxelAerialLuma)));
+outgoingLight = mix(outgoingLight, voxelAerialColor, voxelAerialWeight);
+#include <opaque_fragment>`
       );
   };
 

@@ -24,7 +24,6 @@ import { ACTIVE_VISUAL_THEME } from "../render/sunlitStorybookTheme.js";
 
 const THEME_MATERIALS = ACTIVE_VISUAL_THEME.materials;
 const THEME_VARIANTS = ACTIVE_VISUAL_THEME.materialVariants;
-const THEME_FOG_COLOR = new THREE.Color(ACTIVE_VISUAL_THEME.environment.fog);
 
 export const VOXEL_SIZE = 0.125;
 export const SEMANTIC_GRID_SIGN_VOXEL_SIZE = VOXEL_SIZE / 2;
@@ -1493,14 +1492,14 @@ export function voxelDaylightStyle(sunTime = 0.52) {
   const goldenHour = state.twilight;
   const skyColor = state.topColor.clone().lerp(state.horizonColor, 0.36);
   const environment = ACTIVE_VISUAL_THEME.environment;
-  const fogColor = state.horizonColor.clone().lerp(THEME_FOG_COLOR, daylight * 0.35);
+  const atmosphereColor = state.horizonColor.clone().multiplyScalar(0.68 + daylight * 0.2);
   const sunColor = new THREE.Color("#e17d5c")
     .lerp(new THREE.Color(environment.sun), daylight)
     .lerp(new THREE.Color("#b8c9ff"), moonlight * 0.34);
   return {
     sunColor,
     skyColor,
-    fogColor,
+    atmosphereColor,
     rgbTint: new THREE.Color("#8192c5").lerp(new THREE.Color(environment.ambientSky), daylight),
     rgbStrength: 0.68 + daylight * 0.39,
     ambientSky: new THREE.Color("#202a49").lerp(new THREE.Color(environment.ambientSky), daylight),
