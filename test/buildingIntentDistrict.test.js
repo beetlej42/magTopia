@@ -110,6 +110,13 @@ test("intent district combines street and public-building adapters into one dete
   const district = createVoxelIntentDistrict(config);
   const diagnostics = district.userData.getVoxelDiagnostics();
 
+  for (const name of ["IntentPlot-RetailTerrace", "IntentPlot-ServiceLane", "IntentPlot-PublicInstitution"]) {
+    let opaqueCasters = 0;
+    district.traverse((mesh) => {
+      if (mesh.isMesh && mesh.castShadow && mesh.userData.studioPlotName === name) opaqueCasters += 1;
+    });
+    assert.ok(opaqueCasters > 0, `${name} must cast a building shadow in Studio`);
+  }
   assert.equal(diagnostics.plotCount, 3);
   assert.equal(diagnostics.streetBuildingCount, 4);
   assert.ok(diagnostics.publicMassCount >= 3);

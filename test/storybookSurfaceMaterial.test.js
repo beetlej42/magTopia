@@ -7,7 +7,10 @@ import {
   applyStorybookSurfaceMaterial,
   storybookSurfaceKindForMaterial
 } from "../src/render/storybookSurfaceMaterial.js";
-import { getVoxelFacetHighlightMode } from "../src/render/voxelCurvedWorldTwinkle.js";
+import {
+  getVoxelEnvironmentShaderDiagnostics,
+  getVoxelFacetHighlightMode
+} from "../src/render/voxelCurvedWorldTwinkle.js";
 
 test("storybook surface categories distinguish brick, slate, plaster, and felt", () => {
   assert.equal(storybookSurfaceKindForMaterial("brickRed"), STORYBOOK_SURFACE_KINDS.brick);
@@ -61,7 +64,7 @@ test("voxel facet highlight keeps explicit zero strengths instead of treating th
     const shader = {
       uniforms: {},
       vertexShader: "#include <common>\n#include <project_vertex>",
-      fragmentShader: "#include <common>\n#include <map_fragment>\n#include <roughnessmap_fragment>\n#include <normal_fragment_maps>\n#include <lights_fragment_end>"
+      fragmentShader: "#include <common>\n#include <map_fragment>\n#include <roughnessmap_fragment>\n#include <normal_fragment_maps>\n#include <lights_fragment_end>\n#include <opaque_fragment>"
     };
     material.onBeforeCompile(shader, null);
     assert.equal(shader.uniforms.voxelFacetStrength.value, 0);
@@ -82,7 +85,7 @@ test("storybook surface shader wraps existing material compilation", () => {
   const shader = {
     uniforms: {},
     vertexShader: "#include <common>\n#include <project_vertex>",
-    fragmentShader: "#include <common>\n#include <map_fragment>\n#include <roughnessmap_fragment>\n#include <normal_fragment_maps>\n#include <lights_fragment_end>"
+    fragmentShader: "#include <common>\n#include <map_fragment>\n#include <roughnessmap_fragment>\n#include <normal_fragment_maps>\n#include <lights_fragment_end>\n#include <opaque_fragment>"
   };
   material.onBeforeCompile(shader, null);
   assert.equal(previousCompileCalled, true);
@@ -113,6 +116,11 @@ test("storybook surface shader wraps existing material compilation", () => {
   assert.match(shader.fragmentShader, /vVoxelWorldNormal/);
   assert.match(shader.fragmentShader, /dot\(normal, voxelGlintLightDir\)/);
   assert.match(shader.fragmentShader, /dot\(normal, voxelGlintHalfDir\)/);
+  assert.match(shader.fragmentShader, /voxelToonGrouped/);
+  assert.match(shader.fragmentShader, /reflectedLight\.directDiffuse \*= mix/);
+  assert.match(shader.fragmentShader, /voxelAerialDistanceWeight/);
+  assert.match(shader.fragmentShader, /voxelAerialHorizon/);
+  assert.match(shader.fragmentShader, /outgoingLight = mix\(outgoingLight, voxelAerialColor, voxelAerialWeight\)/);
   assert.doesNotMatch(shader.fragmentShader, /storybookSurfaceModulation|storybookLine|slateBand|paper fine|felt =/);
   const helperIndex = shader.fragmentShader.indexOf("float voxelFacetHash");
   const helperCallIndex = shader.fragmentShader.indexOf("voxelFacetHash(", helperIndex + 1);
@@ -127,4 +135,9 @@ test("storybook surface shader wraps existing material compilation", () => {
   assert.equal(material.userData.voxelFacetHighlight.version, "voxel-facet-highlight-v2");
   assert.equal(material.userData.voxelFacetHighlight.mode, "combined");
   assert.equal(material.userData.voxelFacetHighlight.surfaceKind, STORYBOOK_SURFACE_KINDS.brick);
+  const environment = getVoxelEnvironmentShaderDiagnostics();
+  assert.equal(environment.traditionalFog, false);
+  assert.equal(environment.extraPasses, 0);
+  assert.equal(environment.outlinePass, false);
+  assert.ok(environment.aerialPerspective.strength < 0.25);
 });

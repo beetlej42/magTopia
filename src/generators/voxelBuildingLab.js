@@ -20,6 +20,10 @@ import {
   applyStorybookSurfaceMaterial,
   storybookSurfaceKindForMaterial
 } from "../render/storybookSurfaceMaterial.js";
+import { ACTIVE_VISUAL_THEME } from "../render/sunlitStorybookTheme.js";
+
+const THEME_MATERIALS = ACTIVE_VISUAL_THEME.materials;
+const THEME_VARIANTS = ACTIVE_VISUAL_THEME.materialVariants;
 
 export const VOXEL_SIZE = 0.125;
 export const SEMANTIC_GRID_SIGN_VOXEL_SIZE = VOXEL_SIZE / 2;
@@ -52,31 +56,31 @@ export const VOXEL_WRITE_PRIORITIES = Object.freeze({
 
 const MATERIAL_LIBRARY = Object.freeze({
   brickRed: {
-    colors: ["#9f5847", "#a9634f", "#8f4d40", "#b06b54"],
+    colors: THEME_VARIANTS.brickRed,
     roughness: 0.94
   },
   brickBrown: {
-    colors: ["#62453f", "#704b42", "#583d39", "#795148"],
+    colors: THEME_VARIANTS.brickBrown,
     roughness: 0.96
   },
   sandstone: {
-    colors: ["#c9b796", "#d4c4a6", "#baa783"],
+    colors: THEME_VARIANTS.sandstone,
     roughness: 0.9
   },
   stoneShadow: {
-    colors: ["#8f8475", "#9b8e7d", "#7c746a"],
+    colors: THEME_VARIANTS.stoneShadow,
     roughness: 0.94
   },
   limestone: {
-    colors: ["#d8d0c0", "#c9c1b4", "#e0d9ca"],
+    colors: THEME_VARIANTS.limestone,
     roughness: 0.92
   },
   slate: {
-    colors: ["#485262", "#566173", "#3c4655", "#626b7a"],
+    colors: THEME_VARIANTS.slate,
     roughness: 0.91
   },
   timber: {
-    colors: ["#273f3d", "#2e4d48", "#3f312c", "#4c382f"],
+    colors: THEME_VARIANTS.timber,
     roughness: 0.88
   },
   glass: {
@@ -92,21 +96,21 @@ const MATERIAL_LIBRARY = Object.freeze({
     opacity: 0.5
   },
   warmWindow: {
-    colors: ["#f1b65b", "#ffc96d", "#df9345"],
+    colors: THEME_VARIANTS.warmWindow,
     roughness: 0.55,
-    emissive: "#f2a94f",
+    emissive: THEME_MATERIALS.warmWindow,
     emissiveIntensity: 0.35
   },
   foliage: {
-    colors: ["#557748", "#6d8b50", "#3f6849", "#8b9950"],
+    colors: THEME_VARIANTS.foliage,
     roughness: 1
   },
   foliageDark: {
-    colors: ["#355b43", "#41694a", "#294e3b"],
+    colors: THEME_VARIANTS.foliageDark,
     roughness: 1
   },
   foliageLight: {
-    colors: ["#78965a", "#8aa568", "#66884f"],
+    colors: THEME_VARIANTS.foliageLight,
     roughness: 1
   },
   blossomPink: {
@@ -118,52 +122,52 @@ const MATERIAL_LIBRARY = Object.freeze({
     roughness: 0.96
   },
   grass: {
-    colors: ["#76925a", "#819d61", "#68844e", "#8ca66b"],
+    colors: THEME_VARIANTS.grass,
     roughness: 1
   },
   grassLight: {
-    colors: ["#91a967", "#9ab374", "#829d5d"],
+    colors: THEME_VARIANTS.grassLight,
     roughness: 1
   },
   grassDark: {
-    colors: ["#4f7047", "#5b7b4e", "#45643f"],
+    colors: THEME_VARIANTS.grassDark,
     roughness: 1
   },
   soil: {
-    colors: ["#765442", "#684939", "#815d48"],
+    colors: THEME_VARIANTS.soil,
     roughness: 1
   },
   water: {
-    colors: ["#3e87aa", "#4a96b8", "#367a9d"],
+    colors: THEME_VARIANTS.water,
     roughness: 0.34,
     metalness: 0.04,
     opacity: 0.9
   },
   waterLight: {
-    colors: ["#70b4c9", "#62a8c1", "#82bfd0"],
+    colors: THEME_VARIANTS.waterLight,
     roughness: 0.28,
     metalness: 0.04,
     opacity: 0.82
   },
   violetMagic: {
-    colors: ["#8067b8", "#9a79d0", "#684f9e"],
+    colors: THEME_VARIANTS.violetMagic,
     roughness: 0.5,
     emissive: "#7650bd",
     emissiveIntensity: 0.45
   },
   tealMagic: {
-    colors: ["#5dacaa", "#78c4b9", "#438f91"],
+    colors: THEME_VARIANTS.tealMagic,
     roughness: 0.5,
     emissive: "#4eb6ae",
     emissiveIntensity: 0.45
   },
   iron: {
-    colors: ["#252b31", "#343a40", "#1c2228"],
+    colors: THEME_VARIANTS.iron,
     roughness: 0.8,
     metalness: 0.25
   },
   patinaMetal: {
-    colors: ["#536d6b", "#607b77", "#405c5b"],
+    colors: THEME_VARIANTS.patinaMetal,
     roughness: 0.76,
     metalness: 0.2
   },
@@ -181,11 +185,11 @@ const MATERIAL_LIBRARY = Object.freeze({
     emissiveIntensity: 0.12
   },
   pavement: {
-    colors: ["#aaa49a", "#b9b2a6", "#96938e"],
+    colors: THEME_VARIANTS.pavement,
     roughness: 1
   },
   road: {
-    colors: ["#686b70", "#74767a", "#5e6268"],
+    colors: THEME_VARIANTS.road,
     roughness: 1
   }
 });
@@ -1471,14 +1475,14 @@ function updateDesignDecorationDaylight(entry, night) {
 
 function decorationColor(material) {
   return {
-    aged_timber: "#4c382f",
-    timber: "#4c382f",
-    iron: "#34383d",
-    limestone: "#d8d0c0",
-    sandstone: "#c9b796",
-    violet_magic: "#8067b8",
-    teal_magic: "#5dacaa"
-  }[material] ?? "#70483d";
+    aged_timber: THEME_MATERIALS.timber,
+    timber: THEME_MATERIALS.timber,
+    iron: THEME_MATERIALS.iron,
+    limestone: THEME_MATERIALS.limestone,
+    sandstone: THEME_MATERIALS.sandstone,
+    violet_magic: THEME_MATERIALS.violetMagic,
+    teal_magic: THEME_MATERIALS.tealMagic
+  }[material] ?? THEME_MATERIALS.brickBrown;
 }
 
 export function voxelDaylightStyle(sunTime = 0.52) {
@@ -1487,19 +1491,28 @@ export function voxelDaylightStyle(sunTime = 0.52) {
   const moonlight = state.night;
   const goldenHour = state.twilight;
   const skyColor = state.topColor.clone().lerp(state.horizonColor, 0.36);
-  const sunColor = new THREE.Color("#e17d5c")
-    .lerp(new THREE.Color("#fff0c7"), daylight)
+  const environment = ACTIVE_VISUAL_THEME.environment;
+  const atmosphereColor = state.horizonColor.clone().multiplyScalar(0.68 + daylight * 0.2);
+  const sunColor = new THREE.Color(environment.twilightSun ?? "#e17d5c")
+    .lerp(new THREE.Color(environment.sun), daylight)
     .lerp(new THREE.Color("#b8c9ff"), moonlight * 0.34);
+  const ambientSky = new THREE.Color("#202a49")
+    .lerp(new THREE.Color(environment.ambientSky), daylight)
+    .lerp(new THREE.Color(environment.twilightAmbientSky ?? "#202a49"), goldenHour * 0.42);
+  const ambientGround = new THREE.Color("#202738")
+    .lerp(new THREE.Color(environment.ambientGround), daylight)
+    .lerp(new THREE.Color(environment.twilightAmbientGround ?? "#202738"), goldenHour * 0.36);
   return {
     sunColor,
     skyColor,
-    rgbTint: new THREE.Color("#8192c5").lerp(new THREE.Color("#fff7e8"), daylight),
+    atmosphereColor,
+    rgbTint: new THREE.Color("#8192c5").lerp(new THREE.Color(environment.ambientSky), daylight),
     rgbStrength: 0.68 + daylight * 0.39,
-    ambientSky: new THREE.Color("#202a49").lerp(new THREE.Color("#dceef2"), daylight),
-    ambientGround: new THREE.Color("#202738").lerp(new THREE.Color("#99a58f"), daylight),
+    ambientSky,
+    ambientGround,
     ambientIntensity: 0.68 + daylight * 1.66 + goldenHour * 0.68,
     sunIntensity: 0.12 + daylight * 2.65 + goldenHour * 0.72,
-    rimIntensity: 0.55 + moonlight * 0.95 + goldenHour * 0.28,
+    rimIntensity: (ACTIVE_VISUAL_THEME.id === "legacy" ? 0.55 : 0.24) + moonlight * 0.95 + goldenHour * 0.28,
     nightFactor: state.night,
     daylightFactor: daylight,
     twilightFactor: goldenHour,
@@ -5703,12 +5716,12 @@ function addStreetLamps(root, plan) {
     group.name = `VoxelStreetLamp-${index + 1}`;
     const post = new THREE.Mesh(
       new THREE.BoxGeometry(VOXEL_SIZE * 1.2, VOXEL_SIZE * 22, VOXEL_SIZE * 1.2),
-      new THREE.MeshStandardMaterial({ color: "#252b31", roughness: 0.78, metalness: 0.25 })
+      new THREE.MeshStandardMaterial({ color: THEME_MATERIALS.iron, roughness: 0.78, metalness: 0.25 })
     );
     post.position.y = VOXEL_SIZE * 11;
     const bulbMaterial = new THREE.MeshStandardMaterial({
-      color: "#f5c878",
-      emissive: "#f2a94f",
+      color: THEME_MATERIALS.warmWindow,
+      emissive: THEME_MATERIALS.warmWindow,
       emissiveIntensity: 0.25,
       roughness: 0.45
     });
@@ -5716,7 +5729,7 @@ function addStreetLamps(root, plan) {
     bulb.position.y = VOXEL_SIZE * 24;
     const cap = new THREE.Mesh(
       new THREE.ConeGeometry(VOXEL_SIZE * 3.1, VOXEL_SIZE * 3, 4),
-      new THREE.MeshStandardMaterial({ color: "#252b31", roughness: 0.78, metalness: 0.25 })
+      new THREE.MeshStandardMaterial({ color: THEME_MATERIALS.iron, roughness: 0.78, metalness: 0.25 })
     );
     cap.position.y = VOXEL_SIZE * 28;
     cap.rotation.y = Math.PI / 4;

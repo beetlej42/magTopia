@@ -94,7 +94,8 @@ const SMOOTH_BOKEH_SHADER = {
       }
 
       float centerDistance = -viewZ;
-      vec2 axis = vec2(direction.x, direction.y * aspect);
+      // Radius is a fraction of the short edge, independent of orientation/DPR.
+      vec2 axis = direction * vec2(min(1.0, 1.0 / aspect), min(1.0, aspect));
       vec2 stepUv = axis * circleOfConfusion / 3.23076923;
       float centerWeight = 0.22702703;
       float innerWeight = 0.31621622;

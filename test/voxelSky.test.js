@@ -58,6 +58,54 @@ test("city daylight keeps structures readable while making midnight darker", () 
   assert.ok(midnight.ambientIntensity >= 0.5);
   assert.equal(noon.nightFactor, 0);
   assert.equal(midnight.nightFactor, 1);
+  for (const color of [noon.sunColor, noon.skyColor, noon.atmosphereColor, noon.ambientSky, noon.ambientGround]) {
+    assert.ok([color.r, color.g, color.b].every(Number.isFinite));
+  }
+  assert.ok(noon.sunColor.r > noon.sunColor.b, "midday sun should remain warm white");
+  assert.ok(noon.ambientSky.b >= noon.ambientSky.r, "midday sky ambient should remain cool");
+});
+
+test("storybook twilight keeps colored ambient fill instead of crushing shadows", () => {
+  const dawn = voxelDaylightStyle(0.25);
+  const noon = voxelDaylightStyle(0.5);
+  const midnight = voxelDaylightStyle(0);
+  assert.ok(dawn.twilightFactor > 0.2, "sunrise should retain twilight influence");
+  assert.ok(dawn.ambientSky.b > dawn.ambientSky.r, "dawn sky fill should stay cool");
+  assert.ok(dawn.ambientGround.r >= dawn.ambientGround.b, "dawn ground fill should stay warm");
+  assert.ok(
+    dawn.ambientSky.getHSL({}).l > midnight.ambientSky.getHSL({}).l + 0.08,
+    "dawn ambient fill should lift materially above midnight"
+  );
+  assert.ok(noon.ambientSky.getHSL({}).l >= dawn.ambientSky.getHSL({}).l);
+});
+
+test("aerial perspective color follows the rendered low sky across the day cycle", () => {
+  const colorDelta = (left, right) => Math.hypot(left.r - right.r, left.g - right.g, left.b - right.b);
+  for (const time of [0, 0.23, 0.5, 0.77]) {
+    const sky = getVoxelSkyState(time);
+    const style = voxelDaylightStyle(time);
+    const expectedLowSky = sky.horizonColor.clone().multiplyScalar(0.68 + sky.daylight * 0.2);
+    assert.ok(
+      colorDelta(style.atmosphereColor, expectedLowSky) < 1e-8,
+      `atmosphere should match the visible low sky at time ${time}`
+    );
+  }
+  assert.ok(
+    voxelDaylightStyle(0).atmosphereColor.getHSL({}).l < voxelDaylightStyle(0.5).atmosphereColor.getHSL({}).l - 0.2,
+    "night atmosphere should become substantially darker than midday"
+  );
+});
+
+test("midday sky stays bright and interpolates toward adjacent stops", () => {
+  const before = getVoxelSkyState(0.49);
+  const noon = getVoxelSkyState(0.5);
+  const after = getVoxelSkyState(0.51);
+  assert.equal(noon.daylight, 1);
+  assert.ok(noon.topColor.getHSL({}).l > 0.38);
+  assert.ok(noon.horizonColor.getHSL({}).l > noon.topColor.getHSL({}).l);
+  const colorDelta = (left, right) => Math.hypot(left.r - right.r, left.g - right.g, left.b - right.b);
+  assert.ok(colorDelta(before.topColor, noon.topColor) < 0.08);
+  assert.ok(colorDelta(after.topColor, noon.topColor) < 0.08);
 });
 
 test("sun and moon remain camera-facing while the surface camera moves", () => {

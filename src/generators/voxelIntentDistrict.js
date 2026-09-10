@@ -20,6 +20,7 @@ import {
   STORYBOOK_SURFACE_KINDS,
   applyStorybookSurfaceMaterial
 } from "../render/storybookSurfaceMaterial.js";
+import { ACTIVE_VISUAL_THEME } from "../render/sunlitStorybookTheme.js";
 
 const DISTRICT_CELL_VOXELS = 32;
 const DISTRICT_COLUMNS = 10;
@@ -315,6 +316,18 @@ export function createVoxelIntentDistrict(config = {}) {
     widthCells: institution.userData.spec.footprint.widthCells,
     depthCells: institution.userData.spec.footprint.depthCells
   });
+
+  // These three authored Studio plots are not wrapped in the runtime city's
+  // LOD/shadow-proxy pipeline. Their opaque greedy meshes must cast shadows
+  // directly; otherwise this review scene silently omits building shadows.
+  for (const plot of [retail, workshops, institution]) {
+    plot.traverse((mesh) => {
+      if (!mesh.isMesh || !mesh.userData.voxelRenderStrategy) return;
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      mesh.castShadow = materials.every((material) => !material.transparent);
+      mesh.userData.studioPlotName = plot.name;
+    });
+  }
 
   const environment = createVoxelDistrictEnvironment(params, layout);
   const macroSurface = createVoxelDistrictMacroSurface(params);
@@ -689,18 +702,19 @@ export function createVoxelDistrictMacroSurface(config = {}) {
   const terrainRows = params.worldRows * MACRO_TERRAIN_SUBDIVISIONS;
   const worldWidth = params.worldColumns * cellWorldSize;
   const worldDepth = params.worldRows * cellWorldSize;
+  const colors = ACTIVE_VISUAL_THEME.terrain;
   const palette = {
-    grass: new THREE.Color("#76925a"),
-    grassLight: new THREE.Color("#91a967"),
-    grassDark: new THREE.Color("#4f7047"),
-    water: new THREE.Color("#4389a8"),
-    waterLight: new THREE.Color("#579bb5"),
-    shore: new THREE.Color("#b99f78"),
-    road: new THREE.Color("#696c70"),
-    pavement: new THREE.Color("#a8a198"),
-    parcel: new THREE.Color("#8d9e69"),
-    soil: new THREE.Color("#765a45"),
-    stone: new THREE.Color("#77766d")
+    grass: new THREE.Color(colors.grass),
+    grassLight: new THREE.Color(colors.grassLight),
+    grassDark: new THREE.Color(colors.grassDark),
+    water: new THREE.Color(colors.water),
+    waterLight: new THREE.Color(colors.waterLight),
+    shore: new THREE.Color(colors.shore),
+    road: new THREE.Color(colors.road),
+    pavement: new THREE.Color(colors.pavement),
+    parcel: new THREE.Color(colors.parcel),
+    soil: new THREE.Color(colors.soil),
+    stone: new THREE.Color(colors.stone)
   };
   const material = applyStorybookSurfaceMaterial(new THREE.MeshStandardMaterial({
     vertexColors: true,
@@ -1713,8 +1727,8 @@ function setPrefabLodLevel(lod, levelIndex) {
 function createPrefabDistrictLevel(anchor, generated, level) {
   const group = new THREE.Group();
   group.name = `PrefabDistrict-${anchor.id}-${level}`;
-  const roadMaterial = new THREE.MeshStandardMaterial({ color: "#77777a", roughness: 1, flatShading: true });
-  const groundMaterial = new THREE.MeshStandardMaterial({ color: "#93a96c", roughness: 1, flatShading: true });
+  const roadMaterial = new THREE.MeshStandardMaterial({ color: ACTIVE_VISUAL_THEME.materials.road, roughness: 1, flatShading: true });
+  const groundMaterial = new THREE.MeshStandardMaterial({ color: ACTIVE_VISUAL_THEME.materials.grassLight, roughness: 1, flatShading: true });
   const ground = new THREE.Mesh(new THREE.BoxGeometry(18, 0.18, 14), groundMaterial);
   ground.position.y = -0.12;
   ground.receiveShadow = true;
@@ -1735,7 +1749,7 @@ function createPrefabDistrictLevel(anchor, generated, level) {
     level === "near"
   ));
   if (level === "near") {
-    const treeMaterial = new THREE.MeshStandardMaterial({ color: "#56794d", roughness: 1, flatShading: true });
+    const treeMaterial = new THREE.MeshStandardMaterial({ color: ACTIVE_VISUAL_THEME.materials.foliage, roughness: 1, flatShading: true });
     const treeTransforms = Array.from({ length: 8 }, (_, index) => {
       const x = -10 + (index % 4) * 6.6;
       const z = index < 4 ? -2.5 : 2.5;

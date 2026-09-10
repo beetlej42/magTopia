@@ -16,6 +16,7 @@ const baseUrl = suppliedUrl || `http://127.0.0.1:${port}`;
 // The default command records interaction performance without pretending that
 // SwiftShader represents a phone GPU. The :60hz package script sets this to
 // 16.7ms and turns the measurement into a hardware performance gate.
+const hardwareGpu = process.env.RENDER_ACCEPTANCE_GPU === "hardware";
 const maximumP95Ms = Number(process.env.RENDER_ACCEPTANCE_MAX_P95_MS || 0);
 const minimumTerrainCoverage = Number(process.env.RENDER_ACCEPTANCE_MIN_TERRAIN_COVERAGE || 0.08);
 const dragFrames = Math.max(30, Number(process.env.RENDER_ACCEPTANCE_DRAG_FRAMES || 90));
@@ -33,7 +34,7 @@ try {
   const browserLaunch = await resolveBrowser();
   const browser = await puppeteer.launch({
     executablePath: browserLaunch.executablePath,
-    args: [...chromium.args, "--use-gl=angle", "--use-angle=swiftshader"],
+    args: hardwareGpu ? ["--enable-gpu", "--no-sandbox"] : [...chromium.args, "--use-gl=angle", "--use-angle=swiftshader"],
     headless: browserLaunch.headless,
     protocolTimeout: 180000,
     defaultViewport: null
@@ -165,6 +166,12 @@ async function isExecutable(filePath) {
 
 async function runAcceptance(browser) {
   const page = await browser.newPage();
+  // Chrome requests an optional favicon even though this Studio has none.
+  await page.setRequestInterception(true);
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/favicon.ico") request.respond({ status: 204 });
+    else request.continue();
+  });
   await page.setUserAgent("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile Safari/604.1");
   await page.setViewport({
     width: 390,
@@ -233,6 +240,7 @@ async function runAcceptance(browser) {
     bokeh,
     clock,
     graphics,
+    gpuMode: hardwareGpu ? "hardware" : "software",
     browserErrors,
     thresholds: { minimumTerrainCoverage, maximumP95Ms },
     near: { vision: { before: nearBefore, after: nearAfter }, settledPerformance: nearSettledPerformance, performance: nearPerformance },
