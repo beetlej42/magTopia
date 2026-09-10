@@ -32,6 +32,9 @@ try {
     });
     await page.setViewport({ width, height, deviceScaleFactor: dpr, isMobile: name === "mobile", hasTouch: name === "mobile" });
     const query = new URLSearchParams({ mode: sceneMode, worldTime, clock: "0" });
+    if (process.env.STUDIO_CALIBRATION === "1") query.set("calibration", "sunlit");
+    if (process.env.STUDIO_AERIAL === "0") query.set("aerialPerspective", "0");
+    if (process.env.STUDIO_BOKEH === "0") query.set("bokeh", "0");
     await page.goto(`${baseUrl}/studio?${query}`, { waitUntil: "networkidle0", timeout: 180000 });
     await page.waitForFunction((mode) => window.MAGTOPIA?.getObject?.()
       && document.documentElement.dataset.magicTownMode === mode, { timeout: 180000 }, sceneMode);
@@ -112,7 +115,7 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 500));
     await page.evaluate(() => { document.documentElement.dataset.magtopiaPureView = "true"; });
     await page.screenshot({ path: `${dir}${label}-${name}-night.png` });
-    results.push({ name, sceneMode, worldTime, width, height, dpr, errors, lighting, farBokeh, ...metrics });
+    results.push({ framePacing: "browser-default", name, sceneMode, worldTime, width, height, dpr, errors, lighting, farBokeh, ...metrics });
     await page.close();
   }
   await writeFile(`${dir}${label}-report.json`, JSON.stringify(results, null, 2));

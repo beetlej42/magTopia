@@ -88,6 +88,7 @@ export function createVoxelSky(options = {}) {
         vec3 lowSky = mix(bottomColor, horizonColor, lower);
         vec3 sky = mix(lowSky, topColor, upper);
         gl_FragColor = vec4(sky, 1.0);
+        #include <colorspace_fragment>
       }
     `
   });

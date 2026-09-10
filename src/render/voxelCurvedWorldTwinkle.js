@@ -1,4 +1,5 @@
-import { Color } from "three";
+import { AERIAL_DEPTH_GLSL } from "./aerialPerspective.js";
+import { Color, Vector3 } from "three";
 import { ACTIVE_VISUAL_THEME } from "./sunlitStorybookTheme.js";
 
 const VOXEL_FACET_HIGHLIGHT_QUERY_PARAM = "facetHighlight";
@@ -14,7 +15,9 @@ export const VOXEL_FACET_DECLARATIONS_MARKER = "/* voxel-facet-declarations-end 
 const aerialConfig = ACTIVE_VISUAL_THEME.aerialPerspective;
 const toonConfig = ACTIVE_VISUAL_THEME.toon;
 const SHARED_ENVIRONMENT_UNIFORMS = {
-  voxelAerialEnabled: { value: aerialConfig.enabled ? 1 : 0 },
+  voxelAerialEnabled: { value: aerialConfig.enabled && new URLSearchParams(globalThis.location?.search ?? "").get("aerialPerspective") !== "0" ? 1 : 0 },
+  voxelAerialFocus: { value: new Vector3() },
+  voxelAerialViewDirection: { value: new Vector3(0, 0, -1) },
   voxelAerialColor: { value: new Color(ACTIVE_VISUAL_THEME.environment.middayHorizon).multiplyScalar(0.88) },
   voxelAerialNear: { value: aerialConfig.near },
   voxelAerialFar: { value: aerialConfig.far },
@@ -31,6 +34,11 @@ const SHARED_ENVIRONMENT_UNIFORMS = {
   voxelToonTransitionSoftness: { value: toonConfig.transitionSoftness }
 };
 
+export function updateVoxelEnvironmentView(focus, direction) {
+  SHARED_ENVIRONMENT_UNIFORMS.voxelAerialFocus.value.copy(focus);
+  SHARED_ENVIRONMENT_UNIFORMS.voxelAerialViewDirection.value.copy(direction);
+}
+
 export function updateVoxelEnvironmentStyle(style = {}) {
   if (style.atmosphereColor?.isColor) SHARED_ENVIRONMENT_UNIFORMS.voxelAerialColor.value.copy(style.atmosphereColor);
 }
@@ -38,7 +46,7 @@ export function updateVoxelEnvironmentStyle(style = {}) {
 export function getVoxelEnvironmentShaderDiagnostics() {
   return {
     traditionalFog: false,
-    aerialPerspective: { ...aerialConfig },
+    aerialPerspective: { ...aerialConfig, enabled: Boolean(SHARED_ENVIRONMENT_UNIFORMS.voxelAerialEnabled.value), distanceReference: "view-focus" },
     toon: { ...toonConfig },
     atmosphereColor: `#${SHARED_ENVIRONMENT_UNIFORMS.voxelAerialColor.value.getHexString()}`,
     extraPasses: 0,
@@ -126,7 +134,7 @@ export function applyVoxelCurvedWorldTwinkle(material, {
       )
       .replace(
         "#include <project_vertex>",
-        `#include <project_vertex>\nvVoxelSurfaceKind = ${kindAssignment};\nvVoxelWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvVoxelWorldNormal = normalize(mat3(modelMatrix) * objectNormal);\nvVoxelViewNormal = normalize(normalMatrix * objectNormal);`
+        `#include <project_vertex>\nvVoxelSurfaceKind = ${kindAssignment};\nvec4 voxelWorldVertex = vec4(transformed, 1.0);\n#ifdef USE_INSTANCING\nvoxelWorldVertex = instanceMatrix * voxelWorldVertex;\n#endif\nvVoxelWorldPosition = (modelMatrix * voxelWorldVertex).xyz;\nvVoxelWorldNormal = normalize(mat3(modelMatrix) * objectNormal);\nvVoxelViewNormal = normalize(normalMatrix * objectNormal);`
       );
 
     const facetInjection = `#include <normal_fragment_maps>
@@ -224,7 +232,7 @@ export function applyVoxelCurvedWorldTwinkle(material, {
     shader.fragmentShader = shader.fragmentShader
       .replace(
         "#include <common>",
-        `#include <common>\nuniform float voxelFacetSurfaceKind;\nuniform float voxelFacetCellSize;\nuniform float voxelFacetStrength;\nuniform float voxelGlintStrength;\nuniform float voxelAerialEnabled;\nuniform vec3 voxelAerialColor;\nuniform float voxelAerialNear;\nuniform float voxelAerialFar;\nuniform float voxelAerialStrength;\nuniform float voxelAerialHorizonStrength;\nuniform float voxelAerialSaturationReduction;\nuniform float voxelAerialContrastReduction;\nuniform float voxelAerialShadowLift;\nuniform float voxelToonEnabled;\nuniform float voxelToonStrength;\nuniform float voxelToonShadowLevel;\nuniform float voxelToonMidLevel;\nuniform float voxelToonHighlightLevel;\nuniform float voxelToonTransitionSoftness;\nvarying float vVoxelSurfaceKind;\nvarying vec3 vVoxelWorldPosition;\nvarying vec3 vVoxelWorldNormal;\nvarying vec3 vVoxelViewNormal;\nfloat voxelFacetMode = ${mode === "facet" ? "0.0" : mode === "glint" ? "1.0" : "2.0"};\n\nfloat voxelFacetHash(vec2 p) {\n  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);\n}\n\nvec2 voxelFacetPlanarUv(vec3 position, vec3 normal) {\n  vec3 axis = abs(normalize(normal));\n  if (axis.y > axis.x && axis.y > axis.z) return position.xz;\n  if (axis.x > axis.z) return position.zy;\n  return position.xy;\n}\n\n// Quantized, clustered height field: most cells share the cluster baseline while\n// a small deterministic minority is raised or recessed. Values are voxel fractions.\nfloat voxelHeightField(vec2 cell) {\n  vec2 cluster = floor(cell / 3.0);\n  float clusterBaseline = (voxelFacetHash(cluster + vec2(53.1, 17.7)) - 0.5) * 0.022;\n  float minority = step(0.76, voxelFacetHash(cell + vec2(11.7, 29.3)));\n  float direction = mix(-1.0, 1.0, step(0.52, voxelFacetHash(cell + vec2(37.1, 5.9))));\n  return clusterBaseline + minority * direction * 0.085;\n}\n\nfloat voxelHeightCavity(vec2 cell) {\n  float center = voxelHeightField(cell);\n  float neighbours = voxelHeightField(cell + vec2(-1.0, 0.0))\n    + voxelHeightField(cell + vec2(1.0, 0.0))\n    + voxelHeightField(cell + vec2(0.0, -1.0))\n    + voxelHeightField(cell + vec2(0.0, 1.0));\n  return clamp((neighbours * 0.25 - center) * 5.5, -1.0, 1.0);\n}\n${VOXEL_FACET_DECLARATIONS_MARKER}`
+        `#include <common>\nuniform float voxelFacetSurfaceKind;\nuniform float voxelFacetCellSize;\nuniform float voxelFacetStrength;\nuniform float voxelGlintStrength;\nuniform vec3 voxelAerialFocus;\nuniform vec3 voxelAerialViewDirection;\n${AERIAL_DEPTH_GLSL}\nuniform float voxelAerialEnabled;\nuniform vec3 voxelAerialColor;\nuniform float voxelAerialNear;\nuniform float voxelAerialFar;\nuniform float voxelAerialStrength;\nuniform float voxelAerialHorizonStrength;\nuniform float voxelAerialSaturationReduction;\nuniform float voxelAerialContrastReduction;\nuniform float voxelAerialShadowLift;\nuniform float voxelToonEnabled;\nuniform float voxelToonStrength;\nuniform float voxelToonShadowLevel;\nuniform float voxelToonMidLevel;\nuniform float voxelToonHighlightLevel;\nuniform float voxelToonTransitionSoftness;\nvarying float vVoxelSurfaceKind;\nvarying vec3 vVoxelWorldPosition;\nvarying vec3 vVoxelWorldNormal;\nvarying vec3 vVoxelViewNormal;\nfloat voxelFacetMode = ${mode === "facet" ? "0.0" : mode === "glint" ? "1.0" : "2.0"};\n\nfloat voxelFacetHash(vec2 p) {\n  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);\n}\n\nvec2 voxelFacetPlanarUv(vec3 position, vec3 normal) {\n  vec3 axis = abs(normalize(normal));\n  if (axis.y > axis.x && axis.y > axis.z) return position.xz;\n  if (axis.x > axis.z) return position.zy;\n  return position.xy;\n}\n\n// Quantized, clustered height field: most cells share the cluster baseline while\n// a small deterministic minority is raised or recessed. Values are voxel fractions.\nfloat voxelHeightField(vec2 cell) {\n  vec2 cluster = floor(cell / 3.0);\n  float clusterBaseline = (voxelFacetHash(cluster + vec2(53.1, 17.7)) - 0.5) * 0.022;\n  float minority = step(0.76, voxelFacetHash(cell + vec2(11.7, 29.3)));\n  float direction = mix(-1.0, 1.0, step(0.52, voxelFacetHash(cell + vec2(37.1, 5.9))));\n  return clusterBaseline + minority * direction * 0.085;\n}\n\nfloat voxelHeightCavity(vec2 cell) {\n  float center = voxelHeightField(cell);\n  float neighbours = voxelHeightField(cell + vec2(-1.0, 0.0))\n    + voxelHeightField(cell + vec2(1.0, 0.0))\n    + voxelHeightField(cell + vec2(0.0, -1.0))\n    + voxelHeightField(cell + vec2(0.0, 1.0));\n  return clamp((neighbours * 0.25 - center) * 5.5, -1.0, 1.0);\n}\n${VOXEL_FACET_DECLARATIONS_MARKER}`
       )
       .replace("#include <normal_fragment_maps>", facetInjection)
       .replace(
@@ -371,11 +379,12 @@ export function applyVoxelCurvedWorldTwinkle(material, {
       .replace(
         "#include <opaque_fragment>",
         `// Partial aerial perspective: retain material identity instead of fading
-// geometry into a fog color. Horizontal sight lines receive more atmosphere.
+// geometry into a fog color. Depth starts behind the inspected point, so
+// retreating to far view cannot sweep the foreground into the haze.
 vec3 voxelAerialToFragment = vVoxelWorldPosition - cameraPosition;
 float voxelAerialDistance = length(voxelAerialToFragment);
 float voxelAerialRange = max(voxelAerialFar - voxelAerialNear, 0.001);
-float voxelAerialDistanceWeight = smoothstep(0.0, 1.0, (voxelAerialDistance - voxelAerialNear) / voxelAerialRange);
+float voxelAerialDistanceWeight = smoothstep(0.0, 1.0, (voxelAerialDepthBehindFocus(vVoxelWorldPosition) - voxelAerialNear) / voxelAerialRange);
 float voxelAerialVertical = abs(voxelAerialToFragment.y) / max(voxelAerialDistance, 0.001);
 float voxelAerialHorizon = 1.0 - smoothstep(0.24, 0.78, voxelAerialVertical);
 float voxelAerialWeight = voxelAerialEnabled * voxelAerialStrength * voxelAerialDistanceWeight

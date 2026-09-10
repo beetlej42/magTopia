@@ -1,3 +1,4 @@
+import { createSunlitCalibrationScene } from "./generators/sunlitCalibrationScene.js";
 import "./style.css";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
@@ -10,6 +11,7 @@ import { ACTIVE_VISUAL_THEME } from "./render/sunlitStorybookTheme.js";
 import {
   getVoxelEnvironmentShaderDiagnostics,
   getVoxelFacetHighlightMode,
+  updateVoxelEnvironmentView,
   updateVoxelEnvironmentStyle
 } from "./render/voxelCurvedWorldTwinkle.js";
 import { chooseAdaptiveQuality, detectMobileRenderProfile, shouldEnableBokeh } from "./render/mobilePerformance.js";
@@ -133,6 +135,7 @@ import {
 const app = document.querySelector("#app");
 const pureViewToggle = document.querySelector("#pure-view-toggle");
 const cityInfoOverlay = createCityInfoOverlay();
+const aerialViewDirection = new THREE.Vector3();
 const scene = new THREE.Scene();
 scene.background = new THREE.Color("#fff3f8");
 // The scene root never moves. Keeping it static prevents it from forcing a
@@ -892,7 +895,9 @@ async function rebuildActive(config) {
   } else if (currentMode === "vegetation") {
     activeObject = createVoxelVegetationLab(currentConfig);
   } else if (currentMode === "district") {
-    activeObject = createVoxelIntentDistrict(currentConfig);
+    activeObject = frontendSurface === "studio" && startupParams.get("calibration") === "sunlit"
+      ? createSunlitCalibrationScene(currentConfig)
+      : createVoxelIntentDistrict(currentConfig);
   } else if (currentMode === "agentcity") {
     const cityConfig = {
       ...currentConfig,
@@ -2267,6 +2272,8 @@ function animate() {
     updateInteractivePlacement();
   }
   camera.updateMatrixWorld();
+  camera.getWorldDirection(aerialViewDirection);
+  updateVoxelEnvironmentView(controls.target, aerialViewDirection);
   updateWorldShadowForView();
   if (voxelSky.visible) {
     voxelSky.userData.update({

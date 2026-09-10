@@ -6,7 +6,7 @@ The default palette targets warm terracotta, cream stone, blue-grey slate and ye
 
 - `src/render/sunlitStorybookTheme.js` centralizes building, terrain, foliage and sky colors. Runtime voxel meshes and decoded building artifacts share the same material roles; no artifact rebuild is required for the palette.
 - The existing material shader groups direct diffuse lighting into three soft bands. The bounded Lambert correction keeps cast shadows and AO, with gentler shading on leaves and no banding on glass/water. No outline pass or new render target is introduced.
-- Aerial perspective gradually reduces distant contrast and blends towards the current horizon color over 38–155 world units, capped at 24%. Its horizon weighting protects the downward-looking foreground. Night color comes from the day/night sky.
+- Aerial perspective gradually reduces distant contrast and blends towards the current horizon color over 18–125 world units behind the inspected point, capped at 10%. Camera retreat does not increase this focus-relative depth. Its horizon weighting protects the downward-looking foreground. Night color comes from the day/night sky; daylight haze blends toward cool sky instead of cream-white. `aerialPerspective=0` disables it for comparison.
 - Bokeh uses the same aperture/maximum radius on desktop and mobile. Radius is normalized to the viewport short edge instead of width, keeping the shape circular across portrait/landscape layouts. The existing half-resolution, depth-aware filter and shared scene depth remain in use; far view bypasses Bokeh.
 - Tone mapping stays linear/NoToneMapping to retain the target's warm material colors. `?visualTheme=legacy` compares the original palette and lighting without toon/aerial changes; Bokeh's aspect correction remains active in both themes.
 
@@ -54,3 +54,10 @@ The Studio district now explicitly enables opaque authored building meshes as sh
 Run `STUDIO_MODE=district STUDIO_TIME=0.38 STUDIO_LIGHTING=1 node scripts/capture-sunlit-studio.mjs lighting-review`. In addition to the normal captures, this saves the same camera at times 0.32, 0.5 and 0.68, and fails if any authored plot has no shadow caster. Inspect roof/chimney self-shadow, courtyard occlusion, building silhouettes on grass/roads, opposite-facing walls and shadow direction across these views. These are normal lighting screenshots, without shadow-debug lighting.
 
 Corrected screenshot entry: `artifacts/sunlit-alignment/lighting-review-desktop.png`; angle comparisons append `-sun-0.32`, `-sun-0.5`, `-sun-0.68`. The original deployed city layout and phone hardware still require separate validation before claiming final target parity.
+
+
+## Focus-relative calibration iteration
+
+See `SUNLIT_COLOR_SAMPLING.md` for the sampled colors, calibration scene, foreground pixel comparison and current performance caveat. Studio entry: `/studio?mode=district&calibration=sunlit&worldTime=0.38&clock=0`. The fixture contains twelve real generated terrace buildings with shadow casters in four depth rows. Captures are `artifacts/sunlit-alignment/calibration-final-*`.
+
+This iteration's full suite passed 671 tests with 5 database checks skipped; the subsequently added calibration geometry/shadow test also passed. The focused render suite and production build passed after the sky output conversion correction. The historical 60fps results above belong to earlier runs; the current default browser run and empty-page control are both paced around 30Hz.
