@@ -1492,7 +1492,8 @@ export function voxelDaylightStyle(sunTime = 0.52) {
   const goldenHour = state.twilight;
   const skyColor = state.topColor.clone().lerp(state.horizonColor, 0.36);
   const environment = ACTIVE_VISUAL_THEME.environment;
-  const atmosphereColor = state.horizonColor.clone().multiplyScalar(0.68 + daylight * 0.2);
+  const atmosphereColor = state.horizonColor.clone()
+    .lerp(state.topColor, daylight * 0.65).multiplyScalar(0.68 + daylight * 0.2);
   const sunColor = new THREE.Color(environment.twilightSun ?? "#e17d5c")
     .lerp(new THREE.Color(environment.sun), daylight)
     .lerp(new THREE.Color("#b8c9ff"), moonlight * 0.34);

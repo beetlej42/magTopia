@@ -71,7 +71,7 @@ test("storybook twilight keeps colored ambient fill instead of crushing shadows"
   const midnight = voxelDaylightStyle(0);
   assert.ok(dawn.twilightFactor > 0.2, "sunrise should retain twilight influence");
   assert.ok(dawn.ambientSky.b > dawn.ambientSky.r, "dawn sky fill should stay cool");
-  assert.ok(dawn.ambientGround.r >= dawn.ambientGround.b, "dawn ground fill should stay warm");
+  assert.ok(noon.ambientGround.b >= noon.ambientGround.r, "day ground fill should avoid a brown cast");
   assert.ok(
     dawn.ambientSky.getHSL({}).l > midnight.ambientSky.getHSL({}).l + 0.08,
     "dawn ambient fill should lift materially above midnight"
@@ -79,12 +79,12 @@ test("storybook twilight keeps colored ambient fill instead of crushing shadows"
   assert.ok(noon.ambientSky.getHSL({}).l >= dawn.ambientSky.getHSL({}).l);
 });
 
-test("aerial perspective color follows the rendered low sky across the day cycle", () => {
+test("aerial perspective uses cool daytime sky and follows nightfall", () => {
   const colorDelta = (left, right) => Math.hypot(left.r - right.r, left.g - right.g, left.b - right.b);
   for (const time of [0, 0.23, 0.5, 0.77]) {
     const sky = getVoxelSkyState(time);
     const style = voxelDaylightStyle(time);
-    const expectedLowSky = sky.horizonColor.clone().multiplyScalar(0.68 + sky.daylight * 0.2);
+    const expectedLowSky = sky.horizonColor.clone().lerp(sky.topColor, sky.daylight * 0.65).multiplyScalar(0.68 + sky.daylight * 0.2);
     assert.ok(
       colorDelta(style.atmosphereColor, expectedLowSky) < 1e-8,
       `atmosphere should match the visible low sky at time ${time}`
