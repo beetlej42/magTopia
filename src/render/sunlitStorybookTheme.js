@@ -82,7 +82,7 @@ export const LEGACY_VISUAL_THEME = freezeTheme({
 });
 
 const sunlitMaterials = {
-  brickRed: "#d88a68", brickBrown: "#a46b56", sandstone: "#e4cea5",
+  brickRed: "#ef8a4e", brickBrown: "#d07f5d", sandstone: "#e4cea5",
   limestone: "#ece0c7", stoneShadow: "#a39787", slate: "#5e7088",
   timber: "#493f35", iron: "#34383a", patinaMetal: "#607a70",
   grass: "#adb97b", grassLight: "#a5b88a", grassDark: "#71875f",
@@ -94,8 +94,8 @@ const sunlitMaterials = {
 
 const family = (base, ...variants) => [base, ...variants];
 const sunlitVariants = {
-  brickRed: family(sunlitMaterials.brickRed, "#df936f", "#c97c60", "#d28565"),
-  brickBrown: family(sunlitMaterials.brickBrown, "#ad755f", "#965f4e"),
+  brickRed: family(sunlitMaterials.brickRed, "#f59859", "#df7943", "#e98349"),
+  brickBrown: family(sunlitMaterials.brickBrown, "#dc8b65", "#bf704f"),
   sandstone: family(sunlitMaterials.sandstone, "#e4d1b0", "#d0bb9b"), stoneShadow: family(sunlitMaterials.stoneShadow, "#ada092", "#998d7e"),
   limestone: family(sunlitMaterials.limestone, "#ece2ce", "#d8cebb"), slate: family(sunlitMaterials.slate, "#687b92", "#53657d", "#708198"),
   timber: family(sunlitMaterials.timber, "#54483c", "#41382f"),
