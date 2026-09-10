@@ -1,6 +1,11 @@
 import * as THREE from "three";
 import { VOXEL_SIZE } from "./voxelBuildingLab.js";
 import { getVoxelLodThresholds, selectScreenSpaceVoxelLod } from "../render/voxelLodQuality.js";
+import { ACTIVE_VISUAL_THEME } from "../render/sunlitStorybookTheme.js";
+import {
+  STORYBOOK_SURFACE_KINDS,
+  applyStorybookSurfaceMaterial
+} from "../render/storybookSurfaceMaterial.js";
 
 export const TREE_DETAIL_SCALE = 1;
 export const TREE_DETAIL_VOXEL_SIZE = VOXEL_SIZE / TREE_DETAIL_SCALE;
@@ -16,16 +21,18 @@ export const TREE_FAMILY_TEMPLATE_IDS = Object.freeze({
   pine: Object.freeze(["pine-0"])
 });
 
+const TREE_PALETTES = ACTIVE_VISUAL_THEME.treePalettes;
+const toColors = (palette) => palette.map((value) => new THREE.Color(value));
 const FOLIAGE_PALETTES = Object.freeze({
-  foliage: ["#244832", "#365d39", "#527842", "#779650"].map((value) => new THREE.Color(value)),
-  birchFoliage: ["#31543a", "#4c7042", "#72904e", "#9cac62"].map((value) => new THREE.Color(value)),
-  pineFoliage: ["#193b31", "#28503c", "#386348", "#53795a"].map((value) => new THREE.Color(value)),
-  yewFoliage: ["#112f28", "#1d4533", "#2d5c3d", "#47734c"].map((value) => new THREE.Color(value))
+  foliage: toColors(TREE_PALETTES.foliage),
+  birchFoliage: toColors(TREE_PALETTES.birchFoliage),
+  pineFoliage: toColors(TREE_PALETTES.pineFoliage),
+  yewFoliage: toColors(TREE_PALETTES.yewFoliage)
 });
 const TIMBER_PALETTES = Object.freeze({
-  timber: ["#493224", "#62442b", "#795735"].map((value) => new THREE.Color(value)),
-  birchTimber: ["#62635b", "#989687", "#cac6ad"].map((value) => new THREE.Color(value)),
-  pineTimber: ["#59321f", "#824a28", "#aa6733"].map((value) => new THREE.Color(value))
+  timber: toColors(TREE_PALETTES.timber),
+  birchTimber: toColors(TREE_PALETTES.birchTimber),
+  pineTimber: toColors(TREE_PALETTES.pineTimber)
 });
 const TREE_GEOMETRY_CACHE = new Map();
 
@@ -222,7 +229,20 @@ export function getVoxelTreeTemplateDiagnostics() {
 }
 
 export function createVoxelTreeMaterial() {
-  return new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0, flatShading: true });
+  const material = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    roughness: 1,
+    metalness: 0,
+    flatShading: true
+  });
+  // Trees share one vertex-colored material for foliage and timber. Treat the
+  // combined tree mass as an organic/felt surface so it receives the shared
+  // aerial-perspective shader and the gentler Toon-lite response without
+  // changing geometry, LOD, draw calls, or the shadow proxy.
+  return applyStorybookSurfaceMaterial(material, {
+    surfaceKind: STORYBOOK_SURFACE_KINDS.felt,
+    strength: 0
+  });
 }
 
 export function createVoxelTreeLodRenderer(trees, { initialLod = 2 } = {}) {

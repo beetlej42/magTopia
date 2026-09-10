@@ -120,6 +120,8 @@ installed on the machine (e.g. a Playwright cache) before failing with guidance.
 Everything is overridable through env vars:
 
 - `CHROMIUM_PATH` — explicit Chromium/Chrome executable.
+- `RENDER_ACCEPTANCE_GPU=hardware` — use the native GPU instead of SwiftShader;
+  check `graphics.renderer` in the report before treating results as hardware timings.
 - `RENDER_ACCEPTANCE_URL` — point at an already-running server instead of
   spawning Vite; `RENDER_ACCEPTANCE_PORT` changes the spawned Vite port.
 - `RENDER_ACCEPTANCE_DEVICE_SCALE_FACTOR` — screenshot density (3 = sharp/normal,

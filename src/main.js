@@ -6,7 +6,12 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { AdaptiveBokehPass, calculateBokehViewAmount } from "./render/adaptiveBokehPass.js";
 import { setStorybookSurfaceStrength } from "./render/storybookSurfaceMaterial.js";
-import { getVoxelFacetHighlightMode } from "./render/voxelCurvedWorldTwinkle.js";
+import { ACTIVE_VISUAL_THEME } from "./render/sunlitStorybookTheme.js";
+import {
+  getVoxelEnvironmentShaderDiagnostics,
+  getVoxelFacetHighlightMode,
+  updateVoxelEnvironmentStyle
+} from "./render/voxelCurvedWorldTwinkle.js";
 import { chooseAdaptiveQuality, detectMobileRenderProfile, shouldEnableBokeh } from "./render/mobilePerformance.js";
 import {
   calculateShadowViewExtent,
@@ -135,6 +140,7 @@ scene.background = new THREE.Color("#fff3f8");
 scene.matrixAutoUpdate = false;
 
 const startupParams = new URLSearchParams(window.location.search);
+document.documentElement.dataset.magicTownVisualTheme = ACTIVE_VISUAL_THEME.id;
 setVoxelMaterialMode(startupParams.get("voxelShader") ?? "diffuse");
 const startupVoxelSurfaceStrength = setStorybookSurfaceStrength(
   startupParams.get("storybookMaterials") === "0"
@@ -219,6 +225,10 @@ const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, power
 renderer.setPixelRatio(renderQuality.pixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = ACTIVE_VISUAL_THEME.grading.toneMapping === "aces-filmic"
+  ? THREE.ACESFilmicToneMapping
+  : THREE.NoToneMapping;
+renderer.toneMappingExposure = ACTIVE_VISUAL_THEME.grading.exposure;
 renderer.info.autoReset = false;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = mobilePerformanceProfile ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
@@ -238,8 +248,8 @@ for (const [target, name] of [
 }
 const renderPass = new RenderPass(scene, camera);
 const districtBokehDefaults = {
-  aperture: mobilePerformanceProfile ? 0.0002 : 0.00028,
-  maxblur: mobilePerformanceProfile ? 0.004 : 0.006,
+  aperture: 0.0002,
+  maxblur: 0.004,
   minimumFocusRange: 4,
   focusRangeRatio: 0.075
 };
@@ -920,6 +930,7 @@ async function rebuildActive(config) {
   skyClock.time = Number.isFinite(Number(currentConfig.sunTime)) ? Number(currentConfig.sunTime) : skyClock.time;
   voxelSky.visible = isVoxelSkyMode();
   applyWorldLighting(currentConfig.sunTime);
+  publishAtmosphereDiagnostics();
   applyDistrictBokeh(currentConfig.bokehStrength ?? 1, currentConfig.bokehBlur ?? 1);
   configureCameraForViewport();
   document.documentElement.dataset.magicTownMode = currentMode;
@@ -1055,11 +1066,14 @@ function applyWorldLighting(sunTime = 0.52, updateActiveObject = true) {
     ? voxelDaylightStyle(sunTime)
     : getDaylightStyle(sunTime);
   scene.background.copy(style.skyColor);
+  if (isVoxelSkyMode()) updateVoxelEnvironmentStyle(style);
   worldLights.ambient.color.copy(style.ambientSky);
   worldLights.ambient.groundColor.copy(style.ambientGround);
   const massingContrast = currentMode === "massing" || currentMode === "styles";
   const voxelWorldLighting = ["voxel", "vegetation", "district", "agentcity"].includes(currentMode);
-  const voxelAmbientContrast = voxelWorldLighting ? 0.58 : 1;
+  const voxelAmbientContrast = voxelWorldLighting
+    ? (ACTIVE_VISUAL_THEME.id === "legacy" ? 0.58 : 0.68)
+    : 1;
   const voxelRimContrast = voxelWorldLighting ? 0.72 : 1;
   worldLights.ambient.intensity = shadowDebugEnabled
     ? 0.04
@@ -1076,6 +1090,14 @@ function applyWorldLighting(sunTime = 0.52, updateActiveObject = true) {
   document.documentElement.dataset.magicTownVoxelSurfaceStrength = startupVoxelSurfaceStrength.toFixed(3);
   if (updateActiveObject) activeObject?.userData.updateDaylight?.(style);
   return style;
+}
+
+function publishAtmosphereDiagnostics() {
+  document.documentElement.dataset.magicTownAtmosphere = JSON.stringify({
+    ...getVoxelEnvironmentShaderDiagnostics(),
+    toneMapping: ACTIVE_VISUAL_THEME.grading.toneMapping,
+    exposure: ACTIVE_VISUAL_THEME.grading.exposure
+  });
 }
 
 function updateWorldShadowForView(force = false) {
