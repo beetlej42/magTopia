@@ -1,11 +1,12 @@
 # MAGTOPIA 前端 Surface 与部署边界
 
-MAGTOPIA 将渲染能力与对外页面分开管理。当前 dashboard 继续作为临时主页/运营入口，未来再替换成正式的公共展示首页。
+MAGTOPIA 将渲染能力与对外页面分开管理。公共首页使用独立的服务端 Showcase 页面，Dashboard 保留为城市运营入口。
 
 ## 页面职责
 
 | Surface | 入口 | 用途 | 生产部署 |
 | --- | --- | --- | --- |
+| Showcase | `/` | 品牌介绍、真实渲染街区样板、创建城市入口 | 保留 |
 | Dashboard | `/dashboard` | 订单、城市状态、运营信息 | 保留 |
 | Player City | `/cities/:cityId` | 面向玩家的只读城市查看页 | 保留 |
 | Agent Service | `/.well-known/magtopia-agent.json`、`/agent/*`、`/openapi.json` | Agent 发现、协议和 API | 保留 |
@@ -18,7 +19,7 @@ MAGTOPIA 将渲染能力与对外页面分开管理。当前 dashboard 继续作
 - `/cities/:cityId` 自动进入 `player` surface，只显示城市信息和只读刷新能力，不显示模式、预设、seed、滑块或 API 调试信息。Player surface 还会叠加城市日体验（破晓报纸 → 三卡选择 → 手动放置 → 清晨/白昼/夜晚的视觉呈现投影），其数据来自只读 `GET /api/v1/cities/:cityId/city-day`，且必须在纯享模式下完全隐藏。
 - `?view=1` 和 `/acceptance/*` 自动进入 `acceptance` surface，隐藏产品 UI，保持固定验收画面。
 - 当前服务端只将 `dist/index.html` 用作城市查看页，并没有 `/studio` 服务端路由；Studio 由 Vite 本地开发服务器使用。
-- 将来建设正式公共首页时，可以新增 `showcase` surface，不需要把 Studio 重新暴露出去。
+- 公共首页由 `apps/server/home.html` 与 `public/brand/` 提供，不加载 Studio 或完整 Three.js 运行时。日光/夜色图片来自现有街区的真实渲染截图；首屏 `city-vision.jpg` 为有明确标识的城市愿景概念美术。
 
 ## 本地使用
 

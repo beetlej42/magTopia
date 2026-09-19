@@ -151,6 +151,7 @@ const DENY_LIST = new Set([
   "get /agent/building-design-api-v1.md",
   "get /{p}",
   "get /style-reference/isometric-magic-london-city.jpg",
+  "get /brand/{p}", // Public homepage assets, not Agent API operations.
   "get /dashboard",
   "get /cities/{p}",
   "get /connect/{p}",
