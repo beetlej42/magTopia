@@ -437,3 +437,14 @@ and service-generated preview images. Each downloaded GLB also gets a
 `-1024-webp.glb` runtime copy whose embedded textures are resized to 1024 px and
 encoded as required `EXT_texture_webp` textures. The script never stores the API
 key or the Base64 input image in its metadata.
+
+### 公共首页预览
+
+正式服务的 `/` 为粉紫主题品牌首页，`/play` 创建城市，`/dashboard` 保留城市管理入口。首页静态资产位于 `public/brand/`，由 Fastify 直接提供，不依赖 Studio 或 Vite 的 public 复制。分享链接沿用服务端 `MAGICTOWN_PUBLIC_BASE_URL` 配置。
+
+```bash
+node scripts/preview-home.mjs
+# http://127.0.0.1:4192 — 临时内存存档，仅用于本地预览
+node scripts/check-home.mjs
+# 使用本机 Chrome 检查桌面/移动端，截图输出到 artifacts/homepage/
+```

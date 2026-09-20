@@ -52,6 +52,8 @@ import {
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PLAYBOOK_PATH = path.resolve(SERVER_DIR, "../../docs/agent-playbook.md");
 const BUILDING_DESIGN_API_PATH = path.resolve(SERVER_DIR, "../../docs/BUILDING_DESIGN_API_V1.md");
+const HOME_PATH = path.join(SERVER_DIR, "home.html");
+const BRAND_ROOT = path.resolve(SERVER_DIR, "../../public/brand");
 const DASHBOARD_PATH = path.join(SERVER_DIR, "dashboard.html");
 const GENERATED_ROOT = path.resolve(SERVER_DIR, "../../public/generated");
 const DIST_ROOT = path.resolve(SERVER_DIR, "../../dist");
@@ -77,7 +79,13 @@ export async function createApp({ repository, config, logger = false, now = () =
     return reply.code(status).send(errorEnvelope(error, request.id));
   });
 
-  app.get("/", async (_request, reply) => reply.type("text/html; charset=utf-8").send(homePage(config.publicBaseUrl)));
+  app.get("/", async (_request, reply) => reply.type("text/html; charset=utf-8").send(await homePage(config.publicBaseUrl)));
+  app.get("/brand/:file", async (request, reply) => {
+    const files = { "logo.svg": "image/svg+xml", "home.css": "text/css; charset=utf-8", "home.js": "text/javascript; charset=utf-8", "city-vision.jpg": "image/jpeg", "city-stage-0.jpg": "image/jpeg", "city-stage-1.jpg": "image/jpeg", "city-stage-2.jpg": "image/jpeg", "city-day.jpg": "image/jpeg", "city-night.jpg": "image/jpeg" };
+    const type = Object.hasOwn(files, request.params.file) && files[request.params.file];
+    if (!type) return reply.code(404).send({ message: "Brand asset not found" });
+    return reply.type(type).header("Cache-Control", "public, max-age=3600").send(await fs.readFile(path.join(BRAND_ROOT, request.params.file)));
+  });
   app.get("/play", async (_request, reply) => reply.type("text/html; charset=utf-8").send(renderPlayerStartPage(config.publicBaseUrl)));
   app.get("/healthz", async () => {
     await repository.database.query("SELECT 1");
@@ -2434,8 +2442,9 @@ function withAgentConnectionLinks(connection, config) {
   };
 }
 
-function homePage(baseUrl) {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>MAGTOPIA · 麦托邦 · Agent Service</title><style>${agentPageStyles()}</style></head><body><h1>MAGTOPIA Agent City Service</h1><p>麦托邦是一座由 AI Agent 驱动的魔法城市。每位玩家拥有一座默认私有的城市，市政 Agent 通过专属的一次性链接接入，并以受限 API 读取、建设和解释城市。</p><div class="card"><h2>玩家从这里开始</h2><p><a href="/play">创建城市并获得双方链接</a></p><p>一次创建后即可打开自己的城市，并把生成的一次性链接交给 Agent。</p></div><div class="card"><h2>Agent 从这里开始</h2><p><a href="/agent">浏览器友好的 Agent 起点</a> · <a href="/agent/playbook.md">Playbook</a> · <a href="/agent/openapi">OpenAPI</a></p><p>API base：<code>${baseUrl}/api/v1</code></p></div><div class="card"><h2>城市运营</h2><p><a href="/dashboard">打开城市与资产状态面板</a></p><p>创建城市时会同时返回玩家可视化链接与 Agent 一次性连接链接；双方无需自行拼接 token 或 city id。</p></div></body></html>`;
+async function homePage(baseUrl) {
+  const safeBaseUrl = String(baseUrl).replace(/\/$/, "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+  return (await fs.readFile(HOME_PATH, "utf8")).replaceAll("{{BASE_URL}}", safeBaseUrl);
 }
 
 function playerStartPage(baseUrl) {
