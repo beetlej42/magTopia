@@ -40,12 +40,14 @@ function geometry(materialOffset = 0) {
   // ArrayBuffer decoding.
   const positionBacking = new Float32Array([99, 0, 0, 0, 1 + materialOffset, 0, 0, 0, 1, 0]);
   const normalBacking = new Float32Array([99, 0, 0, 1, 0, 0, 0, 0, 1, 0]);
+  const colorBacking = new Float32Array([99, 0.8, 0.2, 0.1, 0.3, 0.7, 0.2, 0.2, 0.4, 0.9]);
   const indexBacking = new Uint32Array([99, 0, 1, 2]);
   return {
     positions: positionBacking.subarray(1, 10),
     normals: normalBacking.subarray(1, 10),
     ao: new Float32Array([0.2, 0.4, 0.8]),
     surfaceKind: new Float32Array([1, 2, 3]),
+    colors: colorBacking.subarray(1, 10),
     indices: indexBacking.subarray(1),
   };
 }
@@ -84,6 +86,7 @@ test("baked artifact codec preserves LOD order, descriptor order, materials and 
   assert.equal(decoded.levels[1].meshes[0].materialId, "stone");
   assert.deepEqual([...decoded.levels[0].meshes[0].geometry.indices], [0, 1, 2]);
   assert.equal(decoded.levels[0].meshes[0].geometry.positions[3], 1);
+  assert.deepEqual([...decoded.levels[0].meshes[0].geometry.colors], [...geometry().colors]);
   const lod = createBakedMeshLod(decoded);
   assert.equal(lod.userData.levelObjects.length, 2);
   assert.equal(lod.userData.levelObjects[0].children[0].geometry.index.count, 3);
@@ -96,6 +99,7 @@ test("baked artifact encoder accepts Three.js BufferGeometry", () => {
   threeGeometry.setAttribute("normal", new THREE.Float32BufferAttribute(source.normals, 3));
   threeGeometry.setAttribute("voxelAo", new THREE.Float32BufferAttribute(source.ao, 1));
   threeGeometry.setAttribute("voxelSurfaceKind", new THREE.Float32BufferAttribute(source.surfaceKind, 1));
+  threeGeometry.setAttribute("color", new THREE.Float32BufferAttribute(source.colors, 3));
   threeGeometry.setIndex(new THREE.BufferAttribute(source.indices, 1));
   const bytes = encodeBakedBuildingArtifact({
     buildingId: "building-geometry",
@@ -104,6 +108,7 @@ test("baked artifact encoder accepts Three.js BufferGeometry", () => {
   });
   const decoded = decodeBakedBuildingArtifact(bytes);
   assert.deepEqual([...decoded.levels[0].meshes[0].geometry.indices], [0, 1, 2]);
+  assert.deepEqual([...decoded.levels[0].meshes[0].geometry.colors], [...source.colors]);
   threeGeometry.dispose();
 });
 
@@ -294,6 +299,16 @@ test("memory bake worker writes Brotli MTBA, persists READY manifest and is idem
   const decoded = decodeBakedBuildingArtifact(brotliDecompressSync(stored));
   assert.equal(decoded.buildingId, building.id);
   assert.deepEqual(decoded.levels.map((level) => level.lod), [0, 1, 2]);
+  const opaqueMeshes = decoded.levels.flatMap((level) => level.meshes).filter((mesh) => mesh.materialId === "opaquePalette");
+  assert.ok(opaqueMeshes.length > 0);
+  assert.ok(opaqueMeshes.every((mesh) => mesh.geometry.colors?.length === mesh.geometry.positions.length));
+  const bakedLod = createBakedMeshLod(decoded);
+  const bakedOpaqueMeshes = [];
+  bakedLod.traverse((mesh) => {
+    if (mesh.isMesh && mesh.userData.materialId === "opaquePalette") bakedOpaqueMeshes.push(mesh);
+  });
+  assert.equal(bakedOpaqueMeshes.length, opaqueMeshes.length);
+  assert.ok(bakedOpaqueMeshes.every((mesh) => mesh.geometry.getAttribute("color") && mesh.material.vertexColors));
   await writeFile(path.join(root, city.id, building.id, `${design.revision}.mtba`), fixtureArtifact("legacy-fallback", design.revision));
   const app = await createApp({ repository, config });
   try {
@@ -314,6 +329,58 @@ test("memory bake worker writes Brotli MTBA, persists READY manifest and is idem
   const replay = await repository.enqueueRenderArtifactBake({ cityId: city.id, buildingId: building.id, designId: design.id, designRevision: design.revision, sourceHash });
   assert.equal(replay.status, "ready");
   assert.equal(await worker.processNext(), false);
+});
+
+test("render-state omits stale colorless artifacts and queues a current rebuild", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "magictown-stale-bake-"));
+  const config = { ...configBase, bakedArtifactRoot: root };
+  const repository = createMemoryRepository(config);
+  const player = await repository.createPlayer("Stale Bake Owner");
+  const principal = await repository.authenticate(player.access_token);
+  const city = await repository.createCity(principal, { name: "Stale Bake City" });
+  const record = await repository.getCity(principal, city.id);
+  const cell = Object.values(record.state.cells)[0];
+  const design = createBuildingDesignDraft({
+    generation_mode: "floor_stack",
+    intent: { name: "Color House", purpose: "residential" },
+    site: { lot_id: cell.id, footprint: "1x1" }
+  }, { id: "design-stale-color", actor: "test" });
+  const building = {
+    id: "building-stale-color",
+    footprintCells: [cell.id],
+    site: { lotId: cell.id, footprint: "1x1" },
+    program: { name: "Color House", purpose: "residential" },
+    voxelDesign: { ...design, source: { kind: "new" } }
+  };
+  record.state.buildings[building.id] = building;
+  const sourceHash = getBuildingSourceHash(building);
+  await repository.enqueueRenderArtifactBake({
+    cityId: city.id,
+    buildingId: building.id,
+    designId: design.id,
+    designRevision: design.revision,
+    sourceHash
+  });
+  const claimed = await repository.claimNextRenderArtifactJob();
+  await repository.completeRenderArtifactJob(claimed.outbox.id, claimed.job.id, {
+    status: "ready",
+    artifactVersion: BAKED_BUILDING_ARTIFACT_VERSION - 1,
+    sha256: "a".repeat(64),
+    byteLength: 123,
+    relativePath: `${city.id}/${building.id}/stale.mtba.br`
+  });
+
+  const app = await createApp({ repository, config });
+  try {
+    const state = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/render-state` }), 200);
+    assert.deepEqual(state.artifact_manifest, []);
+    assert.equal(state.artifact_pack, null);
+  } finally {
+    await app.close();
+  }
+  const rebuild = await repository.claimNextRenderArtifactJob();
+  assert.equal(rebuild.job.buildingId, building.id);
+  assert.equal(rebuild.job.artifactVersion, BAKED_BUILDING_ARTIFACT_VERSION);
 });
 
 test("inline worker allowlist does not claim another city or outbox type", async () => {

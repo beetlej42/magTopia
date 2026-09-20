@@ -249,7 +249,8 @@ function meshToArtifactEntry(mesh) {
       normals: normal.array,
       indices: index.array,
       ao: geometry.getAttribute("voxelAo")?.array,
-      surfaceKind: geometry.getAttribute("voxelSurfaceKind")?.array
+      surfaceKind: geometry.getAttribute("voxelSurfaceKind")?.array,
+      colors: geometry.getAttribute("color")?.array
     }
   };
 }

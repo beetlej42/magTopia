@@ -2186,6 +2186,7 @@ function createVoxelMaterial(definition, storybookOptions = {}) {
 // Keep this small adapter public so decoding does not duplicate visual
 // material policy or silently drift from the occupancy fallback.
 export function createVoxelMaterialForArtifact(materialId, storybookOptions = {}) {
+  if (materialId === "opaquePalette") return createOpaquePaletteMaterial();
   return createVoxelMaterial(MATERIAL_LIBRARY[materialId] ?? MATERIAL_LIBRARY.timber, storybookOptions);
 }
 

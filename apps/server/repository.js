@@ -4,7 +4,7 @@ import { createId, createSecret, hashRequest, hashSecret } from "./ids.js";
 import { ServiceError } from "./errors.js";
 import { createServiceWorldContract } from "./world.js";
 import { initializeFreshCitySchedule } from "../../src/gameplay/turn.js";
-import { getBuildingSourceHash } from "./render-artifact-service.js";
+import { getBuildingSourceHash, RENDER_ARTIFACT_FORMAT_VERSION } from "./render-artifact-service.js";
 
 export function createRepository(database, config, { now = () => new Date() } = {}) {
   return {
@@ -435,12 +435,14 @@ export function createRepository(database, config, { now = () => new Date() } = 
         let row;
         if (existing.rowCount) {
           row = existing.rows[0];
-          if (row.status === "ready" && row.building_id === buildingId) return renderArtifactResponse(row);
+          if (row.status === "ready" && row.building_id === buildingId && Number(row.format_version) === RENDER_ARTIFACT_FORMAT_VERSION) return renderArtifactResponse(row);
           const updated = await client.query(
             `UPDATE render_artifacts
-             SET building_id = COALESCE($2, building_id), status = $3, error_jsonb = NULL, updated_at = now()
+             SET building_id = COALESCE($2, building_id), status = $3, format_version = $4,
+                 sha256 = NULL, byte_length = NULL, relative_path = NULL,
+                 error_jsonb = NULL, updated_at = now()
              WHERE id = $1 RETURNING *`,
-            [row.id, buildingId, waiting ? "waiting_for_building" : "queued"]
+            [row.id, buildingId, waiting ? "waiting_for_building" : "queued", RENDER_ARTIFACT_FORMAT_VERSION]
           );
           row = updated.rows[0];
         } else {
@@ -448,7 +450,7 @@ export function createRepository(database, config, { now = () => new Date() } = 
             `INSERT INTO render_artifacts(
                id, city_id, building_id, design_id, design_revision, source_hash, format_version, status
              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-            [createId("render-artifact"), cityId, buildingId, normalizedDesignId, normalizedRevision, String(sourceHash).toLowerCase(), 1, waiting ? "waiting_for_building" : "queued"]
+            [createId("render-artifact"), cityId, buildingId, normalizedDesignId, normalizedRevision, String(sourceHash).toLowerCase(), RENDER_ARTIFACT_FORMAT_VERSION, waiting ? "waiting_for_building" : "queued"]
           );
           row = inserted.rows[0];
         }

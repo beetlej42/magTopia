@@ -46,7 +46,9 @@ import { constructionPriceGuide } from "../../src/gameplay/construction-cost.js"
 import {
   buildCityArtifactPack,
   cityArtifactPackManifest,
-  getBuildingSourceHash
+  enqueueCityRenderArtifactBackfill,
+  getBuildingSourceHash,
+  RENDER_ARTIFACT_FORMAT_VERSION
 } from "./render-artifact-service.js";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -222,7 +224,7 @@ export async function createApp({ repository, config, logger = false, now = () =
         mode: "agentcity",
         terrain: "base-voxel-heightfield",
         buildings: "city-state-voxel-designs-with-runtime-asset-fallback",
-        bakedArtifacts: "versioned-binary-mesh-lod-v1",
+        bakedArtifacts: "versioned-binary-mesh-lod-v2",
         artifactManifest: "render-state.artifact_manifest or /render-artifacts/manifest",
         railwayGateway: "fixed-footprint-through-station-v1",
         railwayGatewayNode: "state.nodes.old_town_entry",
@@ -1837,10 +1839,28 @@ async function readArtifactManifest(repository, principal, { cityId, cityVersion
       const currentReady = persisted.filter((entry) => {
         const building = currentBuildings.get(entry.buildingId);
         return building
+          && Number(entry.artifactVersion) === RENDER_ARTIFACT_FORMAT_VERSION
           && Number(building.voxelDesign?.revision) === Number(entry.designRevision)
           && entry.sourceHash === getBuildingSourceHash(building);
       });
-      if (currentReady.length) return currentReady.map((entry) => artifactManifestEntry(entry, cityId, cityVersion));
+      const staleCurrent = persisted.some((entry) => {
+        const building = currentBuildings.get(entry.buildingId);
+        return building
+          && Number(entry.artifactVersion) !== RENDER_ARTIFACT_FORMAT_VERSION
+          && Number(building.voxelDesign?.revision) === Number(entry.designRevision)
+          && entry.sourceHash === getBuildingSourceHash(building);
+      });
+      if (staleCurrent) {
+        try {
+          await enqueueCityRenderArtifactBackfill({ repository, cityId });
+        } catch {
+          // Rendering remains correct through the runtime voxel fallback even
+          // when optional artifact regeneration is temporarily unavailable.
+        }
+      }
+      if (currentReady.length || persisted.length) {
+        return currentReady.map((entry) => artifactManifestEntry(entry, cityId, cityVersion));
+      }
     } catch {
       // A deployment running before the migration keeps the old directory
       // scan/empty-manifest behavior below.
@@ -2537,7 +2557,7 @@ async function readBuiltFile(target) {
 }
 
 const BAKED_ARTIFACT_MANIFEST_SCHEMA = "baked-building-artifact-manifest-v1";
-const BAKED_ARTIFACT_VERSION = 1;
+const BAKED_ARTIFACT_VERSION = RENDER_ARTIFACT_FORMAT_VERSION;
 const BAKED_ARTIFACT_MAX_BYTES = 64 * 1024 * 1024;
 const SAFE_ARTIFACT_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
@@ -2554,6 +2574,7 @@ export async function createBakedArtifactManifest({ cityId, cityVersion, state, 
     try {
       const bytes = await readBakedArtifactBytes(source, { decoded: true });
       if (!bytes) continue;
+      if (bytes.byteLength < 6 || new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint16(4, true) !== BAKED_ARTIFACT_VERSION) continue;
       entries.push({
         schema: BAKED_ARTIFACT_MANIFEST_SCHEMA,
         artifactVersion: BAKED_ARTIFACT_VERSION,

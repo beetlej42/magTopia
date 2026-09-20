@@ -6,7 +6,7 @@ import { createServiceWorldContract } from "./world.js";
 import { ACTIVE_TURN_STATUSES, SETTLED_TURN_STATUSES, initializeFreshCitySchedule } from "../../src/gameplay/turn.js";
 import { createId, createSecret, hashRequest } from "./ids.js";
 import { ServiceError } from "./errors.js";
-import { getBuildingSourceHash } from "./render-artifact-service.js";
+import { getBuildingSourceHash, RENDER_ARTIFACT_FORMAT_VERSION } from "./render-artifact-service.js";
 
 // A lightweight repository for black-box API acceptance and LAN demos. With a
 // storagePath it atomically snapshots every mutation and survives restarts;
@@ -215,12 +215,12 @@ export function createMemoryRepository(config, options = {}) {
       const normalizedDesignId = designId ?? (buildingId ? `building:${buildingId}` : null);
       const key = `${cityId}:${normalizedDesignId ?? ""}:${normalizedRevision}:${String(sourceHash).toLowerCase()}`;
       const existing = renderArtifacts.get(key);
-      if (existing?.status === "ready" && existing.buildingId === buildingId) return structuredClone(existing);
+      if (existing?.status === "ready" && existing.buildingId === buildingId && Number(existing.artifactVersion) === RENDER_ARTIFACT_FORMAT_VERSION) return structuredClone(existing);
       const row = {
         id: existing?.id ?? createId("render-artifact"), cityId, buildingId: buildingId ?? existing?.buildingId ?? null,
         designId: normalizedDesignId, designRevision: normalizedRevision, sourceHash: String(sourceHash).toLowerCase(),
-        artifactVersion: 1, sha256: existing?.sha256 ?? null, byteLength: existing?.byteLength ?? null,
-        relativePath: existing?.relativePath ?? null, status: buildingId ? "queued" : "waiting_for_building",
+        artifactVersion: RENDER_ARTIFACT_FORMAT_VERSION, sha256: null, byteLength: null,
+        relativePath: null, status: buildingId ? "queued" : "waiting_for_building",
         attempts: existing?.attempts ?? 0, error: null, createdAt: existing?.createdAt ?? new Date().toISOString(), updatedAt: new Date().toISOString()
       };
       renderArtifacts.set(key, row);

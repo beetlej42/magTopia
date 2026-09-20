@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { createVoxelMaterialForArtifact } from "../generators/voxelBuildingLab.js";
 
 export const BAKED_BUILDING_ARTIFACT_MAGIC = "MTBA";
-export const BAKED_BUILDING_ARTIFACT_VERSION = 1;
+export const BAKED_BUILDING_ARTIFACT_VERSION = 2;
 export const BAKED_BUILDING_ARTIFACT_KIND = "baked-building-mesh-lod";
 export const BAKED_BUILDING_MANIFEST_SCHEMA = "baked-building-artifact-manifest-v1";
 
@@ -11,6 +11,7 @@ const MESH_RECORD_BYTES = 16;
 const ATTR_NORMAL = 1;
 const ATTR_AO = 2;
 const ATTR_SURFACE_KIND = 4;
+const ATTR_COLOR = 8;
 
 /**
  * Compact binary contract for a baked building:
@@ -35,16 +36,19 @@ export function encodeBakedBuildingArtifact(input = {}) {
       const geometry = normalizeGeometry(mesh.geometry);
       const attributes = ATTR_NORMAL
         | (geometry.ao ? ATTR_AO : 0)
-        | (geometry.surfaceKind ? ATTR_SURFACE_KIND : 0);
+        | (geometry.surfaceKind ? ATTR_SURFACE_KIND : 0)
+        | (geometry.colors ? ATTR_COLOR : 0);
       const positions = toFloat32Array(geometry.positions);
       const normals = geometry.normals ? toFloat32Array(geometry.normals) : new Float32Array(positions.length);
       const ao = geometry.ao ? toFloat32Array(geometry.ao) : null;
       const surfaceKind = geometry.surfaceKind ? toFloat32Array(geometry.surfaceKind) : null;
+      const colors = geometry.colors ? toFloat32Array(geometry.colors) : null;
       const indices = toUint32Array(geometry.indices);
       if (positions.length % 3 || normals.length !== positions.length) throw new Error("Artifact positions and normals must contain 3 values per vertex");
       if (indices.length % 3) throw new Error("Artifact indices must contain triangles");
       if (ao && ao.length !== positions.length / 3) throw new Error("Artifact AO must contain one value per vertex");
       if (surfaceKind && surfaceKind.length !== positions.length / 3) throw new Error("Artifact surfaceKind must contain one value per vertex");
+      if (colors && colors.length !== positions.length) throw new Error("Artifact colors must contain RGB values for every vertex");
       const descriptor = {
         lod: level.lod,
         material: mesh.materialId ?? "timber",
@@ -53,7 +57,7 @@ export function encodeBakedBuildingArtifact(input = {}) {
         attributes
       };
       descriptors.push(descriptor);
-      const arrays = [positions, normals, ...(ao ? [ao] : []), ...(surfaceKind ? [surfaceKind] : []), indices];
+      const arrays = [positions, normals, ...(ao ? [ao] : []), ...(surfaceKind ? [surfaceKind] : []), ...(colors ? [colors] : []), indices];
       const part = concatTypedArrays(arrays);
       encodedMeshes.push({ descriptor, arrays, part });
       payloadBytes += MESH_RECORD_BYTES + part.byteLength;
@@ -138,6 +142,7 @@ export function decodeBakedBuildingArtifact(bytes) {
     const normals = readFloat32(vertexCount * 3);
     const ao = attributes & ATTR_AO ? readFloat32(vertexCount) : null;
     const surfaceKind = attributes & ATTR_SURFACE_KIND ? readFloat32(vertexCount) : null;
+    const colors = attributes & ATTR_COLOR ? readFloat32(vertexCount * 3) : null;
     const indexBytes = indexCount * 4;
     if (offset + indexBytes > input.byteLength) throw new Error("Baked artifact index data is truncated");
     const indices = new Uint32Array(input.buffer.slice(input.byteOffset + offset, input.byteOffset + offset + indexBytes));
@@ -145,7 +150,7 @@ export function decodeBakedBuildingArtifact(bytes) {
     meshes.push({
       lod: descriptor.lod,
       materialId: materials[materialIndex] ?? descriptor.material ?? "timber",
-      geometry: { positions, normals, indices, ...(ao ? { ao } : {}), ...(surfaceKind ? { surfaceKind } : {}) }
+      geometry: { positions, normals, indices, ...(ao ? { ao } : {}), ...(surfaceKind ? { surfaceKind } : {}), ...(colors ? { colors } : {}) }
     });
   }
   if (offset !== input.byteLength) throw new Error("Baked artifact has trailing bytes");
@@ -170,6 +175,7 @@ export function createBakedMeshLod(decoded, { name = "BakedVoxelBuilding", night
       geometry.setAttribute("normal", new THREE.Float32BufferAttribute(entry.geometry.normals, 3));
       if (entry.geometry.ao) geometry.setAttribute("voxelAo", new THREE.Float32BufferAttribute(entry.geometry.ao, 1));
       if (entry.geometry.surfaceKind) geometry.setAttribute("voxelSurfaceKind", new THREE.Float32BufferAttribute(entry.geometry.surfaceKind, 1));
+      if (entry.geometry.colors) geometry.setAttribute("color", new THREE.Float32BufferAttribute(entry.geometry.colors, 3));
       geometry.setIndex(new THREE.BufferAttribute(entry.geometry.indices, 1));
       geometry.computeBoundingSphere();
       const mesh = new THREE.Mesh(geometry, createVoxelMaterialForArtifact(entry.materialId, {
@@ -257,7 +263,8 @@ function normalizeGeometry(geometry = {}) {
     normals: geometry.normals ?? geometry.attributes?.normal?.array,
     indices: geometry.indices ?? geometry.index?.array ?? geometry.index,
     ao: geometry.ao ?? geometry.attributes?.voxelAo?.array,
-    surfaceKind: geometry.surfaceKind ?? geometry.attributes?.voxelSurfaceKind?.array
+    surfaceKind: geometry.surfaceKind ?? geometry.attributes?.voxelSurfaceKind?.array,
+    colors: geometry.colors ?? geometry.attributes?.color?.array
   };
 }
 
