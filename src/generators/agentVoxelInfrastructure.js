@@ -6,6 +6,7 @@ import {
   deriveCardinalRoadPorts
 } from "../city/road-topology.js";
 import { createRng, randRange } from "../utils/random.js";
+import { resolveConstructionDatum } from "../city/construction-grading.js";
 import { VoxelInstanceBuffer, VOXEL_SIZE, VOXEL_WRITE_PRIORITIES } from "./voxelBuildingLab.js";
 import { addSharedVoxelRoadTile, classifyVoxelRoadTopology } from "./voxelIntentDistrict.js";
 import {
@@ -32,8 +33,10 @@ export function createAgentVoxelRoadLayer({ state, grid, seed = "agent-roads" })
   const bridgeSpans = collectBridgeSpans(bridgeCells, roadsByCoordinate);
   const topologyCounts = {};
   const renderedRoadPorts = {};
+  const renderedRoadSurfaceVoxelYs = {};
   const roadAssetCounts = { curbVoxels: 0, markingVoxels: 0, wearVoxels: 0, lampCount: 0 };
   const northIsPositiveZ = agentNorthIsPositiveWorldZ(state.world?.coordinateSystem);
+  const constructionDatum = resolveConstructionDatum(state);
 
   roadCells.forEach((cell, index) => {
     const ports = deriveCardinalRoadPorts(cell, roadsByCoordinate);
@@ -44,11 +47,12 @@ export function createAgentVoxelRoadLayer({ state, grid, seed = "agent-roads" })
 
     const minX = Math.round((cell.center.x - 2) / VOXEL_SIZE);
     const minZ = Math.round((cell.center.z - 2) / VOXEL_SIZE);
-    const surfaceY = Number(cell.surface?.maxElevationVoxels ?? 0) + 1;
+    const surfaceY = constructionDatum.roadSurfaceVoxelY;
     // Bridge spans are graded and authored as one continuous structure below.
     // Treating each water cell like a terrain tile creates a visibly stepped
     // road because shore cells and deep-water cells have different elevations.
     if (isBridge) return;
+    renderedRoadSurfaceVoxelYs[cell.id] = surfaceY;
 
     const assetDiagnostics = addSharedVoxelRoadTile(buffer, {
       minX,
@@ -67,9 +71,9 @@ export function createAgentVoxelRoadLayer({ state, grid, seed = "agent-roads" })
   const renderedBridgeSpans = bridgeSpans.map((span, index) => addVictorianBridgeSpan({
     buffer,
     span,
-    roadsByCoordinate,
     seed: `${seed}:bridge:${span.cells[0]?.id ?? index}`,
-    shade: roadCells.length + index * 97
+    shade: roadCells.length + index * 97,
+    roadSurfaceVoxelY: constructionDatum.roadSurfaceVoxelY
   }));
   const bridgeStyles = renderedBridgeSpans.reduce((counts, span) => {
     counts[span.style] = (counts[span.style] ?? 0) + 1;
@@ -89,7 +93,9 @@ export function createAgentVoxelRoadLayer({ state, grid, seed = "agent-roads" })
     topologySource: AGENT_VOXEL_ROAD_RENDER_CONTRACT.topologySource,
     agentSuppliesVisualDirections: AGENT_VOXEL_ROAD_RENDER_CONTRACT.agentSuppliesVisualDirections,
     northIsPositiveWorldZ: northIsPositiveZ,
+    roadSurfaceVoxelY: constructionDatum.roadSurfaceVoxelY,
     renderedRoadPorts,
+    renderedRoadSurfaceVoxelYs,
     ...roadAssetCounts,
     renderedRoadTopologies: topologyCounts,
     voxelCount: buffer.occupiedVoxelCount,
@@ -131,7 +137,7 @@ function collectBridgeSpans(bridgeCells, roadsByCoordinate) {
   return spans;
 }
 
-function addVictorianBridgeSpan({ buffer, span, roadsByCoordinate, seed, shade }) {
+function addVictorianBridgeSpan({ buffer, span, seed, shade, roadSurfaceVoxelY }) {
   const rng = createRng(seed);
   const { axis, cells } = span;
   const alongValues = cells.map((cell) => cellVoxelBounds(cell)[axis === "x" ? "minX" : "minZ"]);
@@ -139,9 +145,7 @@ function addVictorianBridgeSpan({ buffer, span, roadsByCoordinate, seed, shade }
   const alongStart = Math.min(...alongValues);
   const alongLength = Math.max(...alongValues) - alongStart + CELL_VOXELS;
   const crossStart = Math.round(crossValues.reduce((total, value) => total + value, 0) / crossValues.length);
-  const approachCells = findBridgeApproaches(span, roadsByCoordinate);
-  const gradingCells = [...cells, ...approachCells];
-  const roadY = Math.max(...gradingCells.map((cell) => Number(cell.surface?.maxElevationVoxels ?? 0) + 1));
+  const roadY = Number(roadSurfaceVoxelY);
   const waterY = Math.min(...cells.map((cell) => Number(cell.surface?.minElevationVoxels ?? roadY - 6)));
   const baseY = Math.min(roadY - 4, waterY);
   const style = selectVictorianBridgeStyle(seed, cells.length);
@@ -196,18 +200,6 @@ export function selectVictorianBridgeStyle(seed, spanCellCount) {
         : ["suspension_bridge", "iron_truss", "suspension_bridge", "masonry_arch"];
   const rng = createRng(seed);
   return candidates[Math.floor(rng() * candidates.length) % candidates.length];
-}
-
-function findBridgeApproaches(span, roadsByCoordinate) {
-  const { axis, cells } = span;
-  const first = cells[0];
-  const last = cells.at(-1);
-  const offsets = axis === "x"
-    ? [[-1, 0, first], [1, 0, last]]
-    : [[0, -1, first], [0, 1, last]];
-  return offsets
-    .map(([dc, dr, cell]) => roadsByCoordinate.get(`${cell.column + dc}:${cell.row + dr}`))
-    .filter(Boolean);
 }
 
 function cellVoxelBounds(cell) {

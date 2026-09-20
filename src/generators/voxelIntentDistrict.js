@@ -21,6 +21,7 @@ import {
   applyStorybookSurfaceMaterial
 } from "../render/storybookSurfaceMaterial.js";
 import { ACTIVE_VISUAL_THEME } from "../render/sunlitStorybookTheme.js";
+import { deriveRuntimeConstructionGrade } from "../city/construction-grading.js";
 
 const DISTRICT_CELL_VOXELS = 32;
 const DISTRICT_COLUMNS = 10;
@@ -693,6 +694,7 @@ function isSharedVoxelRoadLocalAt(ports, localX, localZ, northIsPositiveZ) {
 export function createVoxelDistrictMacroSurface(config = {}) {
   const params = normalizeVoxelIntentDistrictConfig(config);
   const blankConstruction = Boolean(config.blankConstruction);
+  const constructionState = config.constructionState ?? null;
   const group = new THREE.Group();
   group.name = "IntentDistrictMacroWorld";
   const chunkCells = 8;
@@ -738,7 +740,8 @@ export function createVoxelDistrictMacroSurface(config = {}) {
     terrainVoxelWorldSize,
     worldWidth,
     worldDepth,
-    blankConstruction
+    blankConstruction,
+    constructionState
   });
   let triangleCount = 0;
   let waterCellCount = 0;
@@ -855,7 +858,8 @@ function createMacroConstructionPlan(params, terrainGrid, {
   terrainVoxelWorldSize,
   worldWidth,
   worldDepth,
-  blankConstruction = false
+  blankConstruction = false,
+  constructionState = null
 }) {
   const logicalCells = [];
   for (let row = 0; row < params.worldRows; row += 1) {
@@ -877,6 +881,9 @@ function createMacroConstructionPlan(params, terrainGrid, {
     }
   }
   if (blankConstruction) {
+    if (constructionState) {
+      return applyRuntimeConstructionGrade(terrainGrid, logicalCells, constructionState);
+    }
     const buildableCells = logicalCells.filter((cell) => cell.buildable);
     return {
       logicalCells,
@@ -1029,6 +1036,98 @@ function createMacroConstructionPlan(params, terrainGrid, {
         logicalCellIds: site.logicalCellIds,
         sourceHeightRangeVoxels: site.sourceHeightRangeVoxels
       }))
+    }
+  };
+}
+
+function applyRuntimeConstructionGrade(terrainGrid, logicalCells, state) {
+  const runtimeGrade = deriveRuntimeConstructionGrade(state);
+  const stateCells = state.cells ?? {};
+  const logicalColumns = terrainGrid.width / MACRO_TERRAIN_SUBDIVISIONS;
+  const logicalRows = terrainGrid.height / MACRO_TERRAIN_SUBDIVISIONS;
+  const gradedCells = [...runtimeGrade.cellIds]
+    .map((cellId) => stateCells[cellId])
+    .filter((cell) => cell
+      && cell.column >= 0
+      && cell.row >= 0
+      && cell.column < logicalColumns
+      && cell.row < logicalRows);
+  const flattenedMask = new Uint8Array(terrainGrid.width * terrainGrid.height);
+  const flattenedVoxels = [];
+  let maximumFlattenDeltaVoxels = 0;
+  let flattenedTerrainVoxels = 0;
+
+  gradedCells.forEach((cell) => {
+    const startColumn = cell.column * MACRO_TERRAIN_SUBDIVISIONS;
+    const startRow = cell.row * MACRO_TERRAIN_SUBDIVISIONS;
+    for (let row = startRow; row < startRow + MACRO_TERRAIN_SUBDIVISIONS; row += 1) {
+      for (let column = startColumn; column < startColumn + MACRO_TERRAIN_SUBDIVISIONS; column += 1) {
+        const index = terrainGrid.index(column, row);
+        if (terrainGrid.kinds[index] === MACRO_TERRAIN_KIND.water) continue;
+        maximumFlattenDeltaVoxels = Math.max(maximumFlattenDeltaVoxels, Math.abs(terrainGrid.elevationSteps[index]));
+        terrainGrid.elevationSteps[index] = 0;
+        flattenedMask[index] = 1;
+        flattenedVoxels.push(index);
+        flattenedTerrainVoxels += 1;
+      }
+    }
+  });
+
+  const transitionWidthVoxels = 4;
+  const neighborOffsets = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+  let frontier = flattenedVoxels;
+  let gradedTransitionVoxels = 0;
+  for (let distance = 1; distance <= transitionWidthVoxels && frontier.length; distance += 1) {
+    const next = [];
+    frontier.forEach((index) => {
+      const column = index % terrainGrid.width;
+      const row = Math.floor(index / terrainGrid.width);
+      for (const [dc, dr] of neighborOffsets) {
+        const nextColumn = column + dc;
+        const nextRow = row + dr;
+        if (nextColumn < 0 || nextRow < 0 || nextColumn >= terrainGrid.width || nextRow >= terrainGrid.height) continue;
+        const nextIndex = terrainGrid.index(nextColumn, nextRow);
+        if (flattenedMask[nextIndex] || terrainGrid.kinds[nextIndex] === MACRO_TERRAIN_KIND.water) continue;
+        flattenedMask[nextIndex] = 1;
+        if (terrainGrid.elevationSteps[nextIndex] > distance) {
+          terrainGrid.elevationSteps[nextIndex] = distance;
+          gradedTransitionVoxels += 1;
+        }
+        next.push(nextIndex);
+      }
+    });
+    frontier = next;
+  }
+
+  const buildableCells = logicalCells.filter((cell) => cell.buildable);
+  const categoryCounts = Object.fromEntries(
+    Object.entries(runtimeGrade.categories).map(([category, cellIds]) => [category, cellIds.size])
+  );
+  return {
+    logicalCells,
+    sites: [],
+    runtimeCellIds: gradedCells.map((cell) => cell.id),
+    centralProtection: null,
+    diagnostics: {
+      rule: "Runtime construction cuts dry terrain to the global construction datum; water and bridge cells retain their natural surface.",
+      strictSiteRule: "Building sites require contiguous dry, non-shore logical cells.",
+      blankConstruction: false,
+      runtimeConstruction: true,
+      logicalCellCount: logicalCells.length,
+      buildableCellCount: buildableCells.length,
+      rejectedWaterCellCount: logicalCells.length - buildableCells.length,
+      strictBuildableCellCount: logicalCells.filter((cell) => cell.strictBuildable).length,
+      siteCount: 0,
+      flattenedLogicalCellCount: gradedCells.length,
+      flattenedTerrainVoxels,
+      categoryCounts,
+      excludedWaterCellCount: runtimeGrade.excludedWaterCellIds.size,
+      roadSurfaceVoxels: categoryCounts.roads * MACRO_TERRAIN_SUBDIVISIONS ** 2,
+      parcelSurfaceVoxels: categoryCounts.buildings * MACRO_TERRAIN_SUBDIVISIONS ** 2,
+      maximumFlattenDeltaVoxels,
+      gradedTransitionVoxels,
+      transitionWidthVoxels,
+      globalConstructionHeight: runtimeGrade.datum.finishedConstructionHeightWorld
     }
   };
 }

@@ -5,7 +5,7 @@ import { createEngineContext, executeCityCommand } from "../src/city/engine.js";
 import { createBlankVoxelWorldContract } from "../src/city/voxel-world.js";
 import * as THREE from "three";
 import { updateVoxelLods } from "../src/generators/magicLondonStarterDistrict.js";
-import { projectDistrictOntoSphere } from "../src/generators/voxelIntentDistrict.js";
+import { createVoxelDistrictMacroSurface, projectDistrictOntoSphere } from "../src/generators/voxelIntentDistrict.js";
 import { createRailwayGatewayLayer, createRailwayStationSpec, createVoxelSteamTrain, createVoxelRailTrack, createLongitudinalTrainShed } from "../src/generators/railwayAssets.js";
 
 test("a 50x50 city starts from a through-station gateway with protected station and forecourt land", () => {
@@ -99,6 +99,52 @@ test("railway station, track, and forecourt use the shared construction datum", 
   assert.equal(layer.getObjectByName("RailwayStation-Level-1").position.y, 0);
   const forecourtBounds = new THREE.Box3().setFromObject(layer.getObjectByName("RailwayStationForecourts"));
   assert.equal(forecourtBounds.max.y, 0);
+});
+
+test("runtime terrain cuts dry railway land to the shared datum without filling water crossings", () => {
+  const world = createBlankVoxelWorldContract({ seed: "railway-runtime-grading" });
+  const state = createCityState(world);
+  const railway = state.nodes.old_town_entry.railway;
+  const gradedCell = railway.station.cellIds
+    .map((cellId) => state.cells[cellId])
+    .find((cell) => cell.surface.maxElevationVoxels > 0);
+  const waterTrackCell = railway.trackCellIds
+    .map((cellId) => state.cells[cellId])
+    .find((cell) => cell.surface.kind === "water");
+  assert.ok(gradedCell, "the regression seed must exercise terrain above the construction datum");
+  assert.ok(waterTrackCell, "the regression seed must exercise a rail crossing over water");
+
+  const macro = createVoxelDistrictMacroSurface({
+    seed: world.seed,
+    blankConstruction: true,
+    constructionState: state
+  });
+  const construction = macro.diagnostics.construction;
+  assert.equal(construction.runtimeConstruction, true);
+  assert.ok(construction.flattenedLogicalCellCount > railway.station.cellIds.length + railway.forecourt.cellIds.length);
+  assert.equal(construction.categoryCounts.stations, railway.station.cellIds.length);
+  assert.equal(construction.categoryCounts.plazas, railway.forecourt.cellIds.length);
+  assert.ok(construction.categoryCounts.railways < railway.trackCellIds.length, "water track cells stay outside terrain grading");
+  assert.ok(construction.excludedWaterCellCount > 0);
+  assert.ok(construction.maximumFlattenDeltaVoxels > 0);
+  assert.ok(construction.gradedTransitionVoxels > 0);
+  assert.ok(macro.constructionPlan.runtimeCellIds.includes(gradedCell.id));
+  assert.ok(!macro.constructionPlan.runtimeCellIds.includes(waterTrackCell.id));
+
+  macro.group.scale.z = -1;
+  macro.group.updateMatrixWorld(true);
+  const chunks = macro.group.children.filter((child) => child.name.startsWith("IntentDistrictMacroChunk-"));
+  const surfaceHeight = (cell) => {
+    const ray = new THREE.Raycaster(
+      new THREE.Vector3(cell.center.x, 10, cell.center.z),
+      new THREE.Vector3(0, -1, 0)
+    );
+    return ray.intersectObjects(chunks, false)[0]?.point.y;
+  };
+  assert.ok(Math.abs(surfaceHeight(gradedCell) - world.constructionDatum.finishedConstructionHeightWorld) < 1e-6,
+    "station terrain is cut down instead of covering the station or forecourt");
+  assert.ok(surfaceHeight(waterTrackCell) < world.constructionDatum.finishedConstructionHeightWorld,
+    "the railway can cross water without filling the river to construction height");
 });
 
 
