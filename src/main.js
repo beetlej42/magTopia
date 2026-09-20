@@ -125,7 +125,7 @@ import { createCityDayController } from "./ui/cityDayController.js";
 import { createCityPlacementLayer } from "./ui/cityPlacementLayer.js";
 import { resolvePlacementTarget } from "./ui/placementTargetResolver.js";
 import { decodeCityArtifactPack, readCityArtifactPackResponse } from "./render/cityArtifactPack.js";
-import { decodeBakedBuildingArtifact, sha256Hex } from "./render/bakedBuildingArtifact.js";
+import { BAKED_BUILDING_ARTIFACT_VERSION, decodeBakedBuildingArtifact, sha256Hex } from "./render/bakedBuildingArtifact.js";
 import {
   RAILWAY_ASSET_PRESETS,
   createRailwayAssetLab,
@@ -1714,6 +1714,7 @@ async function loadCityBakedArtifacts(manifest, pack, onProgress) {
       const loadedBatch = await Promise.all(batch.map(async (entry) => {
         const expected = manifestByBuilding.get(entry.buildingId);
         if (!expected || expected.sha256.toLowerCase() !== String(entry.sha256).toLowerCase()) return null;
+        if (Number(expected.artifactVersion) !== BAKED_BUILDING_ARTIFACT_VERSION) return null;
         if (await sha256Hex(entry.bytes) !== String(entry.sha256).toLowerCase()) return null;
         const artifact = decodeBakedBuildingArtifact(entry.bytes);
         if (artifact.buildingId !== entry.buildingId || Number(artifact.designRevision) !== Number(entry.designRevision)) return null;
