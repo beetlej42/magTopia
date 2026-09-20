@@ -9,6 +9,7 @@ import { normalizeConstructionProposal } from "../../src/city/contracts.js";
 import { districtBlockProgress } from "../../src/city/district-layout.js";
 import { districtBuildings, districtCompositionReview, districtSpatialObservations, districtSuggestions } from "../../src/city/district-guidance.js";
 import { AGENT_VOXEL_ROAD_RENDER_CONTRACT } from "../../src/city/road-topology.js";
+import { normalizeDemolitionTarget, previewDemolition } from "../../src/city/demolition.js";
 import { findCandidateParcels, previewConnectionBetween, previewConstruction } from "../../src/city/solver.js";
 import { createId, hashRequest } from "./ids.js";
 import { ServiceError, errorEnvelope } from "./errors.js";
@@ -722,6 +723,58 @@ export async function createApp({ repository, config, logger = false, now = () =
     return reply.code(response.status === "rejected" ? 422 : 201).send(response);
   });
 
+  app.post("/api/v1/cities/:cityId/demolition-previews", async (request) => {
+    const principal = await authenticate(repository, request, "city:build");
+    const { state } = await repository.getCity(principal, request.params.cityId, { write: true });
+    const body = request.body ?? {};
+    validateDemolitionRequest(body);
+    const preview = previewDemolition(state, body);
+    return {
+      city_version: state.version,
+      ...preview,
+      resources_after: preview.feasible
+        ? { ...state.resources, coins: Number(state.resources?.coins ?? 0) + Number(preview.refund?.coins ?? 0) }
+        : null
+    };
+  });
+
+  app.post("/api/v1/cities/:cityId/demolitions", async (request, reply) => {
+    const principal = await authenticate(repository, request, "city:build");
+    const body = request.body ?? {};
+    validateDemolitionRequest(body);
+    const response = await repository.transactCity({
+      principal,
+      cityId: request.params.cityId,
+      endpoint: "demolitions",
+      idempotencyKey: request.headers["idempotency-key"],
+      requestBody: body,
+      expectedVersion: expectedCityVersion(request, body),
+      action: "demolish",
+      reason: body.actor_note
+    }, async ({ state }) => {
+      const result = executeCityCommand(state, {
+        type: "demolish",
+        target: body.target,
+        reason: body.actor_note,
+        actor: actorId(principal)
+      }, engineContext());
+      if (!result.accepted) return rejectedCommand(result);
+      const commandId = createId("command");
+      return {
+        nextState: result.state,
+        response: commandEnvelope(commandId, result, {
+          kind: "demolition",
+          id: commandId,
+          status: "completed",
+          target: result.demolition.target,
+          affected: result.demolition.affected,
+          refund: result.refund
+        })
+      };
+    });
+    return reply.code(response.status === "rejected" ? 422 : 200).send(response);
+  });
+
   app.post("/api/v1/cities/:cityId/gateways/:nodeId/upgrade", async (request, reply) => {
     const principal = await authenticate(repository, request, "city:build");
     const body = request.body ?? {};
@@ -1240,6 +1293,17 @@ function validateConnectionRequest(body) {
   }
 }
 
+function validateDemolitionRequest(body) {
+  if (!body?.target || typeof body.target !== "object" || Array.isArray(body.target)) {
+    throw new ServiceError(400, "INVALID_DEMOLITION_TARGET", "target is required");
+  }
+  try {
+    normalizeDemolitionTarget(body.target);
+  } catch (error) {
+    throw new ServiceError(400, "INVALID_DEMOLITION_TARGET", error.message);
+  }
+}
+
 async function authenticate(repository, request, scope = null) {
   const authorization = request.headers.authorization ?? "";
   const match = /^Bearer\s+(.+)$/i.exec(authorization);
@@ -1716,8 +1780,11 @@ function spatialQuery(state, query) {
 }
 
 function expandCell(state, cell) {
+  const infrastructureType = state.infrastructure?.[cell.id]?.type ?? cell.infrastructure ?? null;
   return {
     ...cell,
+    infrastructure_type: infrastructureType,
+    demolishable: ["road", "bridge"].includes(infrastructureType) && !cell.node && !cell.reservation,
     building: cell.occupancy ? compactBuilding(state.buildings[cell.occupancy]) : null,
     node: cell.node ? state.nodes[cell.node] : null
   };
@@ -1938,7 +2005,7 @@ function agentSnapshot(row, state, events, orders, config) {
     recent_changes: events,
     districts,
     pending_orders: orders.filter((order) => !["completed", "failed", "cancelled"].includes(order.status)),
-    available_actions: { define_district: true, cancel_district: true, construct_confirmed_design: true, connect: true, upgrade_gateway: Number(state.nodes?.old_town_entry?.stationLevel ?? 1) < 3, spend_full_current_budget: true },
+    available_actions: { define_district: true, cancel_district: true, construct_confirmed_design: true, connect: true, demolish: true, upgrade_gateway: Number(state.nodes?.old_town_entry?.stationLevel ?? 1) < 3, spend_full_current_budget: true },
     links: {
       playbook: `${config.publicBaseUrl}/agent/playbook.md`,
       viewer: `${config.publicBaseUrl}/cities/${encodeURIComponent(row.id)}`,
@@ -1951,6 +2018,8 @@ function agentSnapshot(row, state, events, orders, config) {
       construction_orders: `${config.publicBaseUrl}/api/v1/cities/${row.id}/construction-orders`,
       connection_previews: `${config.publicBaseUrl}/api/v1/cities/${row.id}/connection-previews`,
       connections: `${config.publicBaseUrl}/api/v1/cities/${row.id}/connections`,
+      demolition_previews: `${config.publicBaseUrl}/api/v1/cities/${row.id}/demolition-previews`,
+      demolitions: `${config.publicBaseUrl}/api/v1/cities/${row.id}/demolitions`,
       railway_gateway_upgrade: `${config.publicBaseUrl}/api/v1/cities/${row.id}/gateways/old_town_entry/upgrade`,
       spatial_query: `${config.publicBaseUrl}/api/v1/cities/${row.id}/spatial`,
       buildings: `${config.publicBaseUrl}/api/v1/cities/${row.id}/buildings`,

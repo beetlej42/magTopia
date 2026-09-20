@@ -19,6 +19,8 @@ export const ROAD_COST_BY_KIND = Object.freeze({
   bridge: 15
 });
 
+export const DEMOLITION_REFUND_RATE = 0.5;
+
 export const HEIGHT_MULTIPLIER_STEP = 0.05;
 
 export function constructionPriceGuide() {
@@ -33,7 +35,25 @@ export function constructionPriceGuide() {
     },
     road_rate_per_cell: ROAD_COST_BY_KIND.standard,
     bridge_rate_per_cell: ROAD_COST_BY_KIND.bridge,
+    demolition_refund_rate: DEMOLITION_REFUND_RATE,
     note: "Footprint and floor count come from the confirmed BuildingDesign; Agents never submit functional area."
+  };
+}
+
+export function calculateDemolitionRefund(baseCoins, rate = DEMOLITION_REFUND_RATE) {
+  const coins = Number(baseCoins);
+  const refundRate = Number(rate);
+  if (!Number.isSafeInteger(coins) || coins < 0) {
+    throw new Error(`Demolition base cost must be a non-negative safe integer; received ${String(baseCoins)}`);
+  }
+  if (!Number.isFinite(refundRate) || refundRate < 0 || refundRate > 1) {
+    throw new Error(`Demolition refund rate must be between 0 and 1; received ${String(rate)}`);
+  }
+  return {
+    coins: Math.floor(coins * refundRate),
+    baseCoins: coins,
+    rate: refundRate,
+    rounding: "floor_at_total"
   };
 }
 

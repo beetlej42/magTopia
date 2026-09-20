@@ -112,6 +112,17 @@ test("first accepted Agent work moves the presentation to day", () => {
   assert.equal(presentation.phase, "day");
 });
 
+test("accepted Agent demolition counts as meaningful city work", () => {
+  const state = withSelectedChoice(baseState());
+  state.events.push({
+    id: "e-demolition", turn: 1, cityVersion: 1, at: "2026-01-01T01:00:00.000Z",
+    type: "road_demolished", actor: "agent:credential-1"
+  });
+  const presentation = deriveCityDayPresentation(state, { reportReady: false, reportDismissed: false });
+  assert.equal(presentation.agent.workStarted, true);
+  assert.equal(presentation.phase, "day");
+});
+
 test("an event before the current turn opened does not count as this turn's work", () => {
   const state = withSelectedChoice(baseState());
   state.events.push({

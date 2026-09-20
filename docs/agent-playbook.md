@@ -87,6 +87,8 @@ Cancellation is a planning-state change, not demolition. The district remains vi
 
 Use `/connections` with `cell` endpoints for meaningful street corners, crossings, or shared boundaries. The Agent chooses the endpoints and the solver chooses the exact path. Block perimeter cells are still legal building sites; `context.blockRole`, `context.boundarySidesCovered`, `context.boundaryCoverage`, and `context.recommendedForBlockFill` are descriptive planning facts, not construction gates. Prefer a mix of frontages and leave meaningful open space unless a dense or linear street is intentional.
 
+To correct an ordinary building or road layout, discover stable ids before mutating: `/buildings` returns `building.id`, while bounded `/spatial` cells return `id`, `infrastructure_type`, and `demolishable`. Preview with `/demolition-previews`, then submit the unchanged target to `/demolitions` with the current city version and a unique idempotency key. Building demolition preserves connected roads; road demolition accepts at most 64 explicit road or bridge cells. Both refund 50% of the canonical base cost, rounded down once at the command total. Special structures, active-incident buildings, railway infrastructure, nodes, and reserved cells are protected. The first version does not prevent road removals that disconnect buildings, so construct replacement access before removing an occupied route.
+
 The main automated observations are objective geometry facts:
 
 - `connected_to_city`, `road_junctions`, and `road_endpoints` describe road access and topology;

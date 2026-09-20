@@ -6,6 +6,7 @@ import { incomeForSettlement, systemOwnedBonusForBuilding } from "../gameplay/ec
 import { activeConstructionDiscountRate, consumeConstructionDiscount } from "../gameplay/cards.js";
 import { getCard } from "../gameplay/card-catalog.js";
 import { RAILWAY_STATION_LEVELS, nextRailwayStationLevel } from "./railway-gateway.js";
+import { previewDemolition } from "./demolition.js";
 
 export function createEngineContext(options = {}) {
   const sequences = new Map();
@@ -28,6 +29,7 @@ export function executeCityCommand(currentState, input, context = createEngineCo
     case "upgrade_building": return upgradeBuilding(currentState, input, context);
     case "upgrade_gateway": return upgradeGateway(currentState, input, context);
     case "connect": return connect(currentState, input, context);
+    case "demolish": return demolish(currentState, input, context);
     case "reserve_construction": return reserveConstruction(currentState, input, context);
     case "complete_reserved_construction": return completeReservedConstruction(currentState, input, context);
     case "cancel_construction_reservation": return cancelConstructionReservation(currentState, input, context);
@@ -226,6 +228,60 @@ function connect(currentState, input, context) {
     summary: `Road connected ${connection.from.kind}:${connection.from.id} to ${connection.to.kind}:${connection.to.id}.`
   }, context);
   return accepted(currentState, next, { plan });
+}
+
+function demolish(currentState, input, context) {
+  const preview = previewDemolition(currentState, input);
+  if (!preview.feasible) {
+    return rejected(currentState, preview.code ?? "DEMOLITION_REJECTED", preview.errors?.[0] ?? "Demolition is not feasible", { preview });
+  }
+  const next = cloneCityState(currentState);
+  const actor = input.actor ?? "agent:unknown";
+  const reason = String(input.reason ?? input.actorNote ?? "demolished_by_actor").trim().slice(0, 160) || "demolished_by_actor";
+
+  if (preview.target.kind === "building") {
+    const buildingId = preview.target.buildingId;
+    const building = next.buildings[buildingId];
+    for (const cellId of building.footprintCells ?? []) {
+      if (next.cells[cellId]?.occupancy === buildingId) next.cells[cellId].occupancy = null;
+    }
+    delete next.buildings[buildingId];
+    next.resources = add(next.resources, preview.refund);
+    bump(next, false);
+    appendEvent(next, {
+      type: "building_demolished",
+      actor,
+      buildingId,
+      buildingName: building.program?.name ?? buildingId,
+      footprintCellIds: [...(building.footprintCells ?? [])],
+      baseCost: preview.baseCost,
+      refund: preview.refund,
+      reason,
+      summary: `${building.program?.name ?? buildingId} was demolished; connected roads were preserved.`
+    }, context);
+  } else {
+    for (const cellId of preview.affected.roadCellIds) {
+      if (next.cells[cellId]?.infrastructure === "road") next.cells[cellId].infrastructure = null;
+    }
+    for (const cellId of preview.affected.bridgeCellIds) delete next.infrastructure[cellId];
+    next.resources = add(next.resources, preview.refund);
+    bump(next, false);
+    appendEvent(next, {
+      type: "road_demolished",
+      actor,
+      roadCellIds: [...preview.affected.roadCellIds],
+      bridgeCellIds: [...preview.affected.bridgeCellIds],
+      baseCost: preview.baseCost,
+      refund: preview.refund,
+      reason,
+      summary: `${preview.affected.roadCellIds.length} road cell(s) and ${preview.affected.bridgeCellIds.length} bridge cell(s) were demolished.`
+    }, context);
+  }
+
+  return accepted(currentState, next, {
+    demolition: structuredClone(preview),
+    refund: structuredClone(preview.refund)
+  });
 }
 
 function reserveConstruction(currentState, input, context) {
