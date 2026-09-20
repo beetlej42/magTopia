@@ -178,10 +178,14 @@ export function createBakedMeshLod(decoded, { name = "BakedVoxelBuilding", night
       if (entry.geometry.colors) geometry.setAttribute("color", new THREE.Float32BufferAttribute(entry.geometry.colors, 3));
       geometry.setIndex(new THREE.BufferAttribute(entry.geometry.indices, 1));
       geometry.computeBoundingSphere();
-      const mesh = new THREE.Mesh(geometry, createVoxelMaterialForArtifact(entry.materialId, {
+      const material = createVoxelMaterialForArtifact(entry.materialId, {
         surfaceKind: entry.geometry.surfaceKind?.[0] ?? 0,
         useSurfaceKindAttribute: Boolean(entry.geometry.surfaceKind)
-      }));
+      });
+      if (material.emissive) {
+        material.userData.bakedBaseEmissiveIntensity = material.emissiveIntensity;
+      }
+      const mesh = new THREE.Mesh(geometry, material);
       mesh.name = `${name}-${entry.materialId}`;
       mesh.userData.materialId = entry.materialId;
       mesh.userData.voxelRenderStrategy = "baked-artifact";
@@ -199,7 +203,8 @@ export function createBakedMeshLod(decoded, { name = "BakedVoxelBuilding", night
     const night = Math.max(Number(nightLighting) || 0, Number(style?.nightFactor) || 0);
     lod.traverse((object) => {
       if (!object.isMesh || !object.material?.emissive) return;
-      object.material.emissiveIntensity = Math.max(0.15, object.material.emissiveIntensity) + night * 1.6;
+      const baseIntensity = Number(object.material.userData?.bakedBaseEmissiveIntensity) || 0;
+      object.material.emissiveIntensity = Math.max(0.15, baseIntensity) + night * 1.6;
     });
   };
   return lod;

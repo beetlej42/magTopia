@@ -112,6 +112,29 @@ test("baked artifact encoder accepts Three.js BufferGeometry", () => {
   threeGeometry.dispose();
 });
 
+test("baked window daylight updates remain warm and idempotent", () => {
+  const decoded = decodeBakedBuildingArtifact(encodeBakedBuildingArtifact({
+    buildingId: "building-warm-window",
+    designRevision: 1,
+    levels: [{ lod: 0, meshes: [{ materialId: "warmWindow", geometry: geometry() }] }]
+  }));
+  const lod = createBakedMeshLod(decoded);
+  const windowMesh = lod.userData.levelObjects[0].children[0];
+  const baseIntensity = windowMesh.material.emissiveIntensity;
+
+  lod.userData.updateDaylight({ nightFactor: 0.5 });
+  const firstNightIntensity = windowMesh.material.emissiveIntensity;
+  lod.userData.updateDaylight({ nightFactor: 0.5 });
+
+  assert.equal(windowMesh.material.emissiveIntensity, firstNightIntensity);
+  assert.equal(firstNightIntensity, Math.max(0.15, baseIntensity) + 0.8);
+  assert.notEqual(windowMesh.material.color.getHexString(), "ffffff");
+  assert.notEqual(windowMesh.material.emissive.getHexString(), "ffffff");
+
+  lod.userData.updateDaylight({ nightFactor: 0 });
+  assert.equal(windowMesh.material.emissiveIntensity, Math.max(0.15, baseIntensity));
+});
+
 test("city artifact pack preserves identity, manifest digest and independent MTBA payloads", () => {
   const first = fixtureArtifact("building-a", 2);
   const second = fixtureArtifact("building-b", 4);
