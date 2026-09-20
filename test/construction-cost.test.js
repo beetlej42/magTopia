@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   BUILDING_COST_BY_PURPOSE,
+  DEMOLITION_REFUND_RATE,
   ROAD_COST_BY_KIND,
   calculateBuildingConstructionCost,
+  calculateDemolitionRefund,
   calculateRoadCost,
   constructionPriceGuide,
   ordinaryResidentialHeightMultiplier
@@ -15,7 +17,21 @@ test("Agent price guide exposes stable estimates without accepting client-author
   assert.equal(guide.building_rate_per_footprint_cell_per_floor.residential, 50);
   assert.equal(guide.ordinary_residential_examples["1x1_two_floors"], 105);
   assert.equal(guide.ordinary_residential_examples["2x2_two_floors"], 420);
+  assert.equal(guide.demolition_refund_rate, 0.5);
   assert.match(guide.note, /never submit functional area/i);
+});
+
+test("demolition refunds half the aggregate canonical cost and round down once", () => {
+  assert.equal(DEMOLITION_REFUND_RATE, 0.5);
+  assert.deepEqual(calculateDemolitionRefund(15), {
+    coins: 7,
+    baseCoins: 15,
+    rate: 0.5,
+    rounding: "floor_at_total"
+  });
+  assert.deepEqual(calculateDemolitionRefund(17).coins, 8);
+  assert.throws(() => calculateDemolitionRefund(-1), /base cost/);
+  assert.throws(() => calculateDemolitionRefund(10, 1.1), /refund rate/);
 });
 import { normalizeConstructionProposal } from "../src/city/contracts.js";
 import { deriveGameplayBuilding } from "../src/gameplay/building-metadata.js";

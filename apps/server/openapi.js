@@ -263,6 +263,37 @@ export function createOpenApiDocument(baseUrl) {
             actor_note: { type: "string" }
           }
         },
+        DemolitionTarget: {
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "building_id"],
+              properties: {
+                kind: { const: "building" },
+                building_id: { type: "string", minLength: 1, description: "Stable id returned by /buildings or the building field in /spatial." }
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "cell_ids"],
+              properties: {
+                kind: { const: "road_cells" },
+                cell_ids: { type: "array", minItems: 1, maxItems: 64, uniqueItems: true, items: { type: "string", minLength: 1 }, description: "Road or bridge cell ids returned by /spatial." }
+              }
+            }
+          ]
+        },
+        DemolitionRequest: {
+          type: "object",
+          required: ["target"],
+          properties: {
+            expected_city_version: { type: "integer", minimum: 0 },
+            target: { $ref: "#/components/schemas/DemolitionTarget" },
+            actor_note: { type: "string", maxLength: 160 }
+          }
+        },
         StrategyIncident: {
           type: "object",
           required: ["id", "building_id", "type", "attribute", "dc", "severity", "summary", "status"],
@@ -496,7 +527,7 @@ export function createOpenApiDocument(baseUrl) {
         TurnFacts: {
           type: "object",
           description: "Immutable system-generated settlement record. Agents read rolls, outcomes, and state changes here; they never author them.",
-          required: ["turn", "turnKind", "bootstrapProgress", "resourceDelta", "netResourceDelta", "resourceBefore", "resourceAfter", "officerMaintenance", "populationDelta", "populationBefore", "populationAfter", "publicService", "buildingsStarted", "buildingsCompleted", "buildingFactRefs", "constructionRefs", "exposureChanges", "incidents", "incidentRolls", "unaddressedIncidents", "historicalRiskChanges", "assignments", "rolls", "outcomes", "sealedBuildings", "nextRisks", "choiceKind", "offerChoiceKind", "specialCadence", "eligibilityAudit"],
+          required: ["turn", "turnKind", "bootstrapProgress", "resourceDelta", "netResourceDelta", "resourceBefore", "resourceAfter", "officerMaintenance", "populationDelta", "populationBefore", "populationAfter", "publicService", "buildingsStarted", "buildingsCompleted", "buildingFactRefs", "constructionRefs", "demolitions", "exposureChanges", "incidents", "incidentRolls", "unaddressedIncidents", "historicalRiskChanges", "assignments", "rolls", "outcomes", "sealedBuildings", "nextRisks", "choiceKind", "offerChoiceKind", "specialCadence", "eligibilityAudit"],
           properties: {
             turn: { type: "integer" },
             turnKind: { enum: ["bootstrap", "normal"] },
@@ -594,6 +625,7 @@ export function createOpenApiDocument(baseUrl) {
             buildingsCompleted: { type: "array", items: { type: "string" }, description: "System-derived ids of authoritative buildings completed by accepted construction events in this turn." },
             buildingFactRefs: { type: "array", items: { type: "string" } },
             constructionRefs: { type: "array", items: { type: "object", additionalProperties: false, required: ["factRef", "kind", "reservationId", "proposalId", "buildingId", "eventType"], properties: { factRef: { type: "string" }, kind: { enum: ["reservation", "completion"] }, reservationId: { type: ["string", "null"] }, proposalId: { type: ["string", "null"] }, buildingId: { type: ["string", "null"] }, eventType: { type: "string" } } } },
+            demolitions: { type: "array", items: { type: "object", additionalProperties: false, required: ["factRef", "kind", "eventType", "buildingId", "buildingName", "roadCellIds", "bridgeCellIds", "baseCost", "refund", "reason"], properties: { factRef: { type: "string" }, kind: { enum: ["building", "road_cells"] }, eventType: { enum: ["building_demolished", "road_demolished"] }, buildingId: { type: ["string", "null"] }, buildingName: { type: ["string", "null"] }, roadCellIds: { type: "array", items: { type: "string" } }, bridgeCellIds: { type: "array", items: { type: "string" } }, baseCost: { type: "object", properties: { coins: { type: "integer" } } }, refund: { type: "object", properties: { coins: { type: "integer" } } }, reason: { type: ["string", "null"] } } } },
             nextRisks: { type: "array", items: { type: "object", additionalProperties: true } }
           }
         },
@@ -668,7 +700,7 @@ export function createOpenApiDocument(baseUrl) {
         ReportContext: {
           type: "object",
           description: "SYSTEM-owned immutable newspaper source for one resolved turn. A deterministic projection of the frozen TurnFacts plus read-only city metadata. Never contains prose and never recomputes gameplay. The Agent edits an OwlReport from it and references facts through factRefs.",
-          required: ["schemaVersion", "cityId", "turn", "turnKind", "choiceKind", "offerChoiceKind", "specialCadence", "eligibilityAudit", "bootstrapProgress", "worldDay", "factsDigest", "settlement", "resourceDelta", "resources", "populationDelta", "population", "publicService", "buildingsStarted", "buildingsCompleted", "buildingFactRefs", "constructionRefs", "incidents", "incidentRolls", "historicalRiskChanges", "factRefs"],
+          required: ["schemaVersion", "cityId", "turn", "turnKind", "choiceKind", "offerChoiceKind", "specialCadence", "eligibilityAudit", "bootstrapProgress", "worldDay", "factsDigest", "settlement", "resourceDelta", "resources", "populationDelta", "population", "publicService", "buildingsStarted", "buildingsCompleted", "buildingFactRefs", "constructionRefs", "demolitions", "incidents", "incidentRolls", "historicalRiskChanges", "factRefs"],
           properties: {
             schemaVersion: { type: "integer" },
             cityId: { type: "string" },
@@ -700,6 +732,7 @@ export function createOpenApiDocument(baseUrl) {
             buildingsCompleted: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, buildingId: { type: "string" }, name: { type: "string" }, archetype: { type: ["string", "null"] }, purpose: { type: ["string", "null"] } } } },
             buildingFactRefs: { type: "array", items: { type: "string" } },
             constructionRefs: { type: "array", items: { type: "object", additionalProperties: false, required: ["factRef", "kind", "reservationId", "proposalId", "buildingId", "eventType"], properties: { factRef: { type: "string" }, kind: { enum: ["reservation", "completion"] }, reservationId: { type: ["string", "null"] }, proposalId: { type: ["string", "null"] }, buildingId: { type: ["string", "null"] }, eventType: { type: "string" } } } },
+            demolitions: { type: "array", items: { type: "object", additionalProperties: true } },
             exposureChanges: { type: "object", additionalProperties: { type: "object", properties: { factRef: { type: "string" }, buildingId: { type: "string" }, name: { type: "string" }, from: { type: "number" }, to: { type: "number" }, delta: { type: "number" }, pressure: { type: "number" }, concealment: { type: "number" }, sealed: { type: "boolean" } } } },
             incidents: { type: "array", items: { type: "object", properties: { factRef: { type: "string" }, id: { type: "string" }, buildingId: { type: "string" }, buildingName: { type: "string" }, type: { type: "string" }, dc: { type: "number", enum: [10, 14, 18] }, severity: { type: "number" }, summary: { type: "string" }, status: { type: "string" }, createdAtTurn: { type: "number" } } } },
             incidentRolls: { type: "array", items: { type: "object", properties: { buildingId: { type: "string" }, finalIncidentChance: { type: "number" }, thresholdRoll: { type: "number" }, hit: { type: "boolean" }, sourcePurpose: { type: ["string", "null"] }, purposeWeights: { type: "object", additionalProperties: { type: "number" } } } } },
@@ -978,6 +1011,8 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}/construction-orders/{order_id}": { get: operation("Read a construction order", "construction") },
       "/cities/{city_id}/connection-previews": { post: operation("Preview a building/cell/node road connection", "roads", { $ref: "#/components/schemas/ConnectionRequest" }) },
       "/cities/{city_id}/connections": { post: commandOperation("Submit an idempotent road connection", "roads", { $ref: "#/components/schemas/ConnectionRequest" }) },
+      "/cities/{city_id}/demolition-previews": { post: operation("Preview one ordinary-building or road-cell demolition and its 50% refund", "demolition", { $ref: "#/components/schemas/DemolitionRequest" }) },
+      "/cities/{city_id}/demolitions": { post: commandOperation("Submit one idempotent ordinary-building or road-cell demolition", "demolition", { $ref: "#/components/schemas/DemolitionRequest" }) },
       "/cities/{city_id}/gateways/{node_id}/upgrade": { post: commandOperation("Upgrade the fixed railway station gateway without changing its footprint; levels are capped at three", "construction", { $ref: "#/components/schemas/GatewayUpgradeRequest" }) },
       "/cities/{city_id}/time-advances": { post: commandOperation("Manual time advance is disabled: income and turn progression flow through the cooldown-gated strategy resolve instead", "simulation") },
       "/cities/{city_id}/strategy": { get: operation("Read the strategy context: open incidents, Arcane Officers, player card state, and the last frozen settlement facts", "strategy", null, { $ref: "#/components/schemas/StrategyContext" }) },

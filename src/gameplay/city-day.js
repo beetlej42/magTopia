@@ -34,7 +34,9 @@ export const CITY_DAY_ACTIVE_STATUSES = Object.freeze(new Set(["open", "building
 const AGENT_WORK_EVENT_TYPES = Object.freeze(new Set([
   "building_constructed",
   "building_upgraded",
+  "building_demolished",
   "road_connected",
+  "road_demolished",
   "district_defined",
   "construction_reserved",
   "construction_reservation_completed"

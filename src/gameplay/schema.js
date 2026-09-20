@@ -719,6 +719,7 @@ export function normalizeTurnFacts(value = {}) {
     buildingsCompleted: [...(value.buildingsCompleted ?? [])],
     buildingFactRefs: [...(value.buildingFactRefs ?? [])].map(String).sort(),
     constructionRefs: [...(value.constructionRefs ?? [])].map((entry) => ({ ...entry })),
+    demolitions: [...(value.demolitions ?? [])].map((entry) => cloneAuditValue(entry)),
     bootstrapProgress: value.bootstrapProgress ? cloneAuditValue(value.bootstrapProgress) : null,
     exposureChanges: Object.fromEntries(Object.entries(value.exposureChanges ?? {}).map(([id, change]) => [id, { ...change }])),
     incidents: [...(value.incidents ?? [])].map(normalizeExposureIncident),

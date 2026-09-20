@@ -888,6 +888,7 @@ function resolveTurnInternal(state, input = {}, context = {}, profile = "product
   next.gameplay.cardState = policyAdvance.nextState.gameplay.cardState;
   const cardStateFacts = cardFacts(next, state.turn);
   const constructionFacts = deriveConstructionFacts(state, state.turn);
+  const demolitionFacts = deriveDemolitionFacts(state, state.turn);
   const facts = normalizeTurnFacts({
     turn: state.turn + 1,
     wallClock: {
@@ -929,6 +930,7 @@ function resolveTurnInternal(state, input = {}, context = {}, profile = "product
     buildingsCompleted: constructionFacts.completed,
     constructionRefs: constructionFacts.constructionRefs,
     buildingFactRefs: constructionFacts.refs,
+    demolitions: demolitionFacts,
     bootstrapProgress: isBootstrapTurn(state) ? deriveBootstrapProgress(state) : null,
     turnKind: isBootstrapTurn(state) ? "bootstrap" : "normal",
     exposureChanges,
@@ -1032,6 +1034,25 @@ function deriveConstructionFacts(state, turn) {
     refs: [...refs].sort(),
     constructionRefs: [...constructionRefs.values()].sort((a, b) => a.factRef.localeCompare(b.factRef))
   };
+}
+
+function deriveDemolitionFacts(state, turn) {
+  return (state?.events ?? [])
+    .filter((event) => Number(event?.turn) === Number(turn))
+    .filter((event) => ["building_demolished", "road_demolished"].includes(event?.type))
+    .map((event) => ({
+      factRef: `fact-demolition-${String(event.id)}`,
+      kind: event.type === "building_demolished" ? "building" : "road_cells",
+      eventType: event.type,
+      buildingId: event.buildingId == null ? null : String(event.buildingId),
+      buildingName: event.buildingName == null ? null : String(event.buildingName),
+      roadCellIds: [...(event.roadCellIds ?? [])].map(String).sort(),
+      bridgeCellIds: [...(event.bridgeCellIds ?? [])].map(String).sort(),
+      baseCost: { coins: Number(event.baseCost?.coins ?? 0) },
+      refund: { coins: Number(event.refund?.coins ?? 0) },
+      reason: event.reason == null ? null : String(event.reason)
+    }))
+    .sort((left, right) => left.factRef.localeCompare(right.factRef));
 }
 
 function migrateGameplay(state) {
