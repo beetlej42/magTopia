@@ -5,14 +5,12 @@ import { createMagicLondonStarterDistrict } from "./magicLondonStarterDistrict.j
 import { createStreetLifeCityLayer } from "./streetLifeCityLayer.js";
 import { createRailwayGatewayLayer } from "./railwayAssets.js";
 import { createBuildingContactAmbientOcclusion } from "../render/buildingContactAmbientOcclusion.js";
+import { createRuntimeConstructionHeightSampler } from "../city/construction-grading.js";
 import {
   createVoxelDistrictMacroSurface,
   normalizeVoxelIntentDistrictConfig,
   projectDistrictOntoSphere
 } from "./voxelIntentDistrict.js";
-
-const VOXEL_SIZE = 0.125;
-const NATURAL_DATUM = -0.0625;
 
 export function createAgentAcceptanceCity(config = {}) {
   const steps = createAgentAcceptanceCitySteps(config);
@@ -44,7 +42,7 @@ function* createAgentAcceptanceCitySteps(config = {}) {
   const root = new THREE.Group();
   root.name = "AgentAcceptanceCity";
 
-  const macro = createVoxelDistrictMacroSurface({ ...params, seed, blankConstruction: true });
+  const macro = createVoxelDistrictMacroSurface({ ...params, seed, blankConstruction: true, constructionState: state });
   const macroVegetation = macro.group.getObjectByName("MacroVoxelPlants");
   if (macroVegetation) {
     macro.group.remove(macroVegetation);
@@ -56,7 +54,7 @@ function* createAgentAcceptanceCitySteps(config = {}) {
   root.add(macro.group);
   yield 0.18;
 
-  const constructionHeight = createHeightSampler(state, grid, true);
+  const constructionHeight = createRuntimeConstructionHeightSampler(state, grid);
   const roads = createAgentVoxelRoadLayer({ state, grid, seed });
   roads.name = "AgentAcceptanceRoads";
   root.add(roads);
@@ -219,26 +217,6 @@ function reportLiveCityState(state) {
       checks: { stateLoaded: true },
       allChecksPassed: true
     }
-  };
-}
-
-function createHeightSampler(state, grid, gradeConstruction) {
-  const byCoordinate = new Map(grid.cells.map((cell) => [`${cell.column}:${cell.row}`, cell]));
-  const buildingGrades = new Map();
-  Object.values(state.buildings).forEach((building) => {
-    const top = Math.max(...building.footprintCells.map((cellId) => NATURAL_DATUM + Number(state.cells[cellId]?.surface?.maxElevationVoxels ?? 0) * VOXEL_SIZE));
-    building.footprintCells.forEach((cellId) => buildingGrades.set(cellId, top));
-  });
-  return (x, z) => {
-    const column = Math.floor((x + grid.columns * grid.cellWorldSize / 2) / grid.cellWorldSize);
-    const row = Math.floor((grid.rows * grid.cellWorldSize / 2 - z) / grid.cellWorldSize);
-    const cell = byCoordinate.get(`${column}:${row}`);
-    if (!cell) return NATURAL_DATUM;
-    if (gradeConstruction) {
-      if (buildingGrades.has(cell.id)) return buildingGrades.get(cell.id);
-      if (state.cells[cell.id]?.infrastructure === "road") return NATURAL_DATUM + Number(cell.surface?.maxElevationVoxels ?? 0) * VOXEL_SIZE;
-    }
-    return NATURAL_DATUM + Number(cell.surface?.maxElevationVoxels ?? 0) * VOXEL_SIZE;
   };
 }
 

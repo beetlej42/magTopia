@@ -167,6 +167,29 @@ test("Victorian bridge selection is deterministic, span-aware, and visually vari
   assert.ok(longStyles.has("suspension_bridge"));
 });
 
+test("adjacent roads with different natural terrain heights render at one construction datum", () => {
+  const cells = [1, 4].map((elevation, column) => ({
+    id: `cell-${column}-0`,
+    column,
+    row: 0,
+    center: { x: (column - 0.5) * 4, z: 0 },
+    surface: { kind: "terrain", minElevationVoxels: elevation, maxElevationVoxels: elevation },
+    infrastructure: "road"
+  }));
+  const state = {
+    world: { constructionDatum: { roadSurfaceVoxelY: -1 } },
+    cells: Object.fromEntries(cells.map((cell) => [cell.id, cell])),
+    infrastructure: {}
+  };
+  const layer = createAgentVoxelRoadLayer({ state, grid: { columns: 2, rows: 1, cellWorldSize: 4, cells }, seed: "level-roads" });
+
+  assert.equal(layer.userData.contract.roadSurfaceVoxelY, -1);
+  assert.deepEqual(layer.userData.contract.renderedRoadSurfaceVoxelYs, {
+    "cell-0-0": -1,
+    "cell-1-0": -1
+  });
+});
+
 test("bridge geometry grades and scales as a single span across different river widths", () => {
   for (const cellCount of [1, 3, 6]) {
     const cells = Array.from({ length: cellCount + 2 }, (_, column) => ({
@@ -191,7 +214,8 @@ test("bridge geometry grades and scales as a single span across different river 
     assert.equal(span.cellCount, cellCount);
     assert.equal(span.spanVoxels, cellCount * 32);
     assert.equal(span.spanWorldUnits, cellCount * 4);
-    assert.equal(span.deckVoxelY, 3);
+    assert.equal(span.deckVoxelY, -1, "bridge decks stay level with the global road datum");
+    assert.equal(layer.userData.contract.roadSurfaceVoxelY, -1);
     assert.ok(layer.userData.contract.renderStats.renderedTriangles > 0);
   }
 });
