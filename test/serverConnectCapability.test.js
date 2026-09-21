@@ -58,6 +58,8 @@ test("previewing a capability with GET or HEAD never consumes it", async () => {
     assert.equal(connection.agent_city_url, `https://example.test/cities/${link.city_id}#token=${encodeURIComponent(connection.access_token)}`);
     assert.equal(connection.agent_start.next_action.url, `https://example.test/api/v1/cities/${link.city_id}/snapshot`);
     assert.equal(connection.agent_start.next_action.headers.Authorization, `Bearer ${connection.access_token}`);
+    assert.equal(connection.api_catalog_url, "https://example.test/agent/api/operations");
+    assert.equal(connection.api_operation_url_template, "https://example.test/agent/api/operations/{operation_id}");
 
     const reused = await app.inject({ method: "POST", url });
     assert.equal(reused.statusCode, 410);
@@ -93,6 +95,7 @@ test("player self-service creation returns exact player and Agent handoff links"
 
     const discovery = await json(app, { method: "GET", url: "/.well-known/magtopia-agent.json" }, 200);
     assert.equal(discovery.player_start_url, "https://example.test/play");
+    assert.equal(discovery.api_catalog_url, "https://example.test/agent/api/operations");
 
     const exchanged = await json(app, { method: "POST", url: new URL(city.agent_connect_url).pathname }, 200);
     assert.equal(exchanged.city_id, city.id);

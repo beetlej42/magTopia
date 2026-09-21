@@ -148,6 +148,8 @@ const DENY_LIST = new Set([
   "get /agent/playbook.md",
   "get /agent",
   "get /agent/openapi",
+  "get /agent/api/operations",
+  "get /agent/api/operations/{p}",
   "get /agent/building-design-api-v1.md",
   "get /{p}",
   "get /style-reference/isometric-magic-london-city.jpg",

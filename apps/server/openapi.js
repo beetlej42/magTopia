@@ -1,4 +1,5 @@
 const json = { type: "object", additionalProperties: true };
+const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "options", "head", "trace"]);
 const error = {
   type: "object",
   required: ["code", "message", "retryable"],
@@ -1043,12 +1044,98 @@ export function createOpenApiDocument(baseUrl) {
   };
   for (const [route, pathItem] of Object.entries(document.paths)) {
     const names = [...route.matchAll(/\{([^}]+)\}/g)].map((match) => match[1]);
-    for (const operation of Object.values(pathItem)) {
+    for (const [method, operation] of Object.entries(pathItem)) {
+      if (!HTTP_METHODS.has(method)) continue;
+      operation.operationId ??= operationIdFor(method, route);
       operation.parameters ??= [];
       for (const name of names) operation.parameters.push({ in: "path", name, required: true, schema: { type: "string" } });
     }
   }
   return document;
+}
+
+export function createAgentApiCatalog(document, baseUrl) {
+  return {
+    instructions: "Choose the operation needed for the current task, then read its detail_url before calling an unfamiliar operation. Use /openapi.json only as a fallback.",
+    operation_count: listOperations(document).length,
+    operations: listOperations(document).map(({ method, path, operation }) => ({
+      operation_id: operation.operationId,
+      method: method.toUpperCase(),
+      path: `/api/v1${path}`,
+      summary: operation.summary,
+      tags: operation.tags ?? [],
+      detail_url: `${baseUrl}/agent/api/operations/${encodeURIComponent(operation.operationId)}`
+    }))
+  };
+}
+
+export function createAgentOperationDetail(document, operationId) {
+  const match = listOperations(document).find(({ operation }) => operation.operationId === operationId);
+  if (!match) return null;
+  const schemaNames = collectReferencedSchemas(match.operation, document.components?.schemas ?? {});
+  return {
+    openapi: document.openapi,
+    info: document.info,
+    servers: document.servers,
+    security: document.security,
+    selected_operation: {
+      operation_id: operationId,
+      method: match.method.toUpperCase(),
+      path: `/api/v1${match.path}`,
+      instruction: "Use this operation contract for the current task. Return to /agent/api/operations to discover another capability."
+    },
+    paths: { [match.path]: { [match.method]: match.operation } },
+    components: {
+      securitySchemes: document.components?.securitySchemes ?? {},
+      schemas: Object.fromEntries([...schemaNames].sort().map((name) => [name, document.components.schemas[name]]))
+    }
+  };
+}
+
+export function findAgentOperation(document, method, runtimeRoute) {
+  const normalizedRuntime = normalizeRouteShape(String(runtimeRoute).replace(/^\/api\/v1/, ""));
+  return listOperations(document).find((entry) => entry.method === String(method).toLowerCase() && normalizeRouteShape(entry.path) === normalizedRuntime) ?? null;
+}
+
+function listOperations(document) {
+  const result = [];
+  for (const [path, pathItem] of Object.entries(document.paths ?? {})) {
+    for (const [method, operation] of Object.entries(pathItem)) {
+      if (HTTP_METHODS.has(method)) result.push({ method, path, operation });
+    }
+  }
+  return result;
+}
+
+function operationIdFor(method, route) {
+  const segments = route.split("/").filter(Boolean).map((segment) => {
+    const parameter = /^\{(.+)\}$/.exec(segment)?.[1];
+    return parameter ? `by_${parameter}` : segment.replaceAll("-", "_");
+  });
+  return [String(method).toLowerCase(), ...segments].join("_");
+}
+
+function normalizeRouteShape(route) {
+  return route.split("/").map((segment) => {
+    if (segment.startsWith(":")) return "{}";
+    if (segment.startsWith("{") && segment.endsWith("}")) return "{}";
+    return segment;
+  }).join("/");
+}
+
+function collectReferencedSchemas(value, schemas, collected = new Set()) {
+  if (Array.isArray(value)) {
+    for (const item of value) collectReferencedSchemas(item, schemas, collected);
+    return collected;
+  }
+  if (!value || typeof value !== "object") return collected;
+  const schemaName = /^#\/components\/schemas\/(.+)$/.exec(value.$ref ?? "")?.[1];
+  if (schemaName && schemas[schemaName] && !collected.has(schemaName)) {
+    collected.add(schemaName);
+    collectReferencedSchemas(schemas[schemaName], schemas, collected);
+  }
+  for (const child of Object.values(value)) collectReferencedSchemas(child, schemas, collected);
+  return collected;
 }
 
 function queryParameter(name, schema, description) {

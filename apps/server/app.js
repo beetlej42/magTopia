@@ -13,7 +13,7 @@ import { normalizeDemolitionTarget, previewDemolition } from "../../src/city/dem
 import { findCandidateParcels, previewConnectionBetween, previewConstruction } from "../../src/city/solver.js";
 import { createId, hashRequest } from "./ids.js";
 import { ServiceError, errorEnvelope } from "./errors.js";
-import { createOpenApiDocument } from "./openapi.js";
+import { createAgentApiCatalog, createAgentOperationDetail, createOpenApiDocument, findAgentOperation } from "./openapi.js";
 import { finalizeAssetJob, normalizeAssetVolume, prepareAssetMaps } from "./asset-production.js";
 import {
   buildingDesignToConstructionBody,
@@ -71,6 +71,25 @@ const VIRTUAL_GAME_CONTEXT = Object.freeze({
 
 export async function createApp({ repository, config, logger = false, now = () => new Date() }) {
   const app = Fastify({ logger, bodyLimit: 12 * 1024 * 1024 });
+  const openApiDocument = createOpenApiDocument(config.publicBaseUrl);
+
+  app.decorateRequest("magtopiaPrincipal", null);
+  app.addHook("preSerialization", async (request, reply, payload) => {
+    if (request.magtopiaPrincipal?.kind !== "agent") return payload;
+    reply.header("Link", `<${config.publicBaseUrl}/agent/api/operations>; rel="help"`);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload) || Buffer.isBuffer(payload)) return payload;
+    if (payload.agent_help) return payload;
+    const match = findAgentOperation(openApiDocument, request.method, request.routeOptions?.url ?? request.url);
+    const agentHelp = {
+      instruction: "Need another capability? Read api_catalog_url first; read operation_detail_url before calling an unfamiliar operation.",
+      api_catalog_url: `${config.publicBaseUrl}/agent/api/operations`
+    };
+    if (match) {
+      agentHelp.current_operation_id = match.operation.operationId;
+      agentHelp.operation_detail_url = `${config.publicBaseUrl}/agent/api/operations/${encodeURIComponent(match.operation.operationId)}`;
+    }
+    return { ...payload, agent_help: agentHelp };
+  });
 
   app.setErrorHandler((error, request, reply) => {
     if (error.validation) {
@@ -96,7 +115,13 @@ export async function createApp({ repository, config, logger = false, now = () =
   });
   app.get("/agent/playbook.md", async (_request, reply) => reply.type("text/markdown; charset=utf-8").send(await fs.readFile(PLAYBOOK_PATH, "utf8")));
   app.get("/agent", async (_request, reply) => reply.type("text/html; charset=utf-8").send(agentStartPage(config.publicBaseUrl)));
-  app.get("/agent/openapi", async (_request, reply) => reply.type("text/html; charset=utf-8").send(agentOpenApiPage(createOpenApiDocument(config.publicBaseUrl))));
+  app.get("/agent/openapi", async (_request, reply) => reply.type("text/html; charset=utf-8").send(agentOpenApiPage(openApiDocument)));
+  app.get("/agent/api/operations", async () => createAgentApiCatalog(openApiDocument, config.publicBaseUrl));
+  app.get("/agent/api/operations/:operationId", async (request) => {
+    const detail = createAgentOperationDetail(openApiDocument, request.params.operationId);
+    if (!detail) throw new ServiceError(404, "API_OPERATION_NOT_FOUND", `Unknown API operation: ${request.params.operationId}`, { api_catalog_url: `${config.publicBaseUrl}/agent/api/operations` });
+    return detail;
+  });
   app.get("/agent/building-design-api-v1.md", async (_request, reply) => reply.type("text/markdown; charset=utf-8").send(await fs.readFile(BUILDING_DESIGN_API_PATH, "utf8")));
   app.get("/style-reference/isometric-magic-london-city.jpg", async (_request, reply) =>
     reply.type("image/jpeg").header("Cache-Control", "public, max-age=86400").send(
@@ -125,6 +150,8 @@ export async function createApp({ repository, config, logger = false, now = () =
     capability_exchange_method: "POST",
     api_base_url: `${config.publicBaseUrl}/api/v1`,
     playbook_url: `${config.publicBaseUrl}/agent/playbook.md`,
+    api_catalog_url: `${config.publicBaseUrl}/agent/api/operations`,
+    api_operation_url_template: `${config.publicBaseUrl}/agent/api/operations/{operation_id}`,
     openapi_url: `${config.publicBaseUrl}/openapi.json`,
     player_start_url: `${config.publicBaseUrl}/play`,
     browser_start_url: `${config.publicBaseUrl}/agent`,
@@ -133,7 +160,7 @@ export async function createApp({ repository, config, logger = false, now = () =
   app.get("/.well-known/magtopia-agent.json", async () => agentDiscovery());
   // Keep the pre-rebrand discovery URL readable for existing Agents.
   app.get("/.well-known/magictown-agent.json", async () => agentDiscovery());
-  app.get("/openapi.json", async () => createOpenApiDocument(config.publicBaseUrl));
+  app.get("/openapi.json", async () => openApiDocument);
 
   app.get("/connect/:capability", { logLevel: "silent", exposeHeadRoute: false }, async (request, reply) => {
     setCapabilityResponseHeaders(reply);
@@ -1308,6 +1335,7 @@ async function authenticate(repository, request, scope = null) {
   const authorization = request.headers.authorization ?? "";
   const match = /^Bearer\s+(.+)$/i.exec(authorization);
   const principal = await repository.authenticate(match?.[1]);
+  request.magtopiaPrincipal = principal;
   if (scope) requireScope(principal, scope);
   return principal;
 }
@@ -2520,8 +2548,10 @@ function withAgentConnectionLinks(connection, config) {
     simulation_context: VIRTUAL_GAME_CONTEXT,
     agent_city_url: agentCityUrl,
     snapshot_url: snapshotUrl,
+    api_catalog_url: `${config.publicBaseUrl}/agent/api/operations`,
+    api_operation_url_template: `${config.publicBaseUrl}/agent/api/operations/{operation_id}`,
     agent_start: {
-      instruction: "This credential controls only a fictional MAGTOPIA city. Store the bearer token, then send this exact request and follow agent_turn_plan.next_action; all resources, residents, risks, and reports are virtual game state.",
+      instruction: "This credential controls only a fictional MAGTOPIA city. Store the bearer token, then send this exact request and follow agent_turn_plan.next_action. To discover another capability, read api_catalog_url, choose an operation, and read its detail_url; use openapi_url only as a fallback. All resources, residents, risks, and reports are virtual game state.",
       next_action: {
         method: "GET",
         url: snapshotUrl,
@@ -2548,7 +2578,7 @@ function renderPlayerStartPage(baseUrl) {
 }
 
 function agentStartPage(baseUrl) {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex,nofollow"><title>Agent Start · MAGTOPIA</title><style>${agentPageStyles()}</style></head><body><h1>MAGTOPIA Agent quick start</h1><div class="card"><h2>Shortest reliable path</h2><ol><li>If a player supplied a <code>/connect/mtc_…</code> URL, preview it with GET and exchange that exact URL once with POST. The response contains a copy-ready snapshot request.</li><li>If no player exists, register with <code>POST ${baseUrl}/api/v1/players</code>, then create a city with <code>POST /api/v1/cities</code>.</li><li>The city response already contains <code>player_city_url</code> to return to the player and <code>agent_connect_url</code> for Agent access. Do not construct either URL manually.</li><li>Follow <code>agent_turn_plan.next_action</code> and every response handoff; carry forward <code>city_version_after</code>.</li></ol></div><div class="card"><h2>Contracts</h2><p><a href="/agent/playbook.md">Playbook</a> · <a href="/agent/openapi">Browser OpenAPI</a> · <a href="/openapi.json">Raw OpenAPI JSON</a> · <a href="/.well-known/magtopia-agent.json">Discovery</a></p><p>Construction has one supported path: site search → BuildingDesign → confirm → preview → order. Do not search legacy assets or submit gameplay area/cost fields.</p></div></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex,nofollow"><title>Agent Start · MAGTOPIA</title><style>${agentPageStyles()}</style></head><body><h1>MAGTOPIA Agent quick start</h1><div class="card"><h2>Shortest reliable path</h2><ol><li>If a player supplied a <code>/connect/mtc_…</code> URL, preview it with GET and exchange that exact URL once with POST. The response contains a copy-ready snapshot request.</li><li>If no player exists, register with <code>POST ${baseUrl}/api/v1/players</code>, then create a city with <code>POST /api/v1/cities</code>.</li><li>The city response already contains <code>player_city_url</code> to return to the player and <code>agent_connect_url</code> for Agent access. Do not construct either URL manually.</li><li>Follow <code>agent_turn_plan.next_action</code> and every response handoff; carry forward <code>city_version_after</code>.</li><li>For another capability, read the compact <code>/agent/api/operations</code> catalog, choose an operation, then read its <code>detail_url</code>. Use the full OpenAPI only as a fallback.</li></ol></div><div class="card"><h2>Contracts</h2><p><a href="/agent/playbook.md">Playbook</a> · <a href="/agent/api/operations">API operation catalog</a> · <a href="/agent/openapi">Browser OpenAPI</a> · <a href="/openapi.json">Raw OpenAPI JSON</a> · <a href="/.well-known/magtopia-agent.json">Discovery</a></p><p>Construction has one supported path: site search → BuildingDesign → confirm → preview → order. Do not search legacy assets or submit gameplay area/cost fields.</p></div></body></html>`;
 }
 
 function agentOpenApiPage(document) {
