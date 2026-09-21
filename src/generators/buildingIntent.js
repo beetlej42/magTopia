@@ -5,6 +5,7 @@ import {
   createDistrictArchitectureContext,
   inferPublicBuildingProgram
 } from "./voxelBuildingArchitecture.js";
+import { createRng, pick } from "../utils/random.js";
 
 export const BUILDING_INTENT_VERSION = "0.1";
 export const BUILDING_COMPOSITION_IDS = Object.freeze(["street", "court", "hall", "tower", "yard"]);
@@ -17,6 +18,8 @@ export const BUILDING_FRONTAGE_IDS = Object.freeze([
 ]);
 export const BUILDING_ACCESS_IDS = Object.freeze(["private", "public", "service", "ceremonial"]);
 export const BUILDING_PROMINENCE_IDS = Object.freeze(["ordinary", "important", "landmark"]);
+export const BUILDING_SITE_LAYOUT_IDS = Object.freeze(["auto", "open_space", "mixed", "building"]);
+export const OPEN_SPACE_TYPE_IDS = Object.freeze(["garden", "courtyard", "plaza"]);
 export const BUILDING_STYLE_IDS = Object.freeze([
   "victorian_domestic",
   "victorian_gothic",
@@ -65,6 +68,8 @@ export function normalizeBuildingIntent(input = {}) {
     access: enumValue(BUILDING_ACCESS_IDS, input.access, "private"),
     style: enumValue(BUILDING_STYLE_IDS, input.style, defaultStyle),
     prominence,
+    siteLayout: enumValue(BUILDING_SITE_LAYOUT_IDS, input.siteLayout ?? input.site_layout, "auto"),
+    openSpaceType: optionalEnumValue(OPEN_SPACE_TYPE_IDS, input.openSpaceType ?? input.open_space_type),
     magicLevel: clampNumber(input.magicLevel ?? 0.35, 0, 1),
     districtStyle: text(input.districtStyle ?? input.district_style, ""),
     variationIntent: text(input.variationIntent ?? input.variation_intent, "")
@@ -135,10 +140,24 @@ export function adaptBuildingIntentToStreetConfig(input = {}, overrides = {}) {
 export function adaptBuildingIntentToMassingConfig(input = {}, overrides = {}) {
   const intent = normalizeBuildingIntent(input);
   const seed = text(overrides.seed, `${slug(intent.name)}-massing`);
-  const basePreset = structuredClone(resolveMassingPreset(intent, { ...overrides, seed }));
+  const widthCells = clampInteger(overrides.widthCells ?? BUILDING_SITE_PROFILES[intent.prominence].widthCells, 1, 6);
+  const depthCells = clampInteger(overrides.depthCells ?? BUILDING_SITE_PROFILES[intent.prominence].depthCells, 1, 6);
+  const resolvedSiteLayout = resolvePublicSiteLayout(intent);
+  if (resolvedSiteLayout === "mixed" && widthCells * depthCells < 2) {
+    throw new Error("mixed public-site layout requires at least two logical cells; use open_space or building for a 1x1 site");
+  }
+  const basePreset = resolvedSiteLayout === "building"
+    ? structuredClone(resolveMassingPreset(intent, { ...overrides, seed }))
+    : createPublicSiteLayoutPreset(intent, {
+        ...overrides,
+        seed,
+        widthCells,
+        depthCells,
+        resolvedSiteLayout
+      });
   const program = inferPublicBuildingProgram(intent.purpose);
   const residentialProgram = program === "residential" || intent.frontage === "residential";
-  const shouldVaryPublic = !residentialProgram && (intent.frontage === "institutional"
+  const shouldVaryPublic = resolvedSiteLayout === "building" && !residentialProgram && (intent.frontage === "institutional"
     || intent.prominence !== "ordinary"
     || ["public", "ceremonial"].includes(intent.access)
     || ["library", "academy", "greenhouse", "workshop", "civic"].includes(program));
@@ -185,6 +204,15 @@ export function adaptBuildingIntentToMassingConfig(input = {}, overrides = {}) {
     metadata: {
       ...(preset.metadata ?? {}),
       ...semanticMetadata(intent),
+      publicSite: preset.metadata?.publicSite ?? publicSiteMetadata({
+        intent,
+        resolvedSiteLayout,
+        widthCells,
+        depthCells,
+        variantId: "building",
+        buildingCells: widthCells * depthCells,
+        openSpaceCells: 0
+      }),
       ...(intent.districtStyle ? { districtStyle: intent.districtStyle } : {}),
       ...(intent.variationIntent ? { variationIntent: intent.variationIntent } : {}),
       ...(overrides.districtContext ? { districtContext: createDistrictArchitectureContext(overrides.districtContext) } : {}),
@@ -201,9 +229,11 @@ export function getBuildingIntentCatalog() {
     access: [...BUILDING_ACCESS_IDS],
     style: [...BUILDING_STYLE_IDS],
     prominence: [...BUILDING_PROMINENCE_IDS],
+    siteLayout: [...BUILDING_SITE_LAYOUT_IDS],
+    openSpaceType: [...OPEN_SPACE_TYPE_IDS],
     magicLevelRange: [0, 1],
     semanticFields: ["name", "purpose", "description", "signText"],
-    variationFields: ["districtStyle", "variationIntent"],
+    variationFields: ["districtStyle", "variationIntent", "siteLayout", "openSpaceType"],
     publicPrograms: ["library", "academy", "greenhouse", "workshop", "civic", "generic_public"],
     site: {
       cellSizeVoxels: 32,
@@ -212,6 +242,192 @@ export function getBuildingIntentCatalog() {
       prominenceDefaults: structuredClone(BUILDING_SITE_PROFILES)
     }
   };
+}
+
+export function resolvePublicSiteLayout(input = {}) {
+  const intent = input.intentVersion ? input : normalizeBuildingIntent(input);
+  const requested = intent.siteLayout ?? "auto";
+  if (requested !== "auto") return requested;
+  const purpose = String(intent.purpose ?? "").toLowerCase();
+  const openSpace = /\b(garden|park|plaza|square|courtyard|green|open space)\b|花园|公园|广场|庭院|绿地/.test(purpose);
+  const building = /\b(library|archive|school|academy|college|museum|hall|ministry|office|station|greenhouse|conservatory|workshop|factory|theatre|theater)\b|图书|学校|学院|博物|大厅|政府|车站|温室|工坊|剧院/.test(purpose);
+  if (openSpace && building) return "mixed";
+  if (openSpace) return "open_space";
+  return "building";
+}
+
+export function inferOpenSpaceType(input = {}) {
+  const intent = input.intentVersion ? input : normalizeBuildingIntent(input);
+  if (intent.openSpaceType) return intent.openSpaceType;
+  const purpose = String(intent.purpose ?? "").toLowerCase();
+  if (/\b(plaza|square)\b|广场/.test(purpose)) return "plaza";
+  if (/\b(courtyard|court)\b|庭院|院落/.test(purpose)) return "courtyard";
+  return "garden";
+}
+
+function createPublicSiteLayoutPreset(intent, options = {}) {
+  const widthCells = options.widthCells;
+  const depthCells = options.depthCells;
+  const resolvedSiteLayout = options.resolvedSiteLayout;
+  const openSpaceType = inferOpenSpaceType(intent);
+  const rng = createRng(`${options.seed}:public-site-layout`);
+  const allCells = rectangleLogicalCells(widthCells, depthCells);
+  const split = resolvedSiteLayout === "mixed"
+    ? chooseMixedCellSplit(widthCells, depthCells, rng)
+    : { variantId: `${openSpaceType}-only`, buildingCells: [], openSpaceCells: allCells };
+  const palette = MASSING_PALETTE_BY_STYLE[intent.style];
+  const footprintCells = allCells.map(([x, z]) => ({
+    x,
+    z,
+    use: split.buildingCells.some(([buildingX, buildingZ]) => buildingX === x && buildingZ === z)
+      ? "mass"
+      : "ground"
+  }));
+  const masses = [];
+  if (split.buildingCells.length) {
+    const heightBase = intent.prominence === "landmark" ? 52 : intent.prominence === "important" ? 40 : 30;
+    const capChoices = intent.style === "industrial_iron"
+      ? ["sawtooth", "parapet", "gable"]
+      : intent.style === "victorian_gothic"
+        ? ["gable", "hip"]
+        : ["gable", "hip", "mansard"];
+    masses.push({
+      id: "public-building",
+      role: "primary",
+      type: "solid",
+      cells: split.buildingCells,
+      heightVoxels: heightBase + pick(rng, [0, 4, 8]),
+      cap: { type: pick(rng, capChoices), heightVoxels: intent.style === "victorian_gothic" ? 14 : 9 },
+      materials: { ...palette },
+      facade: {
+        symmetry: intent.style === "industrial_iron" ? 0.3 : 0.75,
+        openness: intent.style === "industrial_iron" ? 0.56 : 0.42,
+        entranceEmphasis: 1,
+        detailDensity: clampNumber(0.72 + intent.magicLevel * 0.25, 0, 1),
+        floorHeightVoxels: 20,
+        bayWidthVoxels: intent.style === "victorian_gothic" ? 7 : 9,
+        order: intent.style === "civic_classical" ? "classical"
+          : intent.style === "victorian_gothic" ? "gothic"
+            : intent.style === "industrial_iron" ? "industrial" : "plain"
+      }
+    });
+  }
+  masses.push({
+    id: `${openSpaceType}-ground`,
+    role: split.buildingCells.length ? "secondary" : "primary",
+    type: "ground",
+    cells: split.openSpaceCells,
+    heightVoxels: 2,
+    cap: { type: "flat" },
+    groundTreatment: groundTreatmentFor(openSpaceType, split.openSpaceCells.length, rng),
+    materials: {
+      ground: openSpaceType === "garden" ? "grassDark" : "pavement",
+      trim: openSpaceType === "plaza" ? "limestone" : "sandstone"
+    }
+  });
+  return {
+    id: `${slug(intent.name)}-${resolvedSiteLayout}`,
+    seed: options.seed,
+    widthCells,
+    depthCells,
+    footprintCells,
+    masses,
+    relations: [],
+    metadata: {
+      publicSite: publicSiteMetadata({
+        intent,
+        resolvedSiteLayout,
+        openSpaceType,
+        widthCells,
+        depthCells,
+        variantId: split.variantId,
+        buildingCells: split.buildingCells.length,
+        openSpaceCells: split.openSpaceCells.length,
+        cellUses: footprintCells
+      })
+    }
+  };
+}
+
+function chooseMixedCellSplit(widthCells, depthCells, rng) {
+  const candidates = [];
+  if (depthCells > 1) {
+    const front = rectangleLogicalCells(widthCells, 1).map(([x]) => [x, depthCells - 1]);
+    candidates.push({ variantId: "front-open-space", openSpaceCells: front });
+  }
+  if (widthCells > 1) {
+    const left = rectangleLogicalCells(1, depthCells);
+    const right = left.map(([, z]) => [widthCells - 1, z]);
+    candidates.push({ variantId: "left-open-space", openSpaceCells: left });
+    candidates.push({ variantId: "right-open-space", openSpaceCells: right });
+  }
+  const selected = pick(rng, candidates);
+  const openKeys = new Set(selected.openSpaceCells.map(([x, z]) => `${x}:${z}`));
+  return {
+    ...selected,
+    buildingCells: rectangleLogicalCells(widthCells, depthCells).filter(([x, z]) => !openKeys.has(`${x}:${z}`))
+  };
+}
+
+function groundTreatmentFor(openSpaceType, area, rng) {
+  const small = area === 1;
+  if (openSpaceType === "plaza") {
+    return {
+      pattern: "bordered",
+      borderWidthVoxels: 2,
+      pathWidthVoxels: pick(rng, [10, 12, 14]),
+      planterCount: small ? 1 : pick(rng, [2, 3, 4]),
+      fenceHeightVoxels: 0,
+      lampCount: small ? 2 : pick(rng, [4, 6]),
+      stepWidthVoxels: small ? 12 : 20,
+      stepDepthVoxels: 4
+    };
+  }
+  if (openSpaceType === "courtyard") {
+    return {
+      pattern: "courtyard",
+      borderWidthVoxels: 2,
+      pathWidthVoxels: pick(rng, [8, 10, 12]),
+      axisMaterial: "stoneShadow",
+      planterCount: small ? 2 : pick(rng, [3, 4, 5]),
+      fenceHeightVoxels: 3,
+      lampCount: small ? 2 : 4,
+      stepWidthVoxels: small ? 12 : 18,
+      stepDepthVoxels: 4
+    };
+  }
+  return {
+    pattern: "garden",
+    borderWidthVoxels: 1,
+    pathWidthVoxels: pick(rng, [6, 7, 8]),
+    axisMaterial: "stoneShadow",
+    planterCount: small ? 4 : pick(rng, [5, 6, 8]),
+    fenceHeightVoxels: 3,
+    lampCount: small ? 2 : pick(rng, [4, 6]),
+    stepWidthVoxels: small ? 10 : 16,
+    stepDepthVoxels: 4
+  };
+}
+
+function publicSiteMetadata({ intent, resolvedSiteLayout, openSpaceType = null, widthCells, depthCells, variantId, buildingCells, openSpaceCells, cellUses = null }) {
+  return {
+    requestedLayout: intent.siteLayout,
+    resolvedLayout: resolvedSiteLayout,
+    openSpaceType,
+    structureKind: resolvedSiteLayout,
+    variantId,
+    footprintCells: widthCells * depthCells,
+    buildingCells,
+    openSpaceCells,
+    builtCoverage: Number((buildingCells / (widthCells * depthCells)).toFixed(3)),
+    ...(cellUses ? { cellUses: structuredClone(cellUses) } : {})
+  };
+}
+
+function rectangleLogicalCells(widthCells, depthCells) {
+  return Array.from({ length: depthCells }, (_, z) => (
+    Array.from({ length: widthCells }, (_, x) => [x, z])
+  )).flat();
 }
 
 function resolveMassingPreset(intent, overrides = {}) {
@@ -426,6 +642,11 @@ function semanticMetadata(intent) {
 
 function enumValue(values, value, fallback) {
   return values.includes(value) ? value : fallback;
+}
+
+function optionalEnumValue(values, value) {
+  if (value == null || value === "") return null;
+  return values.includes(value) ? value : null;
 }
 
 function text(value, fallback) {

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   BUILDING_COST_BY_PURPOSE,
+  PUBLIC_SERVICE_COST_BY_SPACE_KIND,
   DEMOLITION_REFUND_RATE,
   ROAD_COST_BY_KIND,
   calculateBuildingConstructionCost,
@@ -15,10 +16,26 @@ test("Agent price guide exposes stable estimates without accepting client-author
   const guide = constructionPriceGuide();
   assert.equal(guide.currency, "coins");
   assert.equal(guide.building_rate_per_footprint_cell_per_floor.residential, 50);
+  assert.deepEqual(guide.public_service_rate_per_functional_cell, { indoor: 70, outdoor: 30 });
   assert.equal(guide.ordinary_residential_examples["1x1_two_floors"], 105);
   assert.equal(guide.ordinary_residential_examples["2x2_two_floors"], 420);
   assert.equal(guide.demolition_refund_rate, 0.5);
   assert.match(guide.note, /never submit functional area/i);
+});
+
+test("public open space uses the outdoor rate while indoor service keeps the building rate", () => {
+  assert.deepEqual(PUBLIC_SERVICE_COST_BY_SPACE_KIND, { indoor: 70, outdoor: 30 });
+  const cost = calculateBuildingConstructionCost({
+    units: [
+      { purpose: "public_service", area: 2, magicRatio: 0, spaceKind: "indoor" },
+      { purpose: "public_service", area: 3, magicRatio: 0, spaceKind: "outdoor" }
+    ]
+  });
+  assert.equal(cost.coins, 230);
+  assert.deepEqual(cost.breakdown.map(({ spaceKind, baseRate }) => ({ spaceKind, baseRate })), [
+    { spaceKind: "indoor", baseRate: 70 },
+    { spaceKind: "outdoor", baseRate: 30 }
+  ]);
 });
 
 test("demolition refunds half the aggregate canonical cost and round down once", () => {

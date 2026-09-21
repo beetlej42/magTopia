@@ -56,7 +56,7 @@ export function createOpenApiDocument(baseUrl) {
         },
         BuildingIntent: {
           type: "object",
-          description: "Semantic and visual building brief. Choose purpose first, then composition/frontage/access/style/prominence. magic_level controls visual intensity only; use the sibling gameplay_profile to author wizard capacity, Arcane Energy production, and magical exposure. The x-agent-catalog below explains how each option changes the generated architecture; use it as the design vocabulary rather than guessing from enum names.",
+          description: "Semantic and visual building or public-site brief. Choose purpose and site_layout first, then composition/frontage/access/style/prominence. magic_level controls visual intensity only; use the sibling gameplay_profile to author wizard capacity, Arcane Energy production, and magical exposure. The x-agent-catalog below explains how each option changes the generated architecture; use it as the design vocabulary rather than guessing from enum names.",
           required: ["name", "purpose"],
           properties: {
             name: { type: "string", minLength: 1, description: "Human-readable building name." },
@@ -68,17 +68,32 @@ export function createOpenApiDocument(baseUrl) {
             access: { enum: ["private", "public", "service", "ceremonial"], description: "How the primary entrance should read. Public and ceremonial access strengthen entrance emphasis and can make an urban-massing building count as public architecture." },
             style: { enum: ["victorian_domestic", "victorian_gothic", "civic_classical", "industrial_iron", "alchemical_glass"], description: "Architectural language. For public buildings this changes massing, roof families, facade rhythm, and constrained materials, not only color." },
             prominence: { enum: ["ordinary", "important", "landmark"], description: "Urban hierarchy. Higher prominence increases default scale and height; landmark always favors urban_massing." },
+            site_layout: { enum: ["auto", "open_space", "mixed", "building"], default: "auto", description: "Whole-cell public-site layout. open_space is garden/courtyard/plaza only; mixed requires at least two logical cells and reserves at least one cell each for building and open space; building is the legacy all-building behavior. A 1x1 site supports open_space or building, but not mixed." },
+            open_space_type: { enum: ["garden", "courtyard", "plaza"], description: "Visual treatment for open-space cells. It changes generated landscape form but not gameplay rates. Omit to infer from purpose, defaulting to garden." },
             magic_level: { type: "number", minimum: 0, maximum: 1, description: "Continuous magical intensity. Higher values increase generated variation/detail and night-light contribution; keep ordinary background fabric restrained and reserve high values for intentional magical emphasis." },
             district_style: { type: "string", description: "Optional district-level style cue to preserve. For housing, use this with district_context so nearby buildings share a family." },
             variation_intent: { type: "string", description: "Optional high-level structural variation cue such as narrow_corner_house, stepped_frontage, hip_roof, or corner. Use one or two cues to vary a house without destroying district coherence." }
           },
           "x-agent-catalog": {
             version: "1.0",
-            decisionOrder: ["purpose", "composition", "frontage", "access", "style", "prominence", "magic_level", "district_style", "variation_intent"],
+            decisionOrder: ["purpose", "site_layout", "open_space_type", "composition", "frontage", "access", "style", "prominence", "magic_level", "district_style", "variation_intent"],
             generationModeRules: {
               floor_stack: "Recommended for a 1x1 ordinary street building such as a house, shop, or small workshop.",
-              urban_massing: "Recommended for multi-cell sites, institutional frontage, landmarks, and court/hall/tower/yard compositions.",
-              auto: "Prefer auto unless the Agent has a specific reason to force a mode. Multi-cell footprint, institutional frontage, landmark prominence, or court/hall/tower/yard composition selects urban_massing."
+              urban_massing: "Required for open_space and mixed; otherwise recommended for multi-cell sites, institutional frontage, landmarks, and court/hall/tower/yard compositions.",
+              auto: "Prefer auto unless the Agent has a specific reason to force a mode. open_space/mixed, multi-cell footprint, institutional frontage, landmark prominence, or court/hall/tower/yard composition selects urban_massing."
+            },
+            siteLayout: {
+              auto: { meaning: "Infer from purpose text; a purpose naming both an open space and a building resolves to mixed, an open space alone resolves to open_space, otherwise building." },
+              open_space: { meaning: "Every logical site cell is outdoor public space.", minimumLogicalCells: 1, gameplay: "Each outdoor cell costs 30 coins and provides public-service capacity 3." },
+              mixed: { meaning: "A seed-stable generator partitions whole cells between public building and open space.", minimumLogicalCells: 2, constraints: ["At least one indoor building cell.", "At least one outdoor open-space cell."] },
+              building: { meaning: "All functional area is indoor building area; preserves the previous building behavior." },
+              allocation: "The Agent chooses the layout and open-space type. The generator chooses the exact whole-cell partition, with deterministic variation from seed."
+            },
+            openSpaceType: {
+              garden: { meaning: "Planted green public space with paths, planters, fence, and lamps." },
+              courtyard: { meaning: "Enclosed-feeling paved/landscaped court with a stronger border and axial path." },
+              plaza: { meaning: "Hard-surfaced civic square with broad paths, lamps, and restrained planting." },
+              gameplay: "garden, courtyard, and plaza are visually distinct but share the same outdoor public-service cost and capacity."
             },
             composition: {
               street: { meaning: "Compact building organized primarily around the street frontage.", bestFor: ["residential", "shop", "small_workshop", "mixed_use"], effects: ["Normally compatible with floor_stack on 1x1 sites.", "Uses a street-oriented roof unless another cue overrides it."] },
@@ -136,7 +151,7 @@ export function createOpenApiDocument(baseUrl) {
           type: "object",
           additionalProperties: false,
           required: ["purpose", "magic_ratio"],
-          description: "Authoritative gameplay semantics applied to every system-derived floor of this confirmed design. The server owns floor count and functional area. magic_ratio is the wizard-world share, not visual magic strength: residential creates wizard housing capacity; commercial/production/greenhouse can produce Arcane Energy and add concealment pressure.",
+          description: "Authoritative gameplay semantics applied to system-derived functional units of this confirmed design. The server owns floor count, whole-cell indoor/outdoor allocation, and functional area. Public-service indoor cells cost 70 coins and provide capacity 4; outdoor cells cost 30 coins and provide capacity 3. magic_ratio is the wizard-world share, not visual magic strength: residential creates wizard housing capacity; commercial/production/greenhouse can produce Arcane Energy and add concealment pressure.",
           properties: {
             purpose: { enum: ["residential", "commercial", "public_service", "production", "greenhouse"] },
             magic_ratio: { type: "number", enum: [0, 0.25, 0.5, 0.75, 1], description: "Use 0 for entirely Muggle-facing space and a positive discrete value for magical use. A wizard residence needs residential plus magic_ratio > 0." }

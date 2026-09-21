@@ -77,6 +77,11 @@ function deriveGameplayBuildingFromVoxelDesign(voxelDesign, footprint, program =
     voxelDesign.generation?.mode === "urban_massing" ? "public_service" : "residential"
   );
   const submittedFloors = submittedFloorSemantics(submittedGameplayBuilding);
+  const publicSiteLayout = sourceSpec.metadata?.publicSite?.resolvedLayout;
+
+  if (["open_space", "mixed"].includes(publicSiteLayout)) {
+    return derivePublicSiteGameplayBuilding(voxelDesign, sourceSpec, defaultPurpose);
+  }
 
   if (voxelDesign.generation?.mode === "floor_stack" && Array.isArray(sourceSpec.floorSpecs) && sourceSpec.floorSpecs.length) {
     assertSubmittedFloorCount(submittedFloors, sourceSpec.floorSpecs.length);
@@ -96,6 +101,35 @@ function deriveGameplayBuildingFromVoxelDesign(voxelDesign, footprint, program =
       defaultPurpose
     ))
   };
+}
+
+function derivePublicSiteGameplayBuilding(voxelDesign, sourceSpec, defaultPurpose) {
+  const cells = Array.isArray(sourceSpec.footprint?.cells) ? sourceSpec.footprint.cells : [];
+  const buildingCells = cells.filter((cell) => cell?.use === "mass").length;
+  const openSpaceCells = cells.filter((cell) => cell?.use === "ground").length;
+  const layout = sourceSpec.metadata.publicSite.resolvedLayout;
+  if (layout === "open_space" && (buildingCells !== 0 || openSpaceCells < 1)) {
+    throw new Error("Confirmed open_space design must contain only whole ground cells");
+  }
+  if (layout === "mixed" && (buildingCells < 1 || openSpaceCells < 1)) {
+    throw new Error("Confirmed mixed design must contain at least one building cell and one open-space cell");
+  }
+  const profile = voxelDesign.gameplayProfile ?? {};
+  const purpose = canonicalGameplayPurpose(profile.purpose, defaultPurpose);
+  const magicRatio = normalizeMagicRatio(profile.magicRatio);
+  const units = [];
+  if (buildingCells > 0) {
+    units.push({
+      purpose,
+      area: buildingCells * estimateMassingStoreys(sourceSpec),
+      magicRatio,
+      spaceKind: "indoor"
+    });
+  }
+  if (openSpaceCells > 0) {
+    units.push({ purpose, area: openSpaceCells, magicRatio, spaceKind: "outdoor" });
+  }
+  return { units };
 }
 
 function submittedFloorSemantics(value) {

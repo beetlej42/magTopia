@@ -1,4 +1,4 @@
-import { GAMEPLAY_PURPOSES, normalizeMagicRatio } from "./schema.js";
+import { FUNCTIONAL_SPACE_KINDS, GAMEPLAY_PURPOSES, normalizeMagicRatio } from "./schema.js";
 import { getCard } from "./card-catalog.js";
 
 export class EconomyDataError extends Error {
@@ -19,6 +19,7 @@ export const ECONOMY_RULES = Object.freeze({
   publicService: Object.freeze({
     serviceRadius: 5,
     serviceCapacityPerFunctionalCell: 4,
+    outdoorServiceCapacityPerFunctionalCell: 3,
     servicedMaxOccupancy: 0.8,
     servicedMigrationRate: 0.4
   }),
@@ -307,6 +308,9 @@ function canonicalUnits(metadata) {
   return metadata.units.filter((unit) => {
     if (!GAMEPLAY_PURPOSES.includes(unit?.purpose)) throw new EconomyDataError("canonical functional purpose is invalid");
     if (!Number.isSafeInteger(Number(unit?.area)) || Number(unit.area) < 1) throw new EconomyDataError("canonical functional area is not a safe positive integer");
+    if (unit?.spaceKind != null && !FUNCTIONAL_SPACE_KINDS.includes(unit.spaceKind)) {
+      throw new EconomyDataError("canonical functional space kind is invalid");
+    }
     try {
       normalizeMagicRatio(unit.magicRatio);
       return true;
@@ -328,8 +332,15 @@ export function publicServiceCoverageForSettlement(state = {}, metadataMap = {},
   const serviceRules = rules.publicService ?? ECONOMY_RULES.publicService;
   const configuredRadius = Number(options.serviceRadius ?? serviceRules.serviceRadius);
   const radius = Number.isFinite(configuredRadius) ? Math.max(0, Math.trunc(configuredRadius)) : serviceRules.serviceRadius;
-  const configuredCapacity = Number(options.serviceCapacityPerFunctionalCell ?? serviceRules.serviceCapacityPerFunctionalCell);
+  const hasCapacityOverride = options.serviceCapacityPerFunctionalCell != null;
+  const configuredCapacity = Number(hasCapacityOverride
+    ? options.serviceCapacityPerFunctionalCell
+    : serviceRules.serviceCapacityPerFunctionalCell);
   const capacityPerCell = Number.isFinite(configuredCapacity) ? Math.max(0, configuredCapacity) : serviceRules.serviceCapacityPerFunctionalCell;
+  const configuredOutdoorCapacity = Number(serviceRules.outdoorServiceCapacityPerFunctionalCell);
+  const outdoorCapacityPerCell = Number.isFinite(configuredOutdoorCapacity)
+    ? Math.max(0, configuredOutdoorCapacity)
+    : ECONOMY_RULES.publicService.outdoorServiceCapacityPerFunctionalCell;
   const residentialUnits = [];
   const serviceUnits = [];
   for (const [buildingId, metadata] of Object.entries(metadataMap).sort(([left], [right]) => left.localeCompare(right))) {
@@ -362,14 +373,21 @@ export function publicServiceCoverageForSettlement(state = {}, metadataMap = {},
     const nearby = residentialUnits.filter((entry) => footprintsWithinRadius(entry.footprint, service.footprint, radius));
     if (!nearby.length) continue;
     const sourceArea = checkedUnitArea(service.unit, "public service functional area");
-    const sourceCapacity = checkedArcane(sourceArea * capacityPerCell, "service capacity");
+    const sourceCapacityPerCell = !hasCapacityOverride && service.unit.spaceKind === "outdoor"
+      ? outdoorCapacityPerCell
+      : capacityPerCell;
+    const sourceCapacity = checkedArcane(sourceArea * sourceCapacityPerCell, "service capacity");
     const nearbyArea = nearby.reduce((total, entry) => checkedAdd(total, detailByKey.get(`${entry.buildingId}:${entry.unitIndex}`).residentialArea, "nearby residential functional area"), 0);
     serviceCapacity = checkedArcane(serviceCapacity + sourceCapacity, "service capacity");
     for (const entry of nearby) {
       const detail = detailByKey.get(`${entry.buildingId}:${entry.unitIndex}`);
-      const allocated = sourceCapacity * detail.residentialArea / nearbyArea;
+      const allocationShare = detail.residentialArea / nearbyArea;
+      const allocated = sourceCapacity * allocationShare;
       detail.serviceCapacity = checkedArcane(detail.serviceCapacity + allocated, "allocated service capacity");
-      detail.serviceArea = capacityPerCell === 0 ? 0 : detail.serviceCapacity / capacityPerCell;
+      detail.serviceArea = checkedArcane(
+        detail.serviceArea + (sourceCapacityPerCell === 0 ? 0 : sourceArea * allocationShare),
+        "allocated service area"
+      );
       detail.nearbyPublicServiceUnits.push(`${service.buildingId}:${service.unitIndex}`);
     }
   }

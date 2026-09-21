@@ -8,8 +8,10 @@ test("OpenAPI exposes an agent-readable building design catalog", () => {
   const catalog = intent["x-agent-catalog"];
 
   assert.ok(catalog);
-  assert.deepEqual(catalog.decisionOrder.slice(0, 6), [
+  assert.deepEqual(catalog.decisionOrder.slice(0, 8), [
     "purpose",
+    "site_layout",
+    "open_space_type",
     "composition",
     "frontage",
     "access",
@@ -27,6 +29,10 @@ test("OpenAPI exposes an agent-readable building design catalog", () => {
   assert.match(catalog.style.industrial_iron.meaning, /industrial/i);
   assert.match(catalog.residentialGuidance, /district_context/);
   assert.match(catalog.publicBuildingReview, /actualArchitecture/);
+  assert.equal(intent.properties.site_layout.default, "auto");
+  assert.deepEqual(intent.properties.open_space_type.enum, ["garden", "courtyard", "plaza"]);
+  assert.equal(catalog.siteLayout.mixed.minimumLogicalCells, 2);
+  assert.match(catalog.siteLayout.allocation, /whole-cell partition/);
 });
 
 test("OpenAPI decoration catalog matches the runtime semantic grid sign support", () => {

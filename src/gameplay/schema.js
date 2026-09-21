@@ -12,6 +12,7 @@ export const GAMEPLAY_PURPOSES = Object.freeze([
   "greenhouse"
 ]);
 export const MAGIC_RATIOS = Object.freeze([0, 0.25, 0.5, 0.75, 1]);
+export const FUNCTIONAL_SPACE_KINDS = Object.freeze(["indoor", "outdoor"]);
 // Authoritative intensity multipliers used by the unified spatial exposure
 // model. Gameplay grammar carries only purpose and discrete magicRatio. Any
 // prefab-specific override must come from a trusted system resolver at
@@ -124,6 +125,15 @@ export function normalizeMagicRatio(value = 0) {
   return MAGIC_RATIOS.find((allowed) => Math.abs(allowed - ratio) < Number.EPSILON * 8);
 }
 
+export function normalizeFunctionalSpaceKind(value) {
+  if (value == null || value === "") return null;
+  const kind = String(value).trim().toLowerCase();
+  if (!FUNCTIONAL_SPACE_KINDS.includes(kind)) {
+    throw new Error(`Unsupported functional space kind: ${String(value)}`);
+  }
+  return kind;
+}
+
 function normalizeFunctionalArea(value, label = "functional unit") {
   const area = Number(value);
   if (!Number.isSafeInteger(area) || area < 1) {
@@ -165,10 +175,14 @@ export function normalizeFunctionalUnit(value = {}, index = 0, defaults = {}) {
     value.area ?? value.functionalArea ?? areaFromCells(value.cells) ?? defaults.area,
     `functional unit ${index + 1}`
   );
+  const spaceKind = normalizeFunctionalSpaceKind(
+    value.spaceKind ?? value.space_kind ?? defaults.spaceKind
+  );
   return {
     purpose,
     area,
-    magicRatio: normalizeMagicRatio(value.magicRatio ?? defaults.magicRatio)
+    magicRatio: normalizeMagicRatio(value.magicRatio ?? defaults.magicRatio),
+    ...(spaceKind ? { spaceKind } : {})
   };
 }
 
