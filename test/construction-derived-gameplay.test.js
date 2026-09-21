@@ -105,3 +105,40 @@ test("urban massing derives floor count and area from voxel geometry rather than
   assert.equal(cost.coins, 560);
   assert.equal(cost.functionalAreas.public_service, 8);
 });
+
+test("public-site gameplay derives indoor and outdoor units from confirmed whole-cell geometry", () => {
+  const normalized = normalizeConstructionProposal(proposal({
+    site: { lotId: "cell-10-10", footprint: "3x1", entrance: "south" },
+    program: { archetype: "voxel_urban_massing", purpose: "public_service", name: "Archive Garden", attributes: {} },
+    gameplayBuilding: {
+      units: [{ purpose: "public_service", area: 99, magicRatio: 1, spaceKind: "indoor" }]
+    },
+    voxelDesign: {
+      intent: { purpose: "archive garden" },
+      gameplayProfile: { purpose: "public_service", magicRatio: 0.25 },
+      generation: {
+        mode: "urban_massing",
+        sourceSpec: {
+          footprint: {
+            cells: [
+              { x: 0, z: 0, use: "mass" },
+              { x: 1, z: 0, use: "mass" },
+              { x: 2, z: 0, use: "ground" }
+            ]
+          },
+          masses: [{ id: "archive", type: "solid", baseYVoxels: 0, heightVoxels: 40 }],
+          metadata: { publicSite: { resolvedLayout: "mixed" } }
+        }
+      },
+      ports: []
+    }
+  }));
+
+  assert.deepEqual(normalized.gameplayBuilding, {
+    units: [
+      { purpose: "public_service", area: 4, magicRatio: 0.25, spaceKind: "indoor" },
+      { purpose: "public_service", area: 1, magicRatio: 0.25, spaceKind: "outdoor" }
+    ]
+  });
+  assert.equal(calculateBuildingConstructionCost(normalized).coins, 310);
+});

@@ -63,6 +63,20 @@ test("public service uses Manhattan radius 5 and counts vertical functional area
   assert.equal(publicServiceCoverageForSettlement(state, metadata).details[0].serviceCoverage, 0, "distance 6 is outside the radius");
 });
 
+test("outdoor public-service cells provide capacity 3 while indoor cells provide 4", () => {
+  const state = {
+    cells: { home: { column: 0, row: 0 }, service: { column: 0, row: 1 } },
+    buildings: { home: { footprintCells: ["home"] }, service: { footprintCells: ["service"] } }
+  };
+  const metadata = {
+    home: { canonical: true, status: "completed", units: [{ purpose: "residential", area: 4, magicRatio: 0 }] },
+    service: { canonical: true, status: "completed", units: [{ purpose: "public_service", area: 1, magicRatio: 0, spaceKind: "outdoor" }] }
+  };
+  assert.equal(publicServiceCoverageForSettlement(state, metadata).serviceCapacity, 3);
+  metadata.service.units[0].spaceKind = "indoor";
+  assert.equal(publicServiceCoverageForSettlement(state, metadata).serviceCapacity, 4);
+});
+
 test("service target is computed per residential unit before aggregation", () => {
   const state = {
     cells: { high: { column: 0, row: 0 }, low: { column: 10, row: 0 }, service: { column: 0, row: 5 } },

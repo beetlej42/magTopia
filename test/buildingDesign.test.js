@@ -50,6 +50,69 @@ test("institutional and multi-cell designs use the urban massing strategy", () =
   assert.ok(design.availableOperations.modeSpecific.includes("add_mass"));
 });
 
+test("one-cell public gardens use the normal design flow without pretending to be buildings", () => {
+  const draft = createBuildingDesignDraft({
+    site: { lot_id: "cell-4-4", footprint: "1x1", entrance: "south" },
+    intent: {
+      name: "Lantern Pocket Garden",
+      purpose: "neighborhood public garden",
+      site_layout: "open_space",
+      open_space_type: "garden"
+    },
+    gameplay_profile: { purpose: "public_service", magic_ratio: 0 }
+  }, { ...context, id: "pocket-garden-design" });
+  assert.equal(draft.generation.mode, "urban_massing");
+  assert.deepEqual(draft.actualSiteComposition, {
+    requestedLayout: "open_space",
+    resolvedLayout: "open_space",
+    openSpaceType: "garden",
+    structureKind: "open_space",
+    variantId: "garden-only",
+    footprintCells: 1,
+    buildingCells: 0,
+    openSpaceCells: 1,
+    builtCoverage: 0,
+    indoorArea: 0,
+    outdoorArea: 1,
+    cellUses: [{ x: 0, z: 0, use: "ground" }]
+  });
+  assert.equal(draft.availableOperations.modeSpecific.includes("add_floor"), false);
+  assert.equal(draft.agentGuidance[0].code, "public_site_layout_review");
+  const confirmed = confirmBuildingDesign(draft, { expected_revision: 1 }, context);
+  assert.equal(confirmed.compileDiagnostics.status, "compiled");
+  const body = buildingDesignToConstructionBody(confirmed);
+  assert.deepEqual(body.gameplay_building, {
+    units: [{ purpose: "public_service", area: 1, magicRatio: 0, spaceKind: "outdoor" }]
+  });
+});
+
+test("mixed public sites require two cells and expose generated indoor/outdoor areas", () => {
+  assert.throws(() => createBuildingDesignDraft({
+    site: { lot_id: "cell-5-4", footprint: "1x1" },
+    intent: { purpose: "library garden", site_layout: "mixed" }
+  }, context), /at least two logical cells/);
+
+  const draft = createBuildingDesignDraft({
+    site: { lot_id: "cell-5-4", footprint: "3x1" },
+    intent: { purpose: "library garden", site_layout: "mixed", open_space_type: "courtyard" },
+    gameplay_profile: { purpose: "public_service", magic_ratio: 0.25 },
+    seed: "mixed-library-garden"
+  }, { ...context, id: "mixed-library-garden" });
+  assert.equal(draft.actualSiteComposition.resolvedLayout, "mixed");
+  assert.ok(draft.actualSiteComposition.buildingCells >= 1);
+  assert.ok(draft.actualSiteComposition.openSpaceCells >= 1);
+  assert.equal(
+    draft.actualSiteComposition.buildingCells + draft.actualSiteComposition.openSpaceCells,
+    3
+  );
+  const confirmed = confirmBuildingDesign(draft, { expected_revision: 1 }, context);
+  const body = buildingDesignToConstructionBody(confirmed);
+  assert.deepEqual(body.gameplay_building.units.map(({ spaceKind, area }) => ({ spaceKind, area })), [
+    { spaceKind: "indoor", area: draft.actualSiteComposition.indoorArea },
+    { spaceKind: "outdoor", area: draft.actualSiteComposition.outdoorArea }
+  ]);
+});
+
 test("public designs choose seed-stable functional variants and expose an architecture review", () => {
   const input = {
     site: { lot_id: "cell-5-5", footprint: "3x2", entrance: "south" },

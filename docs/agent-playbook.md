@@ -132,6 +132,18 @@ For `urban_massing` public buildings, `seed` now selects a functional variant wi
 
 For example, a library should not accidentally become a greenhouse. If the conflict is local, use `update_mass`; if the overall scheme is wrong, use `regenerate_from_intent` and inspect the new result. These checks are recommendations, not automatic vetoes: an Agent may intentionally create a botanical library or a school with a glass research wing, but it should make that choice deliberately in its final design.
 
+### Public sites: building, open space, or both
+
+Public facilities use the same BuildingDesign flow whether they are a building, a garden/plaza/courtyard, or a combination. Set `intent.site_layout` to `building`, `open_space`, `mixed`, or `auto`, and optionally set `intent.open_space_type` to `garden`, `courtyard`, or `plaza`.
+
+- Allocation always uses complete logical grid cells. A 1×1 site may be a pure building or a one-cell open space; it cannot be `mixed`.
+- `mixed` requires at least two cells and always keeps at least one building cell and one open-space cell. The Agent chooses the layout/type; the generator chooses a seed-stable exact partition.
+- Garden, courtyard, and plaza have distinct generated visuals but identical gameplay. Inspect `actual_site_composition` and the `public_site_layout_review` guidance before confirmation.
+- With `gameplay_profile.purpose: public_service`, each indoor cell-floor costs 70 coins and supplies capacity 4; each outdoor cell costs 30 coins and supplies capacity 3. Both contribute to the district building count.
+- Public sites still need a legal footprint and routeable entrance/road connection like other construction.
+
+Example one-cell garden intent: `{ "name": "Lantern Garden", "purpose": "neighborhood public garden", "site_layout": "open_space", "open_space_type": "garden" }`.
+
 ## Budget behavior
 
 You may spend the city's entire currently available budget without player approval. Income is settled by resolving the turn through the cooldown-gated strategy flow, based on the productive buildings already operating in the city; there is no separate manual time-advance that grants income. Do not treat future income as currently spendable.
@@ -150,7 +162,7 @@ The Agent API exposes one construction contract. When creating the BuildingDesig
 }
 ```
 
-`gameplay_profile.purpose` is one of `residential`, `commercial`, `public_service`, `production`, or `greenhouse`; `magic_ratio` is one of `0`, `0.25`, `0.5`, `0.75`, or `1`. A wizard residence requires `purpose: residential` and `magic_ratio > 0`. A magical production or greenhouse profile produces Arcane Energy but also raises local magical load, so read the strategy risk projection and add concealment. The server derives the exact floor count and functional area; the Agent never submits area.
+`gameplay_profile.purpose` is one of `residential`, `commercial`, `public_service`, `production`, or `greenhouse`; `magic_ratio` is one of `0`, `0.25`, `0.5`, `0.75`, or `1`. A wizard residence requires `purpose: residential` and `magic_ratio > 0`. A magical production or greenhouse profile produces Arcane Energy but also raises local magical load, so read the strategy risk projection and add concealment. The server derives the exact floor count, whole-cell public-site allocation, and functional area; the Agent never submits area.
 
 Do not invent visual enum values from the gameplay purpose. Use these safe frontage mappings: residential → `residential`; commercial → `display`; production or greenhouse → `workshop`; public_service → `institutional`. `ordinary` is a valid prominence, not a frontage. The complete legal frontage set is `residential`, `display`, `workshop`, `institutional`, and `large_bay`. Prefer the copy-ready `agent_turn_plan.development_plan` when present; it already supplies a legal site, intent, frontage, and gameplay profile.
 

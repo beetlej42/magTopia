@@ -5,7 +5,8 @@ import {
   adaptBuildingIntentToMassingConfig,
   adaptBuildingIntentToStreetConfig,
   getBuildingIntentCatalog,
-  normalizeBuildingIntent
+  normalizeBuildingIntent,
+  resolvePublicSiteLayout
 } from "../src/generators/buildingIntent.js";
 import { planVoxelStreet } from "../src/generators/voxelBuildingLab.js";
 import { createUrbanMassingSpec } from "../src/generators/voxelMassingGrammar.js";
@@ -43,6 +44,40 @@ test("BuildingIntent keeps arbitrary purpose text while bounding geometric contr
   assert.deepEqual(catalog.semanticFields, ["name", "purpose", "description", "signText"]);
   assert.equal(catalog.site.maximumSpanCells, 6);
   assert.deepEqual(catalog.site.prominenceDefaults.landmark, { widthCells: 5, depthCells: 3 });
+});
+
+test("public-site intent supports one-cell open space and deterministic whole-cell mixed layouts", () => {
+  const garden = createUrbanMassingSpec(adaptBuildingIntentToMassingConfig({
+    name: "Lantern Pocket Garden",
+    purpose: "neighborhood public garden",
+    siteLayout: "open_space",
+    openSpaceType: "garden"
+  }, { widthCells: 1, depthCells: 1, seed: "pocket-garden" }));
+  assert.equal(garden.metadata.publicSite.resolvedLayout, "open_space");
+  assert.equal(garden.footprint.massCellCount, 0);
+  assert.equal(garden.footprint.groundCellCount, 1);
+  assert.equal(garden.masses[0].type, "ground");
+
+  const mixedInput = {
+    name: "Archive Court",
+    purpose: "public archive and courtyard",
+    siteLayout: "mixed",
+    openSpaceType: "courtyard"
+  };
+  const first = createUrbanMassingSpec(adaptBuildingIntentToMassingConfig(mixedInput, {
+    widthCells: 3, depthCells: 1, seed: "archive-court"
+  }));
+  const second = createUrbanMassingSpec(adaptBuildingIntentToMassingConfig(mixedInput, {
+    widthCells: 3, depthCells: 1, seed: "archive-court"
+  }));
+  assert.deepEqual(first.footprint.cells, second.footprint.cells);
+  assert.ok(first.footprint.massCellCount >= 1);
+  assert.ok(first.footprint.groundCellCount >= 1);
+  assert.equal(first.footprint.massCellCount + first.footprint.groundCellCount, 3);
+  assert.equal(resolvePublicSiteLayout({ purpose: "library garden" }), "mixed");
+  assert.throws(() => adaptBuildingIntentToMassingConfig(mixedInput, {
+    widthCells: 1, depthCells: 1
+  }), /at least two logical cells/);
 });
 
 test("street adapter turns affordances into the existing facade grammar and preserves semantics", () => {

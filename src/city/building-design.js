@@ -2,7 +2,8 @@ import {
   adaptBuildingIntentToMassingConfig,
   adaptBuildingIntentToStreetConfig,
   getBuildingIntentCatalog,
-  normalizeBuildingIntent
+  normalizeBuildingIntent,
+  resolvePublicSiteLayout
 } from "../generators/buildingIntent.js";
 import { createBuildingSpec } from "../generators/voxelBuildingGrammar.js";
 import { createUrbanMassingSpec } from "../generators/voxelMassingGrammar.js";
@@ -67,6 +68,9 @@ export function createBuildingDesignDraft(input = {}, context = {}) {
     input.site?.footprint ?? input.requirements?.maximum_footprint ?? input.requirements?.maximumFootprint
   );
   const mode = requestedMode === "auto" ? recommendGenerationMode(intent, requestedFootprint) : requestedMode;
+  if (mode === "floor_stack" && resolvePublicSiteLayout(intent) !== "building") {
+    throw new Error("open_space and mixed site layouts require urban_massing generation");
+  }
   if (mode === "floor_stack" && requestedFootprint && requestedFootprint !== "1x1") {
     throw new Error("floor_stack currently requires a 1x1 logical site; use urban_massing for larger footprints");
   }
@@ -173,6 +177,7 @@ export function confirmBuildingDesign(current, input = {}, context = {}) {
 export function recommendGenerationMode(input = {}, requestedFootprint = null) {
   const intent = input.intentVersion ? input : normalizeIntentAliases(input);
   const footprint = requestedFootprint ? parseFootprint(requestedFootprint) : null;
+  if (resolvePublicSiteLayout(intent) !== "building") return "urban_massing";
   if (footprint && footprint.columns * footprint.rows > 1) return "urban_massing";
   if (intent.frontage === "institutional" || intent.prominence === "landmark") return "urban_massing";
   if (["court", "hall", "tower", "yard"].includes(intent.composition)) return "urban_massing";
@@ -187,12 +192,7 @@ export function buildingDesignToConstructionBody(design, input = {}) {
     ? design.generation.sourceSpec.floors
     : estimateMassingStoreys(design.generation.sourceSpec);
   const gameplayBuilding = design.gameplayProfile
-    ? {
-        floors: Array.from({ length: floors }, () => ({
-          purpose: design.gameplayProfile.purpose,
-          magicRatio: design.gameplayProfile.magicRatio
-        }))
-      }
+    ? gameplayBuildingForDesign(design, floors)
     : null;
   return {
     ...input,
@@ -210,7 +210,10 @@ export function buildingDesignToConstructionBody(design, input = {}) {
       purpose: design.intent.purpose,
       name: design.intent.name,
       description: design.intent.description,
-      attributes: { voxelFloors: floors }
+      attributes: {
+        voxelFloors: floors,
+        structureKind: design.actualSiteComposition?.structureKind ?? "building"
+      }
     },
     design: {
       district_style: design.intent.style,
@@ -220,10 +223,38 @@ export function buildingDesignToConstructionBody(design, input = {}) {
     asset: { mode: "voxel" },
     agent_guidance: createAgentGuidance(design),
     actual_architecture: structuredClone(design.actualArchitecture ?? null),
+    actual_site_composition: structuredClone(design.actualSiteComposition ?? null),
     architecture_review: structuredClone(design.architectureReview ?? null),
     ...(gameplayBuilding ? { gameplay_building: gameplayBuilding } : {}),
     voxel_design: structuredClone(design)
   };
+}
+
+function gameplayBuildingForDesign(design, floors) {
+  const profile = design.gameplayProfile;
+  const composition = design.actualSiteComposition;
+  if (design.generation.mode !== "urban_massing" || !composition || composition.resolvedLayout === "building") {
+    return {
+      floors: Array.from({ length: floors }, () => ({
+        purpose: profile.purpose,
+        magicRatio: profile.magicRatio
+      }))
+    };
+  }
+  const units = [];
+  if (composition.indoorArea > 0) units.push({
+    purpose: profile.purpose,
+    area: composition.indoorArea,
+    magicRatio: profile.magicRatio,
+    spaceKind: "indoor"
+  });
+  if (composition.outdoorArea > 0) units.push({
+    purpose: profile.purpose,
+    area: composition.outdoorArea,
+    magicRatio: profile.magicRatio,
+    spaceKind: "outdoor"
+  });
+  return { units };
 }
 
 function normalizeGameplayProfile(value) {
@@ -287,6 +318,7 @@ function recommendGeneration({ id, seed, intent, mode, site, requirements, distr
   try {
     sourceSpec = createUrbanMassingSpec(recommended);
   } catch (error) {
+    if (resolvePublicSiteLayout(intent) !== "building") throw error;
     // Semantic presets are authored at preferred dimensions. A smaller or
     // rotated legal parcel must still receive a valid recommendation rather
     // than exposing a late preset indexing error to the agent.
@@ -602,10 +634,20 @@ function normalizeIntentAliases(input = {}) {
       throw new Error(`Unsupported building intent ${field}: ${input[field]}; expected one of ${catalog[field].join(", ")}`);
     }
   }
+  const siteLayout = input.site_layout ?? input.siteLayout;
+  if (siteLayout != null && !catalog.siteLayout.includes(siteLayout)) {
+    throw new Error(`Unsupported building intent site_layout: ${siteLayout}; expected one of ${catalog.siteLayout.join(", ")}`);
+  }
+  const openSpaceType = input.open_space_type ?? input.openSpaceType;
+  if (openSpaceType != null && !catalog.openSpaceType.includes(openSpaceType)) {
+    throw new Error(`Unsupported building intent open_space_type: ${openSpaceType}; expected one of ${catalog.openSpaceType.join(", ")}`);
+  }
   return normalizeBuildingIntent({
     ...input,
     signText: input.signText ?? input.sign_text,
-    magicLevel: input.magicLevel ?? input.magic_level
+    magicLevel: input.magicLevel ?? input.magic_level,
+    siteLayout,
+    openSpaceType
   });
 }
 
@@ -704,9 +746,12 @@ function normalizeOperation(value) {
 }
 
 function availableOperations(mode, intent = {}) {
+  const resolvedSiteLayout = resolvePublicSiteLayout(intent);
+  const modeSpecific = [...MODE_OPERATIONS[normalizeMode(mode)]]
+    .filter((operation) => !(resolvedSiteLayout === "open_space" && operation === "add_floor"));
   return {
     common: [...COMMON_OPERATIONS],
-    modeSpecific: [...MODE_OPERATIONS[normalizeMode(mode)]],
+    modeSpecific,
     decorationTypes: [...BUILDING_DECORATION_TYPES],
     semanticGridSign: {
       grid: "four rows of four cells using 0/1 or ./#",
@@ -723,6 +768,14 @@ function availableOperations(mode, intent = {}) {
           "main/roof"
         ]
       : ["{mass_id}/facade-{direction}", "{mass_id}/cap", "site"],
+    siteLayout: {
+      requested: intent.siteLayout ?? "auto",
+      resolved: resolvedSiteLayout,
+      options: ["auto", "open_space", "mixed", "building"],
+      openSpaceTypes: ["garden", "courtyard", "plaza"],
+      mixedMinimumLogicalCells: 2,
+      regenerateWith: { operation: "regenerate_from_intent", intentFields: ["site_layout", "open_space_type"] }
+    },
     ...(mode === "urban_massing" ? {
       publicMassing: {
         program: inferPublicBuildingProgram(intent.purpose),
@@ -836,6 +889,7 @@ function finalizeDesign(design, context) {
   value.actualArchitecture = value.generation.mode === "urban_massing"
     ? summarizeMassingArchitecture(value.generation.sourceSpec)
     : summarizeFloorStackArchitecture(value.generation.sourceSpec);
+  value.actualSiteComposition = summarizeActualSiteComposition(value);
   value.architectureReview = isPublicBuildingDesign(value)
     ? createPublicArchitectureReview(value.intent, value.actualArchitecture)
     : null;
@@ -844,8 +898,51 @@ function finalizeDesign(design, context) {
   return value;
 }
 
+function summarizeActualSiteComposition(design) {
+  const sourceSpec = design.generation?.sourceSpec;
+  const metadata = sourceSpec?.metadata?.publicSite;
+  if (!metadata) return null;
+  const cellUses = Array.isArray(sourceSpec.footprint?.cells)
+    ? sourceSpec.footprint.cells.map(({ x, z, use }) => ({ x, z, use }))
+    : [];
+  const buildingCells = cellUses.filter((cell) => cell.use === "mass").length;
+  const openSpaceCells = cellUses.filter((cell) => cell.use === "ground").length;
+  const footprintCells = cellUses.length || metadata.footprintCells;
+  const floors = buildingCells > 0
+    ? estimateMassingStoreys(sourceSpec)
+    : 0;
+  return {
+    requestedLayout: metadata.requestedLayout,
+    resolvedLayout: metadata.resolvedLayout,
+    openSpaceType: metadata.openSpaceType ?? null,
+    structureKind: metadata.structureKind,
+    variantId: metadata.variantId,
+    footprintCells,
+    buildingCells,
+    openSpaceCells,
+    builtCoverage: Number((buildingCells / footprintCells).toFixed(3)),
+    indoorArea: buildingCells * floors,
+    outdoorArea: openSpaceCells,
+    cellUses
+  };
+}
+
 function createAgentGuidance(design) {
   const guidance = [];
+  if (design.actualSiteComposition && design.actualSiteComposition.resolvedLayout !== "building") {
+    guidance.push({
+      code: "public_site_layout_review",
+      phase: "design_after_generation",
+      severity: "review",
+      blocking: false,
+      message: "Review the resolved whole-cell public-site layout before confirmation. open_space uses only ground cells; mixed uses at least one building cell and one open-space cell.",
+      actualSiteComposition: structuredClone(design.actualSiteComposition),
+      suggestedAction: {
+        operation: "regenerate_from_intent",
+        agentChooses: ["site_layout", "open_space_type", "seed"]
+      }
+    });
+  }
   if (design.architectureReview && isPublicBuildingDesign(design)) {
     guidance.push({
       code: "public_architecture_review_required",
@@ -889,6 +986,7 @@ function createAgentGuidance(design) {
 
 function isPublicBuildingDesign(design) {
   return design.generation?.mode === "urban_massing"
+    && design.actualSiteComposition?.resolvedLayout !== "open_space"
     && !isResidentialDesign(design)
     && (design.intent?.frontage === "institutional"
       || design.intent?.prominence !== "ordinary"

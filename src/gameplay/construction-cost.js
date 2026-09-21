@@ -14,6 +14,11 @@ export const BUILDING_COST_BY_PURPOSE = Object.freeze({
   greenhouse: 90
 });
 
+export const PUBLIC_SERVICE_COST_BY_SPACE_KIND = Object.freeze({
+  indoor: BUILDING_COST_BY_PURPOSE.public_service,
+  outdoor: 30
+});
+
 export const ROAD_COST_BY_KIND = Object.freeze({
   standard: 2,
   bridge: 15
@@ -28,6 +33,7 @@ export function constructionPriceGuide() {
     currency: "coins",
     authority: "estimate_only; the confirmed-design construction preview is the exact quote",
     building_rate_per_footprint_cell_per_floor: { ...BUILDING_COST_BY_PURPOSE },
+    public_service_rate_per_functional_cell: { ...PUBLIC_SERVICE_COST_BY_SPACE_KIND },
     ordinary_residential_examples: {
       "1x1_one_floor": BUILDING_COST_BY_PURPOSE.residential,
       "1x1_two_floors": roundCoins(BUILDING_COST_BY_PURPOSE.residential * 2 * ordinaryResidentialHeightMultiplier(2)),
@@ -36,7 +42,7 @@ export function constructionPriceGuide() {
     road_rate_per_cell: ROAD_COST_BY_KIND.standard,
     bridge_rate_per_cell: ROAD_COST_BY_KIND.bridge,
     demolition_refund_rate: DEMOLITION_REFUND_RATE,
-    note: "Footprint and floor count come from the confirmed BuildingDesign; Agents never submit functional area."
+    note: "Footprint, floor count, and public-site indoor/outdoor allocation come from the confirmed BuildingDesign; Agents never submit functional area."
   };
 }
 
@@ -100,15 +106,21 @@ function canonicalCostBreakdown(metadata) {
     ? metadata.pricingFacts.effectiveFloorCount
     : null;
   const heightMultiplier = eligibleForHeight ? ordinaryResidentialHeightMultiplier(floors) : 1;
-  const breakdown = metadata.units.map((unit, index) => ({
-    unitIndex: index,
-    purpose: unit.purpose,
-    area: unit.area,
-    magicRatio: unit.magicRatio,
-    baseRate: BUILDING_COST_BY_PURPOSE[unit.purpose],
-    heightMultiplier: eligibleForHeight ? heightMultiplier : 1,
-    cost: unit.area * BUILDING_COST_BY_PURPOSE[unit.purpose] * (eligibleForHeight ? heightMultiplier : 1)
-  }));
+  const breakdown = metadata.units.map((unit, index) => {
+    const baseRate = unit.purpose === "public_service" && unit.spaceKind === "outdoor"
+      ? PUBLIC_SERVICE_COST_BY_SPACE_KIND.outdoor
+      : BUILDING_COST_BY_PURPOSE[unit.purpose];
+    return {
+      unitIndex: index,
+      purpose: unit.purpose,
+      area: unit.area,
+      magicRatio: unit.magicRatio,
+      ...(unit.spaceKind ? { spaceKind: unit.spaceKind } : {}),
+      baseRate,
+      heightMultiplier: eligibleForHeight ? heightMultiplier : 1,
+      cost: unit.area * baseRate * (eligibleForHeight ? heightMultiplier : 1)
+    };
+  });
   return {
     breakdown,
     functionalAreas: { ...metadata.functionalAreas },

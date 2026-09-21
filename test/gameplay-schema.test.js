@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  FUNCTIONAL_SPACE_KINDS,
   GAMEPLAY_GRAMMAR_FIELDS,
   GAMEPLAY_PURPOSES,
   MAGIC_RATIOS,
@@ -20,6 +21,18 @@ test("v0.3 exposes exactly five gameplay purposes and five discrete magic ratios
   assert.throws(() => normalizeGameplayPurpose("workshop"), /Unsupported gameplay purpose/);
   assert.throws(() => normalizeMagicRatio(0.63), /magicRatio/);
   assert.throws(() => normalizeMagicRatio(Infinity), /magicRatio/);
+});
+
+test("functional units preserve validated indoor and outdoor space kinds", () => {
+  assert.deepEqual([...FUNCTIONAL_SPACE_KINDS], ["indoor", "outdoor"]);
+  assert.deepEqual(
+    normalizeFunctionalUnit({ purpose: "public_service", area: 1, space_kind: "outdoor" }),
+    { purpose: "public_service", area: 1, magicRatio: 0, spaceKind: "outdoor" }
+  );
+  assert.throws(
+    () => normalizeFunctionalUnit({ purpose: "public_service", area: 1, spaceKind: "semi_outdoor" }),
+    /space kind/
+  );
 });
 
 test("ordinary two-cell three-floor residence includes every vertical functional cell", () => {
