@@ -9,7 +9,9 @@ The player can create a city at `/play`. The page and city-creation API response
 1. Open or `GET` the one-time `/connect/mtc_...` URL supplied by the player to inspect the non-consuming confirmation page.
 2. When ready to store the credential, exchange it exactly once with `POST /connect/mtc_...` and `Accept: application/json`. Store the returned `access_token` immediately; only a successful POST consumes the link.
 3. Send `Authorization: Bearer <access_token>` on API requests. The exchange response contains a copy-ready `agent_start.next_action`; execute it unchanged to fetch the first snapshot.
-4. Read `/openapi.json` for exact request and response schemas.
+4. Read `/agent/api/operations` to discover the compact list of available operations. Choose the operation relevant to the task, then read its `detail_url` for the exact request, response, and referenced schemas. Read `/openapi.json` only when the catalog or operation detail is insufficient.
+
+Every authenticated Agent JSON response includes a small `agent_help` object. Continue to follow `agent_handoff.next_action` when it is present; use `agent_help.operation_detail_url` to inspect the current operation and `agent_help.api_catalog_url` when you need another capability. Do not reread the catalog between familiar consecutive steps.
 
 Never expose the token in logs, prose, asset prompts, or another URL.
 
