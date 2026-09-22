@@ -38,22 +38,4 @@ jobs:
             -p "${ECS_PORT:-22}" \
             -o BatchMode=yes \
             "${ECS_USER:-root}@${ECS_HOST}" \
-            "bash -se -- '$GIT_SHA'" <<'REMOTE_SCRIPT'
-          /opt/magictown/deploy.sh "$1"
-
-          # Keep the live ECS runtime at the supported maximum credential TTL.
-          sed -i \
-            's/^MAGICTOWN_CREDENTIAL_TTL_DAYS=.*/MAGICTOWN_CREDENTIAL_TTL_DAYS=90/' \
-            /etc/magictown/magictown.env
-          grep -qx 'MAGICTOWN_CREDENTIAL_TTL_DAYS=90' /etc/magictown/magictown.env
-          systemctl restart magictown.service
-
-          for attempt in {1..30}; do
-            if curl --fail --silent --show-error --max-time 2 http://127.0.0.1:4184/healthz >/dev/null; then
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "MAGTOPIA health check failed after applying the production runtime configuration" >&2
-          exit 1
-          REMOTE_SCRIPT
+            "/opt/magictown/deploy.sh '$GIT_SHA'"
