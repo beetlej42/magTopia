@@ -2528,7 +2528,7 @@ function withPlayerCityHandoff(city, capability, playerToken, config) {
     player_city_url: playerCityUrl,
     agent_connect_url: capability.connect_url,
     handoff: {
-      to_player: { url: playerCityUrl, role: "player", instruction: "Open this exact URL; no token transcription is required." },
+      to_player: { url: playerCityUrl, role: "player", instruction: "Send this exact player visualization URL to the player now so they can watch the city develop. Do not reconstruct the URL manually; no token transcription is required." },
       to_agent: {
         simulation_context: VIRTUAL_GAME_CONTEXT,
         url: capability.connect_url,
