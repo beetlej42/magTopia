@@ -72,7 +72,7 @@ all structural checks=true
 - A* 曾穿过 reservation；现在选入口和路由都拒绝 reservation。
 - 已有桥曾重复收费；现在只计算新增 bridge cells。
 - site search 原先替 Agent 计算地块分数；现在只按命名片区范围筛选合法地块，并返回临路方向、道路距离和地形等客观事实。
-- `2x2 hall + large_bay` 推荐曾产生越界 mass；现在合法 parcel 总能得到可编译的 parcel-fitted fallback。
+- 固定尺寸的公共建筑 preset 曾在窄地块产生越界 mass；现在风格 preset 可适配一格宽地块，自动选择只使用兼容 variant，显式不兼容 variant 则一次返回可用候选，不再静默降级为普通方块。
 - 非正方形 massing 的东西入口曾在 viewer 旋转后越界；现在 source dimension 与坐标变换一致。
 - 道路曾在宽立面任意选角落；现在设计保存稳定的 primary entrance frontage cell。
 - 订单成功曾不代表体素可生成；现在 confirm 阶段执行 headless compile 并返回机器可读诊断。

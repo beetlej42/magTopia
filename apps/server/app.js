@@ -1525,6 +1525,9 @@ function designDomainCall(callback) {
   } catch (error) {
     if (/revision conflict/i.test(error.message)) throw new ServiceError(409, "BUILDING_DESIGN_REVISION_CONFLICT", error.message);
     if (/cannot be revised|cannot be confirmed|already built/i.test(error.message)) throw new ServiceError(409, "BUILDING_DESIGN_LOCKED", error.message);
+    if (error.code === "BUILDING_VARIANT_INCOMPATIBLE") {
+      throw new ServiceError(422, error.code, error.message, error.details ?? {});
+    }
     throw new ServiceError(400, "INVALID_BUILDING_DESIGN", error.message);
   }
 }

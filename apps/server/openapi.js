@@ -1,3 +1,5 @@
+import { getPublicBuildingVariantDefinitions } from "../../src/generators/voxelBuildingArchitecture.js";
+
 const json = { type: "object", additionalProperties: true };
 const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "options", "head", "trace"]);
 const error = {
@@ -50,7 +52,7 @@ export function createOpenApiDocument(baseUrl) {
           required: ["anchor_cell_id", "footprint", "entrance"],
           properties: {
             anchor_cell_id: { type: "string", description: "anchor_cell_id returned by POST /site-searches" },
-            footprint: { enum: ["1x1", "1x2", "1x3", "2x1", "2x2", "2x3", "3x1", "3x2", "3x3"] },
+            footprint: { enum: ["1x1", "1x2", "1x3", "2x1", "2x2", "2x3", "3x1", "3x2", "3x3"], description: "World-grid columns x rows from anchor_cell_id. For example, 2x1 occupies the anchor and the next column in the same row. East/west entrances may swap internal authored dimensions before rendering, but never change this world footprint." },
             entrance: { enum: ["north", "east", "south", "west"] }
           }
         },
@@ -144,6 +146,16 @@ export function createOpenApiDocument(baseUrl) {
             districtStyle: { meaning: "Named/shared district architecture cue. Preserve it across nearby housing instead of making every house globally unique." },
             variationIntent: { meaning: "One or two high-level structural changes relative to the district family.", examples: ["narrow_corner_house", "stepped_frontage", "hip_roof", "corner"], effects: ["Words containing hip or corner favor a hip roof in floor_stack.", "corner also requests a more explicit corner-facade condition."] },
             publicBuildingReview: "For public urban_massing, inspect actualArchitecture and architectureReview after generation. Correct one or two components with update_mass; regenerate_from_intent when the overall scheme is wrong.",
+            publicBuildingVariants: {
+              defaultRule: "Omit requirements.variant_id for zero-friction automatic selection from variants compatible with the footprint and site layout. A supplied variant_id is authoritative or returns BUILDING_VARIANT_INCOMPATIBLE with compatible alternatives.",
+              fallbackRule: "Fallback is disabled by default. Set requirements.allow_fallback=true only when accepting a clearly reported compatible alternative.",
+              definitionsByProgram: getPublicBuildingVariantDefinitions()
+            },
+            footprintCoordinates: {
+              notation: "columns x rows",
+              example: "With anchor cell-16-38, 2x1 occupies cell-16-38 and cell-17-38; 1x2 occupies cell-16-38 and cell-16-39.",
+              internalRotation: "The generator may swap authored width/depth for east/west entrances before the viewer rotates the model. This internal frame never changes the requested world-grid footprint."
+            },
             residentialGuidance: "For residential floor_stack, read nearby buildings and district purpose, pass district_context, preserve two or three shared cues, and vary one or two structural cues."
           }
         },
@@ -179,7 +191,14 @@ export function createOpenApiDocument(baseUrl) {
             site: { $ref: "#/components/schemas/Site" },
             intent: { $ref: "#/components/schemas/BuildingIntent" },
             gameplay_profile: { $ref: "#/components/schemas/BuildingGameplayProfile" },
-            requirements: { type: "object", properties: { preferred_floors: { type: "integer", minimum: 1, maximum: 8, description: "Optional initial floor count for floor_stack; defaults are derived from prominence." }, variant_id: { type: "string", description: "Optional public-building variant from the generated catalog returned by the design response." } } },
+            requirements: {
+              type: "object",
+              properties: {
+                preferred_floors: { type: "integer", minimum: 1, maximum: 8, description: "Optional initial floor count for floor_stack; defaults are derived from prominence." },
+                variant_id: { type: "string", description: "Optional authoritative public-building variant. Omit it for automatic compatible selection. If supplied but incompatible, creation returns BUILDING_VARIANT_INCOMPATIBLE with compatible_variants instead of silently choosing another design." },
+                allow_fallback: { type: "boolean", default: false, description: "Opt in to a clearly reported compatible alternative when an explicit variant_id cannot be used. Never required for normal automatic generation." }
+              }
+            },
             district_context: {
               type: "object",
               description: "Optional district context used to keep residential buildings coherent while varying one or two structural cues",
@@ -263,7 +282,7 @@ export function createOpenApiDocument(baseUrl) {
           type: "object",
           required: ["footprint"],
           properties: {
-            footprint: { enum: ["1x1", "1x2", "1x3", "2x1", "2x2", "2x3", "3x1", "3x2", "3x3"] },
+            footprint: { enum: ["1x1", "1x2", "1x3", "2x1", "2x2", "2x3", "3x1", "3x2", "3x3"], description: "World-grid columns x rows. 2x1 advances one column; 1x2 advances one row." },
             district_id: { type: "string", description: "Use the persisted spatial layout and advisory observations of this named development district" },
             limit: { type: "integer", minimum: 1, maximum: 100 }
           }
@@ -1014,7 +1033,7 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}/site-searches": {
         get: operation("List legal construction sites with query parameters (low-friction read fallback; POST remains canonical for structured bounds)", "construction", null, json, true, [
           queryParameter("district_id", { type: "string" }, "Optional named district id."),
-          queryParameter("footprint", { enum: ["1x1", "1x2", "1x3", "2x1", "2x2", "2x3", "3x1", "3x2", "3x3"], default: "1x1" }, "Requested logical footprint."),
+          queryParameter("footprint", { enum: ["1x1", "1x2", "1x3", "2x1", "2x2", "2x3", "3x1", "3x2", "3x3"], default: "1x1" }, "Requested world-grid columns x rows; 2x1 advances one column and 1x2 advances one row."),
           queryParameter("limit", { type: "integer", minimum: 1, maximum: 100, default: 12 }, "Maximum candidate count.")
         ]),
         post: operation("List legal construction sites and objective road-frontage facts inside a named district", "construction", { $ref: "#/components/schemas/SiteSearchRequest" })

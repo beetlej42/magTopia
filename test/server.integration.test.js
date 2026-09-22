@@ -291,6 +291,20 @@ test("Phase 1–3 HTTP service works end to end", { skip: !databaseUrl, timeout:
     const afterCancel = await json(app, auth(playerA, { method: "GET", url: `/api/v1/cities/${cityA.id}/snapshot` }), 200);
     assert.deepEqual(afterCancel.resources, beforeCancel.resources);
 
+    const incompatibleVariant = await app.inject(auth(playerA, {
+      method: "POST",
+      url: `/api/v1/cities/${cityA.id}/building-designs`,
+      payload: {
+        site: { anchor_cell_id: site4.lotId, footprint: "1x1", entrance: site4.entranceDirections[0] },
+        intent: { name: "Impossible Pocket Court", purpose: "public academy", frontage: "institutional", site_layout: "building" },
+        requirements: { variant_id: "courtyard_academy" }
+      }
+    }));
+    assert.equal(incompatibleVariant.statusCode, 422);
+    assert.equal(incompatibleVariant.json().code, "BUILDING_VARIANT_INCOMPATIBLE");
+    assert.equal(incompatibleVariant.json().details.requested_footprint, "1x1");
+    assert.ok(incompatibleVariant.json().details.compatible_variants.includes("hall_academy"));
+
     const voxelDraft = await json(app, auth(playerA, {
       method: "POST",
       url: `/api/v1/cities/${cityA.id}/building-designs`,

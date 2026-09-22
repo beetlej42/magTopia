@@ -3,7 +3,8 @@ import { createPublicBuildingStylePreset } from "./publicBuildingStyleComparison
 import {
   applyPublicBuildingVariation,
   createDistrictArchitectureContext,
-  inferPublicBuildingProgram
+  inferPublicBuildingProgram,
+  resolvePublicBuildingVariant
 } from "./voxelBuildingArchitecture.js";
 import { createRng, pick } from "../utils/random.js";
 
@@ -147,7 +148,7 @@ export function adaptBuildingIntentToMassingConfig(input = {}, overrides = {}) {
     throw new Error("mixed public-site layout requires at least two logical cells; use open_space or building for a 1x1 site");
   }
   const basePreset = resolvedSiteLayout === "building"
-    ? structuredClone(resolveMassingPreset(intent, { ...overrides, seed }))
+    ? structuredClone(resolveMassingPreset(intent, { ...overrides, seed, widthCells, depthCells }))
     : createPublicSiteLayoutPreset(intent, {
         ...overrides,
         seed,
@@ -157,15 +158,32 @@ export function adaptBuildingIntentToMassingConfig(input = {}, overrides = {}) {
       });
   const program = inferPublicBuildingProgram(intent.purpose);
   const residentialProgram = program === "residential" || intent.frontage === "residential";
+  const requestedVariantId = overrides.variantId ?? overrides.variant_id;
+  const allowFallback = overrides.allowFallback ?? overrides.allow_fallback ?? false;
+  const nonBuildingVariantSelection = !residentialProgram && resolvedSiteLayout !== "building" && requestedVariantId
+    ? resolvePublicBuildingVariant(intent, {
+        seed,
+        variantId: requestedVariantId,
+        allowFallback,
+        widthCells,
+        depthCells,
+        requestedFootprint: overrides.requestedFootprint,
+        siteLayout: resolvedSiteLayout
+      })
+    : null;
   const shouldVaryPublic = resolvedSiteLayout === "building" && !residentialProgram && (intent.frontage === "institutional"
     || intent.prominence !== "ordinary"
     || ["public", "ceremonial"].includes(intent.access)
     || ["library", "academy", "greenhouse", "workshop", "civic"].includes(program));
   const preset = shouldVaryPublic
     ? applyPublicBuildingVariation(basePreset, intent, {
-        seed,
-        variantId: overrides.variantId ?? overrides.variant_id
-      })
+      seed,
+      variantId: requestedVariantId,
+      allowFallback,
+      widthCells,
+      depthCells,
+      requestedFootprint: overrides.requestedFootprint
+    })
     : basePreset;
   const palette = MASSING_PALETTE_BY_STYLE[intent.style];
   preset.masses = preset.masses.map((mass) => {
@@ -203,6 +221,7 @@ export function adaptBuildingIntentToMassingConfig(input = {}, overrides = {}) {
     intent,
     metadata: {
       ...(preset.metadata ?? {}),
+      ...(nonBuildingVariantSelection ? { generationSelection: nonBuildingVariantSelection } : {}),
       ...semanticMetadata(intent),
       publicSite: preset.metadata?.publicSite ?? publicSiteMetadata({
         intent,
@@ -431,7 +450,9 @@ function rectangleLogicalCells(widthCells, depthCells) {
 }
 
 function resolveMassingPreset(intent, overrides = {}) {
-  if (["industrial_iron", "victorian_gothic", "alchemical_glass", "victorian_domestic"].includes(intent.style)) {
+  const compactClassical = intent.style === "civic_classical"
+    && (Number(overrides.widthCells) < 2 || Number(overrides.depthCells) < 2);
+  if (compactClassical || ["industrial_iron", "victorian_gothic", "alchemical_glass", "victorian_domestic"].includes(intent.style)) {
     return createPublicBuildingStylePreset(intent.style, {
       widthCells: overrides.widthCells,
       depthCells: overrides.depthCells,

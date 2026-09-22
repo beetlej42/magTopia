@@ -29,6 +29,10 @@ test("OpenAPI exposes an agent-readable building design catalog", () => {
   assert.match(catalog.style.industrial_iron.meaning, /industrial/i);
   assert.match(catalog.residentialGuidance, /district_context/);
   assert.match(catalog.publicBuildingReview, /actualArchitecture/);
+  assert.match(catalog.publicBuildingVariants.defaultRule, /Omit requirements\.variant_id/);
+  assert.equal(catalog.publicBuildingVariants.definitionsByProgram.academy
+    .find((variant) => variant.id === "courtyard_academy").minimumLogicalCells, 4);
+  assert.match(catalog.footprintCoordinates.example, /cell-17-38/);
   assert.equal(intent.properties.site_layout.default, "auto");
   assert.deepEqual(intent.properties.open_space_type.enum, ["garden", "courtyard", "plaza"]);
   assert.equal(catalog.siteLayout.mixed.minimumLogicalCells, 2);
@@ -54,5 +58,7 @@ test("OpenAPI separates visual magic from authoritative gameplay profiles", () =
   assert.deepEqual(profile.required, ["purpose", "magic_ratio"]);
   assert.deepEqual(profile.properties.magic_ratio.enum, [0, 0.25, 0.5, 0.75, 1]);
   assert.equal(request.properties.gameplay_profile.$ref, "#/components/schemas/BuildingGameplayProfile");
+  assert.equal(request.properties.requirements.properties.allow_fallback.default, false);
+  assert.match(document.components.schemas.Site.properties.footprint.description, /columns x rows/);
   assert.match(document.components.schemas.BuildingIntent.description, /visual intensity only/);
 });

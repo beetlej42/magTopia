@@ -53,8 +53,8 @@ export function normalizePublicBuildingStyleComparisonConfig(config = {}) {
 }
 
 export function createPublicBuildingStylePreset(style, options = {}) {
-  const widthCells = clampInteger(options.widthCells ?? 3, 2, 6);
-  const depthCells = clampInteger(options.depthCells ?? 2, 2, 6);
+  const widthCells = clampInteger(options.widthCells ?? 3, 1, 6);
+  const depthCells = clampInteger(options.depthCells ?? 2, 1, 6);
   const shared = {
     id: options.id ?? `${style}-public-building`,
     seed: options.seed ?? `${style}-public-building`,
@@ -273,7 +273,9 @@ function gothicPreset(base) {
 
 function alchemicalPreset(base) {
   const front = base.depthCells - 1;
-  const glassCells = rowCells(base.widthCells - 1, 0).map(([x, z]) => [x + 1, z]);
+  const glassCells = base.widthCells === 1
+    ? [[0, 0]]
+    : rowCells(base.widthCells - 1, 0).map(([x, z]) => [x + 1, z]);
   return {
     ...base,
     masses: [

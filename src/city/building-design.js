@@ -15,7 +15,8 @@ import {
 import {
   createDistrictArchitectureContext,
   createPublicArchitectureReview,
-  getPublicBuildingVariantCatalog,
+  getCompatiblePublicBuildingVariants,
+  getPublicBuildingVariantDefinitions,
   inferPublicBuildingProgram,
   summarizeFloorStackArchitecture,
   summarizeMassingArchitecture
@@ -96,7 +97,7 @@ export function createBuildingDesignDraft(input = {}, context = {}) {
     ports: [createPrimaryEntrancePort(site)],
     decorations: normalizeDecorationSpec(input.decorations),
     locks: normalizeLocks(input.locks),
-    availableOperations: availableOperations(mode, intent),
+    availableOperations: availableOperations(mode, intent, site, generation),
     createdBy: context.actor ?? input.actor ?? "agent:unknown"
   };
   return finalizeDesign(design, context);
@@ -122,7 +123,7 @@ export function createBuildingUpgradeDraft(building, input = {}, context = {}) {
       baseDesignRevision: prior.revision
     },
     createdBy: context.actor ?? input.actor ?? "agent:unknown",
-    availableOperations: availableOperations(base.generation.mode, base.intent)
+    availableOperations: availableOperations(base.generation.mode, base.intent, base.site, base.generation)
   };
   delete design.specHash;
 
@@ -153,7 +154,7 @@ export function reviseBuildingDesign(current, input = {}, context = {}) {
   }
   next.revision += 1;
   next.lastChanges = changes;
-  next.availableOperations = availableOperations(next.generation.mode, next.intent);
+  next.availableOperations = availableOperations(next.generation.mode, next.intent, next.site, next.generation);
   delete next.specHash;
   return finalizeDesign(next, context);
 }
@@ -311,26 +312,12 @@ function recommendGeneration({ id, seed, intent, mode, site, requirements, distr
     // the resulting geometry still fits the reserved logical footprint.
     widthCells: rotated ? shape.rows : shape.columns,
     depthCells: rotated ? shape.columns : shape.rows,
+    requestedFootprint: shape.id,
     variantId: requirements.variant_id ?? requirements.variantId,
+    allowFallback: requirements.allow_fallback ?? requirements.allowFallback ?? false,
     districtContext
   });
-  let sourceSpec;
-  try {
-    sourceSpec = createUrbanMassingSpec(recommended);
-  } catch (error) {
-    if (resolvePublicSiteLayout(intent) !== "building") throw error;
-    // Semantic presets are authored at preferred dimensions. A smaller or
-    // rotated legal parcel must still receive a valid recommendation rather
-    // than exposing a late preset indexing error to the agent.
-    sourceSpec = createUrbanMassingSpec(createGenericMassingRecommendation({
-      id: `${id}-massing`,
-      seed,
-      widthCells: rotated ? shape.rows : shape.columns,
-      depthCells: rotated ? shape.columns : shape.rows,
-      intent,
-      cause: error.message
-    }));
-  }
+  const sourceSpec = createUrbanMassingSpec(recommended);
   return {
     mode,
     specVersion: `urban-massing@${sourceSpec.specVersion}`,
@@ -383,31 +370,6 @@ export function compileBuildingDesign(design) {
   });
   if (diagnostics.occupiedVoxels <= 0 || diagnostics.meshCount <= 0) throw new Error("Voxel design compile produced no occupied geometry");
   return diagnostics;
-}
-
-function createGenericMassingRecommendation({ id, seed, widthCells, depthCells, intent, cause }) {
-  const cells = [];
-  for (let z = 0; z < depthCells; z += 1) for (let x = 0; x < widthCells; x += 1) cells.push([x, z]);
-  const heightVoxels = intent.prominence === "landmark" ? 52 : intent.prominence === "important" ? 40 : 30;
-  return {
-    id,
-    seed,
-    widthCells,
-    depthCells,
-    intent,
-    metadata: { recommendationFallback: "parcel_fitted_primary_mass", presetFailure: cause },
-    masses: [{
-      id: "primary",
-      role: "primary",
-      type: "solid",
-      cells,
-      heightVoxels,
-      cap: { type: intent.composition === "tower" ? "spire" : intent.composition === "hall" ? "gable" : "mansard", heightVoxels: 10 },
-      facade: { entranceEmphasis: 1, openness: 0.38, detailDensity: 0.8, floorHeightVoxels: 15, bayWidthVoxels: 8 },
-      materials: { wall: intent.style === "industrial_iron" ? "brickBrown" : "brickRed", trim: "limestone", roof: "slate", window: "warmWindow", door: "timber" }
-    }],
-    relations: []
-  };
 }
 
 function createPrimaryEntrancePort(site) {
@@ -745,7 +707,7 @@ function normalizeOperation(value) {
   return { ...value, op };
 }
 
-function availableOperations(mode, intent = {}) {
+function availableOperations(mode, intent = {}, site = null, generation = null) {
   const resolvedSiteLayout = resolvePublicSiteLayout(intent);
   const modeSpecific = [...MODE_OPERATIONS[normalizeMode(mode)]]
     .filter((operation) => !(resolvedSiteLayout === "open_space" && operation === "add_floor"));
@@ -776,12 +738,28 @@ function availableOperations(mode, intent = {}) {
       mixedMinimumLogicalCells: 2,
       regenerateWith: { operation: "regenerate_from_intent", intentFields: ["site_layout", "open_space_type"] }
     },
-    ...(mode === "urban_massing" ? {
-      publicMassing: {
-        program: inferPublicBuildingProgram(intent.purpose),
-        variants: getPublicBuildingVariantCatalog(inferPublicBuildingProgram(intent.purpose))
-      }
-    } : {})
+    ...(mode === "urban_massing" ? publicMassingOperations(intent, site, generation) : {})
+  };
+}
+
+function publicMassingOperations(intent, site, generation) {
+  const program = inferPublicBuildingProgram(intent.purpose);
+  const footprint = parseFootprint(site?.footprint ?? "1x1");
+  const resolvedLayout = resolvePublicSiteLayout(intent);
+  const variants = program === "residential"
+    ? []
+    : getCompatiblePublicBuildingVariants(program, {
+        widthCells: footprint.columns,
+        depthCells: footprint.rows,
+        siteLayout: resolvedLayout
+      }).map((definition) => definition.id);
+  return {
+    publicMassing: {
+      program,
+      variants,
+      selection: structuredClone(generation?.sourceSpec?.metadata?.generationSelection ?? null),
+      selectionRule: "Omit variant_id for zero-friction automatic compatible selection; when supplied it is authoritative or returns a structured compatibility error."
+    }
   };
 }
 
@@ -804,7 +782,8 @@ function regenerateFromIntent(design, operation) {
     site: design.site,
     requirements: {
       ...(preferredFloors ? { preferred_floors: preferredFloors } : {}),
-      variant_id: operation.variant_id ?? operation.variantId
+      variant_id: operation.variant_id ?? operation.variantId,
+      allow_fallback: operation.allow_fallback ?? operation.allowFallback ?? false
     },
     districtContext: design.districtContext
   });
@@ -889,13 +868,55 @@ function finalizeDesign(design, context) {
   value.actualArchitecture = value.generation.mode === "urban_massing"
     ? summarizeMassingArchitecture(value.generation.sourceSpec)
     : summarizeFloorStackArchitecture(value.generation.sourceSpec);
+  value.generationSelection = structuredClone(value.generation.sourceSpec?.metadata?.generationSelection ?? null);
   value.actualSiteComposition = summarizeActualSiteComposition(value);
   value.architectureReview = isPublicBuildingDesign(value)
     ? createPublicArchitectureReview(value.intent, value.actualArchitecture)
     : null;
+  value.designIntentReview = createDesignIntentReview(value);
   value.agentGuidance = createAgentGuidance(value);
   value.specHash = (context.hash ?? fallbackHash)(designHashSource(value));
   return value;
+}
+
+function createDesignIntentReview(design) {
+  const selection = design.generation?.sourceSpec?.metadata?.generationSelection;
+  if (!selection) return null;
+  if (!selection.appliedVariantId) {
+    return {
+      status: selection.fallbackApplied ? "fallback" : "not_applicable",
+      requestedVariantId: selection.requestedVariantId,
+      appliedVariantId: null,
+      missingFeatures: [],
+      stylePreserved: true
+    };
+  }
+  const definition = getPublicBuildingVariantDefinitions(selection.program)
+    .find((candidate) => candidate.id === selection.appliedVariantId);
+  const features = design.actualArchitecture?.features ?? {};
+  const missingFeatures = (definition?.requiredFeatures ?? []).filter((feature) => {
+    if (feature === "wingCount") return Number(features.wingCount ?? 0) < 1;
+    return !features[feature];
+  });
+  const expectedFacadeOrder = {
+    victorian_gothic: "gothic",
+    civic_classical: "classical",
+    industrial_iron: "industrial",
+    alchemical_glass: "industrial",
+    victorian_domestic: "plain"
+  }[design.intent?.style];
+  const stylePreserved = !expectedFacadeOrder || design.actualArchitecture?.facadeOrders?.includes(expectedFacadeOrder);
+  return {
+    status: missingFeatures.length || !stylePreserved ? "mismatch" : selection.fallbackApplied ? "fallback" : "matched",
+    requestedVariantId: selection.requestedVariantId,
+    appliedVariantId: selection.appliedVariantId,
+    source: selection.source,
+    fallbackApplied: selection.fallbackApplied,
+    fallbackReason: selection.fallbackReason,
+    requiredFeatures: [...(definition?.requiredFeatures ?? [])],
+    missingFeatures,
+    stylePreserved
+  };
 }
 
 function summarizeActualSiteComposition(design) {
@@ -916,6 +937,7 @@ function summarizeActualSiteComposition(design) {
     resolvedLayout: metadata.resolvedLayout,
     openSpaceType: metadata.openSpaceType ?? null,
     structureKind: metadata.structureKind,
+    layoutVariantId: metadata.variantId,
     variantId: metadata.variantId,
     footprintCells,
     buildingCells,
@@ -929,6 +951,17 @@ function summarizeActualSiteComposition(design) {
 
 function createAgentGuidance(design) {
   const guidance = [];
+  if (["fallback", "mismatch"].includes(design.designIntentReview?.status)) {
+    guidance.push({
+      code: "public_design_intent_not_fully_applied",
+      phase: "design_after_generation",
+      severity: design.designIntentReview.status === "mismatch" ? "warning" : "review",
+      blocking: false,
+      message: "The design was generated, but its requested architectural variant or required visual features were not fully applied. Review designIntentReview before confirmation.",
+      designIntentReview: structuredClone(design.designIntentReview),
+      suggestedAction: { operation: "regenerate_from_intent", agentChooses: ["variant_id", "seed"] }
+    });
+  }
   if (design.actualSiteComposition && design.actualSiteComposition.resolvedLayout !== "building") {
     guidance.push({
       code: "public_site_layout_review",
