@@ -73,6 +73,47 @@ const VARIANTS_BY_PROGRAM = Object.freeze({
   generic_public: ["compact_hall", "courtyard_hall", "tower_hall", "asymmetric_campus"]
 });
 
+const VARIANT_COMPATIBILITY = Object.freeze({
+  courtyard_archive: Object.freeze({ minimumLogicalCells: 4, minimumColumns: 2, minimumRows: 2, requiredFeatures: ["courtyard"] }),
+  courtyard_academy: Object.freeze({ minimumLogicalCells: 4, minimumColumns: 2, minimumRows: 2, requiredFeatures: ["courtyard"] }),
+  glass_court: Object.freeze({ minimumLogicalCells: 4, minimumColumns: 2, minimumRows: 2, requiredFeatures: ["framedGlassVolume", "courtyard"] }),
+  courtyard_hall: Object.freeze({ minimumLogicalCells: 4, minimumColumns: 2, minimumRows: 2, requiredFeatures: ["courtyard"] }),
+  asymmetric_campus: Object.freeze({ minimumLogicalCells: 4, minimumColumns: 2, minimumRows: 2, requiredFeatures: ["wingCount"] }),
+  winged_archive: Object.freeze({ minimumLogicalCells: 2, minimumSpan: 2, requiredFeatures: ["wingCount"] }),
+  glass_wing: Object.freeze({ minimumLogicalCells: 2, minimumSpan: 2, requiredFeatures: ["framedGlassVolume", "wingCount"] }),
+  winged_hall: Object.freeze({ minimumLogicalCells: 2, minimumSpan: 2, requiredFeatures: ["wingCount"] }),
+  service_yard: Object.freeze({ minimumLogicalCells: 2, minimumSpan: 2, requiredFeatures: [] }),
+  clocktower_library: Object.freeze({ requiredFeatures: ["tower"] }),
+  tower_academy: Object.freeze({ requiredFeatures: ["tower"] }),
+  conservatory_tower: Object.freeze({ requiredFeatures: ["framedGlassVolume", "tower"] }),
+  workshop_tower: Object.freeze({ requiredFeatures: ["tower"] }),
+  civic_tower: Object.freeze({ requiredFeatures: ["tower"] }),
+  tower_hall: Object.freeze({ requiredFeatures: ["tower"] }),
+  glass_hall: Object.freeze({ requiredFeatures: ["framedGlassVolume"] }),
+  portico_hall: Object.freeze({ requiredFeatures: ["publicEntrance"] }),
+  dome_hall: Object.freeze({ requiredFeatures: ["dome"] }),
+  sawtooth_bay: Object.freeze({ requiredFeatures: ["primaryHall"] })
+});
+
+const DEFAULT_VARIANT_COMPATIBILITY = Object.freeze({
+  minimumLogicalCells: 1,
+  minimumColumns: 1,
+  minimumRows: 1,
+  minimumSpan: 1,
+  rotatable: true,
+  siteLayouts: Object.freeze(["building"]),
+  requiredFeatures: Object.freeze(["primaryHall"])
+});
+
+export class PublicBuildingVariantError extends Error {
+  constructor(message, details = {}) {
+    super(message);
+    this.name = "PublicBuildingVariantError";
+    this.code = "BUILDING_VARIANT_INCOMPATIBLE";
+    this.details = details;
+  }
+}
+
 const PRIMARY_CAPS_BY_STYLE = Object.freeze({
   civic_classical: ["gable", "hip", "mansard"],
   industrial_iron: ["sawtooth", "parapet", "gable"],
@@ -95,6 +136,139 @@ export function getPublicBuildingVariantCatalog(program = null) {
   return Object.fromEntries(Object.entries(VARIANTS_BY_PROGRAM).map(([key, values]) => [key, [...values]]));
 }
 
+export function getPublicBuildingVariantDefinitions(program = null) {
+  if (program === "residential") return [];
+  const programs = program && VARIANTS_BY_PROGRAM[program]
+    ? [[program, VARIANTS_BY_PROGRAM[program]]]
+    : Object.entries(VARIANTS_BY_PROGRAM);
+  const definitions = programs.flatMap(([programId, variants]) => variants.map((id) => {
+    const compatibility = VARIANT_COMPATIBILITY[id] ?? {};
+    return {
+      id,
+      program: programId,
+      minimumLogicalCells: compatibility.minimumLogicalCells ?? DEFAULT_VARIANT_COMPATIBILITY.minimumLogicalCells,
+      minimumColumns: compatibility.minimumColumns ?? DEFAULT_VARIANT_COMPATIBILITY.minimumColumns,
+      minimumRows: compatibility.minimumRows ?? DEFAULT_VARIANT_COMPATIBILITY.minimumRows,
+      minimumSpan: compatibility.minimumSpan ?? DEFAULT_VARIANT_COMPATIBILITY.minimumSpan,
+      rotatable: compatibility.rotatable ?? DEFAULT_VARIANT_COMPATIBILITY.rotatable,
+      siteLayouts: [...(compatibility.siteLayouts ?? DEFAULT_VARIANT_COMPATIBILITY.siteLayouts)],
+      requiredFeatures: [...(compatibility.requiredFeatures ?? DEFAULT_VARIANT_COMPATIBILITY.requiredFeatures)]
+    };
+  }));
+  if (program) return definitions;
+  return Object.fromEntries(Object.keys(VARIANTS_BY_PROGRAM).map((programId) => [
+    programId,
+    definitions.filter((definition) => definition.program === programId)
+  ]));
+}
+
+export function getCompatiblePublicBuildingVariants(program, options = {}) {
+  return getPublicBuildingVariantDefinitions(program).filter((definition) => variantCompatibility(definition, options).compatible);
+}
+
+export function resolvePublicBuildingVariant(intent = {}, options = {}) {
+  const program = inferPublicBuildingProgram(intent.purpose);
+  const requestedVariantId = options.variantId ?? options.variant_id ?? null;
+  const siteLayout = options.siteLayout ?? options.site_layout ?? "building";
+  const definitions = getPublicBuildingVariantDefinitions(program);
+  const compatibilityOptions = {
+    widthCells: options.widthCells,
+    depthCells: options.depthCells,
+    siteLayout
+  };
+  const compatible = definitions.filter((definition) => variantCompatibility(definition, compatibilityOptions).compatible);
+  const compatibleVariantIds = compatible.map((definition) => definition.id);
+  const requested = requestedVariantId
+    ? definitions.find((definition) => definition.id === requestedVariantId)
+    : null;
+  const incompatibility = requestedVariantId
+    ? requested
+      ? variantCompatibility(requested, compatibilityOptions)
+      : { compatible: false, reasons: [`Variant ${requestedVariantId} does not belong to program ${program}`] }
+    : null;
+
+  if (requestedVariantId && incompatibility.compatible) {
+    return selection({ program, requestedVariantId, appliedVariantId: requestedVariantId, source: "explicit", compatibleVariantIds });
+  }
+
+  const requestedFootprint = options.requestedFootprint ?? `${options.widthCells ?? 1}x${options.depthCells ?? 1}`;
+  if (requestedVariantId && !options.allowFallback) {
+    throw new PublicBuildingVariantError(
+      `Variant ${requestedVariantId} is not compatible with ${requestedFootprint} ${siteLayout} public-site generation`,
+      {
+        requested_variant: requestedVariantId,
+        requested_footprint: requestedFootprint,
+        site_layout: siteLayout,
+        program,
+        reasons: incompatibility.reasons,
+        compatible_variants: compatibleVariantIds,
+        suggested_correction: compatibleVariantIds.length
+          ? `Use one of: ${compatibleVariantIds.join(", ")}`
+          : "Choose site_layout=building or a larger footprint, or omit variant_id for automatic compatible selection."
+      }
+    );
+  }
+
+  if (!compatible.length) {
+    if (requestedVariantId && options.allowFallback) {
+      return selection({
+        program,
+        requestedVariantId,
+        appliedVariantId: null,
+        source: "fallback",
+        compatibleVariantIds,
+        fallbackReason: incompatibility.reasons.join("; ")
+      });
+    }
+    throw new PublicBuildingVariantError(`No ${program} variant is compatible with the requested public site`, {
+      requested_variant: requestedVariantId,
+      requested_footprint: requestedFootprint,
+      site_layout: siteLayout,
+      program,
+      compatible_variants: []
+    });
+  }
+
+  const rng = createRng(`${options.seed ?? "public-building"}:public-variant-selection`);
+  const towerVariants = compatible.filter((definition) => definition.id.includes("tower") || definition.id.includes("clocktower"));
+  const candidates = intent.composition === "tower" && towerVariants.length ? towerVariants : compatible;
+  const applied = pick(rng, candidates).id;
+  return selection({
+    program,
+    requestedVariantId,
+    appliedVariantId: applied,
+    source: requestedVariantId ? "fallback" : "seeded",
+    compatibleVariantIds,
+    fallbackReason: requestedVariantId ? incompatibility.reasons.join("; ") : null
+  });
+}
+
+function variantCompatibility(definition, options = {}) {
+  const widthCells = Math.max(1, Number(options.widthCells) || 1);
+  const depthCells = Math.max(1, Number(options.depthCells) || 1);
+  const siteLayout = options.siteLayout ?? "building";
+  const reasons = [];
+  if (!definition.siteLayouts.includes(siteLayout)) reasons.push(`Variant supports site_layout=${definition.siteLayouts.join("|")}, not ${siteLayout}`);
+  if (widthCells * depthCells < definition.minimumLogicalCells) reasons.push(`Variant requires at least ${definition.minimumLogicalCells} logical cells`);
+  const directFit = widthCells >= definition.minimumColumns && depthCells >= definition.minimumRows;
+  const rotatedFit = definition.rotatable && widthCells >= definition.minimumRows && depthCells >= definition.minimumColumns;
+  if (!directFit && !rotatedFit) reasons.push(`Variant requires at least ${definition.minimumColumns} columns x ${definition.minimumRows} rows${definition.rotatable ? " in either orientation" : ""}`);
+  if (Math.max(widthCells, depthCells) < definition.minimumSpan) reasons.push(`Variant requires a span of at least ${definition.minimumSpan} cells`);
+  return { compatible: reasons.length === 0, reasons };
+}
+
+function selection({ program, requestedVariantId, appliedVariantId, source, compatibleVariantIds, fallbackReason = null }) {
+  return {
+    program,
+    requestedVariantId,
+    appliedVariantId,
+    source,
+    fallbackApplied: source === "fallback",
+    fallbackReason,
+    compatibleVariantIds: [...compatibleVariantIds]
+  };
+}
+
 /**
  * Apply a bounded, seed-stable architectural variation to a public-building
  * preset. The base style grammar remains the source of truth for materials
@@ -105,14 +279,16 @@ export function applyPublicBuildingVariation(preset, intent = {}, options = {}) 
   const program = inferPublicBuildingProgram(intent.purpose);
   const seed = String(options.seed ?? preset.seed ?? "public-building");
   const rng = createRng(`${seed}:public-architecture`);
-  const availableVariants = VARIANTS_BY_PROGRAM[program] ?? VARIANTS_BY_PROGRAM.generic_public;
-  const requestedVariant = options.variantId ?? options.variant_id;
-  const towerVariants = availableVariants.filter((variant) => variant.includes("tower") || variant.includes("clocktower"));
-  const variantId = intent.composition === "tower"
-    ? (towerVariants.includes(requestedVariant) ? requestedVariant : pick(rng, towerVariants.length ? towerVariants : availableVariants))
-    : availableVariants.includes(requestedVariant)
-      ? requestedVariant
-      : pick(rng, availableVariants);
+  const variantSelection = resolvePublicBuildingVariant(intent, {
+    seed,
+    variantId: options.variantId ?? options.variant_id,
+    allowFallback: options.allowFallback ?? options.allow_fallback,
+    widthCells: options.widthCells ?? preset.widthCells,
+    depthCells: options.depthCells ?? preset.depthCells,
+    requestedFootprint: options.requestedFootprint,
+    siteLayout: "building"
+  });
+  const variantId = variantSelection.appliedVariantId;
   const source = structuredClone(preset);
   const masses = source.masses ?? [];
   const structural = masses.filter((mass) => mass.type !== "ground");
@@ -147,8 +323,9 @@ export function applyPublicBuildingVariation(preset, intent = {}, options = {}) 
     }
   }
 
-  if (variantId.includes("winged") || variantId.includes("asymmetric")) {
+  if (variantId.includes("winged") || variantId.endsWith("_wing") || variantId.includes("asymmetric")) {
     varyWingHeights(structural, primary, rng);
+    ensureVariantWing(source, structural, primary, rng);
   }
 
   if (["reading_hall", "hall_academy", "compact_hall"].includes(variantId)) {
@@ -161,6 +338,10 @@ export function applyPublicBuildingVariation(preset, intent = {}, options = {}) 
 
   if (variantId.includes("tower") || variantId.includes("clocktower")) {
     addOrVaryTower({ source, structural, primary, crown, program, rng });
+  }
+
+  if (variantId.includes("dome")) {
+    addOrVaryDome({ source, primary, crown });
   }
 
   if (variantId.includes("glass") || program === "greenhouse") {
@@ -179,7 +360,8 @@ export function applyPublicBuildingVariation(preset, intent = {}, options = {}) 
     variantId,
     variantFamily: "seeded-functional-massing-v1",
     variationAxes: ["silhouette", "roofline", "height_rhythm"],
-    variantChoices: [...availableVariants]
+    variantChoices: [...variantSelection.compatibleVariantIds],
+    generationSelection: variantSelection
   };
   return source;
 }
@@ -227,6 +409,29 @@ function varyWingHeights(structural, primary, rng) {
     });
 }
 
+function ensureVariantWing(source, structural, primary, rng) {
+  if (!primary || structural.some((mass) => ["wing", "secondary"].includes(mass.role))) return;
+  const widthCells = Math.max(1, Number(source.widthCells) || 1);
+  const depthCells = Math.max(1, Number(source.depthCells) || 1);
+  const primaryCell = primary.cells?.[0] ?? [0, 0];
+  const wingCell = widthCells > 1
+    ? [primaryCell[0] === 0 ? widthCells - 1 : 0, primaryCell[1]]
+    : [primaryCell[0], primaryCell[1] === 0 ? depthCells - 1 : 0];
+  const wing = {
+    id: "variant-wing",
+    role: "wing",
+    type: "solid",
+    cells: [wingCell],
+    heightVoxels: Math.max(14, Math.round((primary.heightVoxels ?? 28) * (0.72 + rng() * 0.12))),
+    cap: { ...(primary.cap ?? {}), type: "gable", heightVoxels: Math.max(7, Math.round(Number(primary.cap?.heightVoxels ?? 10) * 0.8)) },
+    materials: { ...(primary.materials ?? {}) },
+    facade: { ...(primary.facade ?? {}), entranceEmphasis: 0, symmetry: 0.35 }
+  };
+  source.masses.push(wing);
+  source.relations = [...(source.relations ?? []), { type: "portal", from: primary.id, to: wing.id, widthVoxels: 7, heightVoxels: 13 }];
+  structural.push(wing);
+}
+
 function addOrVaryTower({ source, structural, primary, crown, program, rng }) {
   if (crown) {
     crown.heightVoxels = Math.max(crown.heightVoxels ?? 32, Math.round((crown.heightVoxels ?? 32) * (1.08 + rng() * 0.12)));
@@ -253,6 +458,29 @@ function addOrVaryTower({ source, structural, primary, crown, program, rng }) {
   source.masses.push(tower);
   source.relations = [...(source.relations ?? []), { type: "stacked", from: primary.id, to: towerId }];
   structural.push(tower);
+}
+
+function addOrVaryDome({ source, primary, crown }) {
+  if (!primary) return;
+  if (crown) {
+    crown.role = "crown";
+    crown.cap = { ...(crown.cap ?? {}), type: "dome", heightVoxels: Math.max(14, Number(crown.cap?.heightVoxels ?? 14)), ribCount: 8, ringCount: 2, finialHeightVoxels: 5 };
+    return;
+  }
+  const dome = {
+    id: "variant-dome",
+    role: "crown",
+    type: "solid",
+    cells: [primary.cells?.[0] ?? [0, 0]],
+    dimensionsVoxels: { width: 18, depth: 18 },
+    heightVoxels: 12,
+    planShape: "octagonal",
+    cap: { type: "dome", heightVoxels: 16, ribCount: 8, ringCount: 2, finialHeightVoxels: 5 },
+    materials: { ...(primary.materials ?? {}) },
+    facade: { ...(primary.facade ?? {}), entranceEmphasis: 0, openness: 0.28 }
+  };
+  source.masses.push(dome);
+  source.relations = [...(source.relations ?? []), { type: "stacked", from: primary.id, to: dome.id }];
 }
 
 function shouldRemoveCrown(variantId, program) {

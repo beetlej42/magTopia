@@ -57,7 +57,9 @@ Agent 仍选择语义风格和功能，编译器负责把风格约束落实到�
 
 ### 方案变化与街区语境
 
-公共建筑不会再只按同一套校园体量初始化。系统先从 `purpose` 推断功能族（`library`、`academy`、`greenhouse`、`workshop`、`civic`），再由 `seed` 在该功能族的合法方案中选择 `variantId`。例如图书馆可得到 `reading_hall`、`courtyard_archive`、`clocktower_library` 或 `winged_archive`；这些变化会作用于冠部是否存在、侧翼是否保留、塔楼、屋顶和高度节奏，而不只是换墙色。Agent 也可以在 `requirements.variant_id` 中指定响应里返回的 variant。
+公共建筑不会再只按同一套校园体量初始化。系统先从 `purpose` 推断功能族（`library`、`academy`、`greenhouse`、`workshop`、`civic`），再由 `seed` 只在当前 footprint 与 `site_layout` 兼容的方案中选择 `variantId`。例如图书馆可得到 `reading_hall`、`courtyard_archive`、`clocktower_library` 或 `winged_archive`；这些变化会作用于冠部是否存在、侧翼是否保留、塔楼、屋顶和高度节奏，而不只是换墙色。
+
+普通 Agent 应省略 `requirements.variant_id`，保持 `site-searches → building-designs → confirm` 的最短路径，不需要增加预查询。需要精细控制时可以显式指定 variant；此时它是权威参数，要么原样生效，要么返回 `BUILDING_VARIANT_INCOMPATIBLE`、兼容候选和修正建议，不会被随机 variant 覆盖。只有调用方明确传入 `requirements.allow_fallback: true` 时，系统才选择兼容替代项，并在顶层 `generationSelection` 与 `designIntentReview` 中报告 requested/applied variant、原因和是否降级。
 
 住宅不做全局逐栋去重。创建 `floor_stack` 住宅时，如果 Agent 已从城市 snapshot 了解当前街区，可以把语境传回设计请求：
 
@@ -199,7 +201,9 @@ POST /api/v1/cities/{city_id}/construction-orders
 
 建成的城市建筑保存权威 `voxelDesign`、design revision、生成模式、seed、source spec 和 decorations。渲染体素是可重新编译的产物，不是存档真相。
 
-矩形 `urban_massing` 使用东西入口时，source spec 会先交换 width/depth，再由 viewer 做 90° 坐标变换，保证旋转后的结构仍对应原逻辑 footprint。语义 preset 若不能适配合法的小地块，推荐器会产生带 `recommendationFallback` 元数据的 parcel-fitted 体量，并在确认阶段重新编译验证。
+Agent-facing footprint 始终使用世界网格的 `columns x rows`：例如从 `cell-16-38` 开始，`2x1` 是 `cell-16-38 + cell-17-38`，`1x2` 是 `cell-16-38 + cell-16-39`。矩形 `urban_massing` 使用东西入口时，source spec 会先交换内部 authored width/depth，再由 viewer 做 90° 坐标变换；这不会改变外部 world footprint。
+
+公共建筑风格 preset 现在可适配一格宽的紧凑地块。需要庭院、侧翼等额外空间的 variant 由兼容目录提前筛选；不再用捕获任意生成错误的方式静默替换成普通 `parcel_fitted_primary_mass`。功能审查读取 `architectureReview`，显式 variant 和风格契约则读取独立的 `designIntentReview`，两者不可互相替代。
 
 ## 5. 升级
 

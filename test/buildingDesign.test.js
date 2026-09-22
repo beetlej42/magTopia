@@ -67,6 +67,7 @@ test("one-cell public gardens use the normal design flow without pretending to b
     resolvedLayout: "open_space",
     openSpaceType: "garden",
     structureKind: "open_space",
+    layoutVariantId: "garden-only",
     variantId: "garden-only",
     footprintCells: 1,
     buildingCells: 0,
@@ -125,6 +126,87 @@ test("public designs choose seed-stable functional variants and expose an archit
   assert.ok(variants.every((design) => design.agentGuidance.some((guidance) => guidance.code === "public_architecture_review_required")));
 });
 
+test("narrow public sites preserve explicit variants and style without a silent generic fallback", () => {
+  const draft = createBuildingDesignDraft({
+    site: { lot_id: "cell-8-8", footprint: "2x1", entrance: "east" },
+    intent: {
+      name: "Narrow Moon Academy",
+      purpose: "public academy",
+      composition: "hall",
+      frontage: "institutional",
+      access: "public",
+      style: "victorian_gothic",
+      prominence: "important"
+    },
+    requirements: { variant_id: "hall_academy" }
+  }, { ...context, id: "narrow-moon-academy" });
+
+  assert.equal(draft.site.footprint, "2x1");
+  assert.deepEqual([
+    draft.generation.sourceSpec.footprint.widthCells,
+    draft.generation.sourceSpec.footprint.depthCells
+  ], [1, 2], "east entrance uses a rotated authored frame without changing the world footprint");
+  assert.equal(draft.generation.sourceSpec.metadata.recommendationFallback, undefined);
+  assert.deepEqual(draft.generation.sourceSpec.metadata.generationSelection, {
+    program: "academy",
+    requestedVariantId: "hall_academy",
+    appliedVariantId: "hall_academy",
+    source: "explicit",
+    fallbackApplied: false,
+    fallbackReason: null,
+    compatibleVariantIds: ["tower_academy", "hall_academy", "arcade_academy"]
+  });
+  assert.deepEqual(draft.generationSelection, draft.generation.sourceSpec.metadata.generationSelection);
+  assert.equal(draft.designIntentReview.status, "matched");
+  assert.equal(draft.designIntentReview.stylePreserved, true);
+  assert.ok(draft.actualArchitecture.facadeOrders.includes("gothic"));
+  assert.equal(confirmBuildingDesign(draft, { expected_revision: 1 }, context).compileDiagnostics.status, "compiled");
+});
+
+test("explicit incompatible variants fail once with compatible alternatives unless fallback is opted in", () => {
+  const input = {
+    site: { lot_id: "cell-9-9", footprint: "1x1", entrance: "south" },
+    intent: { name: "Pocket Academy", purpose: "public academy", frontage: "institutional", site_layout: "building" },
+    requirements: { variant_id: "courtyard_academy" }
+  };
+  assert.throws(
+    () => createBuildingDesignDraft(input, { ...context, id: "incompatible-courtyard" }),
+    (error) => error.code === "BUILDING_VARIANT_INCOMPATIBLE"
+      && error.details.requested_footprint === "1x1"
+      && error.details.compatible_variants.includes("hall_academy")
+  );
+
+  const fallback = createBuildingDesignDraft({
+    ...input,
+    requirements: { ...input.requirements, allow_fallback: true }
+  }, { ...context, id: "compatible-fallback" });
+  assert.equal(fallback.generation.sourceSpec.metadata.generationSelection.requestedVariantId, "courtyard_academy");
+  assert.equal(fallback.generation.sourceSpec.metadata.generationSelection.fallbackApplied, true);
+  assert.ok(["tower_academy", "hall_academy", "arcade_academy"].includes(
+    fallback.generation.sourceSpec.metadata.generationSelection.appliedVariantId
+  ));
+  assert.equal(fallback.designIntentReview.status, "fallback");
+  assert.equal(confirmBuildingDesign(fallback, { expected_revision: 1 }, context).compileDiagnostics.status, "compiled");
+});
+
+test("semantic variants retain their promised visual features across compact style presets", () => {
+  const winged = createBuildingDesignDraft({
+    site: { lot_id: "cell-11-11", footprint: "2x1", entrance: "south" },
+    intent: { name: "Winged Archive", purpose: "public library", frontage: "institutional", style: "victorian_domestic" },
+    requirements: { variant_id: "winged_archive" }
+  }, { ...context, id: "winged-archive-contract" });
+  assert.ok(winged.actualArchitecture.features.wingCount >= 1);
+  assert.equal(winged.designIntentReview.status, "matched");
+
+  const domed = createBuildingDesignDraft({
+    site: { lot_id: "cell-12-11", footprint: "1x1", entrance: "west" },
+    intent: { name: "Pocket Dome Hall", purpose: "civic hall", frontage: "institutional", style: "victorian_gothic" },
+    requirements: { variant_id: "dome_hall" }
+  }, { ...context, id: "dome-hall-contract" });
+  assert.equal(domed.actualArchitecture.features.dome, true);
+  assert.equal(domed.designIntentReview.status, "matched");
+});
+
 test("public architecture review reports an intentional library greenhouse conflict", () => {
   const design = createBuildingDesignDraft({
     site: { lot_id: "cell-5-5", footprint: "3x2", entrance: "south" },
@@ -170,7 +252,7 @@ test("residential designs receive district alignment guidance and can regenerate
   assert.deepEqual(revised.decorations.items, []);
 });
 
-test("parcel-fitted recommendations compile formerly invalid 2x2 halls and rotated 3x2 sites", () => {
+test("compact and rotated public-building recommendations compile without generic fallback", () => {
   const compactHall = createBuildingDesignDraft({
     site: { lot_id: "cell-8-8", footprint: "2x2", entrance: "south" },
     intent: { name: "Glass Guild", purpose: "guild hall", composition: "hall", frontage: "large_bay", prominence: "ordinary" }
