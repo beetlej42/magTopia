@@ -1027,6 +1027,29 @@ export function createOpenApiDocument(baseUrl) {
         post: operation("Create a recommended editable design using floor-stack or urban-massing generation", "building-designs", { $ref: "#/components/schemas/BuildingDesignCreateRequest" })
       },
       "/cities/{city_id}/building-designs/{design_id}": { get: operation("Read the current building design revision", "building-designs") },
+      "/cities/{city_id}/building-designs/{design_id}/visualization": {
+        get: {
+          ...operation("Render an optional static building PNG without changing the city", "building-designs", null, json, true, [
+            queryParameter("revision", { type: "integer", minimum: 1 }, "Expected current revision. Stale links return 409; historical revisions are not rendered."),
+            queryParameter("view", { type: "string", enum: ["front", "back", "top"], default: "front" }, "Front/back are relative to the entrance; top is world north-up."),
+            queryParameter("size", { type: "integer", enum: [512, 1024], default: 512 }, "Square image size in pixels.")
+          ]),
+          description: "Requires city:read and the same Bearer token. Returns PNG bytes, not JSON or a public URL. On-demand CPU projection of the actual geometry with simplified daylight and nearest-layer transparency. No image cache, no city mutation, no mandatory visual review. One render per server process at a time; on busy 503 respect Retry-After. Fetch the image with authorization and pass its bytes to your image tool. X-Design-Revision and X-Design-Hash identify the captured design.",
+          responses: {
+            200: { description: "Static building preview", content: { "image/png": { schema: { type: "string", format: "binary" } } }, headers: {
+              "X-Design-Revision": { schema: { type: "integer" }, description: "Rendered revision" },
+              "X-Design-Hash": { schema: { type: "string" }, description: "Rendered authoritative specHash" }
+            } },
+            400: { description: "Invalid view, size or revision", content: { "application/json": { schema: error } } },
+            401: { description: "Authentication required", content: { "application/json": { schema: error } } },
+            403: { description: "Missing city read scope or access", content: { "application/json": { schema: error } } },
+            404: { description: "City or design not found", content: { "application/json": { schema: error } } },
+            409: { description: "Design revision changed", content: { "application/json": { schema: error } } },
+            422: { description: "Geometry cannot be rendered or exceeds limits", content: { "application/json": { schema: error } } },
+            503: { description: "Renderer busy, timed out or exceeded memory budget", content: { "application/json": { schema: error } } }
+          }
+        }
+      },
       "/cities/{city_id}/building-designs/{design_id}/revisions": { post: operation("Apply structured operations and create an immutable design revision", "building-designs", { $ref: "#/components/schemas/BuildingDesignRevisionRequest" }) },
       "/cities/{city_id}/building-designs/{design_id}/confirm": { post: operation("Lock the current design revision for construction", "building-designs", { $ref: "#/components/schemas/BuildingDesignConfirmRequest" }) },
       "/cities/{city_id}/buildings/{building_id}/upgrade-designs": { post: operation("Create an editable upgrade design from a built voxel design", "building-designs", { $ref: "#/components/schemas/BuildingDesignUpgradeRequest" }) },
@@ -1229,3 +1252,4 @@ function commandOperation(summary, tag, requestBody = json, responseSchema = jso
   ];
   return value;
 }
+

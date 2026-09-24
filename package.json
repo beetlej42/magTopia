@@ -24,7 +24,8 @@
     "test:agent-build": "node --test test/agentDistrictSimulation.test.js",
     "benchmark:vegetation": "node scripts/benchmark-vegetation.mjs",
     "simulate:city": "node scripts/simulate-city.mjs",
-    "hunyuan3d": "node scripts/hunyuan3d.mjs"
+    "hunyuan3d": "node scripts/hunyuan3d.mjs",
+    "visualize:building": "node scripts/visualize-building.mjs"
   },
   "dependencies": {
     "@fastify/swagger": "^9.8.1",
@@ -32,11 +33,11 @@
     "fastify": "^5.10.0",
     "pg": "^8.22.0",
     "three": "^0.160.0",
-    "vite": "^5.0.0"
+    "vite": "^5.0.0",
+    "pngjs": "7.0.0"
   },
   "devDependencies": {
     "@sparticuz/chromium": "138.0.2",
-    "pngjs": "7.0.0",
     "puppeteer-core": "24.16.0"
   }
 }

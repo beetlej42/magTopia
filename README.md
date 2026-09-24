@@ -20,6 +20,7 @@ render or pixel-art sprite sheet.
 - Experimental procedural voxel vertical slice: [docs/VOXEL_BUILDING_SPIKE.md](docs/VOXEL_BUILDING_SPIKE.md)
 - Voxel `BuildingSpec v0.2`: [docs/VOXEL_BUILDING_SPEC_V0.2.md](docs/VOXEL_BUILDING_SPEC_V0.2.md)
 - General voxel `UrbanMassingSpec v0.1`: [docs/VOXEL_MASSING_SPEC_V0.1.md](docs/VOXEL_MASSING_SPEC_V0.1.md)
+- Static building PNG preview: `pnpm visualize:building <design-or-spec.json> <output.png> [front|back|top] [512|1024]` (no browser/GPU, no image cache).
 - Unified two-stage Agent building design and upgrade API: [docs/BUILDING_DESIGN_API_V1.md](docs/BUILDING_DESIGN_API_V1.md)
 
 ## Run
@@ -448,3 +449,4 @@ node scripts/preview-home.mjs
 node scripts/check-home.mjs
 # 使用本机 Chrome 检查桌面/移动端，截图输出到 artifacts/homepage/
 ```
+

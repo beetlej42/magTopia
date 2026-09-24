@@ -227,3 +227,39 @@ POST /api/v1/cities/{city_id}/buildings/{building_id}/upgrade-designs
 ## 渲染
 
 城市 viewer 会识别建筑上的 `voxelDesign`：`floor_stack` 使用精确 `BuildingSpec`，`urban_massing` 使用精确 `UrbanMassingSpec`；共同 `DecorationSpec` 在稳定 facade、roof 或 mass anchor 上派生运行时装饰。加层后仍存在的 anchor 会继续使用同一个 decoration ID。
+
+
+
+## 静态建筑 Visualizer（最小版）
+
+创建、读取、修改和确认设计时，响应中的 `visualization.url` 提供可选 PNG 入口：
+
+```http
+GET /api/v1/cities/{city_id}/building-designs/{design_id}/visualization?revision=3
+Authorization: Bearer <access_token>
+```
+
+- 默认 `view=front&size=512`；可选 `view=back|top`、`size=1024`。front/back 相对入口，俯视为世界北向朝上。
+- 返回 `image/png` 二进制，不是 JSON 或公开图片链接。Agent 下载后交给自己的图像读取工具。
+- `revision` 是对当前版本的校验，不是历史版本选择器；旧链接返回 `409 BUILDING_DESIGN_REVISION_CONFLICT`。
+- `X-Design-Revision` / `X-Design-Hash` 标记实际绘制的快照；`Server-Timing` 给出编译和总绘制耗时。
+- 使用已有 `city:read` 权限，必须有该城市访问权；不创建 revision、不确认、不占地、不扣资源。
+- 不做图片缓存、不存储图片。每进程最多一个临时 worker，忙时返回可重试 503 和 `Retry-After: 1`；失败后原有建造流程仍可继续。
+- worker 最长运行 15 秒，V8 old-generation 堆上限 256 MiB（并非进程总内存硬上限）；编译后最多处理 250,000 三角面、1,000,000 顶点。超限明确失败，不截断建筑。
+
+资产开发可直接使用同一出图器，无需城市或服务端：
+
+```bash
+pnpm visualize:building ./design.json ./preview.png
+pnpm visualize:building ./design.json ./preview-top.png top 1024
+```
+
+输入可以是完整 BuildingDesign、原始 BuildingSpec/UrbanMassingSpec，或
+`{ "sourceSpec": ..., "decorations": ..., "site": { "entrance": "east" } }`。
+原始 spec 默认 south；要检查真实朝向请使用完整设计或带 site 的包装。
+CLI 会打印对应版本、哈希（原始 spec 没有这两个字段）、三角面数和耗时。
+
+实现复用城市的精确建筑编译入口、装饰和入口旋转，使用 greedy 表面网格、正交投影、背面剔除、逐像素深度缓冲和简单朝向明暗绘制 PNG。
+无需浏览器、WebGL 或 GPU，不运行城市模拟；只生成请求的一个视角。
+玻璃仅保留最近的可见透明层；不模拟多层折射、实时灯光、阴影、景深和游戏材质 shader。
+预览用于结构与外观判断，不代表最终游戏光照。既有编译器已写入顶点色的明暗会被保留。
