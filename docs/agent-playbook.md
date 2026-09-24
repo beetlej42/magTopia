@@ -109,6 +109,8 @@ For a new procedural voxel building, use the versioned two-stage design flow ins
 4. Lock the chosen revision through `/building-designs/{design_id}/confirm`. Confirmation headlessly compiles the exact voxel spec; require `compileDiagnostics.status = compiled` and `occupiedVoxels > 0` before construction.
 5. Preview and submit construction with the confirmed `design_id`, `design_revision`, and `design_hash`.
 
+**Optional visual check.** Create/read/revise responses include `visualization.url`. GET it with the same Bearer token to receive a 512×512 entrance-side PNG, then pass the downloaded bytes to your image-reading tool. Use it when checking a public building, courtyard or custom sign; ordinary construction does not require it. Add `view=back` or `view=top` only when useful, or `size=1024` for details. Rendering is on demand with no image cache and does not spend city resources or change city state. A stale `revision` returns 409: read the current design for its new link. On busy 503, respect `Retry-After`; do not poll in a tight loop. Images show actual geometry/material colors with simplified daylight and approximate glass, not final game lighting. Text-only Agents can continue using `actualArchitecture` and `architectureReview`.
+
 To add a floor later, create `/buildings/{building_id}/upgrade-designs`, revise and confirm it, then submit it through the same construction endpoints. An upgrade keeps the building id and rejects stale base revisions. Read `/agent/building-design-api-v1.md` for the operation catalog and complete request examples.
 
 ### Residential buildings: preserve the district, vary the cue
@@ -396,3 +398,4 @@ The response is a pure projection you may read to understand what the player is 
 - `turnDeadlineAt` / `nextTurnUnlockAt` — read-only schedule anchors; `turnDeadlineAt` is deprecated and always null (no deadline auto-settle), while `nextTurnUnlockAt` is the cooldown gate that governs when the turn may be resolved.
 
 The day never advances `morning → day` or `day → night` because time passed; it advances only when real accepted gameplay activity happens. The player's report dismissal is acknowledged server-side so it never replays across devices; it does not mutate city state. Agents should treat this endpoint as context, never as an authority to act on: all Agent city work still flows through the construction/strategy APIs above.
+

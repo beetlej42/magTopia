@@ -1,3 +1,4 @@
+import { buildingEntranceRotation, createBuildingDesignObject } from "./buildingDesignObject.js";
 import * as THREE from "three";
 import { getVoxelLodThresholds, selectScreenSpaceVoxelLod } from "../render/voxelLodQuality.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
@@ -5,9 +6,7 @@ import { mergeAssetRegistry } from "../city/assets.js";
 import { resolveAutomaticModelOrientation } from "./modelOrientation.js";
 import {
   VOXEL_SIZE,
-  createVoxelBuildingFromSpec,
   createVoxelBuildingLodLevelsFromSpec,
-  createVoxelMassingLab,
   createVoxelMassingLodLevels
 } from "./voxelBuildingLab.js";
 import { createBakedMeshLod } from "../render/bakedBuildingArtifact.js";
@@ -241,9 +240,7 @@ function createRuntimeVoxelBuilding(building, renderCells, sampleGroundHeight, n
   const design = building.voxelDesign;
   const nearObject = bakedArtifact
     ? createBakedRuntimeBuilding(bakedArtifact, building, nightLighting, enableVoxelLod)
-    : design.generation.mode === "urban_massing"
-      ? createVoxelMassingLab({ spec: design.generation.sourceSpec, decorations: design.decorations, nightLighting, renderStrategy: "greedy" })
-      : createVoxelBuildingFromSpec(design.generation.sourceSpec, { decorations: design.decorations, nightLighting, renderStrategy: "greedy" });
+    : createBuildingDesignObject(design, { nightLighting });
   const object = bakedArtifact
     ? nearObject
     : enableVoxelLod
@@ -253,12 +250,7 @@ function createRuntimeVoxelBuilding(building, renderCells, sampleGroundHeight, n
   center.x /= renderCells.length;
   center.z /= renderCells.length;
   object.position.set(center.x, sampleGroundHeight(center.x, center.z) + BUILDING_BASE_ELEVATION, center.z);
-  object.rotation.y = {
-    north: 0,
-    east: Math.PI / 2,
-    south: Math.PI,
-    west: -Math.PI / 2
-  }[building.site.entrance] ?? Math.PI;
+  object.rotation.y = buildingEntranceRotation(building.site.entrance);
   object.name = `RuntimeVoxelBuilding-${building.id}`;
   object.userData = {
     ...object.userData,
@@ -1235,3 +1227,4 @@ function getNeighborCellId(cells, entrance) {
   const edge = edgeCells[Math.floor((edgeCells.length - 1) / 2)];
   return edge ? `cell-${edge.column + dx}-${edge.row + dy}` : null;
 }
+
