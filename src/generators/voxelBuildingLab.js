@@ -981,6 +981,9 @@ export function createVoxelMassingLab(input = {}) {
   const root = new THREE.Group();
   root.name = `VoxelMassingLab-${spec.id}`;
   const { buffer, relationCuts, compiledMasses, groundDetails, relationFinishes, capPlans } = compileVoxelMassing(spec);
+  // Fixed landmarks may add voxel-only details before shared surface culling
+  // and greedy meshing. This in-process factory hook is not a JSON API.
+  input.voxelDetailPass?.(buffer, spec);
   const massPlans = compiledMasses.map((compiled) => compiled.diagnostics);
   const materialMeshes = buffer.createMeshes({
     strategy: input.renderStrategy,
@@ -2567,6 +2570,7 @@ function directionalDepthContains(voidSpec, x, z, bounds) {
 }
 
 function planMassingFacadeFeatures(mass, planAtY) {
+  if (mass.facade.enabled === false) return [];
   const features = [];
   const floorHeight = mass.facade.floorHeightVoxels;
   const floorCount = Math.ceil(mass.heightVoxels / floorHeight);

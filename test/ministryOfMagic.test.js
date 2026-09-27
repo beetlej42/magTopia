@@ -9,20 +9,32 @@ import { resolveSpecialStructurePreview, createSpecialStructurePreview } from ".
 import { createCityPlacementLayer } from "../src/ui/cityPlacementLayer.js";
 import { projectDistrictOntoSphere } from "../src/generators/voxelIntentDistrict.js";
 
-test("Ministry stays inside 2x2 in every direction with a bounded two-draw mesh", () => {
+test("Ministry stays inside 2x2 in every direction with shared voxel meshing and a bounded budget", () => {
   const object = createMinistryOfMagic();
-  assert.equal(object.children.length, 2);
+  assert.ok(object.children.length <= 12);
+  assert.equal(object.userData.diagnostics.renderer, "voxel-massing-v1");
+  assert.equal(object.userData.diagnostics.voxelSize, 0.125);
+  assert.equal(object.userData.diagnostics.renderStats.strategy, "greedy-chunks");
   let triangles = 0;
-  object.traverse(child => { if(child.isMesh) triangles += child.geometry.attributes.position.count / 3; });
+  object.traverse(child => {
+    if (!child.isMesh) return;
+    triangles += (child.geometry.index?.count ?? child.geometry.attributes.position.count) / 3;
+    assert.equal(child.userData.flatVoxelGeometry, true);
+    for (const coordinate of child.geometry.attributes.position.array)
+      assert.ok(Math.abs(coordinate / 0.125 - Math.round(coordinate / 0.125)) < 1e-5, "every vertex must lie on the shared voxel grid");
+    const normals = child.geometry.attributes.normal.array;
+    for (let i = 0; i < normals.length; i += 3)
+      assert.equal(Math.abs(normals[i]) + Math.abs(normals[i+1]) + Math.abs(normals[i+2]), 1, "all faces must be axis-aligned voxel faces");
+  });
   assert.ok(triangles > 5000 && triangles < 16000);
   for(const entrance of ["north","east","south","west"]) {
     object.rotation.y = buildingEntranceRotation(entrance);
     const bounds = new THREE.Box3().setFromObject(object);
-    assert.ok(bounds.min.x >= -4 && bounds.max.x <= 4);
-    assert.ok(bounds.min.z >= -4 && bounds.max.z <= 4);
-    assert.ok(bounds.min.y >= -1e-6 && bounds.max.y < 10);
+    assert.ok(bounds.min.x >= -4.000001 && bounds.max.x <= 4.000001);
+    assert.ok(bounds.min.z >= -4.000001 && bounds.max.z <= 4.000001);
+    assert.ok(bounds.min.y >= -0.250001 && bounds.max.y < 10);
   }
-  const windows = object.getObjectByName("Ministry-warm-windows");
+  const windows = object.children.find(child => child.userData.materialId === "warmWindow");
   object.userData.updateDaylight({nightFactor:1}); const night = windows.material.emissiveIntensity;
   object.userData.updateDaylight({nightFactor:0});
   assert.ok(windows.material.emissiveIntensity < night);
@@ -35,7 +47,7 @@ test("CLI compiler, placement preview and city use the exact same landmark geome
   assert.equal(source.kind,"prefab");
   const preview = createSpecialStructurePreview(source.spec);
   const compiled = createBuildingDesignObject({generation:{mode:"landmark_prefab",sourceSpec:spec}});
-  assert.deepEqual(preview.children[1].geometry.attributes.position.array,compiled.children[1].geometry.attributes.position.array);
+  assertGeometryEqual(preview, compiled);
   const cells = [0,1,2,3].map(i=>({id:`cell-${i%2}-${Math.floor(i/2)}`,column:i%2,row:Math.floor(i/2),center:{x:(i%2)*4-2,z:2-Math.floor(i/2)*4}}));
   for(const entrance of ["north","east","south","west"]) {
     const building={id:"ministry",specialStructure:{cardId:"ministry-of-magic"},site:{lotId:cells[0].id,footprint:"2x2",entrance},footprintCells:cells.map(c=>c.id),program:{name:"Ministry"}};
@@ -44,9 +56,9 @@ test("CLI compiler, placement preview and city use the exact same landmark geome
     assert.ok(model,"existing special buildings without voxelDesign must render");
     assert.equal(model.userData.assetId,MINISTRY_ASSET_ID);
     assert.equal(model.rotation.y,buildingEntranceRotation(entrance));
-    assert.deepEqual(model.children[1].geometry.attributes.position.array,compiled.children[1].geometry.attributes.position.array);
+    assertGeometryEqual(model, compiled);
     projectDistrictOntoSphere(city,220);
-    assert.equal(model.children.length,2,"sphere projection must keep the model together");
+    assert.equal(model.children.length,compiled.children.length,"sphere projection must keep the model together");
     disposeBuildingObject(city);
   }
   const layer=createCityPlacementLayer(); const root=new THREE.Group(); layer.setSceneRoot(root);
@@ -54,7 +66,7 @@ test("CLI compiler, placement preview and city use the exact same landmark geome
     cells:cells.map(c=>({...c,centerX:c.center.x,centerZ:c.center.z}))});
   assert.equal(layer.object.getObjectByName("CityPlacementGhost").userData.ghostMode,"landmark-prefab-preview");
   const ghost = layer.object.getObjectByName("MinistryOfMagic");
-  assert.deepEqual(ghost.children[1].geometry.attributes.position.array,compiled.children[1].geometry.attributes.position.array);
+  assertGeometryEqual(ghost, compiled);
   layer.dispose(); disposeBuildingObject(preview); disposeBuildingObject(compiled);
 });
 
@@ -69,3 +81,12 @@ test("lightweight visualizer renders distinct deterministic landmark views", () 
     assert.notDeepEqual(result.png,front.png);
   }
 });
+
+function assertGeometryEqual(actual, expected) {
+  assert.equal(actual.children.length, expected.children.length);
+  for (let i = 0; i < expected.children.length; i++) {
+    const a = actual.children[i].geometry, b = expected.children[i].geometry;
+    assert.deepEqual(a.attributes.position.array, b.attributes.position.array);
+    assert.deepEqual(a.index.array, b.index.array);
+  }
+}
