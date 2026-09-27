@@ -1,0 +1,8 @@
+{
+  "assetId": "ministry-tudor-001",
+  "specVersion": "1.0",
+  "id": "ministry-tudor-001",
+  "footprint": { "worldWidth": 8, "worldDepth": 8 },
+  "site": { "entrance": "north" },
+  "description": "Three-storey jettied Tudor Ministry, exterior stair, forecourt and astrolabe garden. Entrance authored at +Z."
+}
