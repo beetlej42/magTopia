@@ -1,3 +1,4 @@
+import { createBuildingDesignObject, disposeBuildingObject } from "../generators/buildingDesignObject.js";
 import {
   adaptBuildingIntentToMassingConfig,
   adaptBuildingIntentToStreetConfig,
@@ -7,11 +8,7 @@ import {
 } from "../generators/buildingIntent.js";
 import { createBuildingSpec } from "../generators/voxelBuildingGrammar.js";
 import { createUrbanMassingSpec } from "../generators/voxelMassingGrammar.js";
-import {
-  SEMANTIC_GRID_SIGN_VOXEL_SIZE,
-  createVoxelBuildingFromSpec,
-  createVoxelMassingLab
-} from "../generators/voxelBuildingLab.js";
+import { SEMANTIC_GRID_SIGN_VOXEL_SIZE } from "../generators/voxelBuildingLab.js";
 import {
   createDistrictArchitectureContext,
   createPublicArchitectureReview,
@@ -330,9 +327,7 @@ export function compileBuildingDesign(design) {
   if (!design?.generation?.sourceSpec) throw new Error("Building design has no source spec to compile");
   let object;
   try {
-    object = design.generation.mode === "urban_massing"
-      ? createVoxelMassingLab({ spec: design.generation.sourceSpec, decorations: design.decorations, renderStrategy: "greedy" })
-      : createVoxelBuildingFromSpec(design.generation.sourceSpec, { decorations: design.decorations, renderStrategy: "greedy" });
+    object = createBuildingDesignObject(design);
   } catch (error) {
     throw new Error(`Voxel design compile failed: ${error.message}`);
   }
@@ -363,11 +358,7 @@ export function compileBuildingDesign(design) {
     primaryEntrancePort: structuredClone(design.ports?.find((port) => port.type === "primary_entrance") ?? null),
     ...metrics
   };
-  object.traverse((child) => {
-    child.geometry?.dispose?.();
-    if (Array.isArray(child.material)) child.material.forEach((material) => material?.dispose?.());
-    else child.material?.dispose?.();
-  });
+  disposeBuildingObject(object);
   if (diagnostics.occupiedVoxels <= 0 || diagnostics.meshCount <= 0) throw new Error("Voxel design compile produced no occupied geometry");
   return diagnostics;
 }
@@ -1137,3 +1128,4 @@ function stableStringify(value) {
   }
   return JSON.stringify(value);
 }
+

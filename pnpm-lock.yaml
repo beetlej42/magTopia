@@ -20,6 +20,9 @@ importers:
       pg:
         specifier: ^8.22.0
         version: 8.22.0
+      pngjs:
+        specifier: 7.0.0
+        version: 7.0.0
       three:
         specifier: ^0.160.0
         version: 0.160.1
@@ -30,9 +33,6 @@ importers:
       '@sparticuz/chromium':
         specifier: 138.0.2
         version: 138.0.2(debug@4.4.3)
-      pngjs:
-        specifier: 7.0.0
-        version: 7.0.0
       puppeteer-core:
         specifier: 24.16.0
         version: 24.16.0
@@ -1979,3 +1979,4 @@ snapshots:
       fd-slicer: 1.1.0
 
   zod@3.25.76: {}
+

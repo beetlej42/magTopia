@@ -1,3 +1,4 @@
+import { designVisualizationLink, registerBuildingVisualizationRoute } from "./building-visualization.js";
 import { createHash, randomInt } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -442,6 +443,8 @@ export async function createApp({ repository, config, logger = false, now = () =
     return buildingResponse(state, building);
   });
 
+  registerBuildingVisualizationRoute(app, { repository, authenticate });
+
   app.get("/api/v1/cities/:cityId/building-designs", async (request) => {
     const principal = await authenticate(repository, request, "city:read");
     return { data: await repository.listBuildingDesigns(principal, request.params.cityId) };
@@ -454,13 +457,15 @@ export async function createApp({ repository, config, logger = false, now = () =
     const response = await repository.createBuildingDesign(principal, request.params.cityId, draft);
     return reply.code(201).send({
       ...response,
+      visualization: designVisualizationLink(response, request.params.cityId, config),
       agent_handoff: designConfirmationHandoff(response, request.params.cityId, config)
     });
   });
 
   app.get("/api/v1/cities/:cityId/building-designs/:designId", async (request) => {
     const principal = await authenticate(repository, request, "city:read");
-    return repository.getBuildingDesign(principal, request.params.cityId, request.params.designId);
+    const design = await repository.getBuildingDesign(principal, request.params.cityId, request.params.designId);
+    return { ...design, visualization: designVisualizationLink(design, request.params.cityId, config) };
   });
 
   app.post("/api/v1/cities/:cityId/building-designs/:designId/revisions", async (request, reply) => {
@@ -471,6 +476,7 @@ export async function createApp({ repository, config, logger = false, now = () =
     const response = await repository.appendBuildingDesignRevision(principal, request.params.cityId, revised, expectedRevision);
     return reply.code(201).send({
       ...response,
+      visualization: designVisualizationLink(response, request.params.cityId, config),
       agent_handoff: designConfirmationHandoff(response, request.params.cityId, config)
     });
   });
@@ -485,6 +491,7 @@ export async function createApp({ repository, config, logger = false, now = () =
     const { row } = await repository.getCity(principal, request.params.cityId);
     return {
       ...response,
+      visualization: designVisualizationLink(response, request.params.cityId, config),
       agent_handoff: confirmedDesignConstructionHandoff(response, request.params.cityId, Number(row.city_version), config)
     };
   });
@@ -499,7 +506,8 @@ export async function createApp({ repository, config, logger = false, now = () =
       request.body ?? {},
       buildingDesignContext(principal, createId("design"))
     ));
-    return reply.code(201).send(await repository.createBuildingDesign(principal, request.params.cityId, draft));
+    const response = await repository.createBuildingDesign(principal, request.params.cityId, draft);
+    return reply.code(201).send({ ...response, visualization: designVisualizationLink(response, request.params.cityId, config) });
   });
 
   const searchSites = async (request, input) => {
@@ -2802,3 +2810,4 @@ function isWithinPath(root, target) {
   const relative = path.relative(path.resolve(root), path.resolve(target));
   return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
+
