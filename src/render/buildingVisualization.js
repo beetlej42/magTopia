@@ -16,7 +16,7 @@ const SRGB = Uint8Array.from({ length: 4097 }, (_, i) => {
 
 export function visualizationOptions({ view = "front", size = 512 } = {}) {
   if (!BUILDING_VISUALIZATION_VIEWS.includes(view)) throw new Error("view must be front, back or top");
-  if (![512, 1024].includes(Number(size))) throw new Error("size must be 512 or 1024");
+  if (![256, 512, 1024].includes(Number(size))) throw new Error("size must be 256, 512 or 1024");
   return { view, size: Number(size) };
 }
 

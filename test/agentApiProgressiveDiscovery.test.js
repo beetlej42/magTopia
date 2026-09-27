@@ -16,9 +16,13 @@ test("OpenAPI operations have stable ids and support compact progressive discove
   const document = createOpenApiDocument(BASE);
   const catalog = createAgentApiCatalog(document, BASE);
 
-  assert.equal(catalog.operation_count, 53);
-  assert.equal(catalog.operations.length, 53);
-  assert.equal(new Set(catalog.operations.map((entry) => entry.operation_id)).size, 53);
+  const expectedRoutes = Object.entries(document.paths).flatMap(([path, item]) =>
+    Object.keys(item).filter((method) => ["get", "post", "put", "patch", "delete", "head", "options", "trace"].includes(method))
+      .map((method) => `${method.toUpperCase()} /api/v1${path}`)).sort();
+  assert.ok(expectedRoutes.length > 0);
+  assert.equal(catalog.operation_count, expectedRoutes.length);
+  assert.deepEqual(catalog.operations.map((entry) => `${entry.method} ${entry.path}`).sort(), expectedRoutes);
+  assert.equal(new Set(catalog.operations.map((entry) => entry.operation_id)).size, expectedRoutes.length);
 
   const preview = catalog.operations.find((entry) => entry.path.endsWith("/demolition-previews"));
   assert.deepEqual(preview, {
@@ -46,7 +50,7 @@ test("catalog is advertised at discovery, connection, and every Agent JSON respo
     const catalogResponse = await app.inject({ method: "GET", url: "/agent/api/operations" });
     assert.equal(catalogResponse.statusCode, 200);
     const catalog = catalogResponse.json();
-    assert.equal(catalog.operations.length, 53);
+    assert.deepEqual(catalog, createAgentApiCatalog(createOpenApiDocument(BASE), BASE));
 
     const detailResponse = await app.inject({ method: "GET", url: `/agent/api/operations/${catalog.operations[0].operation_id}` });
     assert.equal(detailResponse.statusCode, 200);

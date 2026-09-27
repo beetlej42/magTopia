@@ -239,7 +239,7 @@ GET /api/v1/cities/{city_id}/building-designs/{design_id}/visualization?revision
 Authorization: Bearer <access_token>
 ```
 
-- 默认 `view=front&size=512`；可选 `view=back|top`、`size=1024`。front/back 相对入口，俯视为世界北向朝上。
+- 默认 `view=front&size=512`；可选 `view=back|top`、`size=256|1024`。front/back 相对入口，俯视为世界北向朝上。
 - 返回 `image/png` 二进制，不是 JSON 或公开图片链接。Agent 下载后交给自己的图像读取工具。
 - `revision` 是对当前版本的校验，不是历史版本选择器；旧链接返回 `409 BUILDING_DESIGN_REVISION_CONFLICT`。
 - `X-Design-Revision` / `X-Design-Hash` 标记实际绘制的快照；`Server-Timing` 给出编译和总绘制耗时。

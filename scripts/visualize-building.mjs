@@ -3,8 +3,8 @@ import path from "node:path";
 import { createBuildingVisualizationService } from "../apps/server/building-visualization.js";
 
 const [input, output, view = "front", size = "512", ...extra] = process.argv.slice(2);
-if (!input || !output || extra.length || !["front", "back", "top"].includes(view) || !["512", "1024"].includes(size)) {
-  console.error("Usage: pnpm visualize:building <design-or-spec.json> <output.png> [front|back|top] [512|1024]");
+if (!input || !output || extra.length || !["front", "back", "top"].includes(view) || !["256", "512", "1024"].includes(size)) {
+  console.error("Usage: pnpm visualize:building <design-or-spec.json> <output.png> [front|back|top] [256|512|1024]");
   process.exitCode = 1;
 } else {
   const service = createBuildingVisualizationService();

@@ -1032,7 +1032,7 @@ export function createOpenApiDocument(baseUrl) {
           ...operation("Render an optional static building PNG without changing the city", "building-designs", null, json, true, [
             queryParameter("revision", { type: "integer", minimum: 1 }, "Expected current revision. Stale links return 409; historical revisions are not rendered."),
             queryParameter("view", { type: "string", enum: ["front", "back", "top"], default: "front" }, "Front/back are relative to the entrance; top is world north-up."),
-            queryParameter("size", { type: "integer", enum: [512, 1024], default: 512 }, "Square image size in pixels.")
+            queryParameter("size", { type: "integer", enum: [256, 512, 1024], default: 512 }, "Square image size in pixels.")
           ]),
           description: "Requires city:read and the same Bearer token. Returns PNG bytes, not JSON or a public URL. On-demand CPU projection of the actual geometry with simplified daylight and nearest-layer transparency. No image cache, no city mutation, no mandatory visual review. One render per server process at a time; on busy 503 respect Retry-After. Fetch the image with authorization and pass its bytes to your image tool. X-Design-Revision and X-Design-Hash identify the captured design.",
           responses: {

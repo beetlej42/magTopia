@@ -56,9 +56,9 @@ export function registerBuildingVisualizationRoute(app, { repository, authentica
     const principal = await authenticate(repository, request, "city:read");
     const design = await repository.getBuildingDesign(principal, request.params.cityId, request.params.designId);
     const { revision, view = "front", size = "512", ...unknown } = request.query;
-    if (Object.keys(unknown).length || !["front", "back", "top"].includes(view) || !["512", "1024"].includes(String(size))
+    if (Object.keys(unknown).length || !["front", "back", "top"].includes(view) || !["256", "512", "1024"].includes(String(size))
       || (revision !== undefined && (!/^[1-9]\d*$/.test(String(revision)) || !Number.isSafeInteger(Number(revision))))) {
-      throw new ServiceError(400, "INVALID_REQUEST", "Use view=front|back|top, size=512|1024, and an optional positive revision");
+      throw new ServiceError(400, "INVALID_REQUEST", "Use view=front|back|top, size=256|512|1024, and an optional positive revision");
     }
     if (revision !== undefined && Number(revision) !== design.revision) {
       throw new ServiceError(409, "BUILDING_DESIGN_REVISION_CONFLICT", "This preview link refers to an older design; read the current design", { current_revision: design.revision, spec_hash: design.specHash });

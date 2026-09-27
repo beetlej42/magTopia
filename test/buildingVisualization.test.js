@@ -19,6 +19,9 @@ test("real street geometry produces a deterministic PNG without mutating the des
   const image = PNG.sync.read(first.png);
   assert.equal(image.width, 512);
   assert.equal(image.height, 512);
+  const small = PNG.sync.read(renderBuildingVisualization(design, { size: 256 }).png);
+  assert.equal(small.width, 256);
+  assert.equal(small.height, 256);
   assert.equal(first.metadata.specHash, design.specHash);
   assert.ok(first.triangleCount > 100);
   assert.notDeepEqual(first.png, renderBuildingVisualization(design, { view: "back" }).png);

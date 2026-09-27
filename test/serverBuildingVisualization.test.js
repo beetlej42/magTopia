@@ -33,6 +33,9 @@ test("Agent discovers optional PNG, authenticates, checks revision and leaves ci
     assert.equal(image.headers["x-design-hash"], design.specHash);
     assert.equal(image.headers["x-design-revision"], "1");
     assert.equal(PNG.sync.read(image.rawPayload).width, 512);
+    const small = PNG.sync.read((await call("GET", `${imageUrl}&size=256`, undefined, token)).rawPayload);
+    assert.equal(small.width, 256);
+    assert.equal(small.height, 256);
     const after = (await call("GET", `${base}/snapshot`, undefined, token)).json();
     assert.equal(before.city_version, after.city_version);
     assert.deepEqual(before.resources, after.resources);
