@@ -199,7 +199,7 @@ export function solveConnection(state, footprintCells, request, entrance = "sout
   for (const startId of startIds) {
     for (const targetId of targetIds) {
       const candidate = findRoadRoute(state, startId, targetId, blocked);
-      if (candidate && (!best || candidate.cost < best.cost)) best = { ...candidate, startId, targetId };
+      if (candidate && (!best || compareRouteCosts(candidate.cost, best.cost) < 0)) best = { ...candidate, startId, targetId };
     }
   }
   if (!best) return { feasible: false, reason: "No unblocked route exists between the two entrances" };
@@ -248,14 +248,28 @@ function resolveConnectionEndpoint(state, endpoint, label) {
   }
   const cellId = endpoint.kind === "node" ? state.nodes[endpoint.id]?.cellId : endpoint.id;
   if (!cellId || !state.cells[cellId]) return { ok: false, reason: `Unknown ${label} ${endpoint.kind} ${endpoint.id}` };
+  if (endpoint.kind === "cell") {
+    const isRoadEndpoint = state.cells[cellId].infrastructure === "road"
+      || state.infrastructure[cellId]?.type === "bridge";
+    return {
+      ok: true,
+      key: `cell:${endpoint.id}`,
+      kind: "cell",
+      id: endpoint.id,
+      cellId,
+      footprintCells: isRoadEndpoint ? [] : [cellId],
+      entrance: isRoadEndpoint ? null : firstRouteableDirection(state, cellId),
+      entranceCellId: isRoadEndpoint ? cellId : null
+    };
+  }
   return {
     ok: true,
-    key: `${endpoint.kind}:${endpoint.id}`,
-    kind: endpoint.kind,
+    key: `node:${endpoint.id}`,
+    kind: "node",
     id: endpoint.id,
     cellId,
     footprintCells: [cellId],
-    entrance: endpoint.entrance ?? firstRouteableDirection(state, cellId)
+    entrance: firstRouteableDirection(state, cellId)
   };
 }
 
@@ -350,35 +364,55 @@ function findRoadRoute(state, startId, targetId, blocked) {
   if (!state.cells[startId] || !state.cells[targetId]) return null;
   const bounds = getGridBounds(state);
   const cameFrom = new Map();
-  const gScore = new Map([[startId, 0]]);
-  const fScore = new Map([[startId, routeHeuristic(startId, targetId)]]);
+  const stateCellIds = new Map();
+  const startKey = routeStateKey(startId, null);
+  const startCost = routeCost();
+  const gScore = new Map([[startKey, startCost]]);
+  stateCellIds.set(startKey, startId);
   const open = [];
-  pushRouteCandidate(open, { id: startId, score: fScore.get(startId) });
+  pushRouteCandidate(open, {
+    key: startKey,
+    id: startId,
+    direction: null,
+    cost: startCost,
+    score: estimateRouteCost(startCost, startId, targetId)
+  });
 
   while (open.length) {
     const candidate = popRouteCandidate(open);
-    if (candidate.score !== fScore.get(candidate.id)) continue;
-    const current = candidate.id;
-    if (current === targetId) {
-      const route = reconstructRoute(cameFrom, current);
-      return { route, cost: gScore.get(current) ?? Infinity };
+    const currentCost = gScore.get(candidate.key);
+    if (!currentCost || compareRouteCosts(candidate.cost, currentCost) !== 0) continue;
+    if (candidate.id === targetId) {
+      const route = reconstructRoute(cameFrom, stateCellIds, candidate.key);
+      return { route, cost: currentCost };
     }
-    for (const neighbor of routeNeighbors(current, bounds)) {
-      if (blocked.has(neighbor)) continue;
-      const cell = state.cells[neighbor];
+    for (const neighbor of routeNeighbors(candidate.id, bounds)) {
+      if (blocked.has(neighbor.id)) continue;
+      const cell = state.cells[neighbor.id];
       if (!cell) continue;
       if (cell?.occupancy) continue;
       if (cell?.reservation) continue;
       if (cell?.infrastructure && cell.infrastructure !== "road") continue;
-      const existingBridge = state.infrastructure[neighbor]?.type === "bridge";
-      const stepCost = cell.infrastructure === "road" || existingBridge ? 0.22 : isWaterCell(cell) ? 8 : 1;
-      const tentative = (gScore.get(current) ?? Infinity) + stepCost;
-      if (tentative >= (gScore.get(neighbor) ?? Infinity)) continue;
-      cameFrom.set(neighbor, current);
-      gScore.set(neighbor, tentative);
-      const nextScore = tentative + routeHeuristic(neighbor, targetId);
-      fScore.set(neighbor, nextScore);
-      pushRouteCandidate(open, { id: neighbor, score: nextScore });
+      const existingBridge = state.infrastructure[neighbor.id]?.type === "bridge";
+      const stepCost = routeCost(
+        1,
+        cell.infrastructure === "road" || existingBridge ? 0 : 1,
+        candidate.direction && candidate.direction !== neighbor.direction ? 1 : 0
+      );
+      const tentative = addRouteCosts(currentCost, stepCost);
+      const nextKey = routeStateKey(neighbor.id, neighbor.direction);
+      const known = gScore.get(nextKey);
+      if (known && compareRouteCosts(tentative, known) >= 0) continue;
+      cameFrom.set(nextKey, candidate.key);
+      stateCellIds.set(nextKey, neighbor.id);
+      gScore.set(nextKey, tentative);
+      pushRouteCandidate(open, {
+        key: nextKey,
+        id: neighbor.id,
+        direction: neighbor.direction,
+        cost: tentative,
+        score: estimateRouteCost(tentative, neighbor.id, targetId)
+      });
     }
   }
   return null;
@@ -460,8 +494,35 @@ function popRouteCandidate(heap) {
   return first;
 }
 
+function routeCost(distance = 0, newRoadCells = 0, turns = 0) {
+  return { distance, newRoadCells, turns };
+}
+
+function addRouteCosts(left, right) {
+  return routeCost(
+    left.distance + right.distance,
+    left.newRoadCells + right.newRoadCells,
+    left.turns + right.turns
+  );
+}
+
+function compareRouteCosts(a, b) {
+  return a.distance - b.distance
+    || a.newRoadCells - b.newRoadCells
+    || a.turns - b.turns;
+}
+
+function estimateRouteCost(cost, fromId, toId) {
+  return routeCost(
+    cost.distance + routeHeuristic(fromId, toId),
+    cost.newRoadCells,
+    cost.turns
+  );
+}
+
 function compareRouteCandidates(a, b) {
-  return a.score - b.score || a.id.localeCompare(b.id);
+  return compareRouteCosts(a.score, b.score)
+    || a.key.localeCompare(b.key);
 }
 
 function getGridBounds(state) {
@@ -476,19 +537,24 @@ function getGridBounds(state) {
 
 function routeNeighbors(cellId, bounds) {
   const { column, row } = parseCellId(cellId);
-  return Object.values(DIRECTION_OFFSETS).flatMap(([dx, dy]) => {
+  return DIRECTIONS.flatMap((direction) => {
+    const [dx, dy] = DIRECTION_OFFSETS[direction];
     const nextColumn = column + dx;
     const nextRow = row + dy;
     if (nextColumn < bounds.minColumn || nextColumn > bounds.maxColumn || nextRow < bounds.minRow || nextRow > bounds.maxRow) return [];
-    return [`cell-${nextColumn}-${nextRow}`];
+    return [{ id: `cell-${nextColumn}-${nextRow}`, direction }];
   });
 }
 
-function reconstructRoute(cameFrom, current) {
-  const route = [current];
-  while (cameFrom.has(current)) {
-    current = cameFrom.get(current);
-    route.unshift(current);
+function routeStateKey(cellId, direction) {
+  return `${cellId}|${direction ?? "start"}`;
+}
+
+function reconstructRoute(cameFrom, stateCellIds, currentKey) {
+  const route = [stateCellIds.get(currentKey)];
+  while (cameFrom.has(currentKey)) {
+    currentKey = cameFrom.get(currentKey);
+    route.unshift(stateCellIds.get(currentKey));
   }
   return route;
 }
@@ -496,7 +562,7 @@ function reconstructRoute(cameFrom, current) {
 function routeHeuristic(fromId, toId) {
   const from = parseCellId(fromId);
   const to = parseCellId(toId);
-  return (Math.abs(from.column - to.column) + Math.abs(from.row - to.row)) * 0.2;
+  return Math.abs(from.column - to.column) + Math.abs(from.row - to.row);
 }
 
 function parseCellId(cellId) {
