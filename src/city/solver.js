@@ -249,15 +249,17 @@ function resolveConnectionEndpoint(state, endpoint, label) {
   const cellId = endpoint.kind === "node" ? state.nodes[endpoint.id]?.cellId : endpoint.id;
   if (!cellId || !state.cells[cellId]) return { ok: false, reason: `Unknown ${label} ${endpoint.kind} ${endpoint.id}` };
   if (endpoint.kind === "cell") {
+    const isRoadEndpoint = state.cells[cellId].infrastructure === "road"
+      || state.infrastructure[cellId]?.type === "bridge";
     return {
       ok: true,
       key: `cell:${endpoint.id}`,
       kind: "cell",
       id: endpoint.id,
       cellId,
-      footprintCells: [],
-      entrance: null,
-      entranceCellId: cellId
+      footprintCells: isRoadEndpoint ? [] : [cellId],
+      entrance: isRoadEndpoint ? null : firstRouteableDirection(state, cellId),
+      entranceCellId: isRoadEndpoint ? cellId : null
     };
   }
   return {
