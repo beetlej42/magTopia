@@ -3,10 +3,16 @@ import { createVoxelMassingLab, VOXEL_SIZE, VOXEL_WRITE_PRIORITIES } from "./vox
 
 export const MINISTRY_ASSET_ID = "ministry-tudor-001";
 export const MINISTRY_PARCEL_SIZE = 8;
+export const MINISTRY_ASSET_REVISION = 3;
+// Material roles match the existing civic buildings. Metal is an accent, not
+// a substitute for slate roofing or glazing; no asset-specific RGB palette.
+export const MINISTRY_MATERIALS = Object.freeze({
+  wall: "limestone", trim: "timber", roof: "slate", window: "warmWindow", door: "timber"
+});
 
 // Public-building grammar: a narrow reception, two jettied storeys and a garden.
 export function ministryOfMagicSpec() {
-  const materials = { wall: "limestone", trim: "timber", roof: "patinaMetal", window: "warmWindow", door: "timber" };
+  const materials = MINISTRY_MATERIALS;
   const facade = { enabled: false, openness: 0, entranceEmphasis: 0, detailDensity: 0, order: "plain" };
   const mass = (id, x, z, width, depth, base, height, cap = { type: "flat" }) => ({
     id, type: "solid", cells: [[0, 0]], dimensionsVoxels: { width, depth },
@@ -14,7 +20,7 @@ export function ministryOfMagicSpec() {
     baseYVoxels: base, heightVoxels: height, cap, materials, facade
   });
   const spec = createUrbanMassingSpec({
-    id: MINISTRY_ASSET_ID, seed: "ministry-tudor-voxel-v2", widthCells: 2, depthCells: 2,
+    id: MINISTRY_ASSET_ID, seed: "ministry-tudor-voxel-v3", widthCells: 2, depthCells: 2,
     masses: [
       mass("reception", -9, -10, 22, 23, 0, 18),
       mass("council", -9, -10, 28, 26, 18, 17),
@@ -32,7 +38,7 @@ export function ministryOfMagicSpec() {
     ],
     relations: [{ type: "stacked", from: "reception", to: "council" }, { type: "stacked", from: "council", to: "archive" }]
   });
-  return { ...spec, assetId: MINISTRY_ASSET_ID, assetRevision: 2,
+  return { ...spec, assetId: MINISTRY_ASSET_ID, assetRevision: MINISTRY_ASSET_REVISION,
     footprint: { ...spec.footprint, worldWidth: 8, worldDepth: 8 } };
 }
 
@@ -66,13 +72,18 @@ export function addMinistryVoxelDetails(buffer) {
       else if(face==="back") box(m,x+dx,y+dy,z-dz-pd+1,pw,ph,pd);
       else box(m,x+dx,y+dy,z+dz,pw,ph,pd);
     };
-    patch("timber",-1,-1,0,w+2,h+2,1);
-    patch("patinaMetal",0,0,1,w,h,1);
-    patch("warmWindow",1,1,1,Math.max(1,Math.floor(w/2)-1),Math.max(1,Math.floor(h/2)-1),1);
-    for(const dx of [0,Math.floor(w/2),w-1]) patch("timber",dx,0,1,1,h,1);
-    for(const dy of [0,Math.floor(h/2),h-1]) patch("timber",0,dy,1,w,1,1);
-    patch("sandstone",-1,-2,0,w+2,1,3);
-    patch("timber",-1,h,0,w+2,1,1);
+    // One consistent pane material across the whole window; the existing
+    // public-building daylight callback controls its emission at night.
+    patch(MINISTRY_MATERIALS.window,0,0,0,w,h,1);
+    // Glazing is inset behind a single-voxel frame, rather than buried in two
+    // nested heavy borders. Small dormers have fewer divisions than tall bays.
+    for(const dx of [-1,w]) patch("timber",dx,-1,0,1,h+2,2);
+    for(const dy of [-1,h]) patch("timber",-1,dy,0,w+2,1,2);
+    if(w>=6) patch("timber",Math.floor(w/2),0,1,1,h,1);
+    if(h>=7) patch("timber",0,Math.floor(h*.57),1,w,1,1);
+    patch("stoneShadow",-1,-2,0,w+2,1,2);
+    patch("sandstone",-1,-2,2,w+2,1,1);
+    patch("timber",-2,h+1,0,w+4,1,1);
   }
   function planter(x,z,w=9,d=5) {
     box("sandstone",x,0,z,w,3,d); box("soil",x+1,3,z+1,w-2,1,d-2);
@@ -81,8 +92,16 @@ export function addMinistryVoxelDetails(buffer) {
     }
   }
   // Paving and planting, confined to the 64 x 64 voxel parcel.
-  for(let z=4;z<29;z+=4) for(let x=-29;x<18;x+=4)
-    box((x*7+z*11)%17 ? "pavement" : "sandstone",x,0,z,3,1,3);
+  // Flush, staggered rectangular slabs instead of raised checkerboard blocks.
+  box("pavement",-30,0,4,48,1,27);
+  for(let row=0;row<9;row++) for(let col=0;col<9;col++) {
+    const x=-30+col*6+(row%2)*3, z=4+row*3;
+    if(x+5>18) continue;
+    box((row*11+col*7)%19===0?"sandstone":"pavement",x,0,z,5,1,2);
+    // Just the staggered joint endpoints: continuous dark grid lines compete
+    // with the timber facade at this voxel scale.
+    voxel("stoneShadow",x+5,0,z);
+  }
   box("grass",-31,0,27,13,1,4);
   for(const [x,y,z,w,d] of [[-21,0,-22,24,25],[-24,18,-24,30,28],[-26,35,-25,32,29],[-26,51,-25,32,29]])
     box(y===0?"sandstone":"timber",x,y,z,w,1,d);
@@ -95,6 +114,12 @@ export function addMinistryVoxelDetails(buffer) {
     line("timber",[right,bottom+1,back+2],[right,top-1,back+8]);
   }
   window(-20,23,3,6,9);
+  // One planted sill provides a small lived-in detail without repeating a
+  // flower box on every window or hiding the structural window rhythm.
+  box("timber",-20,20,5,6,1,2);
+  box("foliage",-19,21,5,4,1,2);
+  voxel("blossomPink",-19,22,6); voxel("blossomPink",-16,22,6);
+  voxel("foliage",-18,19,6);
   window(-22,39,4,7,9); window(-6,39,4,7,9);
   for(const y of [23,39]) {
     window(5,y,-17,6,9,"right"); window(5,y,-5,5,9,"right");
@@ -102,14 +127,24 @@ export function addMinistryVoxelDetails(buffer) {
     window(-20,y,-24,6,9,"back"); window(-6,y,-24,6,9,"back");
   }
   window(-18,5,2,4,8);
-  box("timber",-11,1,2,8,14,1); box("patinaMetal",-10,2,3,6,12,1);
+  box("timber",-11,1,2,8,14,1); box("timber",-10,2,3,6,12,1);
   box("warmWindow",-9,10,4,4,3,1); voxel("gildedMetal",-5,7,4);
   box("sandstone",-13,0,4,12,1,4);
-  box("patinaMetal",-3,19,3,6,13,1); box("warmWindow",-2,27,4,4,3,1);
+  box("timber",-3,19,3,6,13,1); box("warmWindow",-2,27,4,4,3,1);
+  // Recessed timber door panels and a small brass latch, not a metal slab.
+  box("timber",-9,3,4,4,4,1); box("timber",-2,20,4,4,4,1);
+  voxel("gildedMetal",1,25,4);
   line("timber",[-10,20,3],[-6,33,3]);
-  box("patinaMetal",-8,1,-23,6,13,1); box("sandstone",-10,0,-26,10,1,3);
+  box("timber",-8,1,-23,6,13,1); box("sandstone",-10,0,-26,10,1,3);
   // Jetty brackets, slender balcony posts and exterior stair.
   for(const x of [-21,2]) line("timber",[x,13,1],[x,17,5],2);
+  // Small repeated corbels make the upper jetty read as crafted joinery.
+  for(const x of [-24,-11,3]) {
+    box("timber",x,33,2,1,2,2); box("timber",x,34,4,1,1,1);
+  }
+  for(const z of [-21,-11,1]) {
+    box("timber",3,33,z,2,2,1); box("timber",5,34,z,1,1,1);
+  }
   box("timber",-4,18,3,18,1,10);
   for(const x of [-4,13]) box("timber",x,0,11,1,18,1);
   for(const x of [-4,0,4]) box("timber",x,19,12,1,6,1);
@@ -126,7 +161,7 @@ export function addMinistryVoxelDetails(buffer) {
   // Read the actual public-grammar roof heightfield so the timber edge cannot
   // drift away from its stepped roof. The gable infill sits one voxel behind.
   const roofHeights = new Map();
-  for(const v of buffer.voxels.values()) if(v.z===5 && v.y>=51 && v.materialId==="patinaMetal")
+  for(const v of buffer.voxels.values()) if(v.z===5 && v.y>=51 && v.materialId===MINISTRY_MATERIALS.roof)
     roofHeights.set(v.x,Math.max(roofHeights.get(v.x)??0,v.y));
   for(const z of [5,-26]) {
     for(const [x,y] of roofHeights) {
@@ -138,22 +173,30 @@ export function addMinistryVoxelDetails(buffer) {
   }
   window(-13,55,5,6,7);
   window(4,58,-15,5,4,"right");
+  // Compact crest and stepped eave returns, with no out-of-grid geometry.
+  for(const z of [-25,4]) {
+    box("timber",-27,50,z,3,1,2); box("timber",4,50,z,3,1,2);
+  }
   box("brickRed",-19,51,-19,4,23,4);
-  for(let y=53;y<73;y+=3) box("sandstone",-19,y,-19,4,1,4);
+  // Brick bond stays subdued; broad alternating cream stripes looked toy-like.
+  for(let y=54;y<74;y+=4) {
+    voxel("brickBrown",-19,y,-18); voxel("brickBrown",-16,y+1,-17);
+  }
   box("sandstone",-20,74,-20,6,1,6);
   box("brickRed",-19,75,-19,1,3,2); box("brickRed",-16,75,-19,1,3,2);
   // Pixel-rune banner and stepped astrolabe rings.
   box("iron",4,33,7,9,1,1); box("patinaMetal",8,26,7,5,7,1);
   for(const [dx,dy] of [[0,0],[0,1],[0,2],[0,3],[1,2],[2,1],[3,2],[4,3],[4,2],[4,1],[4,0]]) voxel("gildedMetal",8+dx,27+dy,8);
-  box("sandstone",21,0,7,9,2,9); box("stoneShadow",24,2,10,3,5,3); box("sandstone",22,7,8,7,1,7);
+  box("sandstone",22,0,7,7,2,9); box("sandstone",21,0,8,9,2,7);
+  box("stoneShadow",24,2,10,3,5,3); box("sandstone",22,7,8,7,1,7);
   const points=[];
   for(let i=0;i<=32;i++) points.push([Math.round(4*Math.cos(i*Math.PI/16)),Math.round(4*Math.sin(i*Math.PI/16))]);
   for(let i=1;i<points.length;i++) {
     const [a,b]=[points[i-1],points[i]];
-    line("gildedMetal",[25+a[0],12+a[1],11],[25+b[0],12+b[1],11]);
-    line("gildedMetal",[25+a[0],12,11+a[1]],[25+b[0],12,11+b[1]]);
+    line("patinaMetal",[25+a[0],12+a[1],11],[25+b[0],12+b[1],11]);
+    line("patinaMetal",[25+a[0],12,11+a[1]],[25+b[0],12,11+b[1]]);
   }
-  box("gildedMetal",25,8,11,1,10,1); box("tealMagic",24,11,10,3,3,3);
+  box("gildedMetal",25,8,11,1,10,1); voxel("tealMagic",25,12,11);
   planter(-28,23,11,5); planter(21,24,9,5);
   for(const z of [-20,-14,-8,-2]) crown(28,3,z,3);
   box("timber",23,0,-23,2,15,2); line("timber",[24,7,-22],[27,14,-22]);
@@ -170,8 +213,8 @@ export function createMinistryOfMagic({ cellWorldSize = 4, nightLighting = 0 } =
     nightLighting, voxelDetailPass: addMinistryVoxelDetails });
   root.name = "MinistryOfMagic";
   root.scale.setScalar(cellWorldSize / 4);
-  root.userData.contract.sourceOfTruth = "UrbanMassingSpec + ministry-tudor-v2 authored voxel detail pass";
-  root.userData = { ...root.userData, assetId: MINISTRY_ASSET_ID, assetRevision: 2,
+  root.userData.contract.sourceOfTruth = "UrbanMassingSpec + ministry-tudor-v3 authored voxel detail pass";
+  root.userData = { ...root.userData, assetId: MINISTRY_ASSET_ID, assetRevision: MINISTRY_ASSET_REVISION,
     representation: "special-landmark-voxel", sphereProjectionRoot: true,
     footprint: "2x2", entrance: "north", authoredParcelSize: 8, voxelSize: VOXEL_SIZE };
   return root;

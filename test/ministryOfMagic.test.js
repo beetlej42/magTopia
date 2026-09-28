@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
-import { createMinistryOfMagic, ministryOfMagicSpec, MINISTRY_ASSET_ID } from "../src/generators/ministryOfMagic.js";
+import { createMinistryOfMagic, ministryOfMagicSpec, addMinistryVoxelDetails, MINISTRY_ASSET_ID, MINISTRY_MATERIALS } from "../src/generators/ministryOfMagic.js";
+import { VoxelInstanceBuffer, createVoxelMassingLab } from "../src/generators/voxelBuildingLab.js";
+import { createPublicBuildingStylePreset } from "../src/generators/publicBuildingStyleComparison.js";
 import { createBuildingDesignObject, disposeBuildingObject, buildingEntranceRotation } from "../src/generators/buildingDesignObject.js";
 import { renderBuildingVisualization } from "../src/render/buildingVisualization.js";
 import { createMagicLondonStarterDistrict } from "../src/generators/magicLondonStarterDistrict.js";
@@ -90,3 +92,36 @@ function assertGeometryEqual(actual, expected) {
     assert.deepEqual(a.index.array, b.index.array);
   }
 }
+
+test("Ministry shares civic roof/window roles and uses one material across every window pane", () => {
+  const civic = createPublicBuildingStylePreset("civic_classical");
+  const hall = civic.masses.find(mass => mass.id === "opera-hall");
+  assert.equal(MINISTRY_MATERIALS.roof, hall.materials.roof);
+  assert.equal(MINISTRY_MATERIALS.window, hall.materials.window);
+  for (const mass of ministryOfMagicSpec().masses.filter(mass => mass.type === "solid")) {
+    assert.equal(mass.materials.roof, "slate");
+    assert.equal(mass.materials.window, "warmWindow");
+  }
+  const buffer = new VoxelInstanceBuffer("ministry-material-regression");
+  addMinistryVoxelDetails(buffer);
+  // Four separate panes in the front upper casement: previously just the
+  // lower-left pane was warmWindow and the rest incorrectly used patinaMetal.
+  for (const x of [-21,-17]) for (const y of [41,46]) {
+    assert.equal(buffer.getMaterialAt(x,y,4), "warmWindow");
+    assert.equal(buffer.getMaterialAt(x,y,5), null, "glass stays recessed behind the one-voxel frame");
+  }
+  assert.equal(buffer.getMaterialAt(-19,41,5), "timber", "slender mullion projects in front of the panes");
+  // Use a stock public building to compare actual shared material parameters,
+  // not just material ID strings.
+  const reference = createVoxelMassingLab({spec:civic,renderStrategy:"greedy"});
+  const ministry = createMinistryOfMagic();
+  const material = object => object.children.find(mesh => mesh.userData.materialId === "warmWindow").material;
+  assert.equal(material(ministry).color.getHex(), material(reference).color.getHex());
+  assert.equal(material(ministry).roughness, material(reference).roughness);
+  assert.equal(material(ministry).metalness, material(reference).metalness);
+  for (const nightFactor of [0,1]) {
+    ministry.userData.updateDaylight({nightFactor}); reference.userData.updateDaylight({nightFactor});
+    assert.equal(material(ministry).emissiveIntensity, material(reference).emissiveIntensity);
+  }
+  disposeBuildingObject(reference); disposeBuildingObject(ministry);
+});
