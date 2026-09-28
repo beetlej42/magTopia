@@ -3,7 +3,7 @@ import { createVoxelMassingLab, VOXEL_SIZE, VOXEL_WRITE_PRIORITIES } from "./vox
 
 export const MINISTRY_ASSET_ID = "ministry-tudor-001";
 export const MINISTRY_PARCEL_SIZE = 8;
-export const MINISTRY_ASSET_REVISION = 5;
+export const MINISTRY_ASSET_REVISION = 6;
 // Material roles match the existing civic buildings. Metal is an accent, not
 // a substitute for slate roofing or glazing; no asset-specific RGB palette.
 export const MINISTRY_MATERIALS = Object.freeze({
@@ -20,7 +20,7 @@ export function ministryOfMagicSpec() {
     baseYVoxels: base, heightVoxels: height, cap, materials, facade
   });
   const spec = createUrbanMassingSpec({
-    id: MINISTRY_ASSET_ID, seed: "ministry-tudor-voxel-v5", widthCells: 2, depthCells: 2,
+    id: MINISTRY_ASSET_ID, seed: "ministry-tudor-voxel-v6", widthCells: 2, depthCells: 2,
     masses: [
       mass("reception", -9, -10, 22, 23, 0, 18),
       mass("council", -9, -10, 28, 26, 18, 17),
@@ -111,8 +111,7 @@ export function addMinistryVoxelDetails(buffer) {
       box("timber",x,bottom,front,1,top-bottom+1,1); box("timber",x,bottom,back,1,top-bottom+1,1);
     }
     for(const x of [left,right]) for(const z of [back,-11,front]) box("timber",x,bottom,z,1,top-bottom+1,1);
-    line("timber",[left,bottom+1,back+2],[left,top-1,back+8]);
-    line("timber",[right,bottom+1,back+2],[right,top-1,back+8]);
+    for(const x of [left,right]) box("timber",x,bottom,back+5,1,top-bottom+1,1);
   }
   window(-20,23,3,5,8);
   // One planted sill provides a small lived-in detail without repeating a
@@ -123,7 +122,7 @@ export function addMinistryVoxelDetails(buffer) {
   voxel("foliage",-18,19,6);
   // One principal casement; secondary openings stay narrow and leave plaster
   // visible. Side and rear elevations get one opening per storey, not pairs.
-  window(-22,39,4,7,9); window(-5,40,4,5,8);
+  window(-13,39,4,7,9);
   for(const y of [23,39]) {
     window(5,y+1,-5,5,8,"right");
     window(y===23?-24:-26,y+1,-6,5,8,"left");
@@ -137,10 +136,14 @@ export function addMinistryVoxelDetails(buffer) {
   // Recessed timber door panels and a small brass latch, not a metal slab.
   box("timber",-9,3,4,4,4,1); box("timber",-2,20,4,4,4,1);
   voxel("gildedMetal",1,25,4);
-  line("timber",[-10,20,3],[-6,33,3]);
+  box("timber",-10,20,3,1,14,1);
   box("timber",-8,1,-23,6,13,1); box("sandstone",-10,0,-26,10,1,3);
   // Jetty brackets, slender balcony posts and exterior stair.
-  for(const x of [-21,2]) line("timber",[x,13,1],[x,17,5],2);
+  for(const x of [-21,2]) {
+    box("timber",x,15,1,2,3,2);
+    box("timber",x,16,3,2,2,1);
+    box("timber",x,17,4,2,1,2);
+  }
   // Small repeated corbels make the upper jetty read as crafted joinery.
   for(const x of [-24,-11,3]) {
     box("timber",x,33,2,1,2,2); box("timber",x,34,4,1,1,1);
@@ -177,8 +180,8 @@ export function addMinistryVoxelDetails(buffer) {
       voxel("timber",x,y,z===5?7:-27);
       if(x>=-25 && x<=4 && y>52) box("limestone",x,52,z===5?4:-24,1,y-52,1);
     }
-    box("timber",-10,52,z,1,(roofHeights.get(-10)??69)-52,1);
-    line("timber",[-21,52,z],[-10,64,z]); line("timber",[1,52,z],[-10,64,z]);
+    for(const x of [-18,-10,-2])
+      box("timber",x,52,z,1,(roofHeights.get(x)??53)-52,1);
   }
   // The dormer lights the attic; the front gable remains solid timber/plaster.
   window(4,58,-14,4,4,"right");
@@ -222,7 +225,7 @@ export function createMinistryOfMagic({ cellWorldSize = 4, nightLighting = 0 } =
     nightLighting, voxelDetailPass: addMinistryVoxelDetails });
   root.name = "MinistryOfMagic";
   root.scale.setScalar(cellWorldSize / 4);
-  root.userData.contract.sourceOfTruth = "UrbanMassingSpec + ministry-tudor-v5 authored voxel detail pass";
+  root.userData.contract.sourceOfTruth = "UrbanMassingSpec + ministry-tudor-v6 authored voxel detail pass";
   root.userData = { ...root.userData, assetId: MINISTRY_ASSET_ID, assetRevision: MINISTRY_ASSET_REVISION,
     representation: "special-landmark-voxel", sphereProjectionRoot: true,
     footprint: "2x2", entrance: "north", authoredParcelSize: 8, voxelSize: VOXEL_SIZE };

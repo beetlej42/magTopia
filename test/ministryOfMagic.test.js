@@ -106,14 +106,14 @@ test("Ministry shares civic roof/window roles and uses one material across every
   addMinistryVoxelDetails(buffer);
   // Four separate panes in the front upper casement: previously just the
   // lower-left pane was warmWindow and the rest incorrectly used patinaMetal.
-  for (const x of [-21,-17]) for (const y of [41,46]) {
+  for (const x of [-12,-8]) for (const y of [41,46]) {
     assert.equal(buffer.getMaterialAt(x,y,4), "warmWindow");
     assert.equal(buffer.getMaterialAt(x,y,5), null, "glass stays recessed behind the one-voxel frame");
   }
-  assert.equal(buffer.getMaterialAt(-19,41,5), "timber", "slender mullion projects in front of the panes");
-  assert.equal(buffer.getMaterialAt(-23,41,5), "timber");
-  assert.equal(buffer.getMaterialAt(-23,41,4), null, "frame is only one voxel deep");
-  assert.equal(buffer.getMaterialAt(-22,49,4), null, "no stacked wooden eyebrow above the frame");
+  assert.equal(buffer.getMaterialAt(-10,41,5), "timber", "slender mullion projects in front of the panes");
+  assert.equal(buffer.getMaterialAt(-14,41,5), "timber");
+  assert.equal(buffer.getMaterialAt(-14,41,4), null, "frame is only one voxel deep");
+  assert.equal(buffer.getMaterialAt(-13,49,4), null, "no stacked wooden eyebrow above the frame");
   // Use a stock public building to compare actual shared material parameters,
   // not just material ID strings.
   const reference = createVoxelMassingLab({spec:civic,renderStrategy:"greedy"});
