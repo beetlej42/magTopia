@@ -155,8 +155,10 @@ test("road-to-road connection closes the direct side of an existing U instead of
 test("equal-length road routes prefer the option that reuses more existing road", () => {
   const world = createTestWorld(7, 7);
   const state = createCityState(world, { resources: { coins: 9999 } });
+  state.cells["cell-1-1"].infrastructure = "road";
   state.cells["cell-2-1"].infrastructure = "road";
   state.cells["cell-3-1"].infrastructure = "road";
+  state.cells["cell-3-2"].infrastructure = "road";
 
   const preview = previewConnectionBetween(
     state,
@@ -166,12 +168,14 @@ test("equal-length road routes prefer the option that reuses more existing road"
 
   assert.equal(preview.feasible, true);
   assert.deepEqual(preview.route, ["cell-1-1", "cell-2-1", "cell-3-1", "cell-3-2"]);
-  assert.deepEqual(preview.roadCells, ["cell-1-1", "cell-3-2"]);
+  assert.deepEqual(preview.roadCells, []);
 });
 
 test("equal-length routes with equal road reuse prefer fewer turns", () => {
   const world = createTestWorld(7, 7);
   const state = createCityState(world, { resources: { coins: 9999 } });
+  state.cells["cell-1-1"].infrastructure = "road";
+  state.cells["cell-4-3"].infrastructure = "road";
 
   const preview = previewConnectionBetween(
     state,
