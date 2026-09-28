@@ -111,6 +111,9 @@ test("Ministry shares civic roof/window roles and uses one material across every
     assert.equal(buffer.getMaterialAt(x,y,5), null, "glass stays recessed behind the one-voxel frame");
   }
   assert.equal(buffer.getMaterialAt(-19,41,5), "timber", "slender mullion projects in front of the panes");
+  assert.equal(buffer.getMaterialAt(-23,41,5), "timber");
+  assert.equal(buffer.getMaterialAt(-23,41,4), null, "frame is only one voxel deep");
+  assert.equal(buffer.getMaterialAt(-22,49,4), null, "no stacked wooden eyebrow above the frame");
   // Use a stock public building to compare actual shared material parameters,
   // not just material ID strings.
   const reference = createVoxelMassingLab({spec:civic,renderStrategy:"greedy"});
@@ -124,4 +127,23 @@ test("Ministry shares civic roof/window roles and uses one material across every
     assert.equal(material(ministry).emissiveIntensity, material(reference).emissiveIntensity);
   }
   disposeBuildingObject(reference); disposeBuildingObject(ministry);
+});
+
+test("main roof extends four slices at both ridge ends without widening the slopes", () => {
+  let inspected = false;
+  const object = createVoxelMassingLab({spec:ministryOfMagicSpec(),renderStrategy:"greedy",voxelDetailPass(buffer) {
+    const original = [...buffer.voxels.values()].filter(v =>
+      (v.z===3 || v.z===-23) && v.y>=51 && v.materialId==="slate");
+    assert.ok(original.length>30);
+    addMinistryVoxelDetails(buffer);
+    for(const v of original) {
+      const direction = v.z===3?1:-1;
+      assert.equal(buffer.getMaterialAt(v.x,v.y,v.z+3*direction),"slate");
+      assert.ok(["slate","timber"].includes(buffer.getMaterialAt(v.x,v.y,v.z+4*direction)));
+      assert.equal(buffer.getMaterialAt(v.x,v.y,v.z+5*direction),null);
+    }
+    inspected = true;
+  }});
+  assert.ok(inspected);
+  disposeBuildingObject(object);
 });

@@ -3,7 +3,7 @@ import { createVoxelMassingLab, VOXEL_SIZE, VOXEL_WRITE_PRIORITIES } from "./vox
 
 export const MINISTRY_ASSET_ID = "ministry-tudor-001";
 export const MINISTRY_PARCEL_SIZE = 8;
-export const MINISTRY_ASSET_REVISION = 3;
+export const MINISTRY_ASSET_REVISION = 4;
 // Material roles match the existing civic buildings. Metal is an accent, not
 // a substitute for slate roofing or glazing; no asset-specific RGB palette.
 export const MINISTRY_MATERIALS = Object.freeze({
@@ -20,7 +20,7 @@ export function ministryOfMagicSpec() {
     baseYVoxels: base, heightVoxels: height, cap, materials, facade
   });
   const spec = createUrbanMassingSpec({
-    id: MINISTRY_ASSET_ID, seed: "ministry-tudor-voxel-v3", widthCells: 2, depthCells: 2,
+    id: MINISTRY_ASSET_ID, seed: "ministry-tudor-voxel-v4", widthCells: 2, depthCells: 2,
     masses: [
       mass("reception", -9, -10, 22, 23, 0, 18),
       mass("council", -9, -10, 28, 26, 18, 17),
@@ -44,6 +44,8 @@ export function ministryOfMagicSpec() {
 
 // Integer voxels only. Diagonal timbers and rings use 6-connected stair steps.
 export function addMinistryVoxelDetails(buffer) {
+  const roofEnds = [...buffer.voxels.values()].filter(v =>
+    (v.z===3 || v.z===-23) && v.y>=51 && v.materialId===MINISTRY_MATERIALS.roof);
   const write = { priority: VOXEL_WRITE_PRIORITIES.decoration, owner: "ministry:tudor-details" };
   const box = (m,x,y,z,w,h,d) => buffer.addBox(m,x,y,z,w,h,d,0,write);
   const voxel = (m,x,y,z) => buffer.addVoxel(m,x,y,z,0,write);
@@ -77,13 +79,12 @@ export function addMinistryVoxelDetails(buffer) {
     patch(MINISTRY_MATERIALS.window,0,0,0,w,h,1);
     // Glazing is inset behind a single-voxel frame, rather than buried in two
     // nested heavy borders. Small dormers have fewer divisions than tall bays.
-    for(const dx of [-1,w]) patch("timber",dx,-1,0,1,h+2,2);
-    for(const dy of [-1,h]) patch("timber",-1,dy,0,w+2,1,2);
+    for(const dx of [-1,w]) patch("timber",dx,-1,1,1,h+2,1);
+    for(const dy of [-1,h]) patch("timber",-1,dy,1,w+2,1,1);
     if(w>=6) patch("timber",Math.floor(w/2),0,1,1,h,1);
     if(h>=7) patch("timber",0,Math.floor(h*.57),1,w,1,1);
     patch("stoneShadow",-1,-2,0,w+2,1,2);
     patch("sandstone",-1,-2,2,w+2,1,1);
-    patch("timber",-2,h+1,0,w+4,1,1);
   }
   function planter(x,z,w=9,d=5) {
     box("sandstone",x,0,z,w,3,d); box("soil",x+1,3,z+1,w-2,1,d-2);
@@ -161,12 +162,18 @@ export function addMinistryVoxelDetails(buffer) {
   // Read the actual public-grammar roof heightfield so the timber edge cannot
   // drift away from its stepped roof. The gable infill sits one voxel behind.
   const roofHeights = new Map();
+  // Extend only the ridge-axis ends, preserving the stock roof cross-section
+  // and its thickness. Snapshot first: never iterate entries we are appending.
+  // The massing compiler currently keeps this cap inside its mass bounds;
+  // four added slices give two clear voxels beyond the projecting gable trim.
+  for(const v of roofEnds) for(const distance of [1,2,3,4])
+    voxel(MINISTRY_MATERIALS.roof,v.x,v.y,v.z+(v.z===3?distance:-distance));
   for(const v of buffer.voxels.values()) if(v.z===5 && v.y>=51 && v.materialId===MINISTRY_MATERIALS.roof)
     roofHeights.set(v.x,Math.max(roofHeights.get(v.x)??0,v.y));
-  for(const z of [5,-26]) {
+  for(const z of [5,-25]) {
     for(const [x,y] of roofHeights) {
-      voxel("timber",x,y,z);
-      if(x>=-25 && x<=4 && y>52) box("limestone",x,52,z===5?4:-25,1,y-52,1);
+      voxel("timber",x,y,z===5?7:-27);
+      if(x>=-25 && x<=4 && y>52) box("limestone",x,52,z===5?4:-24,1,y-52,1);
     }
     box("timber",-10,52,z,1,(roofHeights.get(-10)??69)-52,1);
     line("timber",[-21,52,z],[-10,64,z]); line("timber",[1,52,z],[-10,64,z]);
@@ -174,8 +181,8 @@ export function addMinistryVoxelDetails(buffer) {
   window(-13,55,5,6,7);
   window(4,58,-15,5,4,"right");
   // Compact crest and stepped eave returns, with no out-of-grid geometry.
-  for(const z of [-25,4]) {
-    box("timber",-27,50,z,3,1,2); box("timber",4,50,z,3,1,2);
+  for(const z of [-26,4]) {
+    box("timber",-27,50,z,3,1,4); box("timber",4,50,z,3,1,4);
   }
   box("brickRed",-19,51,-19,4,23,4);
   // Brick bond stays subdued; broad alternating cream stripes looked toy-like.
@@ -213,7 +220,7 @@ export function createMinistryOfMagic({ cellWorldSize = 4, nightLighting = 0 } =
     nightLighting, voxelDetailPass: addMinistryVoxelDetails });
   root.name = "MinistryOfMagic";
   root.scale.setScalar(cellWorldSize / 4);
-  root.userData.contract.sourceOfTruth = "UrbanMassingSpec + ministry-tudor-v3 authored voxel detail pass";
+  root.userData.contract.sourceOfTruth = "UrbanMassingSpec + ministry-tudor-v4 authored voxel detail pass";
   root.userData = { ...root.userData, assetId: MINISTRY_ASSET_ID, assetRevision: MINISTRY_ASSET_REVISION,
     representation: "special-landmark-voxel", sphereProjectionRoot: true,
     footprint: "2x2", entrance: "north", authoredParcelSize: 8, voxelSize: VOXEL_SIZE };

@@ -10,7 +10,7 @@
     "entrance": "north"
   },
   "description": "Three-storey voxel Tudor Ministry on the shared public-building grammar: jettied floors, exterior stair, forecourt and astrolabe garden. Entrance authored at +Z.",
-  "assetRevision": 3,
+  "assetRevision": 4,
   "geometryCompiler": "UrbanMassingSpec + authored voxel details",
   "voxelSize": 0.125
 }
