@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createCityState } from "../src/city/state.js";
+import { previewConnectionBetween } from "../src/city/solver.js";
 import { createCityWorkbench } from "../src/city/workbench.js";
 import { createStarterCityWorkbench } from "../src/city/scenarios.js";
 import { createRoadRenderPlan, getMagicLondonBaseTileContract } from "../src/generators/magicLondonBaseTiles.js";
@@ -123,6 +124,71 @@ test("an isolated road uses the house-facing sides as sidewalks", () => {
   const [road] = createRoadRenderPlan(workbench.getState(), world.grid);
   assert.deepEqual(road.ports, ["east", "west"]);
   assert.equal(road.topology, "straight");
+});
+
+test("road-to-road connection closes the direct side of an existing U instead of reusing the long way around", () => {
+  const world = createTestWorld(9, 9);
+  const state = createCityState(world, { resources: { coins: 9999 } });
+  for (let column = 2; column <= 6; column += 1) {
+    state.cells[`cell-${column}-2`].infrastructure = "road";
+    state.cells[`cell-${column}-6`].infrastructure = "road";
+  }
+  for (let row = 2; row <= 6; row += 1) state.cells[`cell-2-${row}`].infrastructure = "road";
+
+  const preview = previewConnectionBetween(
+    state,
+    { kind: "cell", id: "cell-6-2" },
+    { kind: "cell", id: "cell-6-6" }
+  );
+
+  assert.equal(preview.feasible, true);
+  assert.deepEqual(preview.route, [
+    "cell-6-2",
+    "cell-6-3",
+    "cell-6-4",
+    "cell-6-5",
+    "cell-6-6"
+  ]);
+  assert.deepEqual(preview.roadCells, ["cell-6-3", "cell-6-4", "cell-6-5"]);
+});
+
+test("equal-length road routes prefer the option that reuses more existing road", () => {
+  const world = createTestWorld(7, 7);
+  const state = createCityState(world, { resources: { coins: 9999 } });
+  state.cells["cell-2-1"].infrastructure = "road";
+  state.cells["cell-3-1"].infrastructure = "road";
+
+  const preview = previewConnectionBetween(
+    state,
+    { kind: "cell", id: "cell-1-1" },
+    { kind: "cell", id: "cell-3-2" }
+  );
+
+  assert.equal(preview.feasible, true);
+  assert.deepEqual(preview.route, ["cell-1-1", "cell-2-1", "cell-3-1", "cell-3-2"]);
+  assert.deepEqual(preview.roadCells, ["cell-1-1", "cell-3-2"]);
+});
+
+test("equal-length routes with equal road reuse prefer fewer turns", () => {
+  const world = createTestWorld(7, 7);
+  const state = createCityState(world, { resources: { coins: 9999 } });
+
+  const preview = previewConnectionBetween(
+    state,
+    { kind: "cell", id: "cell-1-1" },
+    { kind: "cell", id: "cell-4-3" }
+  );
+
+  assert.equal(preview.feasible, true);
+  const directions = preview.route.slice(1).map((cellId, index) => {
+    const previous = state.cells[preview.route[index]];
+    const current = state.cells[cellId];
+    return current.column !== previous.column
+      ? (current.column > previous.column ? "east" : "west")
+      : (current.row > previous.row ? "south" : "north");
+  });
+  const turns = directions.slice(1).filter((direction, index) => direction !== directions[index]).length;
+  assert.equal(turns, 1);
 });
 
 test("base tile contract advertises road ends", () => {
