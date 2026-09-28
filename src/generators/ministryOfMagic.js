@@ -3,7 +3,7 @@ import { createVoxelMassingLab, VOXEL_SIZE, VOXEL_WRITE_PRIORITIES } from "./vox
 
 export const MINISTRY_ASSET_ID = "ministry-tudor-001";
 export const MINISTRY_PARCEL_SIZE = 8;
-export const MINISTRY_ASSET_REVISION = 4;
+export const MINISTRY_ASSET_REVISION = 5;
 // Material roles match the existing civic buildings. Metal is an accent, not
 // a substitute for slate roofing or glazing; no asset-specific RGB palette.
 export const MINISTRY_MATERIALS = Object.freeze({
@@ -20,7 +20,7 @@ export function ministryOfMagicSpec() {
     baseYVoxels: base, heightVoxels: height, cap, materials, facade
   });
   const spec = createUrbanMassingSpec({
-    id: MINISTRY_ASSET_ID, seed: "ministry-tudor-voxel-v4", widthCells: 2, depthCells: 2,
+    id: MINISTRY_ASSET_ID, seed: "ministry-tudor-voxel-v5", widthCells: 2, depthCells: 2,
     masses: [
       mass("reception", -9, -10, 22, 23, 0, 18),
       mass("council", -9, -10, 28, 26, 18, 17),
@@ -114,18 +114,20 @@ export function addMinistryVoxelDetails(buffer) {
     line("timber",[left,bottom+1,back+2],[left,top-1,back+8]);
     line("timber",[right,bottom+1,back+2],[right,top-1,back+8]);
   }
-  window(-20,23,3,6,9);
+  window(-20,23,3,5,8);
   // One planted sill provides a small lived-in detail without repeating a
   // flower box on every window or hiding the structural window rhythm.
   box("timber",-20,20,5,6,1,2);
   box("foliage",-19,21,5,4,1,2);
   voxel("blossomPink",-19,22,6); voxel("blossomPink",-16,22,6);
   voxel("foliage",-18,19,6);
-  window(-22,39,4,7,9); window(-6,39,4,7,9);
+  // One principal casement; secondary openings stay narrow and leave plaster
+  // visible. Side and rear elevations get one opening per storey, not pairs.
+  window(-22,39,4,7,9); window(-5,40,4,5,8);
   for(const y of [23,39]) {
-    window(5,y,-17,6,9,"right"); window(5,y,-5,5,9,"right");
-    window(y===23?-24:-26,y,-7,6,9,"left");
-    window(-20,y,-24,6,9,"back"); window(-6,y,-24,6,9,"back");
+    window(5,y+1,-5,5,8,"right");
+    window(y===23?-24:-26,y+1,-6,5,8,"left");
+    window(y===23?-19:-5,y+1,-24,5,8,"back");
   }
   window(-18,5,2,4,8);
   box("timber",-11,1,2,8,14,1); box("timber",-10,2,3,6,12,1);
@@ -158,7 +160,7 @@ export function addMinistryVoxelDetails(buffer) {
     line("timber",[x,0,30],[x,17,12]); line("timber",[x,7,30],[x,24,12]);
     for(let i=0;i<9;i+=2) box("timber",x,2+i*2,29-i*2,1,7,1);
   }
-  window(15,7,-15,6,8,"right");
+  window(15,8,-14,4,8,"right");
   // Read the actual public-grammar roof heightfield so the timber edge cannot
   // drift away from its stepped roof. The gable infill sits one voxel behind.
   const roofHeights = new Map();
@@ -178,8 +180,8 @@ export function addMinistryVoxelDetails(buffer) {
     box("timber",-10,52,z,1,(roofHeights.get(-10)??69)-52,1);
     line("timber",[-21,52,z],[-10,64,z]); line("timber",[1,52,z],[-10,64,z]);
   }
-  window(-13,55,5,6,7);
-  window(4,58,-15,5,4,"right");
+  // The dormer lights the attic; the front gable remains solid timber/plaster.
+  window(4,58,-14,4,4,"right");
   // Compact crest and stepped eave returns, with no out-of-grid geometry.
   for(const z of [-26,4]) {
     box("timber",-27,50,z,3,1,4); box("timber",4,50,z,3,1,4);
@@ -220,7 +222,7 @@ export function createMinistryOfMagic({ cellWorldSize = 4, nightLighting = 0 } =
     nightLighting, voxelDetailPass: addMinistryVoxelDetails });
   root.name = "MinistryOfMagic";
   root.scale.setScalar(cellWorldSize / 4);
-  root.userData.contract.sourceOfTruth = "UrbanMassingSpec + ministry-tudor-v4 authored voxel detail pass";
+  root.userData.contract.sourceOfTruth = "UrbanMassingSpec + ministry-tudor-v5 authored voxel detail pass";
   root.userData = { ...root.userData, assetId: MINISTRY_ASSET_ID, assetRevision: MINISTRY_ASSET_REVISION,
     representation: "special-landmark-voxel", sphereProjectionRoot: true,
     footprint: "2x2", entrance: "north", authoredParcelSize: 8, voxelSize: VOXEL_SIZE };
