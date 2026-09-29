@@ -55,6 +55,15 @@ export function getVoxelSkyState(inputTime = 0.5, target = null) {
   return state;
 }
 
+// Shared with the shadow-casting key light, including its stylized night position.
+export function getVoxelKeyLightPosition(state, target = new THREE.Vector3()) {
+  return target.set(
+    -Math.cos(state.solarAngle) * 10,
+    0.8 + Math.max(0, state.solarHeight) * 7.2,
+    6.5
+  );
+}
+
 export function createVoxelSky(options = {}) {
   const root = new THREE.Group();
   root.name = "VoxelSky";
@@ -128,7 +137,7 @@ export function createVoxelSky(options = {}) {
   const lastState = getVoxelSkyState(options.time ?? 0.5);
   let lastCloudElapsed = Number.NaN;
 
-  function update({ time = lastState.time, elapsed = 0, camera }) {
+  function update({ time = lastState.time, elapsed = 0, camera, lightDirection = null }) {
     if (!camera) return lastState;
     const normalizedTime = wrap01(time);
     const normalizedElapsed = Number.isFinite(Number(elapsed)) ? Number(elapsed) : 0;
@@ -160,6 +169,10 @@ export function createVoxelSky(options = {}) {
     stars.material.opacity = lastState.starOpacity * (0.78 + Math.sin(normalizedElapsed * 1.6) * 0.1);
     stars.visible = stars.material.opacity > 0.01;
 
+    // Cancel the sky root's surface-up rotation: lighting uses world axes.
+    if (lightDirection) celestialPosition.copy(lightDirection);
+    else getVoxelKeyLightPosition(lastState, celestialPosition);
+    celestialPosition.normalize().applyQuaternion(inverseSkyRotation);
     positionCelestial(sun, lastState.solarAngle, lastState.sunOpacity, 178);
     positionCelestial(moon, lastState.solarAngle + Math.PI, lastState.moonOpacity, 176);
     moonColor.copy(MOON_NIGHT_COLOR).lerp(MOON_TWILIGHT_COLOR, lastState.twilight * 0.3);
@@ -200,11 +213,7 @@ export function createVoxelSky(options = {}) {
 
   function positionCelestial(object, angle, opacity, radius) {
     const elevation = Math.sin(angle);
-    const horizontal = Math.cos(angle);
-    celestialPosition.copy(forwardLocal).multiplyScalar(radius)
-      .addScaledVector(screenRight, horizontal * radius * 0.42)
-      .addScaledVector(screenUp, 10 + Math.max(0, elevation) * 40);
-    object.position.copy(celestialPosition);
+    object.position.copy(celestialPosition).multiplyScalar(radius);
     object.quaternion.copy(celestialBillboardQuaternion);
     object.visible = opacity > 0.01 && elevation > -0.16;
   }

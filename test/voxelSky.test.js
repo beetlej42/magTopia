@@ -181,3 +181,33 @@ test("cloud instance matrices update only for perceptible animation or view chan
 
   sky.userData.dispose();
 });
+
+test("celestials track the world key light independently of camera heading and surface up", () => {
+  const sky = createVoxelSky();
+  const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 500);
+  const position = new THREE.Vector3();
+  for (const time of [0, 0.25, 0.35, 0.5, 0.7, 0.75]) {
+    const direction = voxelDaylightStyle(time).sunPosition.normalize();
+    for (const up of [[0, 1, 0], [0.3, 0.9, -0.2]]) {
+      camera.up.set(...up).normalize();
+      camera.position.set(24, 30, -16);
+      for (const heading of [1, -1]) {
+        camera.lookAt(camera.position.clone().addScaledVector(direction, heading));
+        camera.updateMatrixWorld(true);
+        sky.userData.update({ time, camera, lightDirection: direction });
+        sky.updateMatrixWorld(true);
+        const body = sky.getObjectByName(time < 0.25 ? "VoxelMoon" : "VoxelSun");
+        body.getWorldPosition(position);
+        assert.ok(position.sub(camera.position).normalize().distanceTo(direction) < 1e-10);
+        body.getWorldPosition(position);
+        position.project(camera);
+        if (heading === 1) {
+          assert.ok(Math.abs(position.x) < 1e-10 && Math.abs(position.y) < 1e-10);
+        } else {
+          assert.ok(position.z > 1, "looking away should leave the celestial behind the camera");
+        }
+      }
+    }
+  }
+  sky.userData.dispose();
+});

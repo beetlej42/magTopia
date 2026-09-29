@@ -14,7 +14,7 @@ import {
   createUrbanMassingSpec,
   getUrbanMassingCatalog
 } from "./voxelMassingGrammar.js";
-import { getVoxelSkyState } from "../city/voxel-sky.js";
+import { getVoxelSkyState, getVoxelKeyLightPosition } from "../city/voxel-sky.js";
 import { sampleVoxelVertexAmbientOcclusion } from "../render/voxelAmbientOcclusion.js";
 import {
   applyStorybookSurfaceMaterial,
@@ -1521,13 +1521,7 @@ export function voxelDaylightStyle(sunTime = 0.52) {
     daylightFactor: daylight,
     twilightFactor: goldenHour,
     starOpacity: state.starOpacity,
-    sunPosition: new THREE.Vector3(
-      -Math.cos(state.solarAngle) * 10,
-      // Keep the stylized daylight lower than a physical noon sun so cast
-      // shadows remain a readable part of the voxel world's composition.
-      0.8 + Math.max(0, state.solarHeight) * 7.2,
-      6.5
-    )
+    sunPosition: getVoxelKeyLightPosition(state)
   };
 }
 

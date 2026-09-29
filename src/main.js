@@ -2280,6 +2280,7 @@ function animate() {
     voxelSky.userData.update({
       time: skyClock.time,
       elapsed: skyClock.motionElapsed,
+      lightDirection: worldSunDirection,
       camera
     });
   }
