@@ -15,6 +15,7 @@ test("alley remains on the shared voxel grid and within its parcel in all orient
   assert.equal(tower.cap.type,"spire");
   assert.ok(tower.baseYVoxels+tower.heightVoxels+tower.cap.heightVoxels>70);
   assert.ok(!masses.some(m=>m.id==="wand-dormer"));
+  assert.equal(masses.filter(m=>m.id.startsWith("wine-dormer-")).length,2);
   const model=createDiagonAlley();let triangles=0;
   model.traverse(m=>{if(!m.isMesh)return;
     triangles+=(m.geometry.index?.count??m.geometry.attributes.position.count)/3;
@@ -43,6 +44,8 @@ test("partly opening brick wall retains a narrow slit and a clear L-shaped inter
     assert.equal(buffer.getMaterialAt(-4,7,30),"brickRed","opening has displaced brick ends");
     assert.equal(buffer.getMaterialAt(-15,22,24),"shopWine");
     assert.equal(buffer.getMaterialAt(12,25,-10),"shopGreen");
+    assert.equal(buffer.getMaterialAt(-19,86,-9),"limestone","dragon has a long muzzle");
+    for(const x of [-28,-8]) assert.equal(buffer.getMaterialAt(x,95,-23),"limestone","dragon wing tips rise above the head");
   }});disposeBuildingObject(model);
 });
 

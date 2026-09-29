@@ -9,14 +9,16 @@ export function diagonAlleySpec() {
     cap:{type:"gable",heightVoxels:roofHeight,orientation},
     materials:{wall,roof:"slate",trim:"timber",window:"warmWindow"},facade:{enabled:false}
   });
-  const spec=createUrbanMassingSpec({id:DIAGON_ASSET_ID,seed:"diagon-alley-v4",widthCells:2,depthCells:2,
+  const spec=createUrbanMassingSpec({id:DIAGON_ASSET_ID,seed:"diagon-alley-v5",widthCells:2,depthCells:2,
     masses:[shop("wand-shop",-18,-1,22,52,29,"shopWine",12),
       shop("bookshop",12,-19,34,20,31,"shopGreen",10),
       shop("apothecary",21,15,18,20,17,"shopWine",9),
       shop("bookshop-tower",14,-20,12,14,16,"shopGreen",14,31),
+      shop("wine-dormer-front",-9,14,8,9,5,"shopWine",6,32,"east_west"),
+      shop("wine-dormer-middle",-9,0,8,9,5,"shopWine",6,32,"east_west"),
       {...shop("landmark-tower",-18,-19,14,16,28,"shopWine",18,29),
         cap:{type:"spire",heightVoxels:18}} ]});
-  return {...spec,assetId:DIAGON_ASSET_ID,assetRevision:4,footprint:{...spec.footprint,worldWidth:8,worldDepth:8}};
+  return {...spec,assetId:DIAGON_ASSET_ID,assetRevision:5,footprint:{...spec.footprint,worldWidth:8,worldDepth:8}};
 }
 
 export function addDiagonDetails(buffer) {
@@ -81,6 +83,12 @@ export function addDiagonDetails(buffer) {
     p(color,u-2,y+h+2,1,w+4,1,3);
     p("sandstone",u,y+Math.floor(h/2),4,w,1);
   }
+  function flowerbox(p,u,y,w) {
+    p("timber",u,y,3,w,1,2);
+    p("foliage",u+1,y+1,3,w-2,1,2);
+    for(const dx of [1,w-2]) p("blossomPink",u+dx,y+2,4,1,1);
+    p("foliage",u+2,y-1,4,1,1);
+  }
   const wand=facade(-7,-19,"right");
   const books=facade(-4,-9,"front");
   const potions=facade(12,6,"left");
@@ -88,6 +96,10 @@ export function addDiagonDetails(buffer) {
   shopfront(books,"shopGreen",30,"books");
   shopfront(potions,"shopWine",18,"potions");
   for(const u of [3,18]) oriel(wand,u,19,5,9,"shopWine");
+  for(const z of [-4,10]) window(facade(-5,z,"right"),2,33,4,4);
+  flowerbox(wand,3,16,5);
+  flowerbox(books,20,17,6);
+  flowerbox(potions,6,1,5);
   // The two-storey wine shop is the low foreground; a single rear tower
   // carries the landmark silhouette rather than a full extra storey.
   const towerFront=facade(-25,-11,"front"), towerSide=facade(-11,-27,"right");
@@ -99,9 +111,28 @@ export function addDiagonDetails(buffer) {
   }
   for(const x of [-25,-12]) box("sandstone",x,40,-11,1,15,1);
   for(const z of [-27,-12]) box("sandstone",-11,40,z,1,15,1);
-  box("patinaMetal",-19,75,-20,2,3,2);
-  box("gildedMetal",-18,78,-19,1,4,1);
-  box("gildedMetal",-20,80,-19,5,1,1);
+  // Perched pale dragon replaces the tiny weather vane. Coarse silhouette
+  // first: feet, belly, raised neck, long muzzle, paired swept wings and tail.
+  box("stoneShadow",-20,75,-21,5,2,5);
+  for(const x of [-20,-17]) box("limestone",x,77,-18,1,3,3);
+  box("limestone",-20,79,-21,5,4,7);
+  box("limestone",-19,82,-16,3,4,3);
+  box("limestone",-19,85,-14,3,3,3);
+  box("limestone",-19,86,-11,3,2,4);
+  for(const x of [-19,-17]) box("stoneShadow",x,88,-13,1,2,1);
+  box("gildedMetal",-16,87,-12,1,1,1);
+  for(let i=0;i<9;i++) {
+    box("limestone",-19+Math.floor(i/4),80-Math.floor(i/3),-22-i,2,2,1);
+  }
+  for(const sign of [-1,1]) for(let i=1;i<=10;i++) {
+    const x=-18+sign*i;
+    const y=81+Math.floor(i*.9);
+    const top=83+Math.ceil(i*1.2);
+    const z=-20-Math.floor(i/3);
+    box("stoneShadow",x,y,z,1,Math.max(1,top-y),1);
+    box("limestone",x,top,z,1,1,2);
+    if(i===4||i===7) box("limestone",x,y-1,z,1,2,1);
+  }
   const tower=facade(8,-13,"front");window(tower,3,36,5,9);
   box("shopGreen",7,32,-13,14,2,2);box("shopGreen",7,46,-13,14,2,2);
   // A tiny copper finial tops the disproportionately tall bookshop roof.
@@ -162,12 +193,18 @@ export function addDiagonDetails(buffer) {
   box("timber",25,1,-7,4,3,2);box("brickRed",26,4,-7,1,2,2);
   box("shopGreen",25,1,3,1,7,1);box("timber",24,3,3,4,5,1);
   box("sandstone",25,4,4,2,3,1);
+  // A lived-in corner: parcel crate, stock barrel and a folded shop awning.
+  box("timber",26,1,7,3,4,3);box("iron",26,2,7,3,1,3);
+  box("soil",26,5,7,3,1,3);
+  box("timber",23,1,-7,2,2,2);box("sandstone",23,3,-7,2,1,2);
+  books("shopGreen",1,12,2,7,1,4);
+  for(const u of [2,5]) books("sandstone",u,12,2,1,1,4);
 }
 
 export function createDiagonAlley({cellWorldSize=4,nightLighting=0}={}) {
   const root=createVoxelMassingLab({spec:diagonAlleySpec(),renderStrategy:"greedy",nightLighting,voxelDetailPass:addDiagonDetails});
   root.name="DiagonAlley";root.scale.setScalar(cellWorldSize/4);
-  root.userData={...root.userData,assetId:DIAGON_ASSET_ID,assetRevision:4,representation:"special-landmark-voxel",
+  root.userData={...root.userData,assetId:DIAGON_ASSET_ID,assetRevision:5,representation:"special-landmark-voxel",
     sphereProjectionRoot:true,footprint:"2x2",entrance:"north",authoredParcelSize:8,voxelSize:.125};
   return root;
 }
