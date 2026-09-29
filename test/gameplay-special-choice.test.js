@@ -221,7 +221,7 @@ test("every special structure is a unique free-placement card, including placeho
     assert.equal(card.family, "special_building");
     assert.equal(card.unique, true);
     assert.equal(card.effect.freePlacement, true);
-    assert.equal(card.structure?.placeholder ?? false, card.cardId === "ministry-of-magic" || card.cardId === "royal-botanical-greenhouse" || card.cardId === "arcane-energy-conservatory");
+    assert.equal(card.structure?.placeholder ?? false, card.cardId === "royal-botanical-greenhouse" || card.cardId === "arcane-energy-conservatory");
   }
 });
 

@@ -12,8 +12,8 @@
 // The placement pipeline stays replaceable behind `resolveSpecialStructurePreview`:
 // it currently returns a `{ kind: "voxel-spec" }` preview source rendered from
 // the grammar, but the long-term rule is that card-bound special structures are
-// fixed landmark prefabs. A future `cardId -> prefab/asset factory` only needs
-// to return a new preview source kind (e.g. `{ kind: "prefab", object }`) from
+// fixed landmark prefabs. Ministry now returns a `{ kind: "prefab", spec }`
+// source from
 // this resolver — placement session/target state and the ghost renderer consume
 // the normalized source, so no placement logic needs to be rewritten. The voxel
 // spec is the accepted MVP/fallback that remains behind that boundary.
@@ -24,12 +24,16 @@
 
 import { createBuildingSpec } from "../generators/voxelBuildingGrammar.js";
 import { createVoxelBuildingFromSpec, VOXEL_SIZE } from "../generators/voxelBuildingLab.js";
+import { createMinistryOfMagic, ministryOfMagicSpec, MINISTRY_ASSET_ID } from "../generators/ministryOfMagic.js";
 
 // Factory boundary for the placement preview. Returns a normalized preview
 // source the ghost renderer understands. Swap/expand this to introduce a
 // `cardId -> prefab/asset factory` without touching placement state or target
 // resolution.
 export function resolveSpecialStructurePreview({ card = {}, cellWorldSize = 4 } = {}) {
+  if (card.card_id === "ministry-of-magic" && card.structure?.footprint === "2x2") {
+    return { kind: "prefab", cardId: card.card_id, spec: ministryOfMagicSpec() };
+  }
   return {
     kind: "voxel-spec",
     cardId: card.card_id ?? null,
@@ -105,6 +109,7 @@ export function createSpecialStructurePreviewSpec(card = {}, cellWorldSize = 4) 
 // uses for voxel buildings). The placement layer replaces the materials with a
 // translucent ghost material before display.
 export function createSpecialStructurePreview(spec) {
+  if (spec?.assetId === MINISTRY_ASSET_ID) return createMinistryOfMagic();
   if (!spec?.specVersion || !spec?.floorSpecs?.length) {
     throw new Error("A complete BuildingSpec is required for the special structure preview");
   }

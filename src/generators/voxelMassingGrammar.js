@@ -1107,6 +1107,7 @@ function normalizeVoid(source = {}, index) {
 
 function normalizeFacadeIntent(source = {}, massType) {
   return {
+    ...(source.enabled === false ? { enabled: false } : {}),
     symmetry: clampNumber(source.symmetry ?? 0.7, 0, 1),
     openness: clampNumber(source.openness ?? (massType === "open" ? 1 : massType === "framed" ? 0.85 : 0.42), 0, 1),
     transparency: clampNumber(source.transparency ?? (massType === "framed" ? 0.9 : 0), 0, 1),

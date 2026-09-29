@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { PNG } from "pngjs";
 import { buildingEntranceRotation, createBuildingDesignObject, disposeBuildingObject } from "../generators/buildingDesignObject.js";
 import { VOXEL_SIZE } from "../generators/voxelBuildingLab.js";
+import { MINISTRY_ASSET_ID } from "../generators/ministryOfMagic.js";
 
 export const BUILDING_VISUALIZATION_VERSION = "1";
 export const BUILDING_VISUALIZATION_VIEWS = Object.freeze(["front", "back", "top"]);
@@ -25,7 +26,7 @@ export function visualizationOptions({ view = "front", size = 512 } = {}) {
 export function visualizationDesign(input) {
   if (input?.generation?.sourceSpec) return input;
   const spec = input?.sourceSpec ?? input;
-  const mode = Array.isArray(spec?.floorSpecs) ? "floor_stack" : Array.isArray(spec?.masses) ? "urban_massing" : null;
+  const mode = spec?.assetId === MINISTRY_ASSET_ID ? "landmark_prefab" : Array.isArray(spec?.floorSpecs) ? "floor_stack" : Array.isArray(spec?.masses) ? "urban_massing" : null;
   if (!mode) throw new Error("Expected a BuildingDesign, BuildingSpec or UrbanMassingSpec");
   return { generation: { mode, sourceSpec: spec }, decorations: input.decorations, site: input.site ?? { entrance: "south" } };
 }

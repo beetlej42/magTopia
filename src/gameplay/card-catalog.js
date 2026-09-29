@@ -92,7 +92,7 @@ export const SPECIAL_STRUCTURES = Object.freeze({
     footprint: "2x2",
     purpose: "special_structure",
     canonicalProgram: "ministry_of_magic",
-    placeholder: true
+    placeholder: false
   }),
   "royal-botanical-greenhouse": Object.freeze({
     archetype: "special_structure",
@@ -134,9 +134,9 @@ export const CARD_CATALOG = Object.freeze([
     "ministry-of-magic",
     CARD_TYPES.special_structure,
     "Ministry of Magic",
-    "A system-owned civic placeholder that grants one free special-structure placement, unlocks Arcane Officer recruitment, and supplies the first officer slot once built.",
+    "A three-storey timber-framed Ministry with a garden courtyard. Grants one free special-structure placement, unlocks Arcane Officer recruitment, and supplies the first officer slot once built.",
     { kind: "special_structure", magicLevel: 0.5, canonicalProgram: "ministry_of_magic", freePlacement: true, governance: true },
-    { choiceKind: CARD_CHOICE_KINDS.special, family: "special_building", unique: true, decisionMode: CARD_DECISION_MODES.player_place, structure: SPECIAL_STRUCTURES["ministry-of-magic"], metadata: { placeholder: true, canonicalProgram: "ministry_of_magic" } }
+    { choiceKind: CARD_CHOICE_KINDS.special, family: "special_building", unique: true, decisionMode: CARD_DECISION_MODES.player_place, structure: SPECIAL_STRUCTURES["ministry-of-magic"], metadata: { placeholder: false, canonicalProgram: "ministry_of_magic" } }
   ),
   card(
     "diagon-alley-entrance",

@@ -1,0 +1,16 @@
+{
+  "assetId": "ministry-tudor-001",
+  "specVersion": "1.0",
+  "id": "ministry-tudor-001",
+  "footprint": {
+    "worldWidth": 8,
+    "worldDepth": 8
+  },
+  "site": {
+    "entrance": "north"
+  },
+  "description": "Three-storey voxel Tudor Ministry on the shared public-building grammar: jettied floors, exterior stair, forecourt and astrolabe garden. Entrance authored at +Z.",
+  "assetRevision": 7,
+  "geometryCompiler": "UrbanMassingSpec + authored voxel details",
+  "voxelSize": 0.125
+}

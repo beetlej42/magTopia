@@ -145,12 +145,15 @@ export function createCityPlacementLayer() {
       const bounds = new THREE.Box3().setFromObject(cachedPreviewObject);
       const center = bounds.getCenter(new THREE.Vector3());
       cachedPreviewObject.position.sub(center);
+      const replacedMaterials = new Set();
       cachedPreviewObject.traverse((object) => {
         object.userData.previewCached = true;
         if (!object.isMesh) return;
+        for (const material of Array.isArray(object.material) ? object.material : [object.material]) replacedMaterials.add(material);
         object.material = ghostMaterial;
         object.castShadow = false;
       });
+      replacedMaterials.forEach(material => material?.dispose());
     } catch {
       cachedPreviewObject = null;
       cachedPreviewSpec = null;
@@ -172,8 +175,8 @@ export function createCityPlacementLayer() {
     const isLegal = Boolean(target.isLegal);
     const color = isLegal ? VALID_COLOR : INVALID_COLOR;
     const source = target.previewSource ?? null;
-    const spec = source?.kind === "voxel-spec" ? source.spec : null;
-    const sourceKey = source?.kind === "voxel-spec" ? `voxel:${source.spec?.id ?? ""}` : (source?.kind ?? "massing");
+    const spec = ["voxel-spec", "prefab"].includes(source?.kind) ? source.spec : null;
+    const sourceKey = spec ? `${source.kind}:${spec.id ?? ""}` : (source?.kind ?? "massing");
     const key = [
       target.lotId ?? "",
       target.footprintColumns ?? 0,
@@ -197,7 +200,7 @@ export function createCityPlacementLayer() {
 
     const preview = spec ? getCachedPreview(spec) : null;
     if (preview) {
-      ghost.userData.ghostMode = "voxel-building-preview";
+      ghost.userData.ghostMode = source.kind === "prefab" ? "landmark-prefab-preview" : "voxel-building-preview";
       placeVoxelPreview(ghost, preview, spec, target);
     } else {
       ghost.userData.ghostMode = "massing-voxel-fallback";
@@ -228,7 +231,7 @@ export function createCityPlacementLayer() {
       cz += Number(cell.centerZ) / target.cells.length;
     }
     const scale = previewFootprintScale(spec, target.footprintColumns, target.footprintRows, cellWorldSize);
-    preview.scale.set(scale.x, 1, scale.z);
+    preview.scale.set(scale.x, spec.assetId ? scale.x : 1, scale.z);
     // Entrance yaw (matching the city renderer) is a local +Y rotation composed
     // after the sphere orientation, so the door faces the requested entrance
     // while the building stays upright on the surface.
