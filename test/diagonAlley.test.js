@@ -44,8 +44,9 @@ test("partly opening brick wall retains a narrow slit and a clear L-shaped inter
     assert.equal(buffer.getMaterialAt(-4,7,30),"brickRed","opening has displaced brick ends");
     assert.equal(buffer.getMaterialAt(-15,22,24),"shopWine");
     assert.equal(buffer.getMaterialAt(12,25,-10),"shopGreen");
-    assert.equal(buffer.getMaterialAt(-19,86,-9),"limestone","dragon has a long muzzle");
-    for(const x of [-28,-8]) assert.equal(buffer.getMaterialAt(x,95,-23),"limestone","dragon wing tips rise above the head");
+    assert.equal(buffer.getMaterialAt(-19,76,-6),"limestone","dragon has a long muzzle");
+    for(const x of [-28,-8]) assert.equal(buffer.getMaterialAt(x,84,-19),"limestone","lowered wing tips rise above the head");
+    assert.equal(buffer.getMaterialAt(-20,75,-21),null,"old peak pedestal has been removed");
   }});disposeBuildingObject(model);
 });
 
