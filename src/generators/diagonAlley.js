@@ -9,7 +9,7 @@ export function diagonAlleySpec() {
     cap:{type:"gable",heightVoxels:roofHeight,orientation},
     materials:{wall,roof:"slate",trim:"timber",window:"warmWindow"},facade:{enabled:false}
   });
-  const spec=createUrbanMassingSpec({id:DIAGON_ASSET_ID,seed:"diagon-alley-v6",widthCells:2,depthCells:2,
+  const spec=createUrbanMassingSpec({id:DIAGON_ASSET_ID,seed:"diagon-alley-v7",widthCells:2,depthCells:2,
     masses:[shop("wand-shop",-18,-1,22,52,29,"shopWine",12),
       shop("bookshop",12,-19,34,20,31,"shopGreen",10),
       shop("apothecary",21,15,18,20,17,"shopWine",9),
@@ -18,7 +18,7 @@ export function diagonAlleySpec() {
       shop("wine-dormer-middle",-9,0,8,9,5,"shopWine",6,32,"east_west"),
       {...shop("landmark-tower",-18,-19,14,16,28,"shopWine",18,29),
         cap:{type:"spire",heightVoxels:18}} ]});
-  return {...spec,assetId:DIAGON_ASSET_ID,assetRevision:6,footprint:{...spec.footprint,worldWidth:8,worldDepth:8}};
+  return {...spec,assetId:DIAGON_ASSET_ID,assetRevision:7,footprint:{...spec.footprint,worldWidth:8,worldDepth:8}};
 }
 
 export function addDiagonDetails(buffer) {
@@ -96,6 +96,8 @@ export function addDiagonDetails(buffer) {
   const books=facade(-4,-9,"front");
   const potions=facade(12,6,"left");
   shopfront(wand,"shopWine",26,"wands");
+  // Continue the interior retail frontage right up to the concealed entrance.
+  shopfront(facade(-7,10,"right"),"shopWine",14,"wands");
   shopfront(books,"shopGreen",30,"books");
   shopfront(potions,"shopWine",18,"potions");
   for(const u of [3,18]) oriel(wand,u,19,5,9,"shopWine");
@@ -114,35 +116,37 @@ export function addDiagonDetails(buffer) {
   }
   for(const x of [-25,-12]) box("sandstone",x,40,-11,1,15,1);
   for(const z of [-27,-12]) box("sandstone",-11,40,z,1,15,1);
-  // The dragon hugs the forward slope; there is no pedestal on the peak.
-  // Feet and curling tail follow the actual compiled roof heightfield.
-  box("limestone",-20,67,-18,5,5,8);
-  box("limestone",-19,71,-13,3,5,3);
-  box("limestone",-19,75,-11,3,3,3);
-  box("limestone",-19,76,-8,3,2,4);
-  for(const x of [-19,-17]) box("stoneShadow",x,78,-10,1,2,1);
-  box("gildedMetal",-16,77,-9,1,1,1);
-  for(const x of [-22,-15]) {
-    const footY=(spireSurface.get(`${x},-15`)??60)+1;
-    box("limestone",x,footY,-15,2,2,3);
-    box("limestone",x,footY+2,-15,2,Math.max(1,69-footY),2);
-    box("limestone",Math.min(x,-20),69,-15,Math.abs(x+20)+2,2,2);
+  // Prone dragon: its belly follows the roof, not an upright torso.
+  const roofY=(x,z)=>(spireSurface.get(`${x},${z}`)??57)+1;
+  for(let z=-20;z<=-13;z++) for(let x=-20;x<=-16;x++)
+    box("limestone",x,roofY(x,z),z,1,3,1);
+  // Low bent neck turns outward into the alley; muzzle points across the roof.
+  box("limestone",-18,66,-13,4,3,3);
+  box("limestone",-15,67,-13,4,3,3);
+  box("limestone",-12,67,-12,4,2,2);
+  for(const z of [-13,-11]) box("stoneShadow",-15,70,z,1,2,1);
+  box("gildedMetal",-13,69,-10,1,1,1);
+  // Four spread claws clasp the sloping slate on either side of the belly.
+  for(const z of [-18,-13]) for(const x of [-22,-15]) {
+    const y=roofY(x,z);
+    box("limestone",x,y,z,2,2,2);
+    box("limestone",x===-22?x+1:x-1,y+1,z,2,3,2);
+    box("stoneShadow",x,y,z+2,2,1,1);
   }
   const tail=[[-19,-19],[-20,-19],[-21,-19],[-21,-20],[-22,-20],[-23,-20],[-23,-21],[-24,-21],[-24,-22],[-24,-23],[-24,-24],[-23,-24],[-23,-25],[-22,-25],[-21,-25]];
-  let previousY=69;
+  let previousY=roofY(-19,-19);
   for(const [x,z] of tail) {
     const y=(spireSurface.get(`${x},${z}`)??57)+1;
     box("limestone",x,Math.min(y,previousY),z,2,Math.abs(y-previousY)+2,2);
     previousY=y;
   }
-  for(const sign of [-1,1]) for(let i=1;i<=10;i++) {
-    const x=-18+sign*i;
-    const y=70+Math.floor(i*.9);
-    const top=72+Math.ceil(i*1.2);
-    const z=-16-Math.floor(i/3);
-    box("stoneShadow",x,y,z,1,Math.max(1,top-y),1);
-    box("limestone",x,top,z,1,1,2);
-    if(i===4||i===7) box("limestone",x,y-1,z,1,2,1);
+  // Folded wings run lengthwise beside the back, tapering toward the tail.
+  for(const sign of [-1,1]) for(let i=0;i<9;i++) {
+    const z=-14-i, x=-18+sign*(i<4?4:3);
+    const y=roofY(x,z)+3;
+    const h=i<4?4:Math.max(1,8-i);
+    box("stoneShadow",x,y,z,2,h,1);
+    box("limestone",x,y+h,z,2,1,1);
   }
   const tower=facade(8,-13,"front");window(tower,3,36,5,9);
   box("shopGreen",7,32,-13,14,2,2);box("shopGreen",7,46,-13,14,2,2);
@@ -215,7 +219,7 @@ export function addDiagonDetails(buffer) {
 export function createDiagonAlley({cellWorldSize=4,nightLighting=0}={}) {
   const root=createVoxelMassingLab({spec:diagonAlleySpec(),renderStrategy:"greedy",nightLighting,voxelDetailPass:addDiagonDetails});
   root.name="DiagonAlley";root.scale.setScalar(cellWorldSize/4);
-  root.userData={...root.userData,assetId:DIAGON_ASSET_ID,assetRevision:6,representation:"special-landmark-voxel",
+  root.userData={...root.userData,assetId:DIAGON_ASSET_ID,assetRevision:7,representation:"special-landmark-voxel",
     sphereProjectionRoot:true,footprint:"2x2",entrance:"north",authoredParcelSize:8,voxelSize:.125};
   return root;
 }
