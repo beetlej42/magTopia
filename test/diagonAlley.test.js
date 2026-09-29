@@ -23,11 +23,15 @@ test("alley remains on the shared voxel grid and within its parcel in all orient
   disposeBuildingObject(model);
 });
 
-test("brick gateway and internal lane have continuous clear walking headroom",()=>{
+test("closed secret wall conceals a continuous L-shaped internal lane",()=>{
   const model=createVoxelMassingLab({spec:diagonAlleySpec(),renderStrategy:"greedy",voxelDetailPass(buffer){
     addDiagonDetails(buffer);
-    for(let z=-2;z<=30;z++) for(let x=-2;x<=2;x++) for(let y=1;y<=9;y++)
+    for(let z=-2;z<=25;z++) for(let x=0;x<=3;x++) for(let y=1;y<=9;y++)
       assert.equal(buffer.getMaterialAt(x,y,z),null,`blocked route at ${x},${y},${z}`);
+    for(let x=0;x<=27;x++) for(let z=-2;z<=1;z++) for(let y=1;y<=9;y++)
+      assert.equal(buffer.getMaterialAt(x,y,z),null,`blocked bend at ${x},${y},${z}`);
+    for(let x=-29;x<=29;x++) for(let y=1;y<=18;y++)
+      assert.ok(buffer.getMaterialAt(x,y,26),"front brick wall must have no open gateway");
   }});disposeBuildingObject(model);
 });
 
