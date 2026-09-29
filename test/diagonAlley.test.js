@@ -9,6 +9,12 @@ import {createMagicLondonStarterDistrict} from "../src/generators/magicLondonSta
 import {renderBuildingVisualization} from "../src/render/buildingVisualization.js";
 
 test("alley remains on the shared voxel grid and within its parcel in all orientations",()=>{
+  const masses=diagonAlleySpec().masses;
+  assert.equal(masses.find(m=>m.id==="wand-shop").heightVoxels,29);
+  const tower=masses.find(m=>m.id==="landmark-tower");
+  assert.equal(tower.cap.type,"spire");
+  assert.ok(tower.baseYVoxels+tower.heightVoxels+tower.cap.heightVoxels>70);
+  assert.ok(!masses.some(m=>m.id==="wand-dormer"));
   const model=createDiagonAlley();let triangles=0;
   model.traverse(m=>{if(!m.isMesh)return;
     triangles+=(m.geometry.index?.count??m.geometry.attributes.position.count)/3;

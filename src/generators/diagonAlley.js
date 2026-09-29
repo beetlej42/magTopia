@@ -9,13 +9,14 @@ export function diagonAlleySpec() {
     cap:{type:"gable",heightVoxels:roofHeight,orientation},
     materials:{wall,roof:"slate",trim:"timber",window:"warmWindow"},facade:{enabled:false}
   });
-  const spec=createUrbanMassingSpec({id:DIAGON_ASSET_ID,seed:"diagon-alley-v3",widthCells:2,depthCells:2,
-    masses:[shop("wand-shop",-18,-1,22,52,44,"shopWine",17),
+  const spec=createUrbanMassingSpec({id:DIAGON_ASSET_ID,seed:"diagon-alley-v4",widthCells:2,depthCells:2,
+    masses:[shop("wand-shop",-18,-1,22,52,29,"shopWine",12),
       shop("bookshop",12,-19,34,20,31,"shopGreen",10),
       shop("apothecary",21,15,18,20,17,"shopWine",9),
       shop("bookshop-tower",14,-20,12,14,16,"shopGreen",14,31),
-      shop("wand-dormer",-8,-4,10,12,8,"shopWine",7,48,"east_west") ]});
-  return {...spec,assetId:DIAGON_ASSET_ID,assetRevision:3,footprint:{...spec.footprint,worldWidth:8,worldDepth:8}};
+      {...shop("landmark-tower",-18,-19,14,16,28,"shopWine",18,29),
+        cap:{type:"spire",heightVoxels:18}} ]});
+  return {...spec,assetId:DIAGON_ASSET_ID,assetRevision:4,footprint:{...spec.footprint,worldWidth:8,worldDepth:8}};
 }
 
 export function addDiagonDetails(buffer) {
@@ -87,13 +88,20 @@ export function addDiagonDetails(buffer) {
   shopfront(books,"shopGreen",30,"books");
   shopfront(potions,"shopWine",18,"potions");
   for(const u of [3,18]) oriel(wand,u,19,5,9,"shopWine");
-  // A hanging upper room and projecting casements exaggerate the silhouette
-  // without diagonal geometry or occupying the walking lane at ground level.
-  box("shopWine",-7,31,-17,4,13,24);
-  box("timber",-7,30,-18,5,1,26);box("slate",-7,44,-18,5,2,26);
-  const jetty=facade(-3,-17,"right");
-  for(const u of [3,17]) oriel(jetty,u,33,5,9,"shopWine");
-  const dormer=facade(-3,-10,"right");window(dormer,3,49,5,6);
+  // The two-storey wine shop is the low foreground; a single rear tower
+  // carries the landmark silhouette rather than a full extra storey.
+  const towerFront=facade(-25,-11,"front"), towerSide=facade(-11,-27,"right");
+  oriel(towerFront,4,41,6,12,"shopWine");
+  oriel(towerSide,5,41,6,12,"shopWine");
+  for(const y of [39,55]) {
+    box("sandstone",-26,y,-28,16,1,18);
+    if(y===55) box("shopWine",-25,y+1,-27,14,1,16);
+  }
+  for(const x of [-25,-12]) box("sandstone",x,40,-11,1,15,1);
+  for(const z of [-27,-12]) box("sandstone",-11,40,z,1,15,1);
+  box("patinaMetal",-19,75,-20,2,3,2);
+  box("gildedMetal",-18,78,-19,1,4,1);
+  box("gildedMetal",-20,80,-19,5,1,1);
   const tower=facade(8,-13,"front");window(tower,3,36,5,9);
   box("shopGreen",7,32,-13,14,2,2);box("shopGreen",7,46,-13,14,2,2);
   // A tiny copper finial tops the disproportionately tall bookshop roof.
@@ -115,21 +123,23 @@ export function addDiagonDetails(buffer) {
   }
   // Street-facing end elevations, with fewer windows than the shop fronts.
   const wandEnd=facade(-29,25,"front");
-  for(const y of [21,35]) window(wandEnd,8,y,5,6);
+  window(wandEnd,8,21,5,6);
   // Restrained service elevations keep the asset complete when the city rotates.
   const rearWand=facade(-29,-7,"left"), rearBooks=facade(-5,-30,"back");
-  for(const y of [20,34]) window(rearWand,0,y,4,6);
+  window(rearWand,0,20,4,6);
+  window(facade(-25,-27,"back"),4,43,5,8);
+  window(facade(-25,-23,"left"),0,43,5,8);
   for(const u of [6,23]) window(rearBooks,u,21,4,6);
   rearBooks("timber",15,1,0,5,11);rearBooks("iron",19,5,1,1,1);
-  box("iron",-30,1,-23,1,42,1);box("iron",27,1,-30,1,29,1);
-  for(const [x,z,w,d,levels] of [[-29,-27,22,52,[15,30,43]],[-5,-29,34,20,[16,30]],[12,5,18,20,[16]]]) {
+  box("iron",-30,1,-23,1,28,1);box("iron",27,1,-30,1,29,1);
+  for(const [x,z,w,d,levels] of [[-29,-27,22,52,[15,28]],[-5,-29,34,20,[16,30]],[12,5,18,20,[16]]]) {
     for(const y of levels) {
       box("stoneShadow",x-1,y,z-1,w+2,1,1);box("stoneShadow",x-1,y,z+d,w+2,1,1);
       box("stoneShadow",x-1,y,z,1,1,d);box("stoneShadow",x+w,y,z,1,1,d);
     }
   }
   // Chimneys give the grouped roofs a recognisable old-London silhouette.
-  for(const [x,z,y,h] of [[-25,-20,44,18],[22,-24,31,16],[25,8,14,12]]) {
+  for(const [x,z,y,h] of [[22,-24,31,16],[25,8,14,12]]) {
     box("brickBrown",x,y,z,3,h,3);box("stoneShadow",x-1,y+h,z-1,5,1,5);
     box("brickRed",x,y+h+1,z,1,3,1);box("brickRed",x+2,y+h+1,z+2,1,3,1);
   }
@@ -157,7 +167,7 @@ export function addDiagonDetails(buffer) {
 export function createDiagonAlley({cellWorldSize=4,nightLighting=0}={}) {
   const root=createVoxelMassingLab({spec:diagonAlleySpec(),renderStrategy:"greedy",nightLighting,voxelDetailPass:addDiagonDetails});
   root.name="DiagonAlley";root.scale.setScalar(cellWorldSize/4);
-  root.userData={...root.userData,assetId:DIAGON_ASSET_ID,assetRevision:3,representation:"special-landmark-voxel",
+  root.userData={...root.userData,assetId:DIAGON_ASSET_ID,assetRevision:4,representation:"special-landmark-voxel",
     sphereProjectionRoot:true,footprint:"2x2",entrance:"north",authoredParcelSize:8,voxelSize:.125};
   return root;
 }
