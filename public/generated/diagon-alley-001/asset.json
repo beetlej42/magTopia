@@ -1,0 +1,10 @@
+{
+  "assetId": "diagon-alley-001",
+  "id": "diagon-alley-001",
+  "assetRevision": 1,
+  "specVersion": "1.0",
+  "footprint": {"worldWidth": 8, "worldDepth": 8},
+  "site": {"entrance": "north"},
+  "description": "A hidden brick entrance and three stepped wizarding shops enclosing a cobbled alley.",
+  "voxelSize": 0.125
+}

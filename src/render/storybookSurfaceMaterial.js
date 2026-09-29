@@ -23,6 +23,8 @@ const MATERIAL_KIND_BY_ID = Object.freeze({
   stoneShadow: STORYBOOK_SURFACE_KINDS.stone,
   slate: STORYBOOK_SURFACE_KINDS.slate,
   timber: STORYBOOK_SURFACE_KINDS.painted,
+  shopGreen: STORYBOOK_SURFACE_KINDS.painted,
+  shopWine: STORYBOOK_SURFACE_KINDS.painted,
   iron: STORYBOOK_SURFACE_KINDS.painted,
   patinaMetal: STORYBOOK_SURFACE_KINDS.painted,
   pavement: STORYBOOK_SURFACE_KINDS.stone,
