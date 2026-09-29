@@ -9,13 +9,13 @@ export function diagonAlleySpec() {
     cap:{type:"gable",heightVoxels:roofHeight,orientation},
     materials:{wall,roof:"slate",trim:"timber",window:"warmWindow"},facade:{enabled:false}
   });
-  const spec=createUrbanMassingSpec({id:DIAGON_ASSET_ID,seed:"diagon-alley-v2",widthCells:2,depthCells:2,
-    masses:[shop("wand-shop",-18,-1,22,52,44,"stoneShadow",17),
-      shop("bookshop",12,-19,34,20,31,"pavement",10),
-      shop("apothecary",21,15,18,20,17,"brickBrown",9),
-      shop("bookshop-tower",14,-20,12,14,16,"pavement",14,31),
-      shop("wand-dormer",-8,-4,10,12,8,"stoneShadow",7,48,"east_west") ]});
-  return {...spec,assetId:DIAGON_ASSET_ID,assetRevision:2,footprint:{...spec.footprint,worldWidth:8,worldDepth:8}};
+  const spec=createUrbanMassingSpec({id:DIAGON_ASSET_ID,seed:"diagon-alley-v3",widthCells:2,depthCells:2,
+    masses:[shop("wand-shop",-18,-1,22,52,44,"shopWine",17),
+      shop("bookshop",12,-19,34,20,31,"shopGreen",10),
+      shop("apothecary",21,15,18,20,17,"shopWine",9),
+      shop("bookshop-tower",14,-20,12,14,16,"shopGreen",14,31),
+      shop("wand-dormer",-8,-4,10,12,8,"shopWine",7,48,"east_west") ]});
+  return {...spec,assetId:DIAGON_ASSET_ID,assetRevision:3,footprint:{...spec.footprint,worldWidth:8,worldDepth:8}};
 }
 
 export function addDiagonDetails(buffer) {
@@ -70,25 +70,49 @@ export function addDiagonDetails(buffer) {
     p("sandstone",width-3,13,7,1,3);
     if(kind==="books") p("sandstone",width-1,13,7,1,3);
   }
+  function oriel(p,u,y,w,h,color) {
+    p(color,u-1,y-2,0,w+2,h+4,3);
+    p("warmWindow",u,y,3,w,h);
+    for(let dx=0;dx<=w;dx+=3) p("sandstone",u+dx,y,4,1,h);
+    p("sandstone",u-1,y-1,3,w+2,1,2);
+    p("sandstone",u-1,y+h,3,w+2,1,2);
+    p("gildedMetal",u,y+h+1,3,w,1);
+    p(color,u-2,y+h+2,1,w+4,1,3);
+    p("sandstone",u,y+Math.floor(h/2),4,w,1);
+  }
   const wand=facade(-7,-19,"right");
   const books=facade(-4,-9,"front");
   const potions=facade(12,6,"left");
-  shopfront(wand,"timber",26,"wands");
+  shopfront(wand,"shopWine",26,"wands");
   shopfront(books,"shopGreen",30,"books");
   shopfront(potions,"shopWine",18,"potions");
-  for(const u of [3,18]) window(wand,u,20);
+  for(const u of [3,18]) oriel(wand,u,19,5,9,"shopWine");
   // A hanging upper room and projecting casements exaggerate the silhouette
   // without diagonal geometry or occupying the walking lane at ground level.
-  box("stoneShadow",-7,31,-17,4,13,24);
+  box("shopWine",-7,31,-17,4,13,24);
   box("timber",-7,30,-18,5,1,26);box("slate",-7,44,-18,5,2,26);
   const jetty=facade(-3,-17,"right");
-  for(const u of [3,17]) window(jetty,u,34,5,8);
+  for(const u of [3,17]) oriel(jetty,u,33,5,9,"shopWine");
   const dormer=facade(-3,-10,"right");window(dormer,3,49,5,6);
   const tower=facade(8,-13,"front");window(tower,3,36,5,9);
   box("shopGreen",7,32,-13,14,2,2);box("shopGreen",7,46,-13,14,2,2);
   // A tiny copper finial tops the disproportionately tall bookshop roof.
   box("patinaMetal",13,60,-21,2,4,2);box("gildedMetal",13,64,-21,1,2,1);
-  for(const u of [3,20]) window(books,u,21,5,6);
+  for(const u of [3,20]) oriel(books,u,20,6,8,"shopGreen");
+  // Slender painted pilasters tie the retail colour through the full facade.
+  for(const u of [0,15,32]) books("sandstone",u,17,1,1,13);
+  for(const u of [0,12,27]) wand("sandstone",u,17,1,1,12);
+  // Two small stepped turrets echo the reference's clustered spires while
+  // remaining integer voxels and keeping the central roof dominant.
+  for(const x of [0,24]) {
+    box("shopGreen",x,26,-17,5,13,6);
+    box("sandstone",x-1,37,-18,7,1,8);
+    box("warmWindow",x+1,30,-11,2,5,1);
+    box("sandstone",x+2,30,-10,1,5,1);
+    for(let level=0;level<3;level++)
+      box("slate",x-1+level,39+level*3,-18+level,7-level*2,3,8-level*2);
+    box("gildedMetal",x+2,48,-15,1,3,1);
+  }
   // Street-facing end elevations, with fewer windows than the shop fronts.
   const wandEnd=facade(-29,25,"front");
   for(const y of [21,35]) window(wandEnd,8,y,5,6);
@@ -109,16 +133,21 @@ export function addDiagonDetails(buffer) {
     box("brickBrown",x,y,z,3,h,3);box("stoneShadow",x-1,y+h,z-1,5,1,5);
     box("brickRed",x,y+h+1,z,1,3,1);box("brickRed",x+2,y+h+1,z+2,1,3,1);
   }
-  // Closed magical brick entrance: no visible arch, public shop window, or
-  // gap through which the street can look into the alley. Opening animation
-  // is intentionally not part of this fixed asset.
-  box("brickBrown",-30,1,26,61,18,3);
+  // Freeze the enchanted wall halfway through opening: an irregular narrow
+  // slit with displaced brick ends, not a conventional gateway or animation.
+  for(let y=1;y<=18;y++) {
+    const left=y<4?-1:y<10?-3:y<15?-2:0;
+    const right=y<5?3:y<12?4:y<16?3:2;
+    box("brickBrown",-30,y,26,left+30,1,3);
+    box("brickBrown",right,y,26,31-right,1,3);
+    if(y%3===1) {
+      box("brickRed",left-2,y,29,2,1,2);
+      box("brickRed",right,y,25,2,1,2);
+    }
+  }
   box("stoneShadow",-30,19,26,61,1,3);
   for(let y=2;y<18;y+=3) for(let x=-29+(y%2)*3;x<29;x+=7)
-    box("brickRed",x,y,28,4,1,1);
-  // A subtle offset-brick seam identifies the secret panel only close up.
-  for(let y=2;y<15;y+=3) box("stoneShadow",-5,y,28,1,1,1);
-  box("brickRed",1,8,28,2,1,1);
+    if(x+4 < -4 || x>5) box("brickRed",x,y,28,4,1,1);
   // Modest book crates and a freestanding notice board inside the alley.
   box("timber",25,1,-7,4,3,2);box("brickRed",26,4,-7,1,2,2);
   box("shopGreen",25,1,3,1,7,1);box("timber",24,3,3,4,5,1);
@@ -128,7 +157,7 @@ export function addDiagonDetails(buffer) {
 export function createDiagonAlley({cellWorldSize=4,nightLighting=0}={}) {
   const root=createVoxelMassingLab({spec:diagonAlleySpec(),renderStrategy:"greedy",nightLighting,voxelDetailPass:addDiagonDetails});
   root.name="DiagonAlley";root.scale.setScalar(cellWorldSize/4);
-  root.userData={...root.userData,assetId:DIAGON_ASSET_ID,assetRevision:2,representation:"special-landmark-voxel",
+  root.userData={...root.userData,assetId:DIAGON_ASSET_ID,assetRevision:3,representation:"special-landmark-voxel",
     sphereProjectionRoot:true,footprint:"2x2",entrance:"north",authoredParcelSize:8,voxelSize:.125};
   return root;
 }

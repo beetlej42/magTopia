@@ -23,15 +23,20 @@ test("alley remains on the shared voxel grid and within its parcel in all orient
   disposeBuildingObject(model);
 });
 
-test("closed secret wall conceals a continuous L-shaped internal lane",()=>{
+test("partly opening brick wall retains a narrow slit and a clear L-shaped internal lane",()=>{
   const model=createVoxelMassingLab({spec:diagonAlleySpec(),renderStrategy:"greedy",voxelDetailPass(buffer){
     addDiagonDetails(buffer);
-    for(let z=-2;z<=25;z++) for(let x=0;x<=3;x++) for(let y=1;y<=9;y++)
+    for(let z=-2;z<=24;z++) for(let x=0;x<=3;x++) for(let y=1;y<=9;y++)
       assert.equal(buffer.getMaterialAt(x,y,z),null,`blocked route at ${x},${y},${z}`);
     for(let x=0;x<=27;x++) for(let z=-2;z<=1;z++) for(let y=1;y<=9;y++)
       assert.equal(buffer.getMaterialAt(x,y,z),null,`blocked bend at ${x},${y},${z}`);
-    for(let x=-29;x<=29;x++) for(let y=1;y<=18;y++)
+    for(const x of [-20,-10,10,20]) for(let y=1;y<=18;y++)
       assert.ok(buffer.getMaterialAt(x,y,26),"front brick wall must have no open gateway");
+    for(let y=1;y<=18;y++) for(let z=26;z<=28;z++)
+      assert.equal(buffer.getMaterialAt(1,y,z),null,"secret wall retains a narrow real opening");
+    assert.equal(buffer.getMaterialAt(-4,7,30),"brickRed","opening has displaced brick ends");
+    assert.equal(buffer.getMaterialAt(-15,22,24),"shopWine");
+    assert.equal(buffer.getMaterialAt(12,25,-10),"shopGreen");
   }});disposeBuildingObject(model);
 });
 
