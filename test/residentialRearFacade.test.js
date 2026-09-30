@@ -34,7 +34,7 @@ test("legacy homes derive deterministic sparse rear modules without spec mutatio
   const plan = deriveRearFacade(spec);
   assert.deepEqual(plan, deriveRearFacade(structuredClone(spec)));
   assert.equal(plan.floors.length, 3);
-  assert.ok(plan.floors.every((floor) => floor.modules.length >= 1 && floor.modules.length <= 3));
+  assert.ok(plan.floors.every((floor) => floor.modules.length >= 0 && floor.modules.length <= 3));
   assert.ok(plan.floors.flatMap((floor) => floor.modules).filter((module) => module.type === "service_door").length <= 1);
   const first = captureVoxels(spec);
   assert.deepEqual(first, captureVoxels(structuredClone(spec)));
@@ -46,7 +46,7 @@ test("legacy homes derive deterministic sparse rear modules without spec mutatio
       const voxel = first.find((v) => v.x === spec.origin.x + opening.xStart
         && v.y === floor.y + opening.yStart && v.z === spec.origin.z);
       assert.equal(voxel?.owner, `${spec.id}:rear-opening`);
-      assert.equal(voxel.materialId, module.type === "service_door" ? spec.materials.door : spec.materials.window);
+      assert.equal(voxel.materialId, module.materialId);
     }
   }
   assert.ok(first.some((v) => v.owner === `${spec.id}:rear-trim` && v.z < spec.origin.z));
@@ -94,4 +94,48 @@ test("back-view visualization deterministically exposes rear modules", () => {
   const solid = renderBuildingVisualization({ ...spec, intent: { purpose: "public_service" } }, { view: "back", size: 256 });
   assert.notDeepEqual(rear.png, solid.png);
   assert.ok(rear.triangleCount > solid.triangleCount);
+});
+
+
+test("rear windows independently occupy about half of their slots with stable per-building variation", () => {
+  let windows = 0;
+  let available = 0;
+  const layouts = new Set();
+  for (let i = 0; i < 200; i += 1) {
+    const spec = house({ id: `rear-density-${i}` });
+    const plan = deriveRearFacade(spec);
+    const doors = plan.floors.flatMap(f => f.modules).filter(m => m.type === "service_door").length;
+    available += plan.floors.length * 2 - doors;
+    windows += plan.floors.flatMap(f => f.modules).filter(m => m.type === "window").length;
+    layouts.add(JSON.stringify(plan.floors.map(f => f.modules.map(m => [m.bay, m.type]))));
+    assert.deepEqual(plan, deriveRearFacade(structuredClone(spec)));
+  }
+  assert.ok(windows / available > 0.45 && windows / available < 0.55);
+  assert.ok(layouts.size > 30);
+});
+
+test("rear window colors follow the floor visual magic level without changing openings or doors", () => {
+  const spec = house({ floors: 8, floorPrograms: Array.from({ length: 8 }, () => ({ purpose: "home" })),
+    intent: { purpose: "residential", magicLevel: 1 } });
+  spec.floorSpecs[0].magicLevel = 0;
+  spec.floorSpecs[1].magicLevel = 0;
+  const mixed = deriveRearFacade(spec);
+  const ordinary = structuredClone(spec);
+  ordinary.intent.magicLevel = 0;
+  const plain = deriveRearFacade(ordinary);
+  assert.deepEqual(mixed.floors.map(f => f.modules.map(({ materialId, ...m }) => m)),
+    plain.floors.map(f => f.modules.map(({ materialId, ...m }) => m)));
+  const voxels = captureVoxels(spec);
+  let magicalWindows = 0;
+  for (const floor of mixed.floors) for (const module of floor.modules) {
+    const magic = floor.index >= 2 && module.type === "window";
+    if (magic) {
+      magicalWindows++;
+      assert.ok([spec.materials.magicPrimary, spec.materials.magicSecondary].includes(module.materialId));
+    } else assert.equal(module.materialId, module.type === "service_door" ? spec.materials.door : spec.materials.window);
+    const voxel = voxels.find(v => v.x === spec.origin.x + module.opening.xStart
+      && v.y === floor.y + module.opening.yStart && v.z === spec.origin.z);
+    assert.equal(voxel?.materialId, module.materialId);
+  }
+  assert.ok(magicalWindows > 0);
 });

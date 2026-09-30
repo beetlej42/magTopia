@@ -26,7 +26,7 @@ import { ACTIVE_VISUAL_THEME } from "../render/sunlitStorybookTheme.js";
 import { createRng } from "../utils/random.js";
 
 // Geometry identity, independent of the MTBA binary format. Bump for compiler changes.
-export const BUILDING_MESH_COMPILER_VERSION = 1;
+export const BUILDING_MESH_COMPILER_VERSION = 2;
 
 const THEME_MATERIALS = ACTIVE_VISUAL_THEME.materials;
 const THEME_VARIANTS = ACTIVE_VISUAL_THEME.materialVariants;
@@ -5091,19 +5091,29 @@ export function deriveRearFacade(building) {
       y: floor.index * building.floorHeight,
       modules: Array.from({ length: bayCount }, (_, bay) => {
         const door = floor.index === 0 && bay === doorBay;
+        // Separate seed streams keep openings fixed when only magic strength changes.
+        const slotSeed = stableSeed(building.seed, building.id, "rear-facade", floor.index, bay);
+        if (!door && createRng(stableSeed(slotSeed, "present"))() >= 0.5) return null;
+        const requestedMagic = Number(floor.magicLevel ?? floor.magic_level ?? building.intent?.magicLevel ?? building.intent?.magic_level ?? 0);
+        const magicLevel = Number.isFinite(requestedMagic) ? Math.max(0, Math.min(1, requestedMagic)) : 0;
+        const magical = !door && createRng(stableSeed(slotSeed, "magic"))() < magicLevel;
+        const windowMaterial = magical
+          ? (createRng(stableSeed(slotSeed, "magic-color"))() < 0.5 ? building.materials.magicPrimary : building.materials.magicSecondary)
+          : building.materials.window;
         const moduleWidth = door ? 4 : 5;
         const center = Math.round(2 + (bay + 0.5) * (width - 4) / bayCount);
         const xStart = Math.max(2, Math.min(width - moduleWidth - 2, center - Math.floor(moduleWidth / 2)));
         const yStart = door ? 1 : Math.max(3, Math.floor(floor.heightVoxels * 0.3));
         return {
           type: door ? "service_door" : "window",
+          materialId: door ? building.materials.door : (windowMaterial ?? building.materials.window),
           bay,
           opening: {
             xStart, xEnd: xStart + moduleWidth - 1, yStart,
             yEnd: Math.min(floor.heightVoxels - 4, yStart + (door ? 10 : 6) - 1)
           }
         };
-      })
+      }).filter(Boolean)
     }))
   };
 }
@@ -5137,13 +5147,13 @@ function addRearFacadeModules(buffer, building, xStart, zBack, rearFacade) {
   };
   const openingWrite = { priority: VOXEL_WRITE_PRIORITIES.opening, owner: `${building.id}:rear-opening` };
   const trimWrite = { priority: VOXEL_WRITE_PRIORITIES.trim, owner: `${building.id}:rear-trim` };
-  rearFacade.floors.forEach((floor) => floor.modules.forEach(({ type, bay, opening }) => {
+  rearFacade.floors.forEach((floor) => floor.modules.forEach(({ materialId, bay, opening }) => {
     const x = xStart + opening.xStart;
     const y = floor.y + opening.yStart;
     const width = opening.xEnd - opening.xStart + 1;
     const height = opening.yEnd - opening.yStart + 1;
     const shade = floor.index * 20 + bay;
-    rearBuffer.addBox(type === "service_door" ? building.materials.door : building.materials.window,
+    rearBuffer.addBox(materialId,
       x, y, zBack, width, height, 1, shade, openingWrite);
     addOpeningFrame(rearBuffer, building.materials.trim, x, y, zBack, width, height, shade, trimWrite);
   }));
