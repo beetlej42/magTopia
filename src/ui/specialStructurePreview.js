@@ -1,3 +1,4 @@
+import { createOwlTower, owlTowerSpec, OWL_TOWER_ASSET_ID } from "../generators/owlTower.js";
 // PR #52 — Deterministic special-structure building preview.
 //
 // A pending special-structure placement has no server-authored `voxelDesign`
@@ -32,6 +33,7 @@ import { createDiagonAlley, diagonAlleySpec, DIAGON_ASSET_ID } from "../generato
 // `cardId -> prefab/asset factory` without touching placement state or target
 // resolution.
 export function resolveSpecialStructurePreview({ card = {}, cellWorldSize = 4 } = {}) {
+  if (card.card_id === "owl-tower" && card.structure?.footprint === "1x1") return {kind:"prefab",cardId:card.card_id,spec:owlTowerSpec()};
   if (card.card_id === "diagon-alley-entrance" && card.structure?.footprint === "2x2") {
     return { kind: "prefab", cardId: card.card_id, spec: diagonAlleySpec() };
   }
@@ -113,6 +115,7 @@ export function createSpecialStructurePreviewSpec(card = {}, cellWorldSize = 4) 
 // uses for voxel buildings). The placement layer replaces the materials with a
 // translucent ghost material before display.
 export function createSpecialStructurePreview(spec) {
+  if (spec?.assetId === OWL_TOWER_ASSET_ID) return createOwlTower();
   if (spec?.assetId === DIAGON_ASSET_ID) return createDiagonAlley();
   if (spec?.assetId === MINISTRY_ASSET_ID) return createMinistryOfMagic();
   if (!spec?.specVersion || !spec?.floorSpecs?.length) {
