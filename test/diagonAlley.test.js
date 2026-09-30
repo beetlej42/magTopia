@@ -45,6 +45,10 @@ test("partly opening brick wall retains a narrow slit and a clear L-shaped inter
     assert.equal(buffer.getMaterialAt(-15,22,24),"shopWine");
     assert.equal(buffer.getMaterialAt(12,25,-10),"shopGreen");
     assert.equal(buffer.getMaterialAt(-9,67,-11),"limestone","muzzle turns outward across the roof");
+    assert.equal(buffer.getMaterialAt(30,16,10),"stoneShadow","house cornice retains its own column");
+    assert.equal(buffer.getMaterialAt(31,16,10),"brickBrown","side wall does not share the cornice column");
+    assert.equal(buffer.getMaterialAt(31,2,-7),"brickRed","side wall repeats front brick accents");
+    assert.equal(buffer.getMaterialAt(31,19,10),"stoneShadow","side wall has a continuous coping");
     for(const x of [-28,-8]) assert.equal(buffer.getMaterialAt(x,84,-19),null,"wings no longer spread high above the roof");
     for(let z=17;z<=20;z++) assert.equal(buffer.getMaterialAt(-4,8,z),"warmWindow","shop glazing continues toward the entrance");
   }});disposeBuildingObject(model);

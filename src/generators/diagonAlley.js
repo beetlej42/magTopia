@@ -18,7 +18,7 @@ export function diagonAlleySpec() {
       shop("wine-dormer-middle",-9,0,8,9,5,"shopWine",6,32,"east_west"),
       {...shop("landmark-tower",-18,-19,14,16,28,"shopWine",18,29),
         cap:{type:"spire",heightVoxels:18}} ]});
-  return {...spec,assetId:DIAGON_ASSET_ID,assetRevision:8,footprint:{...spec.footprint,worldWidth:8,worldDepth:8}};
+  return {...spec,assetId:DIAGON_ASSET_ID,assetRevision:9,footprint:{...spec.footprint,worldWidth:8,worldDepth:8}};
 }
 
 export function addDiagonDetails(buffer) {
@@ -34,7 +34,13 @@ export function addDiagonDetails(buffer) {
   // Continuous L-shaped paving strip, rather than a central open courtyard.
   box("stoneShadow",-5,0,-3,1,1,29);box("stoneShadow",10,0,5,1,1,21);
   box("stoneShadow",0,0,3,29,1,1);
-  box("brickBrown",30,1,-8,1,17,34); // closes side shortcuts around the shops
+  // Reserve x=30 for the unchanged house cornice; the boundary wall has
+  // its own voxel column at x=31, still inside the 2x2 parcel.
+  box("pavement",31,0,-8,1,1,37);
+  box("brickBrown",31,1,-8,1,18,37);
+  box("stoneShadow",31,19,-8,1,1,37);
+  for(let y=2;y<18;y+=3) for(let z=-7+(y%2)*3;z<25;z+=7)
+    box("brickRed",31,y,z,1,1,Math.min(4,26-z));
   // Facade coordinates: horizontal u, vertical y, outward depth d.
   function facade(x,z,face) {
     return (m,u,y,d,w,h,t=1)=> {
@@ -235,7 +241,7 @@ export function addDiagonDetails(buffer) {
 export function createDiagonAlley({cellWorldSize=4,nightLighting=0}={}) {
   const root=createVoxelMassingLab({spec:diagonAlleySpec(),renderStrategy:"greedy",nightLighting,voxelDetailPass:addDiagonDetails});
   root.name="DiagonAlley";root.scale.setScalar(cellWorldSize/4);
-  root.userData={...root.userData,assetId:DIAGON_ASSET_ID,assetRevision:8,representation:"special-landmark-voxel",
+  root.userData={...root.userData,assetId:DIAGON_ASSET_ID,assetRevision:9,representation:"special-landmark-voxel",
     sphereProjectionRoot:true,footprint:"2x2",entrance:"north",authoredParcelSize:8,voxelSize:.125};
   return root;
 }
