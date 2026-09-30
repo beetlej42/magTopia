@@ -6,6 +6,7 @@ import {
 } from "../src/generators/voxelBuildingLab.js";
 import { renderBuildingVisualization } from "../src/render/buildingVisualization.js";
 import { createBuildingSpec } from "../src/generators/voxelBuildingGrammar.js";
+import { createBuildingDesignDraft } from "../src/city/building-design.js";
 
 function house(options = {}) {
   return createBuildingSpec({ id: "legacy-home", seed: "rear-test", floors: 3,
@@ -138,4 +139,38 @@ test("rear window colors follow the floor visual magic level without changing op
     assert.equal(voxel?.materialId, module.materialId);
   }
   assert.ok(magicalWindows > 0);
+});
+
+
+test("real intent-to-design generation classifies descriptive homes by frontage and inherits building magic", () => {
+  const design = createBuildingDesignDraft({ generation_mode: "floor_stack",
+    intent: { name: "Garden Homes", purpose: "garden-facing town houses", frontage: "residential", site_layout: "building", magic_level: 1 },
+    site: { lot_id: "cell-1", footprint: "1x1" }, requirements: { preferred_floors: 4 }
+  }, { id: "descriptive-homes", actor: "test" });
+  const spec = design.generation.sourceSpec;
+  assert.equal(spec.intent.purpose, "garden-facing town houses");
+  assert.equal(spec.intent.frontage, "residential");
+  assert.equal(spec.intent.magicLevel, 1);
+  assert.ok(spec.floorSpecs.every(f => !Object.hasOwn(f, "magicLevel")));
+  const plan = deriveRearFacade(spec);
+  assert.ok(plan);
+  const windows = plan.floors.flatMap(f => f.modules).filter(m => m.type === "window");
+  assert.ok(windows.length > 0);
+  assert.ok(windows.every(m => [spec.materials.magicPrimary, spec.materials.magicSecondary].includes(m.materialId)));
+  assert.ok(captureVoxels(spec).some(v => v.owner === `${spec.id}:rear-opening`));
+  const plain = createBuildingDesignDraft({ generation_mode: "floor_stack",
+    intent: { name: "Garden Homes", purpose: "garden-facing town houses", frontage: "residential", site_layout: "building", magic_level: 0 },
+    site: { lot_id: "cell-1", footprint: "1x1" }, requirements: { preferred_floors: 4 }
+  }, { id: "plain-descriptive-homes", actor: "test" }).generation.sourceSpec;
+  const plainWindows = deriveRearFacade(plain).floors.flatMap(f => f.modules).filter(m => m.type === "window");
+  assert.ok(plainWindows.length > 0);
+  assert.ok(plainWindows.every(m => m.materialId === plain.materials.window));
+  for (const frontage of ["institutional", "display", "workshop", "large_bay"]) {
+    const nonResidential = createBuildingDesignDraft({ generation_mode: "floor_stack",
+      intent: { purpose: "public records and reading rooms", frontage, site_layout: "building" },
+      site: { lot_id: "cell-1", footprint: "1x1" }
+    }, { id: `nonres-${frontage}`, actor: "test" }).generation.sourceSpec;
+    assert.equal(deriveRearFacade(nonResidential), null);
+    assert.equal(deriveRearFacade({ ...spec, intent: { ...spec.intent, purpose: "residential", frontage } }), null);
+  }
 });

@@ -26,7 +26,7 @@ import { ACTIVE_VISUAL_THEME } from "../render/sunlitStorybookTheme.js";
 import { createRng } from "../utils/random.js";
 
 // Geometry identity, independent of the MTBA binary format. Bump for compiler changes.
-export const BUILDING_MESH_COMPILER_VERSION = 2;
+export const BUILDING_MESH_COMPILER_VERSION = 3;
 
 const THEME_MATERIALS = ACTIVE_VISUAL_THEME.materials;
 const THEME_VARIANTS = ACTIVE_VISUAL_THEME.materialVariants;
@@ -61,6 +61,9 @@ export const VOXEL_WRITE_PRIORITIES = Object.freeze({
 });
 
 const MATERIAL_LIBRARY = Object.freeze({
+  // Painted shop joinery: subdued colours, matte wood rather than metal.
+  shopGreen: { colors: ["#48675c", "#526f63", "#405e54"], roughness: 0.88 },
+  shopWine: { colors: ["#795451", "#845c57", "#6e4c4b"], roughness: 0.88 },
   brickRed: {
     colors: THEME_VARIANTS.brickRed,
     roughness: 0.94
@@ -5075,11 +5078,13 @@ function addFacade(buffer, building, params, xStart, zFront, wallHeight) {
 
 /** Compiler-only plan: never stored in BuildingSpec or dependent on neighbors. */
 export function deriveRearFacade(building) {
-  // Explicit intent wins; legacy specs are residential only when all floors are homes.
-  const purpose = building.intent?.purpose;
-  if ((purpose && purpose !== "residential")
-    || (!purpose && !building.floorSpecs?.every((floor) => floor.purpose === "home"))
-    || !building.floorSpecs?.length) return null;
+  // Modern intent uses semantic frontage; purpose is free-form descriptive text.
+  // Preserve legacy canonical-purpose / all-home specs without affecting public uses.
+  const { frontage, purpose } = building.intent ?? {};
+  const residential = frontage != null ? frontage === "residential"
+    : purpose ? purpose === "residential"
+      : building.floorSpecs?.every((floor) => floor.purpose === "home");
+  if (!residential || !building.floorSpecs?.length) return null;
   const width = building.footprint.widthVoxels;
   if (width < 10) return null;
   const rng = createRng(stableSeed(building.seed, building.id, "rear-facade"));
