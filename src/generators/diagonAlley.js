@@ -18,7 +18,7 @@ export function diagonAlleySpec() {
       shop("wine-dormer-middle",-9,0,8,9,5,"shopWine",6,32,"east_west"),
       {...shop("landmark-tower",-18,-19,14,16,28,"shopWine",18,29),
         cap:{type:"spire",heightVoxels:18}} ]});
-  return {...spec,assetId:DIAGON_ASSET_ID,assetRevision:9,footprint:{...spec.footprint,worldWidth:8,worldDepth:8}};
+  return {...spec,assetId:DIAGON_ASSET_ID,assetRevision:10,footprint:{...spec.footprint,worldWidth:8,worldDepth:8}};
 }
 
 export function addDiagonDetails(buffer) {
@@ -150,15 +150,9 @@ export function addDiagonDetails(buffer) {
     box("limestone",x===-22?x+1:x-1,y+1,z,2,3,2);
     box("stoneShadow",x,y,z+2,2,1,1);
   }
-  const tail=[[-19,-19],[-20,-19],[-21,-19],[-21,-20],[-22,-20],[-23,-20]];
-  let previousY=roofY(-19,-19);
-  for(const [x,z] of tail) {
-    const y=(spireSurface.get(`${x},${z}`)??57)+1;
-    box("limestone",x,Math.min(y,previousY),z,2,Math.abs(y-previousY)+2,2);
-    previousY=y;
-  }
-  // An upward curl lifts clear of the slope, with a fine skyward tip.
-  for(const [x,y,z,w] of [[-24,72,-21,2],[-25,75,-22,2],[-25,78,-23,2],[-24,81,-24,2],[-23,84,-24,1]]) {
+  // Rise directly from the rump: no old roof-following low loop remains.
+  let previousY=roofY(-20,-20)+2;
+  for(const [x,y,z,w] of [[-20,74,-20,2],[-21,75,-21,2],[-22,77,-22,2],[-23,79,-23,2],[-24,81,-24,2],[-23,84,-24,1]]) {
     box("limestone",x,Math.min(y,previousY),z,w,Math.abs(y-previousY)+2,2);
     previousY=y;
   }
@@ -200,6 +194,13 @@ export function addDiagonDetails(buffer) {
   for(const u of [6,23]) window(rearBooks,u,21,4,6);
   rearBooks("timber",15,1,0,5,11);rearBooks("iron",19,5,1,1,1);
   box("iron",-30,1,-23,1,28,1);box("iron",27,1,-30,1,29,1);
+  // Exterior roof-access ladder, clear of the window and drainpipe.
+  // Rails stand off the wall and extend above the eaves as handholds.
+  for(const z of [5,11]) {
+    box("timber",-31,1,z,1,33,1);
+    for(const y of [3,14,25,30]) box("iron",-30,y,z,2,1,1);
+  }
+  for(let y=2;y<=29;y+=3) box("iron",-31,y,6,1,1,5);
   for(const [x,z,w,d,levels] of [[-29,-27,22,52,[15,28]],[-5,-29,34,20,[16,30]],[12,5,18,20,[16]]]) {
     for(const y of levels) {
       box("stoneShadow",x-1,y,z-1,w+2,1,1);box("stoneShadow",x-1,y,z+d,w+2,1,1);
@@ -241,7 +242,7 @@ export function addDiagonDetails(buffer) {
 export function createDiagonAlley({cellWorldSize=4,nightLighting=0}={}) {
   const root=createVoxelMassingLab({spec:diagonAlleySpec(),renderStrategy:"greedy",nightLighting,voxelDetailPass:addDiagonDetails});
   root.name="DiagonAlley";root.scale.setScalar(cellWorldSize/4);
-  root.userData={...root.userData,assetId:DIAGON_ASSET_ID,assetRevision:9,representation:"special-landmark-voxel",
+  root.userData={...root.userData,assetId:DIAGON_ASSET_ID,assetRevision:10,representation:"special-landmark-voxel",
     sphereProjectionRoot:true,footprint:"2x2",entrance:"north",authoredParcelSize:8,voxelSize:.125};
   return root;
 }

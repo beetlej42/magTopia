@@ -45,6 +45,10 @@ test("partly opening brick wall retains a narrow slit and a clear L-shaped inter
     assert.equal(buffer.getMaterialAt(-15,22,24),"shopWine");
     assert.equal(buffer.getMaterialAt(12,25,-10),"shopGreen");
     assert.equal(buffer.getMaterialAt(-9,67,-11),"limestone","muzzle turns outward across the roof");
+    assert.equal(buffer.getMaterialAt(-24,70,-21),null,"old low tail connector is removed");
+    assert.equal(buffer.getMaterialAt(-23,85,-24),"limestone","tail tip remains skyward");
+    assert.equal(buffer.getMaterialAt(-31,32,5),"timber","ladder handholds reach above the eaves");
+    for(let y=2;y<=29;y+=3) assert.equal(buffer.getMaterialAt(-31,y,8),"iron","roof ladder has continuous spaced rungs");
     assert.equal(buffer.getMaterialAt(30,16,10),"stoneShadow","house cornice retains its own column");
     assert.equal(buffer.getMaterialAt(31,16,10),"brickBrown","side wall does not share the cornice column");
     assert.equal(buffer.getMaterialAt(31,2,-7),"brickRed","side wall repeats front brick accents");
