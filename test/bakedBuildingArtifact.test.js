@@ -24,7 +24,8 @@ import { createApp } from "../apps/server/app.js";
 import { createOpenApiDocument } from "../apps/server/openapi.js";
 import { createMemoryRepository } from "../apps/server/memory-repository.js";
 import { createBuildingDesignDraft } from "../src/city/building-design.js";
-import { createRenderArtifactWorker, enqueueCityRenderArtifactBackfill, getBuildingSourceHash } from "../apps/server/render-artifact-service.js";
+import { createRenderArtifactWorker, enqueueCityRenderArtifactBackfill, getBuildingSourceHash, cityArtifactPackManifest } from "../apps/server/render-artifact-service.js";
+import { BUILDING_MESH_COMPILER_VERSION } from "../src/generators/voxelBuildingLab.js";
 import { createWorker } from "../apps/server/worker.js";
 
 const configBase = {
@@ -52,10 +53,11 @@ function geometry(materialOffset = 0) {
   };
 }
 
-function fixtureArtifact(buildingId = "building-1", designRevision = 3) {
+function fixtureArtifact(buildingId = "building-1", designRevision = 3, sourceHash = null) {
   return encodeBakedBuildingArtifact({
     buildingId,
     designRevision,
+    sourceHash,
     levels: [
       { lod: 2, meshes: [{ materialId: "stone", geometry: geometry(2) }] },
       { lod: 0, meshes: [{ materialId: "timber", geometry: geometry(0) }] }
@@ -238,9 +240,9 @@ test("render-state stays compatible without a baked root and serves configured b
       program: { name: "Artifact House", purpose: "residential" },
       voxelDesign: { id: "design-1", revision: 3, generation: { mode: "floor_stack", sourceSpec: { floors: 1 } } }
     };
-    const bytes = fixtureArtifact();
+    const sourceHash = getBuildingSourceHash(cityRecord.state.buildings["building-1"]);
+    const bytes = fixtureArtifact("building-1", 3, sourceHash);
     await mkdir(path.join(root, city.id, "building-1"), { recursive: true });
-    const sourceHash = createHash("sha256").update(bytes).digest("hex");
     const compressed = brotliCompressSync(bytes);
     await writeFile(path.join(root, city.id, "building-1", `3-${sourceHash}.mtba.br`), compressed);
     const state = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/render-state` }), 200);
@@ -404,6 +406,88 @@ test("render-state omits stale colorless artifacts and queues a current rebuild"
   const rebuild = await repository.claimNextRenderArtifactJob();
   assert.equal(rebuild.job.buildingId, building.id);
   assert.equal(rebuild.job.artifactVersion, BAKED_BUILDING_ARTIFACT_VERSION);
+});
+
+test("compiler identity invalidates ready meshes and rebuilds a new pack without changing the design", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "magtopia-compiler-bake-"));
+  const config = { ...configBase, bakedArtifactRoot: root };
+  const repository = createMemoryRepository(config);
+  const player = await repository.createPlayer("Compiler Owner");
+  const principal = await repository.authenticate(player.access_token);
+  const city = await repository.createCity(principal, { name: "Compiler City" });
+  const record = await repository.getCity(principal, city.id);
+  const cell = Object.values(record.state.cells)[0];
+  const design = createBuildingDesignDraft({ generation_mode: "floor_stack",
+    intent: { name: "Rear House", purpose: "residential" },
+    site: { lot_id: cell.id, footprint: "1x1" }
+  }, { id: "design-compiler", actor: "test" });
+  const building = { id: "building-compiler", footprintCells: [cell.id],
+    site: { lotId: cell.id, footprint: "1x1" },
+    program: { name: "Rear House", purpose: "residential" }, voxelDesign: design };
+  record.state.buildings[building.id] = building;
+  const original = structuredClone(design);
+  // Before compiler identity existed, sourceHash was the unchanged design hash.
+  const oldHash = createHash("sha256").update(JSON.stringify({
+    sourceSpec: design.generation.sourceSpec, decorations: design.decorations ?? null
+  })).digest("hex");
+  const currentHash = getBuildingSourceHash(building);
+  assert.notEqual(currentHash, oldHash);
+  assert.notEqual(currentHash, getBuildingSourceHash(building, BUILDING_MESH_COMPILER_VERSION + 1));
+  await repository.enqueueRenderArtifactBake({ cityId: city.id, buildingId: building.id,
+    designId: design.id, designRevision: design.revision, sourceHash: oldHash });
+  const claimed = await repository.claimNextRenderArtifactJob();
+  const oldBytes = fixtureArtifact(building.id, design.revision, oldHash);
+  const oldSha = createHash("sha256").update(oldBytes).digest("hex");
+  const directory = path.join(root, city.id, building.id);
+  await mkdir(directory, { recursive: true });
+  await writeFile(path.join(directory, `${design.revision}-${oldHash}.mtba.br`), brotliCompressSync(oldBytes));
+  await writeFile(path.join(directory, `${design.revision}.mtba`), oldBytes);
+  await repository.completeRenderArtifactJob(claimed.outbox.id, claimed.job.id, {
+    status: "ready", artifactVersion: BAKED_BUILDING_ARTIFACT_VERSION,
+    sha256: oldSha, byteLength: oldBytes.byteLength,
+    relativePath: `${city.id}/${building.id}/${design.revision}-${oldHash}.mtba.br`
+  });
+  const oldPack = cityArtifactPackManifest({ cityId: city.id, cityVersion: city.city_version,
+    manifest: [{ buildingId: building.id, designRevision: design.revision, sha256: oldSha, byteLength: oldBytes.byteLength }] });
+  const app = await createApp({ repository, config });
+  try {
+    const state = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/render-state` }), 200);
+    assert.deepEqual(state.artifact_manifest, []);
+    assert.equal(state.artifact_pack, null);
+    // Source remains available while optional baking is in progress.
+    assert.ok(state.state.buildings[building.id].voxelDesign.generation.sourceSpec);
+    const unavailable = await app.inject(auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/render-artifacts/${building.id}?revision=${design.revision}` }));
+    assert.equal(unavailable.statusCode, 404);
+    // Repeated viewer reads must not reset or duplicate the pending rebuild.
+    const repeated = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/render-state` }), 200);
+    assert.deepEqual(repeated.artifact_manifest, []);
+    const worker = createRenderArtifactWorker({ repository, config, logger: { error() {} } });
+    assert.equal(await worker.processNext(), true);
+    const rebuilt = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/render-state` }), 200);
+    assert.equal(rebuilt.artifact_manifest.length, 1);
+    assert.equal(rebuilt.artifact_manifest[0].sourceHash, currentHash);
+    assert.notEqual(rebuilt.artifact_manifest[0].sha256, oldSha);
+    assert.notEqual(rebuilt.artifact_pack.url, oldPack.url);
+    assert.notEqual(rebuilt.artifact_pack.manifestSha256, oldPack.manifestSha256);
+    const download = await app.inject(auth(player, { method: "GET", url: rebuilt.artifact_manifest[0].url }));
+    assert.equal(download.statusCode, 200);
+    const baked = decodeBakedBuildingArtifact(brotliDecompressSync(download.rawPayload));
+    assert.equal(baked.sourceHash, currentHash);
+    assert.equal(baked.formatVersion, BAKED_BUILDING_ARTIFACT_VERSION);
+    const pack = await app.inject(auth(player, { method: "GET", url: rebuilt.artifact_pack.url }));
+    assert.equal(pack.statusCode, 200);
+    const decoded = decodeCityArtifactPack(brotliDecompressSync(pack.rawPayload), { manifestSha256: rebuilt.artifact_pack.manifestSha256 });
+    assert.equal(decodeBakedBuildingArtifact(decoded.entries[0].bytes).sourceHash, currentHash);
+    const oldPackResponse = await app.inject(auth(player, { method: "GET", url: oldPack.url }));
+    assert.equal(oldPackResponse.statusCode, 409);
+    const replay = await enqueueCityRenderArtifactBackfill({ repository, cityId: city.id });
+    assert.equal(replay.skipped, 1);
+    assert.equal(replay.queued, 0);
+    assert.equal(await worker.processNext(), false);
+    assert.deepEqual(building.voxelDesign, original);
+  } finally {
+    await app.close();
+  }
 });
 
 test("inline worker allowlist does not claim another city or outbox type", async () => {
