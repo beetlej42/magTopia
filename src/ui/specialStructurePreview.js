@@ -25,12 +25,16 @@
 import { createBuildingSpec } from "../generators/voxelBuildingGrammar.js";
 import { createVoxelBuildingFromSpec, VOXEL_SIZE } from "../generators/voxelBuildingLab.js";
 import { createMinistryOfMagic, ministryOfMagicSpec, MINISTRY_ASSET_ID } from "../generators/ministryOfMagic.js";
+import { createDiagonAlley, diagonAlleySpec, DIAGON_ASSET_ID } from "../generators/diagonAlley.js";
 
 // Factory boundary for the placement preview. Returns a normalized preview
 // source the ghost renderer understands. Swap/expand this to introduce a
 // `cardId -> prefab/asset factory` without touching placement state or target
 // resolution.
 export function resolveSpecialStructurePreview({ card = {}, cellWorldSize = 4 } = {}) {
+  if (card.card_id === "diagon-alley-entrance" && card.structure?.footprint === "2x2") {
+    return { kind: "prefab", cardId: card.card_id, spec: diagonAlleySpec() };
+  }
   if (card.card_id === "ministry-of-magic" && card.structure?.footprint === "2x2") {
     return { kind: "prefab", cardId: card.card_id, spec: ministryOfMagicSpec() };
   }
@@ -109,6 +113,7 @@ export function createSpecialStructurePreviewSpec(card = {}, cellWorldSize = 4) 
 // uses for voxel buildings). The placement layer replaces the materials with a
 // translucent ghost material before display.
 export function createSpecialStructurePreview(spec) {
+  if (spec?.assetId === DIAGON_ASSET_ID) return createDiagonAlley();
   if (spec?.assetId === MINISTRY_ASSET_ID) return createMinistryOfMagic();
   if (!spec?.specVersion || !spec?.floorSpecs?.length) {
     throw new Error("A complete BuildingSpec is required for the special structure preview");

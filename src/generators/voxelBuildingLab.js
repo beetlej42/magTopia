@@ -55,6 +55,9 @@ export const VOXEL_WRITE_PRIORITIES = Object.freeze({
 });
 
 const MATERIAL_LIBRARY = Object.freeze({
+  // Painted shop joinery: subdued colours, matte wood rather than metal.
+  shopGreen: { colors: ["#48675c", "#526f63", "#405e54"], roughness: 0.88 },
+  shopWine: { colors: ["#795451", "#845c57", "#6e4c4b"], roughness: 0.88 },
   brickRed: {
     colors: THEME_VARIANTS.brickRed,
     roughness: 0.94

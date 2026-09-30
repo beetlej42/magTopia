@@ -1,10 +1,12 @@
 import { createVoxelBuildingFromSpec, createVoxelMassingLab } from "./voxelBuildingLab.js";
 import { createMinistryOfMagic, MINISTRY_ASSET_ID } from "./ministryOfMagic.js";
+import { createDiagonAlley, DIAGON_ASSET_ID } from "./diagonAlley.js";
 
 // Keep confirmation, city rendering and offline visualization on the same compiler.
 export function createBuildingDesignObject(design, renderOptions = {}) {
   if (!design?.generation?.sourceSpec) throw new Error("Building design has no source spec to compile");
   const options = { ...renderOptions, decorations: design.decorations, renderStrategy: "greedy" };
+  if (design.generation.mode === "landmark_prefab" && design.generation.sourceSpec.assetId === DIAGON_ASSET_ID) return createDiagonAlley(renderOptions);
   if (design.generation.mode === "landmark_prefab" && design.generation.sourceSpec.assetId === MINISTRY_ASSET_ID) {
     return createMinistryOfMagic(renderOptions);
   }

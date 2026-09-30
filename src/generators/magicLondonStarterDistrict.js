@@ -1,5 +1,6 @@
 import { buildingEntranceRotation, createBuildingDesignObject } from "./buildingDesignObject.js";
-import { createMinistryOfMagic, MINISTRY_ASSET_ID } from "./ministryOfMagic.js";
+import { createMinistryOfMagic } from "./ministryOfMagic.js";
+import { createDiagonAlley } from "./diagonAlley.js";
 import * as THREE from "three";
 import { getVoxelLodThresholds, selectScreenSpaceVoxelLod } from "../render/voxelLodQuality.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
@@ -53,15 +54,17 @@ export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cit
     const renderCells = footprintCellIds.map((cellId) => resolveRenderCell(cells, cellId)).filter(Boolean);
     // Card identity selects the fixed landmark for existing and new cities.
     // Legacy non-2x2 placements retain their previous representation.
-    if (building.specialStructure?.cardId === "ministry-of-magic" && building.site.footprint === "2x2" && renderCells.length === 4) {
-      const object = createMinistryOfMagic({ cellWorldSize: tileSize, nightLighting });
+    const landmarkFactory = building.specialStructure?.cardId === "ministry-of-magic" ? createMinistryOfMagic
+      : building.specialStructure?.cardId === "diagon-alley-entrance" ? createDiagonAlley : null;
+    if (landmarkFactory && building.site.footprint === "2x2" && renderCells.length === 4) {
+      const object = landmarkFactory({ cellWorldSize: tileSize, nightLighting });
       const x = renderCells.reduce((sum, cell) => sum + cell.center.x, 0) / 4;
       const z = renderCells.reduce((sum, cell) => sum + cell.center.z, 0) / 4;
       object.position.set(x, sampleGroundHeight(x, z) + BUILDING_BASE_ELEVATION, z);
       object.rotation.y = buildingEntranceRotation(building.site.entrance);
       object.userData.buildingId = building.id;
       voxelDaylightTargets.push(object);
-      placements.push({ assetId: MINISTRY_ASSET_ID, label: building.program.name, cellId: renderCells[0].id,
+      placements.push({ assetId: object.userData.assetId, label: building.program.name, cellId: renderCells[0].id,
         footprintCells: renderCells.map(cell => cell.id), entrance: building.site.entrance,
         entranceFrontageCell: getNeighborCellId(renderCells, building.site.entrance),
         buildingId: building.id, representation: object.userData.representation });
