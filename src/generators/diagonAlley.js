@@ -9,7 +9,7 @@ export function diagonAlleySpec() {
     cap:{type:"gable",heightVoxels:roofHeight,orientation},
     materials:{wall,roof:"slate",trim:"timber",window:"warmWindow"},facade:{enabled:false}
   });
-  const spec=createUrbanMassingSpec({id:DIAGON_ASSET_ID,seed:"diagon-alley-v7",widthCells:2,depthCells:2,
+  const spec=createUrbanMassingSpec({id:DIAGON_ASSET_ID,seed:"diagon-alley-v8",widthCells:2,depthCells:2,
     masses:[shop("wand-shop",-18,-1,22,52,29,"shopWine",12),
       shop("bookshop",12,-19,34,20,31,"shopGreen",10),
       shop("apothecary",21,15,18,20,17,"shopWine",9),
@@ -18,7 +18,7 @@ export function diagonAlleySpec() {
       shop("wine-dormer-middle",-9,0,8,9,5,"shopWine",6,32,"east_west"),
       {...shop("landmark-tower",-18,-19,14,16,28,"shopWine",18,29),
         cap:{type:"spire",heightVoxels:18}} ]});
-  return {...spec,assetId:DIAGON_ASSET_ID,assetRevision:7,footprint:{...spec.footprint,worldWidth:8,worldDepth:8}};
+  return {...spec,assetId:DIAGON_ASSET_ID,assetRevision:8,footprint:{...spec.footprint,worldWidth:8,worldDepth:8}};
 }
 
 export function addDiagonDetails(buffer) {
@@ -105,6 +105,17 @@ export function addDiagonDetails(buffer) {
   flowerbox(wand,3,16,5);
   flowerbox(books,20,17,6);
   flowerbox(potions,6,1,5);
+  // The entrance shop has a modest upstairs workshop, distinct from the oriels.
+  const entranceUpper=facade(-7,10,"right");
+  for(const u of [2,9]) {
+    window(entranceUpper,u,20,3,6);
+    entranceUpper("shopGreen",u-2,20,1,1,6);
+    entranceUpper("shopGreen",u+4,20,1,1,6);
+    flowerbox(entranceUpper,u-1,17,5);
+  }
+  entranceUpper("timber",0,27,1,14,1,3);
+  entranceUpper("slate",-1,28,1,16,1,4);
+  for(const u of [0,13]) entranceUpper("timber",u,25,1,1,2,2);
   // The two-storey wine shop is the low foreground; a single rear tower
   // carries the landmark silhouette rather than a full extra storey.
   const towerFront=facade(-25,-11,"front"), towerSide=facade(-11,-27,"right");
@@ -133,11 +144,16 @@ export function addDiagonDetails(buffer) {
     box("limestone",x===-22?x+1:x-1,y+1,z,2,3,2);
     box("stoneShadow",x,y,z+2,2,1,1);
   }
-  const tail=[[-19,-19],[-20,-19],[-21,-19],[-21,-20],[-22,-20],[-23,-20],[-23,-21],[-24,-21],[-24,-22],[-24,-23],[-24,-24],[-23,-24],[-23,-25],[-22,-25],[-21,-25]];
+  const tail=[[-19,-19],[-20,-19],[-21,-19],[-21,-20],[-22,-20],[-23,-20]];
   let previousY=roofY(-19,-19);
   for(const [x,z] of tail) {
     const y=(spireSurface.get(`${x},${z}`)??57)+1;
     box("limestone",x,Math.min(y,previousY),z,2,Math.abs(y-previousY)+2,2);
+    previousY=y;
+  }
+  // An upward curl lifts clear of the slope, with a fine skyward tip.
+  for(const [x,y,z,w] of [[-24,72,-21,2],[-25,75,-22,2],[-25,78,-23,2],[-24,81,-24,2],[-23,84,-24,1]]) {
+    box("limestone",x,Math.min(y,previousY),z,w,Math.abs(y-previousY)+2,2);
     previousY=y;
   }
   // Folded wings run lengthwise beside the back, tapering toward the tail.
@@ -219,7 +235,7 @@ export function addDiagonDetails(buffer) {
 export function createDiagonAlley({cellWorldSize=4,nightLighting=0}={}) {
   const root=createVoxelMassingLab({spec:diagonAlleySpec(),renderStrategy:"greedy",nightLighting,voxelDetailPass:addDiagonDetails});
   root.name="DiagonAlley";root.scale.setScalar(cellWorldSize/4);
-  root.userData={...root.userData,assetId:DIAGON_ASSET_ID,assetRevision:7,representation:"special-landmark-voxel",
+  root.userData={...root.userData,assetId:DIAGON_ASSET_ID,assetRevision:8,representation:"special-landmark-voxel",
     sphereProjectionRoot:true,footprint:"2x2",entrance:"north",authoredParcelSize:8,voxelSize:.125};
   return root;
 }
