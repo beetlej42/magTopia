@@ -652,6 +652,7 @@ test("Owl Daily reports bind to resolved turns and stay canonical (PostgreSQL)",
 test("PostgreSQL rebakes a prior compiler artifact without resetting an active job", { skip: !databaseUrl, timeout: 120_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "magtopia-pg-compiler-"));
   const config = { publicBaseUrl: "http://127.0.0.1:4183", assetOutputRoot: root,
+    capabilityTtlMinutes: 30, credentialTtlDays: 90,
     bakedArtifactRoot: root, assetProvider: "fixture", workerPollMs: 5, gameplaySeed: 11 };
   const database = createDatabase(databaseUrl);
   await migrateDatabase(database);
