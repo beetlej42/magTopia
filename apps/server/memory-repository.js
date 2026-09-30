@@ -201,10 +201,10 @@ export function createMemoryRepository(config, options = {}) {
         .map((row) => structuredClone(row));
     },
 
-    async getRenderArtifactManifest(principal, cityId, buildingId, revision) {
+    async getRenderArtifactManifest(principal, cityId, buildingId, revision, sourceHash = null) {
       await this.getCity(principal, cityId);
       if (!config.bakedArtifactRoot) return null;
-      const row = [...renderArtifacts.values()].find((entry) => entry.cityId === cityId && entry.buildingId === buildingId && entry.designRevision === Number(revision) && entry.status === "ready");
+      const row = [...renderArtifacts.values()].find((entry) => entry.cityId === cityId && entry.buildingId === buildingId && entry.designRevision === Number(revision) && entry.status === "ready" && (!sourceHash || entry.sourceHash === sourceHash));
       return row ? structuredClone(row) : null;
     },
 
@@ -216,6 +216,9 @@ export function createMemoryRepository(config, options = {}) {
       const key = `${cityId}:${normalizedDesignId ?? ""}:${normalizedRevision}:${String(sourceHash).toLowerCase()}`;
       const existing = renderArtifacts.get(key);
       if (existing?.status === "ready" && existing.buildingId === buildingId && Number(existing.artifactVersion) === RENDER_ARTIFACT_FORMAT_VERSION) return structuredClone(existing);
+      if (existing && existing.buildingId === buildingId
+        && Number(existing.artifactVersion) === RENDER_ARTIFACT_FORMAT_VERSION
+        && ["queued", "processing"].includes(existing.status)) return structuredClone(existing);
       const row = {
         id: existing?.id ?? createId("render-artifact"), cityId, buildingId: buildingId ?? existing?.buildingId ?? null,
         designId: normalizedDesignId, designRevision: normalizedRevision, sourceHash: String(sourceHash).toLowerCase(),

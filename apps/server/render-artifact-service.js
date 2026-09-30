@@ -4,6 +4,7 @@ import path from "node:path";
 import { brotliCompress, constants as zlibConstants } from "node:zlib";
 import { promisify } from "node:util";
 import {
+  BUILDING_MESH_COMPILER_VERSION,
   createVoxelBuildingLodLevelsFromSpec,
   createVoxelMassingLodLevels
 } from "../../src/generators/voxelBuildingLab.js";
@@ -107,14 +108,16 @@ export async function buildCityArtifactPack({ config, cityId, cityVersion, state
   }
 }
 
-export function getBuildingSourceHash(building) {
+export function getBuildingSourceHash(building, compilerVersion = BUILDING_MESH_COMPILER_VERSION) {
   const design = building?.voxelDesign;
   if (!design?.generation?.sourceSpec) return null;
-  if (/^[a-f0-9]{64}$/i.test(String(design.specHash ?? ""))) return String(design.specHash).toLowerCase();
-  return createHash("sha256").update(JSON.stringify({
+  const designHash = /^[a-f0-9]{64}$/i.test(String(design.specHash ?? ""))
+    ? String(design.specHash).toLowerCase()
+    : createHash("sha256").update(JSON.stringify({
     sourceSpec: design.generation.sourceSpec,
     decorations: design.decorations ?? null
   })).digest("hex");
+  return createHash("sha256").update(JSON.stringify({ designHash, meshCompilerVersion: compilerVersion })).digest("hex");
 }
 
 export async function generateBakedBuildingArtifact(building) {

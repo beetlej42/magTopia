@@ -7,7 +7,8 @@ import {
   FLOOR_USE_IDS,
   ROOF_FORM_IDS,
   VOXEL_STYLE_KIT_IDS,
-  createBuildingSpec
+  createBuildingSpec,
+  stableSeed
 } from "./voxelBuildingGrammar.js";
 import {
   MASSING_CELL_VOXELS,
@@ -21,6 +22,11 @@ import {
   storybookSurfaceKindForMaterial
 } from "../render/storybookSurfaceMaterial.js";
 import { ACTIVE_VISUAL_THEME } from "../render/sunlitStorybookTheme.js";
+
+import { createRng } from "../utils/random.js";
+
+// Geometry identity, independent of the MTBA binary format. Bump for compiler changes.
+export const BUILDING_MESH_COMPILER_VERSION = 1;
 
 const THEME_MATERIALS = ACTIVE_VISUAL_THEME.materials;
 const THEME_VARIANTS = ACTIVE_VISUAL_THEME.materialVariants;
@@ -5033,7 +5039,9 @@ function addBuilding(buffer, building, params) {
   const wallHeight = building.wallHeightVoxels;
 
   addFacade(buffer, building, params, xStart, zFront, wallHeight);
-  addBackWall(buffer, building, xStart, zBack, wallHeight);
+  const rearFacade = deriveRearFacade(building);
+  addBackWall(buffer, building, xStart, zBack, wallHeight, rearFacade);
+  addRearFacadeModules(buffer, building, xStart, zBack, rearFacade);
   if (building.adjacency.exposedLeftWall) addSideWall(buffer, building, xStart, zBack, depth, "left");
   if (building.adjacency.exposedRightWall) addSideWall(buffer, building, xStart + width - 1, zBack, depth, "right");
   addFacadeModules(buffer, building, params, xStart, zFront);
@@ -5065,23 +5073,80 @@ function addFacade(buffer, building, params, xStart, zFront, wallHeight) {
   });
 }
 
-function addBackWall(buffer, building, xStart, zBack, wallHeight) {
+/** Compiler-only plan: never stored in BuildingSpec or dependent on neighbors. */
+export function deriveRearFacade(building) {
+  // Explicit intent wins; legacy specs are residential only when all floors are homes.
+  const purpose = building.intent?.purpose;
+  if ((purpose && purpose !== "residential")
+    || (!purpose && !building.floorSpecs?.every((floor) => floor.purpose === "home"))
+    || !building.floorSpecs?.length) return null;
+  const width = building.footprint.widthVoxels;
+  if (width < 10) return null;
+  const rng = createRng(stableSeed(building.seed, building.id, "rear-facade"));
+  const bayCount = Math.max(1, Math.min(3, Math.floor((width - 4) / 10)));
+  const doorBay = rng() < 0.8 ? Math.floor(rng() * bayCount) : -1;
+  return {
+    floors: building.floorSpecs.map((floor) => ({
+      index: floor.index,
+      y: floor.index * building.floorHeight,
+      modules: Array.from({ length: bayCount }, (_, bay) => {
+        const door = floor.index === 0 && bay === doorBay;
+        const moduleWidth = door ? 4 : 5;
+        const center = Math.round(2 + (bay + 0.5) * (width - 4) / bayCount);
+        const xStart = Math.max(2, Math.min(width - moduleWidth - 2, center - Math.floor(moduleWidth / 2)));
+        const yStart = door ? 1 : Math.max(3, Math.floor(floor.heightVoxels * 0.3));
+        return {
+          type: door ? "service_door" : "window",
+          bay,
+          opening: {
+            xStart, xEnd: xStart + moduleWidth - 1, yStart,
+            yEnd: Math.min(floor.heightVoxels - 4, yStart + (door ? 10 : 6) - 1)
+          }
+        };
+      })
+    }))
+  };
+}
+
+function addBackWall(buffer, building, xStart, zBack, wallHeight, rearFacade) {
   const width = building.footprint.widthVoxels;
   for (let y = 0; y < wallHeight; y += 1) {
     for (let localX = 0; localX < width; localX += 2) {
-      buffer.addBox(
-        building.materials.wall,
-        xStart + localX,
-        y,
-        zBack,
-        Math.min(2, width - localX),
-        1,
-        1,
-        localX + y * 7,
-        { priority: VOXEL_WRITE_PRIORITIES.structure, owner: `${building.id}:back-wall` }
-      );
+      // Preserve the original wall shade grouping, including non-residential paths.
+      for (let offset = 0; offset < Math.min(2, width - localX); offset += 1) {
+        const x = localX + offset;
+        const isOpening = rearFacade?.floors.some((floor) => floor.modules.some(({ opening }) => (
+          x >= opening.xStart && x <= opening.xEnd
+          && y >= floor.y + opening.yStart && y <= floor.y + opening.yEnd
+        )));
+        if (isOpening) continue;
+        buffer.addVoxel(building.materials.wall, xStart + x, y, zBack, localX + y * 7,
+          { priority: VOXEL_WRITE_PRIORITIES.structure, owner: `${building.id}:back-wall` });
+      }
     }
   }
+}
+
+function addRearFacadeModules(buffer, building, xStart, zBack, rearFacade) {
+  if (!rearFacade) return;
+  // Reflect existing front-frame primitives through the rear plane.
+  const rearBuffer = {
+    addBox(material, x, y, z, width, height, depth, shade, write) {
+      buffer.addBox(material, x, y, 2 * zBack - z - depth + 1, width, height, depth, shade, write);
+    }
+  };
+  const openingWrite = { priority: VOXEL_WRITE_PRIORITIES.opening, owner: `${building.id}:rear-opening` };
+  const trimWrite = { priority: VOXEL_WRITE_PRIORITIES.trim, owner: `${building.id}:rear-trim` };
+  rearFacade.floors.forEach((floor) => floor.modules.forEach(({ type, bay, opening }) => {
+    const x = xStart + opening.xStart;
+    const y = floor.y + opening.yStart;
+    const width = opening.xEnd - opening.xStart + 1;
+    const height = opening.yEnd - opening.yStart + 1;
+    const shade = floor.index * 20 + bay;
+    rearBuffer.addBox(type === "service_door" ? building.materials.door : building.materials.window,
+      x, y, zBack, width, height, 1, shade, openingWrite);
+    addOpeningFrame(rearBuffer, building.materials.trim, x, y, zBack, width, height, shade, trimWrite);
+  }));
 }
 
 function addSideWall(buffer, building, x, zBack, depth, side) {

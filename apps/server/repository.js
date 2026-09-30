@@ -405,14 +405,15 @@ export function createRepository(database, config, { now = () => new Date() } = 
       return result.rows.map(renderArtifactResponse);
     },
 
-    async getRenderArtifactManifest(principal, cityId, buildingId, revision) {
+    async getRenderArtifactManifest(principal, cityId, buildingId, revision, sourceHash = null) {
       await this.getCity(principal, cityId);
       if (!config.bakedArtifactRoot) return null;
       const result = await database.query(
         `SELECT * FROM render_artifacts
          WHERE city_id = $1 AND building_id = $2 AND design_revision = $3 AND status = 'ready'
+           AND ($4::text IS NULL OR source_hash = $4)
          ORDER BY updated_at DESC LIMIT 1`,
-        [cityId, buildingId, Number(revision)]
+        [cityId, buildingId, Number(revision), sourceHash]
       );
       return result.rowCount ? renderArtifactResponse(result.rows[0]) : null;
     },
@@ -436,6 +437,8 @@ export function createRepository(database, config, { now = () => new Date() } = 
         if (existing.rowCount) {
           row = existing.rows[0];
           if (row.status === "ready" && row.building_id === buildingId && Number(row.format_version) === RENDER_ARTIFACT_FORMAT_VERSION) return renderArtifactResponse(row);
+          if (row.building_id === buildingId && Number(row.format_version) === RENDER_ARTIFACT_FORMAT_VERSION
+            && ["queued", "processing"].includes(row.status)) return renderArtifactResponse(row);
           const updated = await client.query(
             `UPDATE render_artifacts
              SET building_id = COALESCE($2, building_id), status = $3, format_version = $4,

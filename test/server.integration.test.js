@@ -7,6 +7,8 @@ import { createApp } from "../apps/server/app.js";
 import { createDatabase, migrateDatabase } from "../apps/server/database.js";
 import { createRepository } from "../apps/server/repository.js";
 import { createWorker } from "../apps/server/worker.js";
+import { createHash } from "node:crypto";
+import { enqueueCityRenderArtifactBackfill, getBuildingSourceHash, RENDER_ARTIFACT_FORMAT_VERSION } from "../apps/server/render-artifact-service.js";
 import { factsDigest } from "../src/gameplay/owl-report.js";
 
 const databaseUrl = process.env.MAGICTOWN_TEST_DATABASE_URL;
@@ -641,6 +643,58 @@ test("Owl Daily reports bind to resolved turns and stay canonical (PostgreSQL)",
     assert.equal(rows.rows[0].turn, 1);
     assert.equal(rows.rows[0].facts_digest, context.factsDigest);
     assert.equal(rows.rows[0].report_jsonb.headline, report.headline);
+  } finally {
+    await app.close();
+    await database.close();
+  }
+});
+
+test("PostgreSQL rebakes a prior compiler artifact without resetting an active job", { skip: !databaseUrl, timeout: 120_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "magtopia-pg-compiler-"));
+  const config = { publicBaseUrl: "http://127.0.0.1:4183", assetOutputRoot: root,
+    bakedArtifactRoot: root, assetProvider: "fixture", workerPollMs: 5, gameplaySeed: 11 };
+  const database = createDatabase(databaseUrl);
+  await migrateDatabase(database);
+  const repository = createRepository(database, config);
+  const app = await createApp({ repository, config });
+  try {
+    const player = await json(app, { method: "POST", url: "/api/v1/players", payload: { display_name: "PG Compiler Owner" } }, 201);
+    const city = await json(app, auth(player, { method: "POST", url: "/api/v1/cities", payload: { name: "PG Compiler City" } }), 201);
+    const principal = await repository.authenticate(player.access_token);
+    const record = await repository.getCity(principal, city.id);
+    const cell = Object.values(record.state.cells)[0];
+    const design = await json(app, auth(player, { method: "POST",
+      url: `/api/v1/cities/${city.id}/building-designs`, payload: { generation_mode: "floor_stack",
+        intent: { name: "PG Rear House", purpose: "residential" }, site: { lot_id: cell.id, footprint: "1x1" }
+      } }), 201);
+    const building = { id: "building-pg-compiler", footprintCells: [cell.id],
+      site: { lotId: cell.id, footprint: "1x1" }, program: { name: "PG Rear House", purpose: "residential" }, voxelDesign: design };
+    record.state.buildings[building.id] = building;
+    await database.query("UPDATE cities SET state_jsonb = $1 WHERE id = $2", [JSON.stringify(record.state), city.id]);
+    const oldHash = createHash("sha256").update(JSON.stringify({ sourceSpec: design.generation.sourceSpec, decorations: design.decorations ?? null })).digest("hex");
+    const old = await repository.enqueueRenderArtifactBake({ cityId: city.id, buildingId: building.id,
+      designId: design.id, designRevision: design.revision, sourceHash: oldHash });
+    await database.query("UPDATE render_artifacts SET status = 'ready', sha256 = $1, byte_length = 123, relative_path = 'old.mtba.br' WHERE id = $2", ["a".repeat(64), old.id]);
+    await database.query("UPDATE outbox_jobs SET status = 'completed' WHERE payload_jsonb->>'render_artifact_id' = $1", [old.id]);
+    const first = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/render-state` }), 200);
+    assert.deepEqual(first.artifact_manifest, []);
+    const rows = await database.query("SELECT * FROM render_artifacts WHERE city_id = $1 AND source_hash = $2", [city.id, getBuildingSourceHash(building)]);
+    assert.equal(rows.rowCount, 1);
+    const job = rows.rows[0];
+    assert.equal(job.status, "queued");
+    assert.equal(job.format_version, RENDER_ARTIFACT_FORMAT_VERSION);
+    await database.query("UPDATE render_artifacts SET status = 'processing' WHERE id = $1", [job.id]);
+    await enqueueCityRenderArtifactBackfill({ repository, cityId: city.id });
+    assert.equal((await database.query("SELECT status FROM render_artifacts WHERE id = $1", [job.id])).rows[0].status, "processing");
+    const worker = createWorker({ repository, config, onlyRenderArtifactIds: [job.id], logger: { error() {} } });
+    assert.equal(await worker.processNext(), true);
+    const current = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/render-state` }), 200);
+    assert.equal(current.artifact_manifest.length, 1);
+    assert.equal(current.artifact_manifest[0].sourceHash, getBuildingSourceHash(building));
+    const download = await app.inject(auth(player, { method: "GET", url: current.artifact_manifest[0].url }));
+    assert.equal(download.statusCode, 200);
+    assert.equal((await enqueueCityRenderArtifactBackfill({ repository, cityId: city.id })).skipped, 1);
+    assert.equal(await worker.processNext(), false);
   } finally {
     await app.close();
     await database.close();

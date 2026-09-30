@@ -1,3 +1,4 @@
+import { decodeBakedBuildingArtifact } from "../../src/render/bakedBuildingArtifact.js";
 import { designVisualizationLink, registerBuildingVisualizationRoute } from "./building-visualization.js";
 import { createHash, randomInt } from "node:crypto";
 import fs from "node:fs/promises";
@@ -318,13 +319,16 @@ export async function createApp({ repository, config, logger = false, now = () =
     if (!building?.voxelDesign?.generation?.sourceSpec) throw new ServiceError(404, "RENDER_ARTIFACT_NOT_FOUND", "Baked render artifact is not available for this building");
     if (!Number.isInteger(expectedRevision)) throw new ServiceError(400, "INVALID_RENDER_ARTIFACT_REVISION", "Artifact revision must be an integer");
     if (Number(building.voxelDesign.revision) !== expectedRevision) throw new ServiceError(409, "RENDER_ARTIFACT_REVISION_MISMATCH", "Baked render artifact revision does not match the current design");
-    const persistedCandidate = await repository.getRenderArtifactManifest?.(principal, request.params.cityId, request.params.buildingId, expectedRevision);
-    const persisted = persistedCandidate && persistedCandidate.sourceHash === getBuildingSourceHash(building)
+    const persistedCandidate = await repository.getRenderArtifactManifest?.(principal, request.params.cityId, request.params.buildingId, expectedRevision, getBuildingSourceHash(building));
+    const persisted = persistedCandidate && Number(persistedCandidate.artifactVersion) === RENDER_ARTIFACT_FORMAT_VERSION
+      && persistedCandidate.sourceHash === getBuildingSourceHash(building)
       ? persistedCandidate
       : null;
     const source = resolveBakedArtifactSource(config, request.params.cityId, building, persisted);
     const bytes = source ? await readBakedArtifactBytes(source) : null;
-    if (!bytes) throw new ServiceError(404, "RENDER_ARTIFACT_NOT_FOUND", "Baked render artifact is not available for this building");
+    if (!bytes || (!persisted && !isCurrentBakedArtifact(source.contentEncoding ? brotliDecompressSync(bytes) : bytes, building))) throw new ServiceError(404, "RENDER_ARTIFACT_NOT_FOUND", "Baked render artifact is not available for this building");
+    const sha256 = persisted?.sha256 ?? createHash("sha256").update(source.contentEncoding ? brotliDecompressSync(bytes) : bytes).digest("hex");
+    if (request.query.hash && request.query.hash !== sha256) throw new ServiceError(409, "RENDER_ARTIFACT_HASH_MISMATCH", "The artifact content identity changed");
     reply
       .type("application/octet-stream")
       .header("Cache-Control", "public, max-age=31536000, immutable")
@@ -1918,7 +1922,7 @@ async function enqueueConfirmedRenderArtifact(repository, cityId, design) {
       buildingId: design.source?.kind === "upgrade" ? design.source.buildingId : null,
       designId: design.id,
       designRevision: design.revision,
-      sourceHash: design.specHash
+      sourceHash: getBuildingSourceHash({ voxelDesign: design })
     });
   } catch {
     // Queueing is deliberately best-effort. The design confirmation is the
@@ -1952,9 +1956,10 @@ async function readArtifactManifest(repository, principal, { cityId, cityVersion
       const staleCurrent = persisted.some((entry) => {
         const building = currentBuildings.get(entry.buildingId);
         return building
-          && Number(entry.artifactVersion) !== RENDER_ARTIFACT_FORMAT_VERSION
           && Number(building.voxelDesign?.revision) === Number(entry.designRevision)
-          && entry.sourceHash === getBuildingSourceHash(building);
+          && (Number(entry.artifactVersion) !== RENDER_ARTIFACT_FORMAT_VERSION
+            || entry.sourceHash !== getBuildingSourceHash(building))
+          && !currentReady.some((current) => current.buildingId === building.id);
       });
       if (staleCurrent) {
         try {
@@ -1988,7 +1993,7 @@ function artifactManifestEntry(entry, cityId, cityVersion) {
     byteLength: entry.byteLength == null ? null : Number(entry.byteLength),
     relativePath: entry.relativePath,
     contentEncoding: String(entry.relativePath ?? "").endsWith(".br") ? "br" : null,
-    url: `/api/v1/cities/${encodeURIComponent(cityId)}/render-artifacts/${encodeURIComponent(entry.buildingId)}?revision=${encodeURIComponent(String(entry.designRevision))}`
+    url: `/api/v1/cities/${encodeURIComponent(cityId)}/render-artifacts/${encodeURIComponent(entry.buildingId)}?revision=${encodeURIComponent(String(entry.designRevision))}&hash=${entry.sha256}`
   };
 }
 
@@ -2684,7 +2689,7 @@ export async function createBakedArtifactManifest({ cityId, cityVersion, state, 
     try {
       const bytes = await readBakedArtifactBytes(source, { decoded: true });
       if (!bytes) continue;
-      if (bytes.byteLength < 6 || new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint16(4, true) !== BAKED_ARTIFACT_VERSION) continue;
+      if (!isCurrentBakedArtifact(bytes, building)) continue;
       entries.push({
         schema: BAKED_ARTIFACT_MANIFEST_SCHEMA,
         artifactVersion: BAKED_ARTIFACT_VERSION,
@@ -2692,11 +2697,11 @@ export async function createBakedArtifactManifest({ cityId, cityVersion, state, 
         cityVersion: Number(cityVersion),
         buildingId: building.id,
         designRevision: revision,
-        sourceHash: building.voxelDesign.generation.sourceHash ?? building.voxelDesign.generation.hash ?? null,
+        sourceHash: getBuildingSourceHash(building),
         sha256: createHash("sha256").update(bytes).digest("hex"),
         byteLength: bytes.byteLength,
         contentEncoding: source.contentEncoding ?? null,
-        url: `/api/v1/cities/${encodeURIComponent(cityId)}/render-artifacts/${encodeURIComponent(building.id)}?revision=${encodeURIComponent(String(revision))}`
+        url: `/api/v1/cities/${encodeURIComponent(cityId)}/render-artifacts/${encodeURIComponent(building.id)}?revision=${encodeURIComponent(String(revision))}&hash=${createHash("sha256").update(bytes).digest("hex")}`
       });
     } catch {
       // Stale/corrupt artifacts are optional and must not make city state fail.
@@ -2725,9 +2730,8 @@ export function resolveBakedArtifactSource(config = {}, cityId, building, manife
   return {
     kind: "file",
     root,
-    directory,
-    revision,
-    paths: [path.join(directory, `${revision}.mtba.br`), path.join(directory, `${revision}.mtba`)]
+    paths: [path.join(directory, `${revision}-${getBuildingSourceHash(building)}.mtba.br`),
+      path.join(directory, `${revision}-${getBuildingSourceHash(building)}.mtba`)]
   };
 }
 
@@ -2754,37 +2758,20 @@ export async function readBakedArtifactBytes(source, { decoded = false } = {}) {
       throw error;
     }
   }
-  if (source.directory && Number.isInteger(source.revision)) {
-    let names = [];
-    try {
-      names = await fs.readdir(source.directory);
-    } catch (error) {
-      if (error?.code !== "ENOENT") throw error;
-    }
-    const revisionPrefix = `${source.revision}-`;
-    const hashedNames = names
-      .filter((name) => name.startsWith(revisionPrefix) && (/^\d+-[a-f0-9]{64}\.mtba\.br$/i.test(name) || /^\d+-[a-f0-9]{64}\.mtba$/i.test(name)))
-      .sort();
-    for (const name of hashedNames) {
-      const candidate = path.join(source.directory, name);
-      if (!isWithinPath(source.root, candidate)) continue;
-      try {
-        const realRoot = await fs.realpath(source.root);
-        const realPath = await fs.realpath(candidate);
-        if (!isWithinPath(realRoot, realPath)) continue;
-        const stored = await fs.readFile(realPath);
-        if (stored.byteLength > BAKED_ARTIFACT_MAX_BYTES) throw new ServiceError(413, "RENDER_ARTIFACT_TOO_LARGE", "Baked render artifact is too large");
-        source.path = realPath;
-        source.contentEncoding = realPath.endsWith(".br") ? "br" : null;
-        if (!decoded || !source.contentEncoding) return stored;
-        return brotliDecompressSync(stored);
-      } catch (error) {
-        if (error?.code === "ENOENT") continue;
-        throw error;
-      }
-    }
-  }
+
   return null;
+}
+
+function isCurrentBakedArtifact(bytes, building) {
+  try {
+    const artifact = decodeBakedBuildingArtifact(bytes);
+    return artifact.formatVersion === BAKED_ARTIFACT_VERSION
+      && artifact.buildingId === building.id
+      && Number(artifact.designRevision) === Number(building.voxelDesign.revision)
+      && artifact.sourceHash === getBuildingSourceHash(building);
+  } catch {
+    return false;
+  }
 }
 
 function resolveBakedArtifactFixture(fixtures, key, buildingId) {
