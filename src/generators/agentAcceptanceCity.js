@@ -169,6 +169,7 @@ function* createAgentAcceptanceCitySteps(config = {}) {
   root.userData.getRailwayLodDiagnostics = () => railway.userData.getRailwayLodDiagnostics?.() ?? [];
   root.userData.getStreetLifeDiagnostics = () => streetLife.userData.getDiagnostics();
   root.userData.update = (elapsed) => {
+    buildings.userData.update?.(elapsed);
     railway.userData.update?.(elapsed);
     streetLife.userData.update(elapsed);
   };

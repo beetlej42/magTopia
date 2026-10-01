@@ -1,0 +1,15 @@
+{
+  "assetId": "owl-tower-001",
+  "id": "owl-tower-001",
+  "assetRevision": 4,
+  "specVersion": "1.0",
+  "footprint": {
+    "worldWidth": 4,
+    "worldDepth": 4
+  },
+  "site": {
+    "entrance": "north"
+  },
+  "voxelSize": 0.125,
+  "description": "A narrow stone postal tower with a projecting timber owl loft, open flight holes and two independently authored perched owls. Ivory courier flies a circuit; brown keeper turns its head. Static previews remain perched."
+}

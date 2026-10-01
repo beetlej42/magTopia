@@ -270,7 +270,10 @@ export function createIsometricDevelopmentWorld(config = {}) {
     railway?.userData.updateDaylight?.(style);
     starterDistrict.userData.updateDaylight?.(style);
   };
-  root.userData.update = (elapsed) => railway?.userData.update?.(elapsed);
+  root.userData.update = (elapsed) => {
+    railway?.userData.update?.(elapsed);
+    starterDistrict.userData.update?.(elapsed);
+  };
   root.userData.updateDaylight(getDaylightStyle(params.sunTime));
   root.userData.maps = { previews: [["Development terrain", terrain.canvas]] };
   return root;

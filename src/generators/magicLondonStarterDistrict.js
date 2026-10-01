@@ -1,3 +1,4 @@
+import { createOwlTower } from "./owlTower.js";
 import { buildingEntranceRotation, createBuildingDesignObject } from "./buildingDesignObject.js";
 import { createMinistryOfMagic } from "./ministryOfMagic.js";
 import { createDiagonAlley } from "./diagonAlley.js";
@@ -43,6 +44,7 @@ export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cit
   const baseFitControllers = [];
   const voxelLods = [];
   const voxelDaylightTargets = [];
+  const animationTargets = [];
   const dynamicLightRecords = [];
   const dynamicLightCandidates = [];
   const dynamicLightDiagnostics = { count: 0, visible: 0, limit: 0 };
@@ -55,15 +57,18 @@ export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cit
     // Card identity selects the fixed landmark for existing and new cities.
     // Legacy non-2x2 placements retain their previous representation.
     const landmarkFactory = building.specialStructure?.cardId === "ministry-of-magic" ? createMinistryOfMagic
-      : building.specialStructure?.cardId === "diagon-alley-entrance" ? createDiagonAlley : null;
-    if (landmarkFactory && building.site.footprint === "2x2" && renderCells.length === 4) {
+      : building.specialStructure?.cardId === "diagon-alley-entrance" ? createDiagonAlley
+      : building.specialStructure?.cardId === "owl-tower" ? createOwlTower : null;
+    const landmarkCells = building.specialStructure?.cardId === "owl-tower" ? 1 : 4;
+    if (landmarkFactory && building.site.footprint === (landmarkCells === 1 ? "1x1" : "2x2") && renderCells.length === landmarkCells) {
       const object = landmarkFactory({ cellWorldSize: tileSize, nightLighting });
-      const x = renderCells.reduce((sum, cell) => sum + cell.center.x, 0) / 4;
-      const z = renderCells.reduce((sum, cell) => sum + cell.center.z, 0) / 4;
+      const x = renderCells.reduce((sum, cell) => sum + cell.center.x, 0) / landmarkCells;
+      const z = renderCells.reduce((sum, cell) => sum + cell.center.z, 0) / landmarkCells;
       object.position.set(x, sampleGroundHeight(x, z) + BUILDING_BASE_ELEVATION, z);
       object.rotation.y = buildingEntranceRotation(building.site.entrance);
       object.userData.buildingId = building.id;
       voxelDaylightTargets.push(object);
+      if (object.userData.update) animationTargets.push(object);
       placements.push({ assetId: object.userData.assetId, label: building.program.name, cellId: renderCells[0].id,
         footprintCells: renderCells.map(cell => cell.id), entrance: building.site.entrance,
         entranceFrontageCell: getNeighborCellId(renderCells, building.site.entrance),
@@ -79,6 +84,7 @@ export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cit
       const buildingObject = createRuntimeVoxelBuilding(building, renderCells, sampleGroundHeight, nightLighting, enableVoxelLod, bakedArtifacts?.[building.id]);
       if (buildingObject.isLOD) voxelLods.push(buildingObject);
       voxelDaylightTargets.push(buildingObject);
+      if (buildingObject.userData.update) animationTargets.push(buildingObject);
       placements.push({
         assetId: null,
         label: building.program.name,
@@ -192,7 +198,9 @@ export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cit
     // targets so daylight continues to reach windows and lights afterwards.
     voxelDaylightTargets.forEach((target) => target.userData?.updateDaylight?.(style));
   };
+  root.userData.update = elapsed => animationTargets.forEach(object => object.userData.update(elapsed));
   root.userData.updateView = (camera, maxDynamicLights = 4, viewport = {}) => {
+    animationTargets.forEach(object => object.userData.updateAnimationView?.(camera));
     updateVoxelLods(voxelLods, camera, viewport);
     updateNearestDynamicLights(dynamicLightRecords, dynamicLightCandidates, camera, maxDynamicLights, dynamicLightDiagnostics);
   };
