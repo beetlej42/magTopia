@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { planCourtyardFountain } from "./courtyardFountain.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   BUILDING_ARCHETYPE_IDS,
@@ -26,7 +27,7 @@ import { ACTIVE_VISUAL_THEME } from "../render/sunlitStorybookTheme.js";
 import { createRng } from "../utils/random.js";
 
 // Geometry identity, independent of the MTBA binary format. Bump for compiler changes.
-export const BUILDING_MESH_COMPILER_VERSION = 3;
+export const BUILDING_MESH_COMPILER_VERSION = 4;
 
 const THEME_MATERIALS = ACTIVE_VISUAL_THEME.materials;
 const THEME_VARIANTS = ACTIVE_VISUAL_THEME.materialVariants;
@@ -1093,7 +1094,9 @@ function compileVoxelMassing(spec) {
   ));
   const groundDetails = compiledMasses
     .filter((compiled) => compiled.mass.type === "ground")
-    .map((compiled) => addMassingGroundDetails(buffer, spec, compiled.mass, compiled.basePlan));
+    .map((compiled) => addMassingGroundDetails(buffer, spec, compiled.mass, compiled.basePlan, compiledMasses
+      .filter((other) => other.mass.type !== "ground")
+      .map((other) => ({ mass: other.mass, plan: other.basePlan }))));
   const relationFinishes = addMassingRelationFinishes(buffer, spec, relationCuts, compiledMasses);
   const capPlans = compiledMasses.map((compiled) => {
     const stackedChildren = spec.relations
@@ -3927,7 +3930,7 @@ function genericMassingFacadeMaterial(mass, features, faces, x, localY, z) {
   return null;
 }
 
-function addMassingGroundDetails(buffer, spec, mass, plan) {
+function addMassingGroundDetails(buffer, spec, mass, plan, occluders = []) {
   const treatment = mass.groundTreatment;
   const result = {
     id: mass.id,
@@ -3985,6 +3988,16 @@ function addMassingGroundDetails(buffer, spec, mass, plan) {
     )) result.voxels += 1;
   }
 
+  const fountain = treatment.pattern === "courtyard"
+    ? planCourtyardFountain({ plan, bounds, surfaceY, trim: mass.materials.trim, occluders })
+    : null;
+  if (fountain) {
+    result.fountain = { centerX: fountain.centerX, centerZ: fountain.centerZ, radius: fountain.radius, height: fountain.height, voxels: fountain.voxels.length };
+    for (const { x, y, z, material } of fountain.voxels) {
+      if (buffer.addVoxel(material, x, y, z, hashNumber(spec.seed, mass.id, "fountain", x, y, z), decorationWrite)) result.voxels += 1;
+    }
+  }
+
   const candidates = [
     [0.24, 0.24],
     [0.76, 0.24],
@@ -4009,6 +4022,13 @@ function addMassingGroundDetails(buffer, spec, mass, plan) {
       }
     }
     if (!footprint.every((key) => plan.has(key))) continue;
+    if (fountain && footprint.some((key) => {
+      const [x, z] = parseMassingPoint(key);
+      const dx = Math.abs(x - fountain.centerX);
+      const dz = Math.abs(z - fountain.centerZ);
+      const clearance = fountain.radius + 1;
+      return Math.max(dx, dz) <= clearance && dx + dz <= Math.floor(clearance * 1.5);
+    })) continue;
     if (
       treatment.pattern !== "garden"
       && (Math.abs(candidate.x - centerX) <= pathHalf || Math.abs(candidate.z - centerZ) <= pathHalf)
@@ -5961,3 +5981,4 @@ function linearTentRise(index, span, ridgeRatio, ridgeHeight) {
     ? ridgeHeight
     : Math.round(ridgeHeight * clamp((span - 1 - index) / run, 0, 1));
 }
+
