@@ -33,6 +33,7 @@ export const CITY_DAY_ACTIVE_STATUSES = Object.freeze(new Set(["open", "building
 // event stream instead of a parallel activity log.
 const AGENT_WORK_EVENT_TYPES = Object.freeze(new Set([
   "building_constructed",
+  "building_started",
   "building_upgraded",
   "building_demolished",
   "road_connected",
@@ -186,3 +187,4 @@ export function deriveCityDayPresentation(state, options = {}) {
     turnDeadlineAt: gameplay.turnDeadlineAt ?? null
   };
 }
+

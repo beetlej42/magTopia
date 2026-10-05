@@ -1,3 +1,4 @@
+import { constructionSchedule, completeDueConstruction } from "../gameplay/construction.js";
 import { completeAssetPrompt, normalizeConnectionRequest, normalizeConstructionProposal, normalizeDistrictDefinition } from "./contracts.js";
 import { appendEvent, cloneCityState } from "./state.js";
 import { previewConnectionBetween, previewConstruction } from "./solver.js";
@@ -200,7 +201,7 @@ function constructBuilding(currentState, input, context) {
   if (!preview.feasible) return rejected(currentState, classifyPreviewError(preview), preview.errors?.[0] ?? "Construction is not feasible", { preview });
   const next = cloneCityState(currentState);
   const buildingId = input.buildingId ?? context.createId("building");
-  applyCompletedBuilding(next, { proposal, preview, buildingId, assetId: input.assetId ?? proposal.program.assetId }, context);
+  applyConstructionSite(next, { proposal, preview, buildingId, assetId: input.assetId ?? proposal.program.assetId }, context);
   if (!isSpecialStructureProposal(proposal)) next.gameplay = consumeConstructionDiscount(next, constructionDiscountRate).gameplay;
   return accepted(currentState, next, { building: structuredClone(next.buildings[buildingId]), preview });
 }
@@ -305,7 +306,8 @@ function reserveConstruction(currentState, input, context) {
     reservedCells,
     frozenCost: preview.cost,
     actor: proposal.actor,
-    createdAt: context.now()
+    createdAt: context.now(),
+    construction: constructionSchedule(next.turn)
   };
   if (!isSpecialStructureProposal(proposal)) {
     const discount = next.gameplay?.cardState?.constructionDiscount;
@@ -342,16 +344,18 @@ function completeReservedConstruction(currentState, input, context) {
   const live = next.reservations[input.reservationId];
   const buildingId = input.buildingId ?? context.createId("building");
   clearReservationMarks(next, live);
-  applyCompletedBuilding(next, {
+  applyConstructionSite(next, {
     proposal: live.proposal,
     preview: live.preview,
     buildingId,
     assetId: input.assetId ?? live.proposal.program.assetId,
-    resourcesAlreadyDebited: true
+    resourcesAlreadyDebited: true,
+    construction: live.construction ?? constructionSchedule(next.turn)
   }, context);
   delete next.reservations[input.reservationId];
   appendEvent(next, { type: "construction_reservation_completed", reservationId: input.reservationId, buildingId }, context);
-  return accepted(currentState, next, { building: structuredClone(next.buildings[buildingId]) });
+  const ready = completeDueConstruction(next, context.now());
+  return accepted(currentState, ready, { building: structuredClone(ready.buildings[buildingId]) });
 }
 
 function cancelConstructionReservation(currentState, input, context) {
@@ -402,7 +406,7 @@ export function calculateDailyIncome(state) {
   return incomeForSettlement(metadata, state.gameplay?.population ?? {});
 }
 
-function applyCompletedBuilding(next, { proposal, preview, buildingId, assetId, resourcesAlreadyDebited = false }, context) {
+function applyConstructionSite(next, { proposal, preview, buildingId, assetId, resourcesAlreadyDebited = false, construction = constructionSchedule(next.turn) }, context) {
   preview.footprintCells.forEach((cellId) => { next.cells[cellId].occupancy = buildingId; });
   applyRoadPlan(next, preview.connectionPlan);
   if (!resourcesAlreadyDebited) next.resources = preview.resourcesAfter;
@@ -412,7 +416,8 @@ function applyCompletedBuilding(next, { proposal, preview, buildingId, assetId, 
   next.buildings[buildingId] = {
     ...proposal,
     id: buildingId,
-    status: "completed",
+    status: "construction",
+    construction,
     assetId: assetId ?? null,
     assetPrompt: completeAssetPrompt(proposal),
     footprintCells: preview.footprintCells,
@@ -421,7 +426,7 @@ function applyCompletedBuilding(next, { proposal, preview, buildingId, assetId, 
     createdAtTurn: next.turn
   };
   bump(next, false);
-  appendEvent(next, { type: "building_constructed", actor: proposal.actor, buildingId, proposalId: proposal.id, assetId: assetId ?? null, cost: preview.cost, summary: `${proposal.program.name} was built by ${proposal.actor}.` }, context);
+  appendEvent(next, { type: "building_started", actor: proposal.actor, buildingId, proposalId: proposal.id, assetId: assetId ?? null, cost: preview.cost, summary: `${proposal.program.name} began construction; ready at turn ${construction.readyAtTurn}.` }, context);
 }
 
 function applyRoadPlan(state, plan) {
@@ -464,3 +469,4 @@ function classifyPreviewError(preview) {
 function negativeKeys(resources) { return Object.entries(resources).filter(([, value]) => value < 0).map(([key]) => key); }
 function add(a = {}, b = {}) { return { coins: (a.coins ?? 0) + (b.coins ?? 0) }; }
 function subtract(a, b) { return { coins: a.coins - b.coins }; }
+

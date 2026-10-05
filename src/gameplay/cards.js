@@ -1,3 +1,4 @@
+import { constructionSchedule } from "./construction.js";
 import { getCard, CARD_TYPES, CARD_CATALOG, CARD_CHOICE_KINDS, CARD_DECISION_MODES, normalizeCardDuration } from "./card-catalog.js";
 import { manhattanDistance, cellFootprint } from "./exposure.js";
 import { createRoller, hashSeed, pick } from "./random.js";
@@ -377,7 +378,8 @@ function canonicalBuildingPurposes(building) {
 }
 
 export function specialStructureBuildings(state) {
-  return Object.values(state?.buildings ?? {}).filter((building) => building?.specialStructure?.cardId);
+  return Object.values(state?.buildings ?? {}).filter((building) => building?.specialStructure?.cardId
+    && ["active", "completed"].includes(building.status ?? "completed"));
 }
 
 // Concealment bonus granted to a magical building by nearby special structures.
@@ -618,7 +620,8 @@ export function placeSpecialStructure(state, cityId, input = {}, context = {}) {
       canonicalProgram: effect.canonicalProgram ?? structure.canonicalProgram ?? null,
       attributes: { magicLevel: effect.magicLevel ?? 0.5, specialCardId: card.cardId, canonicalProgram: effect.canonicalProgram ?? structure.canonicalProgram ?? null }
     },
-    status: "completed",
+    status: "construction",
+    construction: constructionSchedule(state.turn),
     specialStructure: {
       cardId: card.cardId,
       structureId: card.cardId,
@@ -633,13 +636,13 @@ export function placeSpecialStructure(state, cityId, input = {}, context = {}) {
       turn: state.turn,
       cityVersion: (state.version ?? 0) + 1,
       at: context.now?.() ?? new Date().toISOString(),
-      type: "special_structure_placed",
+      type: "special_structure_started",
       actor: "system:card",
       cardId: card.cardId,
       buildingId,
       lotId,
       footprint,
-      summary: `${structure.name} was placed by the daily card system.`
+      summary: `${structure.name} began construction; ready at turn ${state.turn + 1}.`
     });
   }
   const completed = normalizePendingPlacement({ ...placement, status: "completed", buildingId, lotId, footprint, entrance });
@@ -938,3 +941,4 @@ function normalizeCardState(value = {}) {
     } : null
   };
 }
+

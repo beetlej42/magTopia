@@ -1,3 +1,4 @@
+import { createConstructionSite, constructionSiteOptions } from "./constructionSite.js";
 import { createOwlTower } from "./owlTower.js";
 import { buildingEntranceRotation, createBuildingDesignObject } from "./buildingDesignObject.js";
 import { createMinistryOfMagic } from "./ministryOfMagic.js";
@@ -49,11 +50,30 @@ export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cit
   const dynamicLightCandidates = [];
   const dynamicLightDiagnostics = { count: 0, visible: 0, limit: 0 };
 
-  Object.values(cityState?.buildings ?? {}).forEach((building, index) => {
+  const awaitingAssets = Object.values(cityState?.reservations ?? {}).map(reservation => ({
+    ...reservation.proposal, id: reservation.id, status: "construction",
+    footprintCells: reservation.preview.footprintCells, construction: reservation.construction,
+    awaitingAsset: true
+  }));
+  [...Object.values(cityState?.buildings ?? {}), ...awaitingAssets].forEach((building, index) => {
     const buildingAssetId = building.assetId ?? building.program?.assetId;
     const asset = assets.get(buildingAssetId);
     const footprintCellIds = building.footprintCells?.length ? building.footprintCells : [building.site.lotId];
     const renderCells = footprintCellIds.map((cellId) => resolveRenderCell(cells, cellId)).filter(Boolean);
+    if (building.status === "construction" && renderCells.length) {
+      const x = renderCells.reduce((sum, cell) => sum + cell.center.x, 0) / renderCells.length;
+      const z = renderCells.reduce((sum, cell) => sum + cell.center.z, 0) / renderCells.length;
+      const object = createConstructionSite({ ...constructionSiteOptions(building), cellWorldSize: tileSize,
+        cellOffsets: renderCells.map(cell => ({ x: cell.center.x - x, z: cell.center.z - z })) });
+      object.position.set(x, sampleGroundHeight(x, z) + BUILDING_BASE_ELEVATION, z);
+      object.userData.buildingId = building.id;
+      placements.push({ buildingId: building.id, label: building.program?.name, cellId: renderCells[0].id,
+        footprintCells: footprintCellIds, entrance: building.site.entrance,
+        representation: "construction-site", readyAtTurn: building.construction?.readyAtTurn ?? null,
+        awaitingAsset: building.awaitingAsset === true });
+      root.add(object);
+      return;
+    }
     // Card identity selects the fixed landmark for existing and new cities.
     // Legacy non-2x2 placements retain their previous representation.
     const landmarkFactory = building.specialStructure?.cardId === "ministry-of-magic" ? createMinistryOfMagic
@@ -1256,3 +1276,4 @@ function getNeighborCellId(cells, entrance) {
   const edge = edgeCells[Math.floor((edgeCells.length - 1) / 2)];
   return edge ? `cell-${edge.column + dx}-${edge.row + dy}` : null;
 }
+

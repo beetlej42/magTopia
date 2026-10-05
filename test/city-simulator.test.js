@@ -18,7 +18,7 @@ test("headless city simulation is deterministic and uses the canonical ledger", 
   assert.ok(first.timeline.every((entry) => entry.invariants.every((invariant) => invariant.ok)));
   assert.ok(first.timeline.some((entry) => entry.construction.spend > 0));
   assert.ok(first.timeline.some((entry) => entry.coins.income > 0));
-  assert.ok(first.finalState.events.some((event) => event.type === "building_constructed"));
+  assert.ok(first.finalState.events.some((event) => event.type === "building_started"));
 });
 
 test("simulated buildings all expose a legal road-fronting entrance and ledger spends roads", () => {
@@ -109,3 +109,4 @@ test("invalid simulator arguments fail clearly", () => {
   assert.equal(invalid.status, 2);
   assert.match(invalid.stderr, /turns must be an integer/);
 });
+

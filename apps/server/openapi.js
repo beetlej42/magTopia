@@ -442,7 +442,12 @@ export function createOpenApiDocument(baseUrl) {
           required: ["command_id", "status", "city_version_before", "city_version_after", "turn", "building_id"],
           properties: {
             command_id: { type: "string" },
-            status: { const: "placed" },
+            status: { const: "placed", description: "Placement entitlement consumed; the building is still under construction." },
+            building_status: { type: "string" },
+            ready_at_turn: { type: ["integer", "null"] },
+            construction_started_at_turn: { type: ["integer", "null"] },
+            completed_at_turn: { type: ["integer", "null"] },
+            operational: { type: "boolean" },
             city_version_before: { type: "integer" },
             city_version_after: { type: "integer" },
             turn: { type: "integer" },
@@ -1064,7 +1069,7 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}/construction-previews": { post: operation("Preview one confirmed BuildingDesign", "construction", { $ref: "#/components/schemas/BuildingDesignConstructionRequest" }) },
       "/cities/{city_id}/construction-orders": {
         get: operation("List construction orders", "construction"),
-        post: commandOperation("Submit one idempotent confirmed-BuildingDesign construction order", "construction", { $ref: "#/components/schemas/BuildingDesignConstructionRequest" })
+        post: commandOperation("Submit one idempotent confirmed-BuildingDesign construction order; new buildings operate from the next turn (resource.building_status, ready_at_turn); completed order status means asset fulfillment", "construction", { $ref: "#/components/schemas/BuildingDesignConstructionRequest" })
       },
       "/cities/{city_id}/construction-orders/{order_id}": { get: operation("Read a construction order", "construction") },
       "/cities/{city_id}/connection-previews": { post: operation("Preview a building/cell/node road connection", "roads", { $ref: "#/components/schemas/ConnectionRequest" }) },
@@ -1252,4 +1257,5 @@ function commandOperation(summary, tag, requestBody = json, responseSchema = jso
   ];
   return value;
 }
+
 

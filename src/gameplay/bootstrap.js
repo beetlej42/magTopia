@@ -2,8 +2,8 @@
 // is computed from the authoritative city state/event stream and is never
 // accepted as Agent input or persisted by a GET request.
 
-const START_EVENTS = new Set(["construction_reserved", "building_constructed", "construction_reservation_completed", "special_structure_placed"]);
-const COMPLETE_EVENTS = new Set(["building_constructed", "construction_reservation_completed", "special_structure_placed"]);
+const START_EVENTS = new Set(["construction_reserved", "building_started", "special_structure_started", "building_constructed", "construction_reservation_completed", "special_structure_placed"]);
+const COMPLETE_EVENTS = new Set(["building_completed", "building_constructed", "special_structure_placed"]);
 
 export function isBootstrapTurn(state) {
   // The turn number is the authority. Persisted turnKind is a descriptive
@@ -20,12 +20,13 @@ export function deriveBootstrapProgress(state = {}) {
     if (value?.type === "bridge") roads.add(String(id));
   }
   const buildings = Object.values(state.buildings ?? {}).filter(Boolean);
-  const activeBuildings = buildings.filter((b) => ["active", "completed"].includes(String(b.status ?? "completed")));
-  const residential = activeBuildings.filter((b) => purposeFamily(b) === "residential").map((b) => String(b.id)).sort();
-  const commercial = activeBuildings.filter((b) => purposeFamily(b) === "commercial").map((b) => String(b.id)).sort();
-  const publicService = activeBuildings.filter((b) => purposeFamily(b) === "public_service").map((b) => String(b.id)).sort();
+  const plannedBuildings = buildings.filter((b) => ["active", "completed", "construction"].includes(String(b.status ?? "completed")));
+  const residential = plannedBuildings.filter((b) => purposeFamily(b) === "residential").map((b) => String(b.id)).sort();
+  const commercial = plannedBuildings.filter((b) => purposeFamily(b) === "commercial").map((b) => String(b.id)).sort();
+  const publicService = plannedBuildings.filter((b) => purposeFamily(b) === "public_service").map((b) => String(b.id)).sort();
+  const reservedPurposes = new Set(Object.values(state.reservations ?? {}).map(r => purposeFamily(r.proposal)));
   const connected = [...roads].sort();
-  const events = (state.events ?? []).filter((e) => START_EVENTS.has(e?.type));
+  const events = (state.events ?? []).filter((e) => START_EVENTS.has(e?.type) || COMPLETE_EVENTS.has(e?.type));
   const gatewayNode = state.nodes?.old_town_entry;
   const gatewayCell = gatewayNode?.cellId ? state.cells?.[gatewayNode.cellId] : null;
   const gatewayAdjacentRoad = gatewayCell && Object.values(state.cells ?? {}).some((cell) =>
@@ -51,9 +52,9 @@ export function deriveBootstrapProgress(state = {}) {
   const milestones = {
     gateway: gateway,
     road: connected.length > 0,
-    housing: residential.length > 0,
-    income: commercial.length > 0,
-    publicService: publicService.length > 0
+    housing: residential.length > 0 || reservedPurposes.has("residential"),
+    income: commercial.length > 0 || reservedPurposes.has("commercial"),
+    publicService: publicService.length > 0 || reservedPurposes.has("public_service")
   };
   const recommendedBeforeResolve = ["gateway", "housing", "income"];
   const missingRecommendedMilestones = recommendedBeforeResolve.filter((milestone) => !milestones[milestone]);
@@ -87,13 +88,13 @@ export function bootstrapGuidance(progress) {
   const missing = [];
   if (!progress?.gatewayConnected) missing.push("connect the first main road to old_town_entry");
   if (!progress?.roadsConnectedCount) missing.push("lay a compact street frontage");
-  if (!progress?.residentialBuildings?.length) missing.push("add low-cost housing");
-  if (!progress?.commercialBuildings?.length) missing.push("add an income-producing building");
-  if (!progress?.publicServiceBuildings?.length) missing.push("add a small public service when affordable");
+  if (!progress?.milestones?.housing) missing.push("add low-cost housing");
+  if (!progress?.milestones?.income) missing.push("add an income-producing building");
+  if (!progress?.milestones?.publicService) missing.push("add a small public service when affordable");
   const location = progress?.gatewayLocation
     ? `old_town_entry is ${progress.gatewayLocation.cell_id} at column ${progress.gatewayLocation.column}, row ${progress.gatewayLocation.row}`
     : "old_town_entry location is unavailable";
-  return `Bootstrap objective: build a real starter neighborhood before the first resolve. ${location}. ${missing.length ? `Next, ${missing.join(", ")}.` : "The suggested starter mix is represented."} This remains advisory, but aim to complete gateway, housing, and income milestones before resolving; public service remains optional when funds are tight.`;
+  return `Bootstrap objective: build a real starter neighborhood before the first resolve. ${location}. ${missing.length ? `Next, ${missing.join(", ")}.` : "The suggested starter mix is represented."} Buildings under construction count toward these planning milestones and become operational next turn. This remains advisory, but aim to complete gateway, housing, and income milestones before resolving; public service remains optional when funds are tight.`;
 }
 
 function purposeFamily(building) {

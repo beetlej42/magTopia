@@ -123,18 +123,20 @@ export function previewCitySystems(state, options = {}) {
   }).map((entry) => [entry.buildingId, entry]));
   const buildings = Object.entries(state.buildings ?? {}).sort(([left], [right]) => left.localeCompare(right)).map(([id, building]) => {
     const metadata = metadataMap[id] ?? {};
+    const operational = ["active", "completed"].includes(metadata.status ?? "active");
     const concealment = neighborhoodConcealment(state, { ...building, id }, { metadataOf: (neighbor) => metadataMap[neighbor.id] })
       + Number(policyEffects.concealmentBonus ?? 0)
       + specialStructureConcealment(state, { ...building, id });
-    const pressure = exposurePressure(metadata, concealment, {
+    const pressure = operational ? exposurePressure(metadata, concealment, {
       modifier: specialStructureExposureModifier(state)
-    });
+    }) : 0;
     const risk = riskByBuilding.get(id) ?? {};
     return {
       building_id: id,
       name: building.program?.name ?? id,
       purpose: building.program?.purpose ?? null,
       status: building.status ?? metadata.status ?? "active",
+      ready_at_turn: building.construction?.readyAtTurn ?? null,
       canonical: metadata.canonical === true,
       units: (metadata.units ?? []).map((unit) => ({ purpose: unit.purpose, area: unit.area, magic_ratio: unit.magicRatio })),
       magic_load: Number(risk.magicLoad ?? 0),
@@ -148,6 +150,14 @@ export function previewCitySystems(state, options = {}) {
     };
   });
   return {
+    construction: {
+      under_construction: Object.values(state.buildings ?? {}).filter(b => b.status === "construction").map(b => ({
+        building_id: b.id, name: b.program?.name ?? b.id, ready_at_turn: b.construction?.readyAtTurn ?? null
+      })),
+      awaiting_assets: Object.values(state.reservations ?? {}).map(r => ({
+        reservation_id: r.id, name: r.proposal?.program?.name ?? r.id, ready_at_turn: r.construction?.readyAtTurn ?? null
+      }))
+    },
     population: {
       current: populationPreview.before,
       capacity: populationPreview.capacityDelta,
@@ -269,7 +279,7 @@ export function updateExposures(state, metadataMap, options = {}) {
   const flatConcealmentBonus = Number(options.concealmentBonus ?? 0);
   const concealmentBonusFor = options.concealmentBonusFor ?? (() => 0);
   for (const [id, metadata] of Object.entries(metadataMap)) {
-    if (metadata.status === "sealed") continue;
+    if (metadata.status && !["active", "completed"].includes(metadata.status)) continue;
     const concealment = neighborhoodConcealment(state, { ...state.buildings[id], id }, { metadataOf: (neighbor) => nextMetadata[neighbor.id] })
       + flatConcealmentBonus
       + concealmentBonusFor({ ...state.buildings[id], id });
@@ -1003,21 +1013,23 @@ function deriveConstructionFacts(state, turn) {
   const refs = new Set();
   const constructionRefs = new Map();
   const actualBuildingIds = new Set(Object.keys(state?.buildings ?? {}).map(String));
-  const startTypes = new Set(["construction_reserved", "building_constructed", "construction_reservation_completed", "special_structure_placed"]);
-  const completedTypes = new Set(["building_constructed", "construction_reservation_completed", "special_structure_placed"]);
+  const startTypes = new Set(["construction_reserved", "building_started", "special_structure_started", "building_constructed", "construction_reservation_completed", "special_structure_placed"]);
+  const completedTypes = new Set(["building_completed", "building_constructed", "special_structure_placed"]);
   for (const event of state?.events ?? []) {
-    if (Number(event?.turn) !== Number(turn) || !startTypes.has(event?.type)) continue;
+    if (Number(event?.turn) !== Number(turn) || (!startTypes.has(event?.type) && !completedTypes.has(event?.type))) continue;
     const buildingId = event.buildingId ?? event.building_id;
     if (buildingId != null && actualBuildingIds.has(String(buildingId))) {
       const value = String(buildingId);
-      started.add(value);
+      if (startTypes.has(event.type)) started.add(value);
       refs.add(`fact-building-${value}`);
-      if (completedTypes.has(event.type)) completed.add(value);
+      const legacyAssetCompletion = event.type === "construction_reservation_completed"
+        && !state.buildings[value]?.construction;
+      if (completedTypes.has(event.type) || legacyAssetCompletion) completed.add(value);
     }
     if (event.reservationId != null || event.proposalId != null) {
       const reservationId = event.reservationId == null ? null : String(event.reservationId);
       const refId = reservationId ?? String(event.proposalId);
-      const kind = event.type === "construction_reserved" ? "reservation" : "completion";
+      const kind = completedTypes.has(event.type) ? "completion" : "reservation";
       constructionRefs.set(`${event.type}:${refId}`, {
         factRef: `fact-construction-${kind}-${refId}`,
         kind,

@@ -297,7 +297,11 @@ export function createCityInfoContext(root) {
   };
   context.buildings = placements.map((placement, order) => {
     const object = buildingObjectsById.get(placement.buildingId) ?? null;
-    const building = state.buildings?.[placement.buildingId] ?? null;
+    const reservation = state.reservations?.[placement.buildingId];
+    const building = state.buildings?.[placement.buildingId] ?? (reservation ? {
+      ...reservation.proposal, id: reservation.id, status: "construction", awaitingAsset: true,
+      construction: reservation.construction, footprintCells: reservation.preview.footprintCells
+    } : null);
     if (!object && !building) return null;
     const footprintCellIds = placement.footprintCells ?? building?.footprintCells ?? [];
     const geometry = getBuildingGeometry({ placement, object, building }, context);
@@ -667,6 +671,11 @@ function buildingSubtitle(building) {
   if (!building) return "Building";
   const purpose = PURPOSE_LABELS[building.program?.purpose] ?? building.program?.purpose ?? "Building";
   const status = STATUS_LABELS[building.status] ?? building.status ?? "Active";
+  if (building.status === "construction") {
+    const ready = building.construction?.readyAtTurn;
+    return purpose + " · " + (building.awaitingAsset ? "Awaiting asset · " : "")
+      + (ready == null ? "Under construction" : `Ready from turn ${ready}`);
+  }
   return purpose + " · " + status;
 }
 
@@ -691,3 +700,4 @@ function approach(current, target, delta, rate) {
 function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
 }
+

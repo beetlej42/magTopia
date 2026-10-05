@@ -1,3 +1,4 @@
+import { completeDueConstruction } from "../src/gameplay/construction.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createCityState } from "../src/city/state.js";
@@ -225,7 +226,7 @@ test("every special structure is a unique free-placement card, including placeho
   }
 });
 
-test("special placement is free for every catalog structure and unlocks Ministry governance only after placement", () => {
+test("special placement is free for every catalog structure and unlocks Ministry governance only after construction", () => {
   const structureIds = CARD_CATALOG.filter((card) => card.type === CARD_TYPES.special_structure).map((card) => card.cardId);
   for (const cardId of structureIds) {
     let state = stateAt(5, `free-${cardId}`);
@@ -250,7 +251,9 @@ test("special placement is free for every catalog structure and unlocks Ministry
     assert.equal(placed.nextState.resources.coins, 321);
     assert.equal(placed.nextState.gameplay.resources.coins, 321);
     if (cardId === "ministry-of-magic") {
-      assert.equal(arcaneOfficerRecruitmentUnlocked(placed.nextState), true);
+      assert.equal(arcaneOfficerRecruitmentUnlocked(placed.nextState), false);
+      const finished = completeDueConstruction({ ...placed.nextState, turn: 6 }, "2026-10-05T00:00:00.000Z");
+      assert.equal(arcaneOfficerRecruitmentUnlocked(finished), true);
       assert.equal(placed.nextState.buildings[placed.buildingId].program.canonicalProgram, "ministry_of_magic");
     }
   }
@@ -349,3 +352,4 @@ test("completed discounted reservations keep the one-shot entitlement consumed",
   assert.equal(completed.accepted, true, completed.message);
   assert.equal(completed.state.gameplay.cardState.constructionDiscount.remainingUses, 0);
 });
+

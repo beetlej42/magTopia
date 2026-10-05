@@ -1,3 +1,4 @@
+import { completeDueConstruction } from "./construction.js";
 import { normalizeScheduler } from "./schema.js";
 
 // Turn lifecycle under the consolidated gameplay rules.
@@ -97,7 +98,7 @@ export function openNextTurn(state, now, config = {}) {
   const schedule = normalizeTurnSchedule(config);
   const at = new Date(now).getTime();
   const openedAt = new Date(at).toISOString();
-  return withGameplay(state, {
+  return completeDueConstruction(withGameplay(state, {
     turnStatus: "open",
     turnKind: "normal",
     turnOpenedAt: openedAt,
@@ -106,7 +107,7 @@ export function openNextTurn(state, now, config = {}) {
     // The scheduler metadata describes the *current* turn: the previous turn's
     // settlement (settledBy/resolvedAt) already lives in lastTurnFacts.wallClock.
     scheduler: normalizeScheduler({ openedAt })
-  });
+  }), openedAt);
 }
 
 // True when the current active turn cannot be resolved yet because its cooldown
@@ -144,3 +145,4 @@ function finiteMs(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
+

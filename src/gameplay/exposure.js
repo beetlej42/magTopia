@@ -333,7 +333,7 @@ export function neighborhoodConcealment(state, building, options = {}) {
   let total = 0;
   for (const neighbor of neighbors) {
     const metadata = metadataOf(neighbor);
-    if (metadata?.status === "sealed") continue;
+    if (!isEligibleLifecycle(lifecycleStatus(neighbor, metadata))) continue;
     const distance = cellFootprint(neighbor)
       .map((cellId) => Math.min(...cellFootprint(building).map((ownCell) => manhattanDistance(ownCell, cellId))))
       .reduce((best, candidate) => Math.min(best, candidate), Infinity);
@@ -364,3 +364,4 @@ export function applyExposureChange(current, delta) {
 export function isSealedExposure(exposure) {
   return exposure >= SEALED_EXPOSURE_THRESHOLD;
 }
+
