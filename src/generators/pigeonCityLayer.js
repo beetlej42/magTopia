@@ -109,6 +109,9 @@ export function createPigeonCityLayer({ navigation, planetRadius = 220, seed = "
         diagnostics.source = current.id; diagnostics.destination = null; diagnostics.state = "resting"; showRoute();
       }
     }
+    // The static city ancestor may have matrixWorldAutoUpdate disabled, so the
+    // renderer will not traverse down to us. Commit this dynamic subtree here.
+    group.updateMatrixWorld(true);
   };
   group.userData.updateView = (_camera, viewport = {}) => { detailed = viewport.viewMode !== "far"; };
   group.userData.getDiagnostics = () => ({ ...diagnostics });

@@ -32,10 +32,14 @@ test("one flock of five moves between safe plazas, with no vertical takeoff", ()
     for (const p of track) assert.ok(nav.ceiling(p.x, p.z, 0.43) <= p.y - 0.005);
   }
   const layer = createPigeonCityLayer({ navigation: nav });
+  const parent = new THREE.Group(); parent.add(layer); parent.updateMatrixWorld(true);
+  parent.matrixAutoUpdate = parent.matrixWorldAutoUpdate = false;
   layer.userData.update(0);
+  const before = layer.children[0].matrixWorld.clone();
   layer.traverse(o => { o.matrixAutoUpdate = o.matrixWorldAutoUpdate = false; });
   layer.userData.update(1);
   assert.ok(layer.children[0].matrixAutoUpdate);
+  assert.notDeepEqual(layer.children[0].matrixWorld.elements, before.elements, "world transforms advance under a frozen city ancestor");
   let flew = false;
   for (let t = 2; t <= 130; t += 0.1) { layer.userData.update(t); flew ||= layer.userData.getDiagnostics().state === "flying"; }
   assert.ok(flew);
