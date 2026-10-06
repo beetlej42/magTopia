@@ -1,3 +1,6 @@
+import { capacitiesFromSettlementMetadata, systemOwnedBonusForBuilding } from "./economy.js";
+import { normalizePopulationState } from "./schema.js";
+
 // Gameplay construction is independent of asset generation / order fulfillment.
 // Roads remain immediate. Only newly accepted buildings receive this clock;
 // existing archives without it keep their original lifecycle.
@@ -38,6 +41,26 @@ export function completeDueConstruction(state, now) {
       at: now, actor: "system:construction", buildingId: building.id,
       summary: `${building.program?.name ?? building.id} completed construction and is now operational.`
     });
+  }
+  // Arrival cards read the persisted capacity before settlement. Commissioned
+  // housing must be usable immediately, without also migrating people or
+  // crediting income. Add only these newly commissioned units; the normal
+  // settlement still reconciles total capacity (including later demolitions).
+  const metadata = Object.fromEntries(due.map(({ id }) => {
+    const building = next.buildings[id];
+    return [id, {
+      ...(building.metadata ?? (building.gameplay?.canonical ? building.gameplay : {})),
+      status: "completed",
+      ...(systemOwnedBonusForBuilding(building) ? { systemOwnedCardId: building.specialStructure.cardId } : {})
+    }];
+  }));
+  const capacity = capacitiesFromSettlementMetadata(metadata);
+  if (capacity.muggles || capacity.wizards) {
+    const population = normalizePopulationState(next.gameplay?.population);
+    next.gameplay = { ...next.gameplay, population: {
+      muggles: { ...population.muggles, capacity: population.muggles.capacity + capacity.muggles },
+      wizards: { ...population.wizards, capacity: population.wizards.capacity + capacity.wizards }
+    } };
   }
   return next;
 }

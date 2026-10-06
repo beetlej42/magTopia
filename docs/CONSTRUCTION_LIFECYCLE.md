@@ -17,6 +17,8 @@ Only turn opening (under the existing city transaction lock) commissions due sit
 An asynchronous asset arriving in an already-open eligible turn may commission
 its site immediately. Asset readiness during a settled/closed interval waits for
 opening. Retries cannot charge again or duplicate completion events.
+Commissioning adds the new housing capacity immediately so arrival cards can use
+it; resident migration and income still happen only during normal settlement.
 
 Construction-order and placement-mandate fulfillment remain separate from this
 lifecycle. API responses expose `building_status`, `ready_at_turn`,

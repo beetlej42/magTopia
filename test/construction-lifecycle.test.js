@@ -6,7 +6,7 @@ import { createEngineContext, executeCityCommand } from "../src/city/engine.js";
 import { resolveTurn, previewCitySystems } from "../src/gameplay/simulation.js";
 import { openNextTurn } from "../src/gameplay/turn.js";
 import { completeDueConstruction, constructionSchedule } from "../src/gameplay/construction.js";
-import { specialStructureConcealment, specialStructureExposureModifier } from "../src/gameplay/cards.js";
+import { openTurnCardState, selectCard, specialStructureConcealment, specialStructureExposureModifier } from "../src/gameplay/cards.js";
 import { deriveBootstrapProgress } from "../src/gameplay/bootstrap.js";
 import { createConstructionSite } from "../src/generators/constructionSite.js";
 import { createMagicLondonStarterDistrict } from "../src/generators/magicLondonStarterDistrict.js";
@@ -71,9 +71,18 @@ test("new sites occupy and charge once, skip same-turn effects, and automaticall
   const opened = open(first.nextState);
   assert.equal(opened.resources.coins, balance, "opening a turn never earns or spends coins");
   assert.ok(Object.values(opened.buildings).every(b => b.status === "completed"));
+  assert.equal(opened.gameplay.population.wizards.capacity, 2, "new housing is available to arrival cards immediately");
+  assert.equal(opened.gameplay.population.wizards.current, 0, "commissioning does not migrate people");
   assert.equal(opened.events.filter(e => e.type === "building_completed").length, 3);
   assert.equal(openNextTurn(opened, now), null, "reopening cannot duplicate completions");
   assert.equal(completeDueConstruction(opened, now), opened);
+  const cardState = openTurnCardState(opened, "construction");
+  const arrival = selectCard(cardState, "construction", {
+    offerId: cardState.gameplay.cardState.offer.offerId, selectedCardId: "ordinary-people-migration"
+  });
+  assert.equal(arrival.accepted, true);
+  assert.equal(arrival.nextState.gameplay.population.wizards.current, 2, "arrival cards can use housing commissioned this turn");
+  assert.equal(arrival.nextState.resources.coins, balance);
   const second = settle(opened);
   assert.deepEqual(second.facts.buildingsStarted, []);
   assert.deepEqual(second.facts.buildingsCompleted, ids);
