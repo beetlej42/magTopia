@@ -70,7 +70,7 @@ export const SPECIAL_STRUCTURES = Object.freeze({
   }),
   "floo-fireplace-station": Object.freeze({
     archetype: "special_structure",
-    name: "Floo Fireplace Station",
+    name: "Moleway Entrance",
     footprint: "1x1",
     purpose: "special_structure"
   }),
@@ -168,15 +168,15 @@ export const CARD_CATALOG = Object.freeze([
   card(
     "floo-fireplace-station",
     CARD_TYPES.special_structure,
-    "Floo Fireplace Station",
-    "A public hearth linked into the floo network. It brings travellers and trade to its block, lifting local prosperity.",
+    "Moleway Entrance",
+    "An ordinary underground passage for citizens; wizards tap the brass mole nose twice to find a secret shortcut. Each completed entrance adds 5 coins per turn and 2 wizard capacity. Can be built repeatedly.",
     {
       kind: "special_structure",
       magicLevel: 0.5,
       coinOutput: EFFECT_VALUES.flooCoinOutput,
       wizardCapacity: EFFECT_VALUES.flooWizardCapacity
     },
-    { choiceKind: CARD_CHOICE_KINDS.special, family: "special_building", unique: true, decisionMode: CARD_DECISION_MODES.player_place, structure: SPECIAL_STRUCTURES["floo-fireplace-station"] }
+    { choiceKind: CARD_CHOICE_KINDS.special, family: "special_building", unique: false, decisionMode: CARD_DECISION_MODES.player_place, structure: SPECIAL_STRUCTURES["floo-fireplace-station"] }
   ),
   card(
     "concealment-statue",

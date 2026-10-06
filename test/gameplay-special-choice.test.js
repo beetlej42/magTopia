@@ -214,13 +214,13 @@ test("selecting an unused ordinary discount again preserves one capped entitleme
   assert.equal(second.cardEffects.discount.preserved, true);
 });
 
-test("every special structure is a unique free-placement card, including placeholder facilities", () => {
+test("special structures are free placements; Moleway is repeatable", () => {
   const structures = CARD_CATALOG.filter((card) => card.type === CARD_TYPES.special_structure);
   assert.ok(structures.length >= 7);
   for (const card of structures) {
     assert.equal(card.choiceKind, CARD_CHOICE_KINDS.special);
     assert.equal(card.family, "special_building");
-    assert.equal(card.unique, true);
+    assert.equal(card.unique, card.cardId !== "floo-fireplace-station");
     assert.equal(card.effect.freePlacement, true);
     assert.equal(card.structure?.placeholder ?? false, card.cardId === "royal-botanical-greenhouse" || card.cardId === "arcane-energy-conservatory");
   }
@@ -353,3 +353,21 @@ test("completed discounted reservations keep the one-shot entitlement consumed",
   assert.equal(completed.state.gameplay.cardState.constructionDiscount.remainingUses, 0);
 });
 
+
+test("two deferred Moleway mandates can be placed in one turn without overwriting a building", () => {
+  let state = stateAt(10, "moleway-repeat");
+  const cardId = "floo-fireplace-station";
+  state.gameplay.cardState.placements = Object.fromEntries(["first", "second"].map(id => [id, {
+    placementId: id, cardId, status: "deferred", mode: "delegate_to_agent", turn: 5
+  }]));
+  for (const placementId of ["first", "second"]) {
+    const lotId = legalMinistryLot(state);
+    const result = placeSpecialStructure(state, state.cityId, { cardId, placementId, lotId, entrance: "south" });
+    assert.equal(result.accepted, true, result.message);
+    state = result.nextState;
+  }
+  const entrances = Object.values(state.buildings).filter(b => b.specialStructure?.cardId === cardId);
+  assert.equal(entrances.length, 2);
+  assert.notEqual(entrances[0].id, entrances[1].id);
+  for (const b of entrances) assert.equal(state.cells[b.site.lotId].occupancy, b.id);
+});

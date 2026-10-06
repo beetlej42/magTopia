@@ -1,3 +1,4 @@
+import { MOLEWAY_ASSET_ID } from "../generators/moleway.js";
 import { OWL_TOWER_ASSET_ID } from "../generators/owlTower.js";
 // Node-only static renderer: Three is used for geometry/math, never WebGL or a browser.
 import * as THREE from "three";
@@ -28,7 +29,7 @@ export function visualizationOptions({ view = "front", size = 512 } = {}) {
 export function visualizationDesign(input) {
   if (input?.generation?.sourceSpec) return input;
   const spec = input?.sourceSpec ?? input;
-  const mode = [MINISTRY_ASSET_ID, DIAGON_ASSET_ID, OWL_TOWER_ASSET_ID].includes(spec?.assetId) ? "landmark_prefab" : Array.isArray(spec?.floorSpecs) ? "floor_stack" : Array.isArray(spec?.masses) ? "urban_massing" : null;
+  const mode = [MOLEWAY_ASSET_ID, MINISTRY_ASSET_ID, DIAGON_ASSET_ID, OWL_TOWER_ASSET_ID].includes(spec?.assetId) ? "landmark_prefab" : Array.isArray(spec?.floorSpecs) ? "floor_stack" : Array.isArray(spec?.masses) ? "urban_massing" : null;
   if (!mode) throw new Error("Expected a BuildingDesign, BuildingSpec or UrbanMassingSpec");
   return { generation: { mode, sourceSpec: spec }, decorations: input.decorations, site: input.site ?? { entrance: "south" } };
 }
