@@ -3,6 +3,8 @@ import { runNonVisualAgentBuildScenario } from "../city/agent-district-simulatio
 import { createAgentVoxelRoadLayer, createAgentVoxelVegetationLayer } from "./agentVoxelInfrastructure.js";
 import { createMagicLondonStarterDistrict } from "./magicLondonStarterDistrict.js";
 import { createStreetLifeCityLayer } from "./streetLifeCityLayer.js";
+import { createPigeonNavigation } from "./pigeonNavigation.js";
+import { createPigeonCityLayer } from "./pigeonCityLayer.js";
 import { createRailwayGatewayLayer } from "./railwayAssets.js";
 import { createBuildingContactAmbientOcclusion } from "../render/buildingContactAmbientOcclusion.js";
 import { createRuntimeConstructionHeightSampler } from "../city/construction-grading.js";
@@ -92,6 +94,8 @@ function* createAgentAcceptanceCitySteps(config = {}) {
   root.add(vegetation);
   yield 0.82;
 
+  // Capture collisions in authoritative flat coordinates before sphere projection.
+  const pigeonNavigation = createPigeonNavigation({ state, grid, collisionRoot: [buildings, roads, railway, vegetation], sampleGroundHeight: constructionHeight });
   const sphericalProjection = projectDistrictOntoSphere(root, params.planetRadius);
   railway.userData.enableSphericalTrain?.(params.planetRadius);
   const streetLife = createStreetLifeCityLayer({
@@ -103,6 +107,9 @@ function* createAgentAcceptanceCitySteps(config = {}) {
     density: config.streetLifeDensity ?? 1
   });
   root.add(streetLife);
+  const pigeons = createPigeonCityLayer({ navigation: pigeonNavigation, planetRadius: params.planetRadius,
+    seed: `${seed}:pigeons`, debug: config.pigeonDebug ?? false });
+  root.add(pigeons);
   yield 0.94;
 
   root.userData.config = { ...params, acceptanceSeed: seed };
@@ -168,10 +175,13 @@ function* createAgentAcceptanceCitySteps(config = {}) {
   root.userData.getPrefabLodSummaryDiagnostics = () => buildings.userData.getVoxelLodSummaryDiagnostics?.() ?? {};
   root.userData.getRailwayLodDiagnostics = () => railway.userData.getRailwayLodDiagnostics?.() ?? [];
   root.userData.getStreetLifeDiagnostics = () => streetLife.userData.getDiagnostics();
+  root.userData.getPigeonDiagnostics = () => pigeons.userData.getDiagnostics();
+  root.userData.setPigeonDebug = enabled => pigeons.userData.setDebug(enabled);
   root.userData.update = (elapsed) => {
     buildings.userData.update?.(elapsed);
     railway.userData.update?.(elapsed);
     streetLife.userData.update(elapsed);
+    pigeons.userData.update(elapsed);
   };
   root.userData.updateView = (camera, _maxDynamicLights = 4, viewport = {}) => {
     macro.group.userData.updateView?.(camera);
@@ -179,6 +189,7 @@ function* createAgentAcceptanceCitySteps(config = {}) {
     railway.userData.updateView?.(camera, _maxDynamicLights, viewport);
     vegetation.userData.updateView?.(camera, viewport);
     streetLife.userData.updateView(camera, viewport);
+    pigeons.userData.updateView(camera, viewport);
     root.userData.diagnostics.streetLife = streetLife.userData.getDiagnostics();
   };
   root.userData.updateDaylight = (style) => {
