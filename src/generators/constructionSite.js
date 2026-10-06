@@ -23,6 +23,7 @@ export function createConstructionSite({ cellWorldSize = 4, cellOffsets = [{ x: 
   const gateCell = cells.filter(c => !has(c.x + gx * 4, c.z + gz * 4))
     .sort((a, b) => Math.abs(gx ? a.z : a.x) - Math.abs(gx ? b.z : b.x))[0];
   let edgeCount = 0;
+  const fencePosts = new Set();
   // Every gate and fence stays inside its own tile, leaving the road clear.
   for (const cell of cells) {
     box("earth", cell.x, -0.06, cell.z, 3.96, 0.08, 3.96);
@@ -31,8 +32,13 @@ export function createConstructionSite({ cellWorldSize = 4, cellOffsets = [{ x: 
       edgeCount++;
       const isGate = cell === gateCell && side === entrance;
       const along = (t, inset = 1.79) => ({ x: cell.x + dx * inset + dz * t, z: cell.z + dz * inset + dx * t });
-      for (const t of [-1.72, ...(isGate ? [-0.65, 0.65] : [0]), 1.72]) {
-        const p = along(t); box("darkWood", p.x, 0, p.z, 0.13, 0.95, 0.13);
+      for (const t of [-1.79, ...(isGate ? [-0.65, 0.65] : [0]), 1.79]) {
+        const p = along(t);
+        // Perpendicular fence edges share one post at their intersection.
+        const key = `${p.x.toFixed(4)},${p.z.toFixed(4)}`;
+        if (fencePosts.has(key)) continue;
+        fencePosts.add(key);
+        box("darkWood", p.x, 0, p.z, 0.13, 0.95, 0.13);
         box("brass", p.x, 0.94, p.z, 0.17, 0.07, 0.17);
       }
       for (let i = 0; i < 18; i++) {
