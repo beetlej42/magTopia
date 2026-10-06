@@ -1,3 +1,5 @@
+import { resolvePublicServiceBaselineTurn } from "../gameplay/simulation.js";
+import { openNextTurn } from "../gameplay/turn.js";
 import {
   confirmBuildingDesign,
   createBuildingDesignDraft,
@@ -236,6 +238,12 @@ export function runNonVisualAgentBuildScenario(options = {}) {
     }
   }
 
+  const settled = resolvePublicServiceBaselineTurn(state, { expectedTurn: state.turn }, {
+    now: () => FIXED_TIME, seed, options: { turnCooldownMs: 1 }
+  });
+  if (settled.error) failures.push({ stage: "settlement", code: settled.error.code, error: settled.error.message });
+  else state = openNextTurn(settled.nextState, "2026-08-02T08:00:01.000Z", { turnCooldownMs: 1 });
+
   const diagnostics = diagnoseAgentBuild(state, actions);
   return {
     world,
@@ -353,3 +361,4 @@ function neighbors(cellId) {
 export function getNonVisualDistrictProgram() {
   return structuredClone(DISTRICT_PROGRAM);
 }
+

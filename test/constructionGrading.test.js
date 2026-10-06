@@ -82,3 +82,9 @@ test("building footprints with different natural elevations share one rendered b
   assert.equal(sampleHeight(0, 0), -0.0625);
   assert.equal(sampleHeight(4, 0), -0.0625 + 3 * 0.125);
 });
+
+
+test("waiting-asset worksite footprints use the construction datum", () => {
+  const state = { cells: { site: cell("site") }, reservations: { waiting: { preview: { footprintCells: ["site"] } } } };
+  assert.equal(deriveRuntimeConstructionGrade(state).categories.buildings.has("site"), true);
+});

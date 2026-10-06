@@ -268,10 +268,11 @@ export function buildReportContext({ cityId = null, state = {}, facts, options =
             placementId: facts.specialPlacementMandate.placementId
           }
           : null,
-        // Attributed completions: every entry ties a completed mandate to the
+        // Placement mandate completions (not building commissioning): every entry ties a completed mandate to the
         // placement/card/building, so the Owl Daily never misreads a later
         // turn completing an older mandate as the current selection completing.
         completed: (facts.specialPlacementsCompleted ?? []).map((entry) => ({
+          meaning: "placement_fulfilled; see buildingsCompleted for operational completion",
           ...entry,
           cardTitle: entry.cardId ? getCard(entry.cardId)?.title ?? entry.cardId : null
         }))
@@ -497,3 +498,4 @@ function stableStringify(value) {
   }
   return JSON.stringify(value);
 }
+

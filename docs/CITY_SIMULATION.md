@@ -33,9 +33,9 @@ through context flags. This keeps the baseline about canonical economy,
 population, and public-service rules rather than silently introducing PR-F+
 mechanics. No balance constants are overridden.
 
-On the current `audit` baseline, balanced completes 30/30 buildings, lays 31
-road/bridge cells for 88 coins, earns 4,230 coins, has no stalls, and is
-`selfFunding=true` / `sustainable=true`. Economy-first also self-funds; housing-
-first builds 30 but is not self-funding under the cumulative-income criterion;
-service-first builds 16, stalls for up to 4 consecutive turns, and is reported
-as `sustainable=false`. These are observed outcomes, not strategy assertions.
+With one-turn construction, the `audit` balanced run builds 30 buildings in 30
+turns, spends 2,000 coins on buildings and 44 on 22 road cells, and finishes with
+2,516 coins and 260 AE. Population reaches 30/40, with no stalls or anomalies and
+`sustainable=true`. Sites become operational through the real next-turn opening
+path, after the turn in which they were started has settled. These are observed
+outcomes, not strategy assertions.

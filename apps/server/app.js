@@ -1,3 +1,4 @@
+import { constructionInfo } from "../../src/gameplay/construction.js";
 import { decodeBakedBuildingArtifact } from "../../src/render/bakedBuildingArtifact.js";
 import { designVisualizationLink, registerBuildingVisualizationRoute } from "./building-visualization.js";
 import { createHash, randomInt } from "node:crypto";
@@ -644,7 +645,7 @@ export async function createApp({ repository, config, logger = false, now = () =
         await client.query("UPDATE building_designs SET status = 'built', building_id = $1, updated_at = now() WHERE id = $2", [buildingId, linkedDesign.id]);
         return {
           nextState: engineResult.state,
-          response: commandEnvelope(orderId, engineResult, { kind: sourceBuildingId ? "upgrade_order" : "construction_order", id: orderId, status: "completed", building_id: buildingId, design_id: linkedDesign.id, design_revision: linkedDesign.revision })
+          response: commandEnvelope(orderId, engineResult, { kind: sourceBuildingId ? "upgrade_order" : "construction_order", id: orderId, status: "completed", building_id: buildingId, ...constructionInfo(engineResult.building), design_id: linkedDesign.id, design_revision: linkedDesign.revision })
         };
       }
       if (assetChoice.mode === "reuse") {
@@ -657,7 +658,7 @@ export async function createApp({ repository, config, logger = false, now = () =
         );
         return {
           nextState: engineResult.state,
-          response: commandEnvelope(orderId, engineResult, { kind: "construction_order", id: orderId, status: "completed", building_id: engineResult.building.id })
+          response: commandEnvelope(orderId, engineResult, { kind: "construction_order", id: orderId, status: "completed", building_id: engineResult.building.id, ...constructionInfo(engineResult.building) })
         };
       }
       await enforceAssetJobLimit(principal, client);
@@ -682,7 +683,7 @@ export async function createApp({ repository, config, logger = false, now = () =
       );
       return {
         nextState: engineResult.state,
-        response: commandEnvelope(orderId, engineResult, { kind: "construction_order", id: orderId, status: "awaiting_asset", asset_job_id: jobId, reservation_id: reservationId })
+        response: commandEnvelope(orderId, engineResult, { kind: "construction_order", id: orderId, status: "awaiting_asset", asset_job_id: jobId, reservation_id: reservationId, building_status: "awaiting_asset", ready_at_turn: engineResult.reservation.construction.readyAtTurn, operational: false })
       };
     });
     if (body.asset?.mode === "voxel" && response.status === "completed") {
@@ -1146,6 +1147,7 @@ export async function createApp({ repository, config, logger = false, now = () =
           city_version_after: result.nextState.version,
           turn: result.nextState.turn,
           building_id: result.buildingId,
+          ...constructionInfo(result.nextState.buildings[result.buildingId]),
           placement: { ...result.placement, card_title: getCard(result.placement.cardId)?.title ?? null },
           choice: currentChoice(result.nextState),
           collaboration_handoff: agentTurnPlan({ id: request.params.cityId, city_version: result.nextState.version }, result.nextState, config, now()).next_action
@@ -1853,10 +1855,10 @@ function buildingInBounds(state, building, query) {
 }
 
 function buildingResponse(state, building) {
-  return { ...building, footprint: building.footprintCells.map((id) => ({ cell_id: id, column: state.cells[id]?.column, row: state.cells[id]?.row })) };
+  return { ...building, ...constructionInfo(building), footprint: building.footprintCells.map((id) => ({ cell_id: id, column: state.cells[id]?.column, row: state.cells[id]?.row })) };
 }
 
-function compactBuilding(building) { return building ? { id: building.id, name: building.program?.name, archetype: building.program?.archetype, status: building.status ?? "completed" } : null; }
+function compactBuilding(building) { return building ? { id: building.id, name: building.program?.name, archetype: building.program?.archetype, status: building.status ?? "completed", ready_at_turn: building.construction?.readyAtTurn ?? null } : null; }
 
 function districtResponse(state, district) {
   const cells = Object.values(state.cells).filter((cell) => (
@@ -2177,7 +2179,7 @@ function agentTurnPlan(row, state, config, nowValue, suppliedSystems = null) {
     resolve_after_development: {
       method: "POST",
       url: `${cityBase}/strategy/resolve`,
-      instruction: "After the construction order succeeds, copy its city_version_after into expected_city_version and use an Idempotency-Key containing that version. Do not send assignments in the resolve body."
+      instruction: "Accepted new buildings are under construction until the next turn opens; do not wait or retry for completion. Order status completed means asset/order fulfillment, not operational gameplay. After the construction order succeeds, copy its city_version_after into expected_city_version and use an Idempotency-Key containing that version. Do not send assignments in the resolve body."
     },
     next_action: nextAction
   };
@@ -2797,4 +2799,5 @@ function isWithinPath(root, target) {
   const relative = path.relative(path.resolve(root), path.resolve(target));
   return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
+
 

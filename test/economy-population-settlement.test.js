@@ -1,3 +1,4 @@
+import { openNextTurn } from "../src/gameplay/turn.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -447,7 +448,11 @@ test("construct command persists canonical vertical units before settlement", ()
   assert.equal(building.gameplay.functionalAreas.residential, 2);
   const settled = resolveTurn(result.state, {}, { seed: "construct-economy", now: () => "2026-08-23T01:00:00.000Z" });
   assert.equal(settled.error, null);
-  assert.deepEqual(settled.nextState.gameplay.population, { muggles: { current: 1, capacity: 4 }, wizards: { current: 1, capacity: 4 } });
+  assert.deepEqual(settled.nextState.gameplay.population, { muggles: { current: 0, capacity: 0 }, wizards: { current: 0, capacity: 0 } });
+  const opened = openNextTurn(settled.nextState, "2026-08-23T02:00:00.000Z");
+  const operating = resolveTurn(opened, {}, { seed: "construct-economy", now: () => "2026-08-23T03:00:00.000Z" });
+  assert.equal(operating.error, null);
+  assert.deepEqual(operating.nextState.gameplay.population, { muggles: { current: 1, capacity: 4 }, wizards: { current: 1, capacity: 4 } });
   assert.deepEqual(settled.facts.resourceDelta, { coins: 0, arcaneEnergy: 0 });
 });
 
@@ -549,3 +554,4 @@ test("resolve migrates legacy gameplay resources while preserving old frozen fac
   assert.equal(factsDigest(result.nextState.gameplay.turnFacts[0]), oldDigest);
   assert.equal("magic" in result.nextState.gameplay.resources, false);
 });
+

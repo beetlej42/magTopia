@@ -54,6 +54,12 @@ export function deriveRuntimeConstructionGrade(state = {}) {
     footprint.forEach((cellId) => add("buildings", cellId));
   });
 
+  // A waiting asset already has a visible worksite. Grade its footprint using
+  // the same datum, so a multi-cell enclosure cannot be buried in higher terrain.
+  Object.values(state.reservations ?? {}).forEach((reservation) => {
+    (reservation.preview?.footprintCells ?? []).forEach((cellId) => add("buildings", cellId));
+  });
+
   Object.values(cells).forEach((cell) => {
     const category = GRADED_INFRASTRUCTURE[cell.infrastructure];
     if (category) add(category, cell.id);

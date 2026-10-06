@@ -674,7 +674,7 @@ test("integration walk: report -> dismiss -> card -> morning -> agent work -> da
 
     // Agent begins building -> day.
     const sites = await json(app, auth(agent, { method: "POST", url: `/api/v1/cities/${city.id}/site-searches`, payload: { footprint: "1x1", limit: 10 } }), 200);
-    await json(app, auth(agent, {
+    const construction = await json(app, auth(agent, {
       method: "POST",
       url: `/api/v1/cities/${city.id}/construction-orders`,
       headers: { "idempotency-key": "walk-build-1" },
@@ -690,8 +690,22 @@ test("integration walk: report -> dismiss -> card -> morning -> agent work -> da
     day = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/city-day` }), 200);
     assert.equal(day.phase, "day");
 
+    assert.equal(construction.resource.building_status, "construction");
+    assert.equal(construction.resource.ready_at_turn, 3);
+    assert.equal(construction.resource.operational, false);
+    const buildingId = construction.resource.building_id;
+    const site = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/buildings/${buildingId}` }), 200);
+    assert.equal(site.status, "construction", "GET does not commission the site");
+
     // Resolve turn 1 -> next dawn with the new report ready.
     const secondSettled = await resolveAndPublish(app, repository, { player, agent, city }, { turn: 2 });
+    assert.ok(secondSettled.settled.facts.buildingsStarted.includes(buildingId));
+    assert.equal(secondSettled.settled.facts.buildingsCompleted.includes(buildingId), false);
+    const waiting = (await repository.getCity(owner, city.id)).state;
+    assert.equal(waiting.buildings[buildingId].status, "construction");
+    const operational = openNextTurn(waiting, new Date(Date.now() + 91 * 86_400_000));
+    assert.equal(operational.buildings[buildingId].status, "completed");
+    assert.equal(operational.events.filter(e => e.type === "building_completed" && e.buildingId === buildingId).length, 1);
     const secondFactsTurn = secondSettled.settled.facts.turn;
     day = await json(app, auth(player, { method: "GET", url: `/api/v1/cities/${city.id}/city-day` }), 200);
     assert.equal(day.settled, true);
@@ -897,3 +911,4 @@ async function json(app, request, statusCode) {
   assert.equal(response.statusCode, statusCode, response.body);
   return response.json();
 }
+
