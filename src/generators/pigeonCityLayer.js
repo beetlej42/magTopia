@@ -3,6 +3,7 @@ import { createRng } from "../utils/random.js";
 import { getVoxelSphereFrame } from "./voxelIntentDistrict.js";
 import { createPigeonAsset, posePigeon } from "./pigeonAsset.js";
 import { PIGEON_COUNT, pigeonPerch, planPigeonFlight, samplePigeonTrack } from "./pigeonNavigation.js";
+import { planPigeonLocalFlight } from "./pigeonLocalFlight.js";
 
 const smooth = x => { const u = Math.max(0, Math.min(1, x)); return u * u * (3 - 2 * u); };
 
@@ -41,14 +42,27 @@ export function createPigeonCityLayer({ navigation, planetRadius = 220, seed = "
   }
   function chooseRoute(elapsed) {
     const candidates = stops.filter(stop => stop.buildingId !== current.buildingId);
+    // Occasionally return to the same plaza even when a neighbor is available.
+    if (rng() < 0.35) candidates.unshift(current);
     // At most four attempts per rest cycle; one successful route is retained.
     for (let tries = 0; candidates.length && tries < 4; tries++) {
       const [target] = candidates.splice(Math.floor(rng() * candidates.length), 1);
-      const planned = planPigeonFlight(navigation, current, target);
+      const nearby = Math.hypot((current.parcelX ?? current.x) - (target.parcelX ?? target.x),
+        (current.parcelZ ?? current.z) - (target.parcelZ ?? target.z)) <= 8;
+      const planned = (nearby ? planPigeonLocalFlight(navigation, current, target) : null)
+        ?? (target.id !== current.id ? planPigeonFlight(navigation, current, target) : null);
       if (!planned) { diagnostics.rejectedRoutes++; continue; }
       route = planned; launchedAt = elapsed + 0.6;
-      diagnostics.destination = target.id; diagnostics.state = "preparing"; showRoute(); return;
+      diagnostics.destination = target.id; diagnostics.flightKind = planned.kind ?? "street-transfer";
+      diagnostics.state = "preparing"; showRoute(); return;
     }
+    const local = planPigeonLocalFlight(navigation, current);
+    if (local) {
+      route = local; launchedAt = elapsed + 0.6;
+      diagnostics.destination = current.id; diagnostics.flightKind = local.kind;
+      diagnostics.state = "preparing"; showRoute(); return;
+    }
+    diagnostics.lastLocalRejection = navigation.lastLocalRejection ?? null;
     nextFlight = elapsed + 30 + rng() * 30;
   }
   group.userData.update = elapsed => {
@@ -84,9 +98,17 @@ export function createPigeonCityLayer({ navigation, planetRadius = 220, seed = "
         const t = Math.max(0, elapsed - (landed ? launchedAt + delay + duration : restAt));
         // Short out-and-back steps, with planted-foot motion and long pauses.
         const turnTime = bird.landingHeading !== undefined ? 0.7 + i * 0.16 : 0;
-        const cycle = Math.min(9, Math.max(0, t - turnTime - i * 0.3));
+        const cycle = Math.max(0, t - turnTime - i * 0.3) % (11 + i * 0.7);
         const walking = !route && t >= turnTime + i * 0.3 && (cycle < 0.8 || cycle >= 4.5 && cycle < 5.3);
-        const travel = cycle < 0.8 ? cycle * 0.15 : cycle < 4.5 ? 0.12 : cycle < 5.3 ? 0.12 - (cycle - 4.5) * 0.15 : 0;
+        let travel = cycle < 0.8 ? cycle * 0.3 : cycle < 4.5 ? 0.24 : cycle < 5.3 ? 0.24 - (cycle - 4.5) * 0.3 : 0;
+        // Settle back onto the validated flight endpoints before takeoff.
+        travel *= smooth((nextFlight - elapsed) / 1.2);
+        const perch = position.clone();
+        for (let step = 1; step <= 4 && travel; step++) {
+          const x = perch.x + Math.sin(bird.restHeading) * travel * step / 4;
+          const z = perch.z + Math.cos(bird.restHeading) * travel * step / 4;
+          if (navigation.ceiling(x, z, 0.25) > perch.y - 0.005) travel = 0;
+        }
         const yaw = cycle < 3.8 ? 0 : cycle < 4.5 ? Math.PI * smooth((cycle - 3.8) / 0.7) : cycle < 8.3 ? Math.PI : Math.PI * (1 - smooth((cycle - 8.3) / 0.7));
         if (!route) { position.x += Math.sin(bird.restHeading) * travel; position.z += Math.cos(bird.restHeading) * travel; }
         let heading = bird.restHeading + yaw;
