@@ -14,7 +14,7 @@ cell of a larger plaza may offer a patch, but transfers choose another building.
 Paving, lamps, planters and other rendered geometry must leave room for all five
 perches. The whole parcel is searched, with dispersed perches when central
 decoration prevents a clustered flock. A city with no safe plaza has no flock;
-one safe plaza has a resting flock. Gardens, courtyards and construction sites are not
+one safe plaza can support a local return flight. Gardens, courtyards and construction sites are not
 landing targets in this version.
 
 The layer builds a conservative 0.5-unit height field from visible rendered
@@ -31,6 +31,17 @@ checked, including the endpoint spread. Tight turns (radius below 0.55 units),
 obstructions and routes shorter than 4 or longer than 160 units are rejected.
 There is no unchecked fallback to a straight line or a sharp corner.
 
+Adjacent plazas (up to eight world units apart) first try a local orbital
+excursion, then land at the neighbor. Some excursions return to the source;
+if a transfer fails, a validated return circuit is attempted. Each bird uses
+its own forward spiral ascent and descent from its actual perch, avoiding the
+shared low-altitude centerline problem around central decorations. Cruise
+orbits retain the 0.55-unit horizontal turn radius; eased connector spirals may
+turn tighter at departure speed. All tracks are clearance-checked at most
+0.04 units apart and retain staggered departures and varied cruise heights.
+Failed circuits remain grounded. Planning is bounded and cached per scene
+(up to sixteen source/destination results); mobile planning time is unmeasured.
+
 Birds climb and descend while moving forward; cruise altitude is 3.2 units above
 graded ground. Takeoff uses unequal individual delays. Flight tracks have
 lateral, vertical and longitudinal offsets, forming a loose cluster rather than
@@ -39,6 +50,9 @@ at 65% and 35% spread, otherwise the destination is rejected. Plaza-specific
 seeded irregular perches replace the symmetric cross. Birds touch down along
 their flight tangent, then turn to individual headings before walking. Ground
 movement uses short steps with alternating feet, head motion, pauses and pecks.
+Ground activity repeats with different periods for each bird, rather than
+ending after nine seconds. Walking segments are checked against the geometry
+field and settle onto validated perches before departure.
 After 30–60 seconds the flock tries up to four randomly selected destinations;
 if none is safe it waits another 30–60 seconds. The route search may reject a
 destination even if a different, longer route could have worked.

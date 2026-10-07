@@ -39,7 +39,8 @@ export function createPigeonNavigation({ state, grid, collisionRoot, sampleGroun
       const cell = cells.find(c => c.id === id);
       if (!cell) continue;
       plazaIds.add(id);
-      plazas.push({ id: `${building.id}:${id}`, buildingId: building.id, x: cell.center.x, z: cell.center.z });
+      plazas.push({ id: `${building.id}:${id}`, buildingId: building.id, x: cell.center.x, z: cell.center.z,
+        parcelX: cell.center.x, parcelZ: cell.center.z });
     }
   }
   const field = new Map();
@@ -254,8 +255,9 @@ export function planPigeonFlight(nav, from, to) {
 }
 
 export function samplePigeonTrack(route, index, distance, position, direction) {
-  const ds = route.distances, points = route.tracks[index];
-  const d = Math.max(0, Math.min(route.length, distance));
+  const ds = route.trackDistances?.[index] ?? route.distances, points = route.tracks[index];
+  const trackLength = ds.at(-1);
+  const d = Math.max(0, Math.min(route.length, distance)) * trackLength / route.length;
   let low = 0, high = ds.length - 1;
   while (high - low > 1) { const mid = (low + high) >> 1; if (ds[mid] <= d) low = mid; else high = mid; }
   position.copy(points[low]).lerp(points[high], (d - ds[low]) / Math.max(1e-6, ds[high] - ds[low]));

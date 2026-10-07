@@ -3,6 +3,7 @@ import test from "node:test";
 import * as THREE from "three";
 import { createPigeonNavigation, planPigeonFlight, pigeonPerch } from "../src/generators/pigeonNavigation.js";
 import { createPigeonCityLayer } from "../src/generators/pigeonCityLayer.js";
+import { planPigeonLocalFlight } from "../src/generators/pigeonLocalFlight.js";
 import { createBuildingDesignDraft } from "../src/city/building-design.js";
 import { createBuildingDesignObject } from "../src/generators/buildingDesignObject.js";
 
@@ -74,12 +75,63 @@ test("disconnected roads, construction plazas and obstructed landing patches are
   assert.equal(createPigeonCityLayer({ navigation: nav }).children.length, 0);
 });
 
-test("a single plaza retains a single resting flock without inventing a destination", () => {
+test("a single plaza flies a local circuit and returns without inventing another plaza", () => {
   const input = fixture(); delete input.state.buildings.b;
   const layer = createPigeonCityLayer({ navigation: createPigeonNavigation(input) });
-  layer.userData.update(0); layer.userData.update(90);
-  assert.equal(layer.userData.getDiagnostics().state, "resting");
-  assert.equal(layer.userData.getDiagnostics().destination, null);
+  let flew = false, returned = false;
+  for (let t = 0; t < 100; t += 0.1) {
+    layer.userData.update(t);
+    const d = layer.userData.getDiagnostics();
+    if (d.state === "flying") { flew = true; assert.equal(d.destination, d.source); }
+    if (flew && d.state === "resting") { returned = true; break; }
+  }
+  assert.ok(flew && returned);
+  assert.equal(layer.userData.getDiagnostics().birdCount, 5);
+});
+
+test("resting birds keep walking after the initial nine seconds", () => {
+  const input = fixture(); delete input.state.buildings.b;
+  const layer = createPigeonCityLayer({ navigation: createPigeonNavigation(input) });
+  layer.userData.update(0); layer.userData.update(12);
+  const before = layer.children.map(b => b.position.clone());
+  layer.userData.update(13);
+  assert.ok(layer.children.some((b, i) => b.position.distanceTo(before[i]) > 0.02));
+  layer.userData.update(22.1);
+  const later = layer.children.map(b => b.position.clone());
+  layer.userData.update(22.6);
+  assert.ok(layer.children.some((b, i) => b.position.distanceTo(later[i]) > 0.02));
+});
+
+test("adjacent 1x1 plazas support a complete loop, transfer, and forward takeoff", () => {
+  const input = fixture();
+  input.state.buildings.b.footprintCells = ["c1"];
+  const nav = createPigeonNavigation(input);
+  for (const target of [nav.stops[0], nav.stops[1]]) {
+    const route = planPigeonLocalFlight(nav, nav.stops[0], target);
+    assert.ok(route);
+    assert.ok(route.length > 10, "a circuit rather than a short straight hop");
+    route.tracks.forEach((track, i) => {
+      assert.ok(track[0].distanceTo(pigeonPerch(route.from, i)) < 1e-6);
+      assert.ok(track.at(-1).distanceTo(pigeonPerch(route.to, i)) < 1e-6);
+      assert.ok(Math.hypot(track[1].x - track[0].x, track[1].z - track[0].z) > 0);
+      assert.ok(track[1].y > track[0].y);
+      for (const p of track) assert.ok(nav.ceiling(p.x, p.z, 0.43) <= p.y - 0.005);
+    });
+  }
+});
+
+test("a decorated single plaza can fly and land back on dispersed perches", () => {
+  const input = fixture(); delete input.state.buildings.b;
+  const fountain = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1, 0.7), new THREE.MeshBasicMaterial());
+  fountain.position.y = 0.5; input.collisionRoot.add(fountain);
+  const nav = createPigeonNavigation(input);
+  const route = planPigeonLocalFlight(nav, nav.stops[0]);
+  assert.ok(route);
+  route.tracks.forEach(track => track.forEach(p => assert.ok(nav.ceiling(p.x, p.z, 0.43) <= p.y - 0.005)));
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(4, 1, 4), new THREE.MeshBasicMaterial());
+  roof.position.y = 2; input.collisionRoot.add(roof);
+  const blocked = createPigeonNavigation(input);
+  assert.equal(planPigeonLocalFlight(blocked, nav.stops[0]), null);
 });
 
 test("first completed plaza creates a flock on scene refresh, including existing cities", () => {
