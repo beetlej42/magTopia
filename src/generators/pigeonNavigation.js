@@ -8,6 +8,22 @@ const key = (x, z) => `${x}:${z}`;
 const offsets = [[0.03, -0.04], [-0.57, 0.12], [0.54, 0.22], [0.12, -0.55], [0.12, 0.64]];
 const smooth = x => { const t = Math.max(0, Math.min(1, x)); return t * t * (3 - 2 * t); };
 
+// Saved cities may predate the derived composition summary. Prefer actual
+// geometry metadata, then explicit legacy intent; never infer from a name.
+export function isCompletedPigeonPlaza(building) {
+  if (building.status === "construction") return false;
+  const design = building.voxelDesign;
+  const spec = design?.generation?.sourceSpec;
+  const composition = design?.actualSiteComposition ?? spec?.metadata?.publicSite;
+  if (composition) return composition.openSpaceType === "plaza"
+    && ["open_space", "mixed"].includes(composition.resolvedLayout);
+  const intent = design?.intent ?? spec?.intent ?? building.program?.intent;
+  const type = intent?.openSpaceType ?? intent?.open_space_type ?? intent?.purpose ?? building.program?.purpose;
+  const layout = intent?.siteLayout ?? intent?.site_layout;
+  return type === "plaza" && layout !== "building"
+    && !(spec?.masses ?? []).some(m => m.type !== "ground");
+}
+
 // A conservative, flat-space height field. Rasterize triangle bounds rather
 // than mesh bounds: merged plaza paving must not turn its lamps into a roof.
 // Only navigable cells are allocated; overhead geometry blocks the entire column.
@@ -17,11 +33,7 @@ export function createPigeonNavigation({ state, grid, collisionRoot, sampleGroun
   const plazas = [];
   const plazaIds = new Set();
   for (const building of Object.values(state?.buildings ?? {})) {
-    const design = building.voxelDesign;
-    const composition = design?.actualSiteComposition;
-    const masses = design?.generation?.sourceSpec?.masses ?? [];
-    if (building.status === "construction" || composition?.resolvedLayout !== "open_space"
-      || composition?.openSpaceType !== "plaza" || !masses.length || masses.some(m => m.type !== "ground")) continue;
+    if (!isCompletedPigeonPlaza(building)) continue;
     const ids = building.footprintCells?.length ? building.footprintCells : [building.site?.lotId];
     for (const id of ids) {
       const cell = cells.find(c => c.id === id);
@@ -41,7 +53,8 @@ export function createPigeonNavigation({ state, grid, collisionRoot, sampleGroun
       }
     }
   }
-  if (!plazas.length) return { field, stops: [], ceiling: () => Infinity, sampleGroundHeight, step: STEP };
+  if (!plazas.length) return { field, stops: [], ceiling: () => Infinity, sampleGroundHeight, step: STEP,
+    plazaBuildings: 0, blockedPlazas: [] };
   const nodes = [...field.values()];
   const minIX = Math.min(...nodes.map(n => n.ix)), maxIX = Math.max(...nodes.map(n => n.ix));
   const minIZ = Math.min(...nodes.map(n => n.iz)), maxIZ = Math.max(...nodes.map(n => n.iz));
@@ -96,10 +109,16 @@ export function createPigeonNavigation({ state, grid, collisionRoot, sampleGroun
     const rng = createRng(`pigeon-perches:${plaza.id}`);
     const perches = offsets.map(([x, z]) => [x + (rng() - 0.5) * 0.1, z + (rng() - 0.5) * 0.1]);
     const headings = perches.map(() => rng() * Math.PI * 2 - Math.PI);
-    // Try central patches; do not place a flock on a lamp/planter or uneven paving.
-    for (const [dx, dz] of [[0, 0], [-0.5, 0], [0.5, 0], [0, -0.5], [0, 0.5]]) {
+    // Search the whole parcel, keeping the familiar central positions first.
+    // Fountains and mixed-site buildings often occupy all five old candidates.
+    const candidates = [[0, 0], [-0.5, 0], [0.5, 0], [0, -0.5], [0, 0.5]];
+    for (let dx = -size / 2 + STEP / 2; dx < size / 2; dx += STEP)
+      for (let dz = -size / 2 + STEP / 2; dz < size / 2; dz += STEP) candidates.push([dx, dz]);
+    for (const [dx, dz] of candidates) {
       const x = (Math.floor((plaza.x + dx) / STEP) + 0.5) * STEP;
       const z = (Math.floor((plaza.z + dz) / STEP) + 0.5) * STEP;
+      if (perches.some(([ox, oz]) => Math.abs(x + ox - plaza.x) + 0.45 > size / 2
+        || Math.abs(z + oz - plaza.z) + 0.45 > size / 2)) continue;
       const heights = perches.map(([ox, oz]) => ceiling(x + ox, z + oz, 0.45));
       const top = Math.max(...heights);
       const base = sampleGroundHeight(x, z);
@@ -108,9 +127,29 @@ export function createPigeonNavigation({ state, grid, collisionRoot, sampleGroun
       if (top - floor > 0.08 || top - Math.min(...heights) > 0.08) continue;
       return [{ ...plaza, x, z, y: top + 0.025, perches, headings }];
     }
+    // A decorated plaza can have room for five birds without room for the
+    // original clustered formation. Use separate safe patches at one height.
+    const available = [];
+    for (const [dx, dz] of candidates) {
+      const x = (Math.floor((plaza.x + dx) / STEP) + 0.5) * STEP;
+      const z = (Math.floor((plaza.z + dz) / STEP) + 0.5) * STEP;
+      if (Math.abs(x - plaza.x) + 0.45 > size / 2 || Math.abs(z - plaza.z) + 0.45 > size / 2) continue;
+      const top = ceiling(x, z, 0.45), floor = field.get(key(Math.floor(x / STEP), Math.floor(z / STEP)))?.top;
+      if (!Number.isFinite(top) || top > sampleGroundHeight(x, z) + 0.65 || top - floor > 0.08) continue;
+      if (available.some(p => Math.hypot(p.x - x, p.z - z) < 0.5)) continue;
+      available.push({ x, z, top });
+    }
+    for (const origin of available) {
+      const patches = available.filter(p => Math.abs(p.top - origin.top) < 0.08).slice(0, PIGEON_COUNT);
+      if (patches.length < PIGEON_COUNT) continue;
+      return [{ ...plaza, x: origin.x, z: origin.z, y: Math.max(...patches.map(p => p.top)) + 0.025,
+        perches: patches.map(p => [p.x - origin.x, p.z - origin.z]), headings }];
+    }
     return [];
   });
-  return { field, stops, ceiling, sampleGroundHeight, step: STEP };
+  return { field, stops, ceiling, sampleGroundHeight, step: STEP,
+    plazaBuildings: new Set(plazas.map(p => p.buildingId)).size,
+    blockedPlazas: plazas.filter(p => !stops.some(s => s.id === p.id)).map(p => p.id) };
 }
 
 export function pigeonPerch(stop, index) {

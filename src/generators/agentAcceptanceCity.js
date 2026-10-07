@@ -133,6 +133,7 @@ function* createAgentAcceptanceCitySteps(config = {}) {
     railwayGateway: railway.userData.contract,
     vegetation: vegetation.userData.contract,
     streetLife: streetLife.userData.getDiagnostics(),
+    pigeons: pigeons.userData.getDiagnostics(),
     contactAmbientOcclusion: {
       method: "curved-footprint-gradient-v1",
       patchCount: contactAmbientOcclusion.userData.patchCount,
@@ -191,6 +192,7 @@ function* createAgentAcceptanceCitySteps(config = {}) {
     streetLife.userData.updateView(camera, viewport);
     pigeons.userData.updateView(camera, viewport);
     root.userData.diagnostics.streetLife = streetLife.userData.getDiagnostics();
+    root.userData.diagnostics.pigeons = pigeons.userData.getDiagnostics();
   };
   root.userData.updateDaylight = (style) => {
     roads.userData.updateDaylight?.(style, params.nightLighting);

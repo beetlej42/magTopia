@@ -5,11 +5,16 @@ The city renderer adds at most one flock of five C-size pigeons (body length
 saved city state and Agent APIs are unchanged. Existing cities receive the layer
 when rendered with the new client.
 
-Only completed, pure plaza designs qualify as resting places. Each footprint
+The first completed plaza supplies a flock; loading an existing city applies
+the same rule without a saved-state migration or another construction action.
+Completed pure plazas and the clear paved parts of mixed plaza sites qualify.
+Older designs can use source-spec public-site metadata or explicit plaza intent
+when the derived composition summary is absent. Each footprint
 cell of a larger plaza may offer a patch, but transfers choose another building.
 Paving, lamps, planters and other rendered geometry must leave room for all five
-perches. A city with no safe plaza has no flock; one safe plaza has a resting
-flock. Mixed building sites, gardens, courtyards and construction sites are not
+perches. The whole parcel is searched, with dispersed perches when central
+decoration prevents a clustered flock. A city with no safe plaza has no flock;
+one safe plaza has a resting flock. Gardens, courtyards and construction sites are not
 landing targets in this version.
 
 The layer builds a conservative 0.5-unit height field from visible rendered
@@ -47,7 +52,8 @@ validation; no 60 Hz claim is made by the unit tests.
 ## Inspection
 
 - `city.userData.getPigeonDiagnostics()` reports count, eligible plaza patches,
-  current state, source, destination and rejected route count.
+  recognized plaza building count, blocked plaza IDs, current state, source,
+  destination and rejected route count. These also appear in city diagnostics.
 - `city.userData.setPigeonDebug(true)` shows the active route centerline.
 - `node --test test/pigeonCityLayer.test.js test/streetLifeCityLayer.test.js`
   checks real plaza assets, clear/blocked/disconnected routes, rounded turns,
