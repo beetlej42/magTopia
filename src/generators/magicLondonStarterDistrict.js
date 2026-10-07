@@ -1,3 +1,4 @@
+import { createMoleway, MOLEWAY_CARD_ID } from "./moleway.js";
 import { createConstructionSite, constructionSiteOptions } from "./constructionSite.js";
 import { createOwlTower } from "./owlTower.js";
 import { buildingEntranceRotation, createBuildingDesignObject } from "./buildingDesignObject.js";
@@ -78,8 +79,9 @@ export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cit
     // Legacy non-2x2 placements retain their previous representation.
     const landmarkFactory = building.specialStructure?.cardId === "ministry-of-magic" ? createMinistryOfMagic
       : building.specialStructure?.cardId === "diagon-alley-entrance" ? createDiagonAlley
-      : building.specialStructure?.cardId === "owl-tower" ? createOwlTower : null;
-    const landmarkCells = building.specialStructure?.cardId === "owl-tower" ? 1 : 4;
+      : building.specialStructure?.cardId === "owl-tower" ? createOwlTower
+      : building.specialStructure?.cardId === MOLEWAY_CARD_ID ? createMoleway : null;
+    const landmarkCells = ["owl-tower", MOLEWAY_CARD_ID].includes(building.specialStructure?.cardId) ? 1 : 4;
     if (landmarkFactory && building.site.footprint === (landmarkCells === 1 ? "1x1" : "2x2") && renderCells.length === landmarkCells) {
       const object = landmarkFactory({ cellWorldSize: tileSize, nightLighting });
       const x = renderCells.reduce((sum, cell) => sum + cell.center.x, 0) / landmarkCells;

@@ -1,3 +1,4 @@
+import { markMolewayTerrainOpenings } from "../city/moleway-opening.js";
 import * as THREE from "three";
 import { getVoxelLodThresholds, selectScreenSpaceVoxelLod } from "../render/voxelLodQuality.js";
 import { createRng } from "../utils/random.js";
@@ -1099,6 +1100,7 @@ function applyRuntimeConstructionGrade(terrainGrid, logicalCells, state) {
     frontier = next;
   }
 
+  markMolewayTerrainOpenings(terrainGrid, state, MACRO_TERRAIN_SUBDIVISIONS);
   const buildableCells = logicalCells.filter((cell) => cell.buildable);
   const categoryCounts = Object.fromEntries(
     Object.entries(runtimeGrade.categories).map(([category, cellIds]) => [category, cellIds.size])
@@ -1325,6 +1327,7 @@ function createMacroTerrainChunkGeometry(terrainGrid, palette, {
   const localIndex = (column, row) => (row - startTerrainRow) * chunkWidth + column - startTerrainColumn;
   const surfaceKey = (column, row) => {
     const cellIndex = terrainGrid.index(column, row);
+    if (terrainGrid.openings?.[cellIndex]) return -1;
     return (terrainGrid.elevationSteps[cellIndex] + 8) * 16 + terrainGrid.colors[cellIndex];
   };
 
@@ -1332,7 +1335,7 @@ function createMacroTerrainChunkGeometry(terrainGrid, palette, {
     for (let column = startTerrainColumn; column < endColumn; column += 1) {
       const cellIndex = terrainGrid.index(column, row);
       if (terrainGrid.kinds[cellIndex] === MACRO_TERRAIN_KIND.water) waterCellCount += 1;
-      if (merged[localIndex(column, row)]) continue;
+      if (terrainGrid.openings?.[cellIndex] || merged[localIndex(column, row)]) continue;
       const key = surfaceKey(column, row);
       let rectangleWidth = 1;
       while (
@@ -1382,6 +1385,7 @@ function createMacroTerrainChunkGeometry(terrainGrid, palette, {
   for (let row = startTerrainRow; row < endRow; row += 1) {
     for (let column = startTerrainColumn; column < endColumn; column += 1) {
       const cellIndex = terrainGrid.index(column, row);
+      if (terrainGrid.openings?.[cellIndex]) continue;
       const step = terrainGrid.elevationSteps[cellIndex];
       const height = GLOBAL_CONSTRUCTION_HEIGHT + step * VOXEL_SIZE;
       const x0 = -worldWidth / 2 + column * terrainVoxelWorldSize;

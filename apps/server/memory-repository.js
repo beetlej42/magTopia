@@ -1,3 +1,4 @@
+import { upgradeMolewayNames } from "../../src/gameplay/moleway-compatibility.js";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createCityState } from "../../src/city/state.js";
@@ -86,7 +87,7 @@ export function createMemoryRepository(config, options = {}) {
     async getCity(principal, cityId) {
       const row = cities.get(cityId);
       if (!row || !canAccess(principal, row)) throw new ServiceError(404, "CITY_NOT_FOUND", "City not found");
-      return { row, state: row.state_jsonb };
+      return { row, state: upgradeMolewayNames(row.state_jsonb) };
     },
 
     async getEvents(principal, cityId, afterVersion = 0, limit = 100) {
@@ -276,7 +277,7 @@ export function createMemoryRepository(config, options = {}) {
 
     async getCityForScheduler(cityId) {
       const row = cities.get(cityId);
-      return row ? { row, state: row.state_jsonb } : null;
+      return row ? { row, state: upgradeMolewayNames(row.state_jsonb) } : null;
     },
 
     async scanCitiesForScheduler(nowIso) {
@@ -309,7 +310,7 @@ export function createMemoryRepository(config, options = {}) {
         throw cityVersionConflict("City changed since the scheduler read it", expectedVersion, row.state_jsonb.version);
       }
       const client = memoryClient({ cityId, row, designs, orders, assets });
-      const handled = await handler({ client, state: row.state_jsonb, city: row });
+      const handled = await handler({ client, state: upgradeMolewayNames(row.state_jsonb), city: row });
       if (handled.nextState) {
         row.state_jsonb = handled.nextState;
         row.city_version = handled.nextState.version;

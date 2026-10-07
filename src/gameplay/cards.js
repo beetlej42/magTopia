@@ -601,7 +601,7 @@ export function placeSpecialStructure(state, cityId, input = {}, context = {}) {
   const frontage = getEntranceFrontageCells(state, footprintCells, entrance);
   if (!frontage.length) return { accepted: false, code: "PLACEMENT_ILLEGAL", message: `Entrance ${entrance} has no buildable frontage at this location` };
 
-  const buildingId = context.createId?.("building") ?? `building-${state.turn}-${cardId}`;
+  const buildingId = context.createId?.("building") ?? `building-${state.turn}-${cardId}-${placement.placementId}`;
   const effect = { ...(card.effect ?? {}) };
   const next = structuredClone(state);
   next.version = (state.version ?? 0) + 1;

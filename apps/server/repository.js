@@ -1,3 +1,4 @@
+import { upgradeMolewayNames } from "../../src/gameplay/moleway-compatibility.js";
 import { createCityState } from "../../src/city/state.js";
 import { getAssetRegistry } from "../../src/city/assets.js";
 import { createId, createSecret, hashRequest, hashSecret } from "./ids.js";
@@ -90,14 +91,14 @@ export function createRepository(database, config, { now = () => new Date() } = 
         if (!result.rowCount) throw new ServiceError(404, "CITY_NOT_FOUND", "City not found");
         return result.rows[0];
       });
-      return { row, state: row.state_jsonb };
+      return { row, state: upgradeMolewayNames(row.state_jsonb) };
     },
 
     async getCityForScheduler(cityId) {
       const result = await database.query("SELECT * FROM cities WHERE id = $1", [cityId]);
       if (!result.rowCount) return null;
       const row = result.rows[0];
-      return { row, state: row.state_jsonb };
+      return { row, state: upgradeMolewayNames(row.state_jsonb) };
     },
 
     async scanCitiesForScheduler(nowIso) {
@@ -137,7 +138,7 @@ export function createRepository(database, config, { now = () => new Date() } = 
         if (expectedVersion !== undefined && Number(expectedVersion) !== actualVersion) {
           throw cityVersionConflict("City changed since the scheduler read it", expectedVersion, actualVersion);
         }
-        const state = city.state_jsonb;
+        const state = upgradeMolewayNames(city.state_jsonb);
         const eventCount = state.events?.length ?? 0;
         const handled = await handler({ client, state, city });
         const response = handled.response;
@@ -532,7 +533,7 @@ export function createRepository(database, config, { now = () => new Date() } = 
         if (expectedVersion !== undefined && Number(expectedVersion) !== actualVersion) {
           throw cityVersionConflict("City changed since the preview", expectedVersion, actualVersion);
         }
-        const state = city.state_jsonb;
+        const state = upgradeMolewayNames(city.state_jsonb);
         const eventCount = state.events?.length ?? 0;
         const handled = await handler({ client, state, city });
         const response = handled.response;
