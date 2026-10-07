@@ -82,6 +82,60 @@ test("a single plaza retains a single resting flock without inventing a destinat
   assert.equal(layer.userData.getDiagnostics().destination, null);
 });
 
+test("first completed plaza creates a flock on scene refresh, including existing cities", () => {
+  const input = fixture();
+  const building = input.state.buildings.a;
+  input.state.buildings = {};
+  const count = () => createPigeonCityLayer({ navigation: createPigeonNavigation(input) }).userData.getDiagnostics().birdCount;
+  assert.equal(count(), 0);
+  input.state.buildings.a = { ...building, status: "construction" };
+  assert.equal(count(), 0);
+  input.state.buildings.a.status = "completed";
+  assert.equal(count(), 5);
+  assert.equal(count(), 5, "loading an existing city uses the same rule without migration");
+});
+
+test("legacy plaza source metadata and intent qualify without a derived summary", () => {
+  const input = fixture(); delete input.state.buildings.b;
+  const design = input.state.buildings.a.voxelDesign;
+  const summary = design.actualSiteComposition;
+  delete design.actualSiteComposition;
+  design.generation.sourceSpec.metadata = { publicSite: summary };
+  assert.equal(createPigeonNavigation(input).stops.length, 1);
+  delete design.generation.sourceSpec.metadata;
+  design.intent = { purpose: "plaza" };
+  assert.equal(createPigeonNavigation(input).stops.length, 1);
+  design.intent = { purpose: "garden" };
+  assert.equal(createPigeonNavigation(input).stops.length, 0);
+  design.intent = { purpose: "plaza", siteLayout: "building" };
+  assert.equal(createPigeonNavigation(input).stops.length, 0);
+});
+
+test("mixed plazas qualify while gardens and courtyards remain excluded", () => {
+  const input = fixture(); delete input.state.buildings.b;
+  const design = input.state.buildings.a.voxelDesign;
+  design.actualSiteComposition.resolvedLayout = "mixed";
+  design.generation.sourceSpec.masses.push({ type: "building" });
+  assert.equal(createPigeonNavigation(input).stops.length, 1);
+  for (const type of ["garden", "courtyard"]) {
+    design.actualSiteComposition.openSpaceType = type;
+    assert.equal(createPigeonNavigation(input).stops.length, 0);
+  }
+});
+
+test("central plaza decoration uses dispersed safe perches instead of suppressing the flock", () => {
+  const input = fixture(); delete input.state.buildings.b;
+  const fountain = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1, 0.7), new THREE.MeshBasicMaterial());
+  fountain.position.y = 0.5; input.collisionRoot.add(fountain);
+  const nav = createPigeonNavigation(input);
+  assert.equal(nav.stops.length, 1);
+  for (let i = 0; i < 5; i++) {
+    const p = pigeonPerch(nav.stops[0], i);
+    assert.ok(nav.ceiling(p.x, p.z, 0.45) < p.y);
+  }
+  assert.equal(createPigeonCityLayer({ navigation: nav }).userData.getDiagnostics().birdCount, 5);
+});
+
 test("actual generated plaza paving and lamps leave usable perches and an exit", () => {
   const input = fixture();
   for (const building of Object.values(input.state.buildings)) {

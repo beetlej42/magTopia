@@ -20,6 +20,7 @@ export function createPigeonCityLayer({ navigation, planetRadius = 220, seed = "
   let route = null, launchedAt = 0, nextFlight = 30 + rng() * 30, restAt = 0, lastTime = null;
   let debugLine = null, detailed = true;
   const diagnostics = { flockCount: birds.length ? 1 : 0, birdCount: birds.length, eligiblePlazas: stops.length,
+    plazaBuildings: navigation.plazaBuildings ?? 0, blockedPlazas: navigation.blockedPlazas ?? [],
     state: birds.length ? "resting" : "inactive", source: current?.id ?? null, destination: null, rejectedRoutes: 0 };
   function place(bird, point, yaw, pitch = 0, bank = 0) {
     getVoxelSphereFrame(point.x, point.z, planetRadius, frame);
