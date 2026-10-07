@@ -70,7 +70,7 @@ export const SPECIAL_STRUCTURES = Object.freeze({
   }),
   "floo-fireplace-station": Object.freeze({
     archetype: "special_structure",
-    name: "Moleway Entrance",
+    name: "鼹鼠地道",
     footprint: "1x1",
     purpose: "special_structure"
   }),
@@ -168,7 +168,7 @@ export const CARD_CATALOG = Object.freeze([
   card(
     "floo-fireplace-station",
     CARD_TYPES.special_structure,
-    "Moleway Entrance",
+    "鼹鼠地道",
     "An ordinary underground passage for citizens; wizards tap the brass mole nose twice to find a secret shortcut. Each completed entrance adds 5 coins per turn and 2 wizard capacity. Can be built repeatedly.",
     {
       kind: "special_structure",

@@ -354,7 +354,7 @@ Re-selecting the same policy refreshes its duration instead of stacking its effe
 
 ### Special structures and delegated placement
 
-Special structure cards (Diagon Alley Entrance, Owl Tower, Floo Fireplace Station, Concealment Statue, Moonlight Herb Plot) are real city buildings. The player either places one themselves (`player_place`) or delegates the location to you (`delegate_to_agent`).
+Special structure cards (Diagon Alley Entrance, Owl Tower, Moleway (鼹鼠地道), Concealment Statue, Moonlight Herb Plot) are real city buildings. The player either places one themselves (`player_place`) or delegates the location to you (`delegate_to_agent`).
 
 When you see a `deferred` placement in `strategy.cards.pending_placements`:
 

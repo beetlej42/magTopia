@@ -675,278 +675,270 @@ export function cancelSpecialStructurePlacement(state, input = {}, context = {})
   const cardState = normalizeCardState(state.gameplay?.cardState);
   const placementId = String(input.placementId ?? input.placement_id ?? "");
   const placement = cardState.placements[placementId];
-  if (!placement) return { accepted: false, code: "PLACEMENT_NOT_FOUND", message: `No pending placement exists for id ${placement…47947 tokens truncated… 6, z - 1, 3, 3, 3, shadeKey + 3, write);
-    return;
-  }
-  buffer.addBox("timber", x - 3, crownY - 2, z, 7, 2, 2, shadeKey + 1, write);
-  buffer.addBox("foliageDark", x - 4, crownY - 1, z - 4, 9, 4, 9, shadeKey + 2, write);
-  buffer.addBox("foliage", x - 3, crownY + 3, z - 3, 7, 3, 7, shadeKey + 3, write);
-  [[-4, -3], [3, -3], [-4, 3], [3, 3]].forEach(([dx, dz], index) => {
-    const drop = 3 + positiveModulo(shadeKey + index, 3);
-    buffer.addBox(index % 2 ? "foliage" : "foliageDark", x + dx, crownY - drop, z + dz, 2, drop + 2, 2, shadeKey + index + 4, write);
+  if (!placement) return { accepted: false, code: "PLACEMENT_NOT_FOUND", message: `No pending placement exists for id ${placementId || "(none)"}` };
+  if (["completed", "cancelled"].includes(placement.status)) return { accepted: false, code: "PLACEMENT_NOT_CANCELLABLE", message: `Placement ${placementId} is already ${placement.status}` };
+  const cancelled = normalizePendingPlacement({ ...placement, status: "cancelled", cancelledAtTurn: state.turn });
+  const nextPlacements = { ...cardState.placements, [placementId]: cancelled };
+  const next = withCardState(state, {
+    offer: cardState.offer,
+    choice: cardState.choice,
+    activePolicies: cardState.activePolicies,
+    pendingPlacement: cardState.pendingPlacement?.placementId === placementId ? null : cardState.pendingPlacement,
+    placements: nextPlacements,
+    constructionDiscount: cardState.constructionDiscount
   });
+  return { accepted: true, code: "OK", nextState: next, placement: cancelled };
 }
 
-function addVoxelShrub(buffer, form, x, groundY, z, rng, shadeKey, write) {
-  if (form === "rounded") {
-    buffer.addBox("foliageDark", x - 1, groundY + 1, z - 1, 4, 2, 3, shadeKey, write);
-    buffer.addBox("foliage", x, groundY + 3, z, 2, 1 + Math.round(rng()), 2, shadeKey + 1, write);
-    return;
+function resolveImmediateCard(state, card, cityId, context) {
+  const effect = card.effect ?? {};
+  const next = structuredClone(state);
+  const effects = {};
+  if (effect.kind === "grant_coins") {
+    const amount = Number(effect.coins ?? 0);
+    const gameplay = normalizeGameplayResources(next.gameplay.resources);
+    next.gameplay.resources = { ...gameplay, coins: gameplay.coins + amount };
+    next.resources = { ...next.resources, coins: (next.resources.coins ?? 0) + amount };
+    effects.grant = { kind: "coins", amount };
+  } else if (effect.kind === "grant_population") {
+    const requested = Number(effect.wizards ?? 0);
+    const population = normalizePopulationState(next.gameplay.population);
+    const capacity = population.wizards.capacity;
+    const current = population.wizards.current;
+    const granted = Math.max(0, Math.min(requested, Math.max(0, capacity - current)));
+    next.gameplay.population = {
+      ...population,
+      wizards: { ...population.wizards, current: current + granted }
+    };
+    effects.grant = { kind: "population", requested, granted, capacity };
+  } else if (effect.kind === "recruit_officer") {
+    if (!arcaneOfficerRecruitmentUnlocked(next)) {
+      return { accepted: false, code: "ARCANE_OFFICER_RECRUITMENT_LOCKED", message: "Arcane Officer recruitment requires a completed Ministry of Magic or governance facility", nextState: state };
+    }
+    const recruitment = generateArcaneOfficer(next, cityId, context);
+    if (!recruitment.accepted) {
+      return { accepted: false, code: recruitment.code, message: recruitment.message, nextState: state };
+    }
+    next.gameplay.arcaneOfficers = {
+      ...(next.gameplay.arcaneOfficers ?? {}),
+      [recruitment.officer.id]: recruitment.officer
+    };
+    effects.recruit = { officer_id: recruitment.officer.id, officer_name: recruitment.officer.name, archetype: recruitment.officer.archetype };
+  } else {
+    return { accepted: false, code: "UNSUPPORTED_CARD_EFFECT", message: `Card effect ${effect.kind} is not supported` };
   }
-  if (form === "fern") {
-    buffer.addVoxel("foliageDark", x, groundY + 1, z, shadeKey, write);
-    [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(([dx, dz], index) => {
-      const length = 2 + positiveModulo(shadeKey + index, 2);
-      for (let step = 1; step <= length; step += 1) {
-        buffer.addVoxel("foliageLight", x + dx * step, groundY + Math.max(1, 3 - step), z + dz * step, shadeKey + index + step, write);
-      }
+  return { accepted: true, nextState: next, effects };
+}
+
+// Named MVP Arcane Officer generation. Uses the authoritative archetype
+// profiles and the existing roster-capacity rule; no coin cost because the
+// card grant is system-owned. Agent/client input never supplies stats.
+export function generateArcaneOfficer(state, cityId, context = {}) {
+  const officers = state?.gameplay?.arcaneOfficers ?? {};
+  const rosterSize = Object.keys(officers).length;
+  const wizards = state?.gameplay?.population?.wizards?.current ?? 0;
+  const capacity = arcaneOfficerCapacity(state);
+  if (rosterSize >= capacity) {
+    return { accepted: false, code: "ARCANE_OFFICER_CAPACITY_REACHED", message: `Arcane officer roster is at its capacity of ${capacity}` };
+  }
+  const officer = generateArcaneOfficerIdentity({
+    seed: `${String(cityId)}:card-officer:${state.turn}:${rosterSize}`,
+    id: context.createId?.("arcaneOfficer") ?? `arcaneOfficer-${rosterSize + 1}`,
+    hiredAtTurn: state.turn,
+    nameIndex: rosterSize
+  });
+  return { accepted: true, officer };
+}
+
+export const ARCANE_OFFICER_NAMES = Object.freeze([
+  "Vesper Lark",
+  "Rowan Featherstone",
+  "Mira Holler",
+  "Cassian Dusk",
+  "Ivy Thornbush",
+  "Silas Moonshadow",
+  "Elowen Reed",
+  "Cormac Whistler",
+  "Seraphine Vale",
+  "Bram Bramble",
+  "Isolde Nightingale",
+  "Percival Ashcroft"
+]);
+
+// Applying a policy card. The same policy never stacks without limit: a repeat
+// selection refreshes its duration instead of numerically stacking the effect.
+export function applyPolicySelection(state, card, turn, context = {}) {
+  const cardState = normalizeCardState(state.gameplay?.cardState);
+  const policyId = String(card.effect?.policyId ?? card.cardId);
+  const duration = normalizeCardDuration(card.duration);
+  const effects = policyEffectsFor(card);
+  const existingIndex = cardState.activePolicies.findIndex((entry) => entry.policyId === policyId);
+  const refreshed = existingIndex >= 0;
+  const nextPolicies = [...cardState.activePolicies];
+  if (refreshed) {
+    const existing = nextPolicies[existingIndex];
+    nextPolicies[existingIndex] = normalizeActivePolicy({
+      ...existing,
+      remainingTurns: duration.turns,
+      effects
     });
-    return;
+  } else {
+    nextPolicies.push(normalizeActivePolicy({
+      policyId,
+      sourceCardId: card.cardId,
+      startedAtTurn: turn,
+      durationType: duration.type,
+      durationTurns: duration.turns,
+      remainingTurns: duration.turns,
+      effects
+    }));
   }
-  buffer.addBox("foliage", x - 1, groundY + 1, z - 1, 3, 3, 3, shadeKey, write);
-  const blossom = rng() > 0.48 ? "blossomPink" : "blossomGold";
-  [[-1, -1], [1, -1], [0, 1]].forEach(([dx, dz], index) => buffer.addVoxel(blossom, x + dx, groundY + 4 + (index % 2), z + dz, shadeKey + index + 1, write));
-}
-
-function districtCellAtVoxel(layout, x, z) {
-  const column = Math.floor((x + layout.widthVoxels / 2) / layout.cellVoxels);
-  const row = Math.floor((z + layout.depthVoxels / 2) / layout.cellVoxels);
-  if (column < 0 || row < 0 || column >= layout.columns || row >= layout.rows) return null;
-  return layout.cells[row * layout.columns + column] ?? null;
-}
-
-function districtCellBounds(column, row) {
-  const minX = -DISTRICT_WIDTH_VOXELS / 2 + column * DISTRICT_CELL_VOXELS;
-  const minZ = -DISTRICT_DEPTH_VOXELS / 2 + row * DISTRICT_CELL_VOXELS;
   return {
-    minX,
-    maxX: minX + DISTRICT_CELL_VOXELS,
-    minZ,
-    maxZ: minZ + DISTRICT_CELL_VOXELS
+    refreshed,
+    durationTurns: duration.turns,
+    remainingTurns: duration.turns,
+    nextState: withCardState(state, {
+      offer: cardState.offer,
+      choice: cardState.choice,
+      activePolicies: nextPolicies,
+      pendingPlacement: cardState.pendingPlacement,
+      placements: cardState.placements,
+      constructionDiscount: cardState.constructionDiscount
+    }, { bumpVersion: false })
   };
 }
 
-function placeDistrictObject(object, placement, footprint) {
-  const bounds = districtCellBounds(placement.column, placement.row);
-  const centerX = bounds.minX + footprint.widthCells * DISTRICT_CELL_VOXELS / 2;
-  const centerZ = bounds.minZ + footprint.depthCells * DISTRICT_CELL_VOXELS / 2;
-  object.position.set(centerX * VOXEL_SIZE, 0, centerZ * VOXEL_SIZE);
-  object.userData.districtPlacement = {
-    column: placement.column,
-    row: placement.row,
-    widthCells: footprint.widthCells,
-    depthCells: footprint.depthCells,
-    centerVoxels: [centerX, centerZ],
-    centerWorld: [centerX * VOXEL_SIZE, centerZ * VOXEL_SIZE]
+export function policyEffectsFor(card) {
+  const effect = card.effect ?? {};
+  const effects = [];
+  if (effect.concealmentBonus != null) effects.push({ kind: "concealment_bonus", value: Number(effect.concealmentBonus) });
+  if (effect.constructionDiscountRate != null) effects.push({ kind: "construction_discount", value: Number(effect.constructionDiscountRate) });
+  if (effect.wizardGrowthBonusRate != null) effects.push({ kind: "wizard_growth_bonus", value: Number(effect.wizardGrowthBonusRate) });
+  if (effect.incidentResponseBonus != null) effects.push({ kind: "incident_response_bonus", value: Number(effect.incidentResponseBonus) });
+  return effects;
+}
+
+// Advances the deterministic policy lifecycle at settlement. Policies lose one
+// remaining turn per resolved turn; expiring policies are removed. The choice
+// of this turn (policy started/refreshed) is reported for the frozen facts.
+export function advancePolicies(state, { now = () => new Date().toISOString(), turn = state.turn } = {}) {
+  const cardState = normalizeCardState(state.gameplay?.cardState);
+  const choice = normalizeCardChoice(cardState.choice);
+  const activePolicies = cardState.activePolicies;
+  const expired = [];
+  const nextPolicies = [];
+  for (const policy of activePolicies) {
+    if (policy.durationType === "until_replaced") {
+      nextPolicies.push(policy);
+      continue;
+    }
+    const remaining = policy.remainingTurns - 1;
+    if (remaining <= 0) {
+      expired.push(policy.policyId);
+    } else {
+      nextPolicies.push(normalizeActivePolicy({ ...policy, remainingTurns: remaining }));
+    }
+  }
+  const started = choice.status === "selected" && choice.selectedCardId
+    ? (getCard(choice.selectedCardId)?.type === CARD_TYPES.policy ? [String(choice.cardEffects?.policy?.policy_id ?? choice.selectedCardId)] : [])
+    : [];
+  const refreshed = choice.status === "selected" && choice.cardEffects?.policy?.action === "refreshed"
+    ? [String(choice.cardEffects.policy.policy_id)]
+    : [];
+  const nextState = withCardState(state, {
+    offer: cardState.offer,
+    choice: normalizeCardChoice({
+      ...choice,
+      policyStarted: started,
+      policyRefreshed: refreshed,
+      policyExpired: expired
+    }),
+    activePolicies: nextPolicies,
+    pendingPlacement: cardState.pendingPlacement,
+    placements: cardState.placements,
+    constructionDiscount: cardState.constructionDiscount
+  }, { bumpVersion: false });
+  return { nextState, started, refreshed, expired };
+}
+
+// The card facts block frozen into TurnFacts at settlement.
+export function cardFacts(state, turn) {
+  if ((turn != null && Number(turn) === 0) || (turn == null && state?.turn != null && Number(state.turn) === 0)) {
+    return {
+      cardOfferId: null, offeredCardIds: [], selectedCardId: null,
+      choiceStatus: "not_applicable", choiceResolvedAt: null, cardEffects: {},
+      policyStarted: [], policyRefreshed: [], policyExpired: [], specialPlacementMandate: null, specialPlacementsCompleted: [], choiceKind: null, offerChoiceKind: null, specialCadence: false, eligibilityAudit: []
+    };
+  }
+  const cardState = normalizeCardState(state.gameplay?.cardState);
+  const choice = normalizeCardChoice(cardState.choice);
+  const offer = cardState.offer;
+  const skipped = choice.status === "pending";
+  return {
+    cardOfferId: offer?.offerId ?? null,
+    offeredCardIds: offer?.offeredCardIds ?? [],
+    offerChoiceKind: offer?.choiceKind ?? null,
+    specialCadence: specialChoiceTurn(turn),
+    eligibilityAudit: [...(offer?.eligibilityAudit ?? [])],
+    selectedCardId: skipped ? null : choice.selectedCardId,
+    choiceKind: choice.choiceKind ?? offer?.choiceKind ?? null,
+    choiceStatus: skipped ? "skipped" : choice.status,
+    choiceResolvedAt: choice.choiceResolvedAt,
+    cardEffects: { ...(choice.cardEffects ?? {}) },
+    policyStarted: [...(choice.policyStarted ?? [])],
+    policyRefreshed: [...(choice.policyRefreshed ?? [])],
+    policyExpired: [...(choice.policyExpired ?? [])],
+    specialPlacementMandate: cardState.pendingPlacement
+      ? { ...cardState.pendingPlacement, status: cardState.pendingPlacement.status }
+      : null,
+    specialPlacementsCompleted: [...(choice.specialPlacementsCompleted ?? [])]
   };
 }
 
-function createDistrictGridDiagnostics(layout, objects) {
-  const placements = Object.fromEntries(Object.entries(objects).map(([id, object]) => {
-    const placement = object.userData.districtPlacement;
-    const voxelPosition = [object.position.x / VOXEL_SIZE, object.position.z / VOXEL_SIZE];
-    return [id, {
-      ...structuredClone(placement),
-      voxelPosition,
-      gridAligned: voxelPosition.every((value) => Number.isInteger(value))
-    }];
+export function listCards() {
+  return CARD_CATALOG.map((entry) => ({
+    card_id: entry.cardId,
+    type: entry.type,
+    title: entry.title,
+    description: entry.description,
+    decision_mode: entry.decisionMode,
+    choice_kind: entry.choiceKind,
+    family: entry.family,
+    unique: entry.unique,
+    free_placement: Boolean(entry.effect?.freePlacement),
+    placement_required: entry.type === CARD_TYPES.special_structure,
+    duration: entry.duration,
+    ...(entry.structure ? { structure: entry.structure } : {})
   }));
+}
+
+function withCardState(state, patch, { bumpVersion = true } = {}) {
   return {
-    columns: layout.columns,
-    rows: layout.rows,
-    cellVoxels: layout.cellVoxels,
-    cellWorldSize: layout.cellVoxels * VOXEL_SIZE,
-    surfaceCounts: layout.cells.reduce((counts, cell) => ({
-      ...counts,
-      [cell.surface]: (counts[cell.surface] ?? 0) + 1
-    }), {}),
-    placements
+    ...state,
+    version: bumpVersion ? (state.version ?? 0) + 1 : (state.version ?? 0),
+    gameplay: {
+      ...(state.gameplay ?? {}),
+      cardState: normalizeCardState({
+        ...patch,
+        constructionDiscount: patch.constructionDiscount ?? state.gameplay?.cardState?.constructionDiscount ?? null
+      })
+    }
   };
 }
 
-export function projectDistrictOntoSphere(root, radius) {
-  root.updateMatrixWorld(true);
-  const leaves = [];
-  const collectProjectionLeaves = (object) => {
-    if (object !== root && (
-      object.userData?.sphereProjectionRoot
-      || object.isInstancedMesh
-      || object.isMesh
-      || object.isLight
-    )) {
-      leaves.push(object);
-      return;
-    }
-    object.children.forEach(collectProjectionLeaves);
-  };
-  collectProjectionLeaves(root);
-
-  const instanceMatrix = new THREE.Matrix4();
-  const flatMatrix = new THREE.Matrix4();
-  const curvedMatrix = new THREE.Matrix4();
-  const worldUp = new THREE.Vector3(0, 1, 0);
-  let projectedInstances = 0;
-  let projectedVertices = 0;
-  let correctedReflectedGeometries = 0;
-  let maximumTiltRadians = 0;
-
-  leaves.forEach((object) => {
-    if (object.isInstancedMesh) {
-      for (let index = 0; index < object.count; index += 1) {
-        object.getMatrixAt(index, instanceMatrix);
-        flatMatrix.multiplyMatrices(object.matrixWorld, instanceMatrix);
-        maximumTiltRadians = Math.max(maximumTiltRadians, curveFlatMatrixOntoSphere(flatMatrix, curvedMatrix, radius));
-        object.setMatrixAt(index, curvedMatrix);
-        projectedInstances += 1;
-      }
-      object.instanceMatrix.needsUpdate = true;
-      root.add(object);
-      object.position.set(0, 0, 0);
-      object.quaternion.identity();
-      object.scale.set(1, 1, 1);
-      object.updateMatrix();
-      object.computeBoundingSphere();
-      return;
-    }
-
-    if (object.isMesh && object.userData.flatVoxelGeometry) {
-      // Some API-backed layers mirror flat Z to reconcile row conventions.
-      // Baking that negative transform into positions reverses triangle
-      // winding, so restore the original outward-facing orientation before
-      // using FrontSide materials on the curved result.
-      if (object.matrixWorld.determinant() < 0 && reverseIndexedTriangleWinding(object.geometry)) {
-        correctedReflectedGeometries += 1;
-      }
-      const positions = object.geometry.attributes.position;
-      const flatPosition = new THREE.Vector3();
-      const curvedPosition = new THREE.Vector3();
-      for (let index = 0; index < positions.count; index += 1) {
-        flatPosition.fromBufferAttribute(positions, index).applyMatrix4(object.matrixWorld);
-        const frame = getVoxelSphereFrame(flatPosition.x, flatPosition.z, radius);
-        curvedPosition.copy(frame.surface).addScaledVector(frame.normal, flatPosition.y);
-        positions.setXYZ(index, curvedPosition.x, curvedPosition.y, curvedPosition.z);
-        maximumTiltRadians = Math.max(maximumTiltRadians, frame.normal.angleTo(worldUp));
-      }
-      positions.needsUpdate = true;
-      object.geometry.computeVertexNormals();
-      object.geometry.computeBoundingBox();
-      object.geometry.computeBoundingSphere();
-      projectedVertices += positions.count;
-      projectedInstances += object.userData.sourceVoxelCount ?? 0;
-      root.add(object);
-      object.position.set(0, 0, 0);
-      object.quaternion.identity();
-      object.scale.set(1, 1, 1);
-      object.updateMatrix();
-      return;
-    }
-
-    flatMatrix.copy(object.matrixWorld);
-    maximumTiltRadians = Math.max(maximumTiltRadians, curveFlatMatrixOntoSphere(flatMatrix, curvedMatrix, radius));
-    root.add(object);
-    curvedMatrix.decompose(object.position, object.quaternion, object.scale);
-    object.updateMatrix();
-  });
-  root.updateMatrixWorld(true);
+function normalizeCardState(value = {}) {
   return {
-    type: "spherical-local-frame",
-    radius,
-    projectedObjects: leaves.length,
-    projectedInstances,
-    projectedVertices,
-    correctedReflectedGeometries,
-    maximumSurfaceTiltDegrees: THREE.MathUtils.radToDeg(maximumTiltRadians)
+    offer: value.offer ? normalizeCardOffer(value.offer) : null,
+    choice: normalizeCardChoice(value.choice ?? {}),
+    activePolicies: [...(value.activePolicies ?? [])].map((entry) => normalizeActivePolicy(entry)),
+    pendingPlacement: value.pendingPlacement ? normalizePendingPlacement(value.pendingPlacement) : null,
+    placements: Object.fromEntries(Object.entries(value.placements ?? {}).map(([id, entry]) => [id, normalizePendingPlacement(entry)])),
+    constructionDiscount: value.constructionDiscount ? {
+      cardId: String(value.constructionDiscount.cardId ?? ""),
+      discountRate: Number(value.constructionDiscount.discountRate ?? 0),
+      remainingUses: Number(value.constructionDiscount.remainingUses ?? 0),
+      grantedAtTurn: Number(value.constructionDiscount.grantedAtTurn ?? 0)
+    } : null
   };
 }
 
-function reverseIndexedTriangleWinding(geometry) {
-  const index = geometry.getIndex();
-  if (!index || index.count % 3 !== 0) return false;
-  for (let offset = 0; offset < index.count; offset += 3) {
-    const second = index.getX(offset + 1);
-    index.setX(offset + 1, index.getX(offset + 2));
-    index.setX(offset + 2, second);
-  }
-  index.needsUpdate = true;
-  return true;
-}
-
-function curveFlatMatrixOntoSphere(flatMatrix, targetMatrix, radius) {
-  const flatPosition = new THREE.Vector3();
-  const flatQuaternion = new THREE.Quaternion();
-  const flatScale = new THREE.Vector3();
-  flatMatrix.decompose(flatPosition, flatQuaternion, flatScale);
-  const frame = getVoxelSphereFrame(flatPosition.x, flatPosition.z, radius);
-  const axisX = new THREE.Vector3(1, 0, 0).applyQuaternion(flatQuaternion);
-  const axisY = new THREE.Vector3(0, 1, 0).applyQuaternion(flatQuaternion);
-  const axisZ = new THREE.Vector3(0, 0, 1).applyQuaternion(flatQuaternion);
-  mapFlatDirectionToSphere(axisX, frame).normalize();
-  mapFlatDirectionToSphere(axisY, frame).normalize();
-  mapFlatDirectionToSphere(axisZ, frame).normalize();
-  const curvedPosition = frame.surface.clone().addScaledVector(frame.normal, flatPosition.y);
-  targetMatrix.makeBasis(axisX, axisY, axisZ);
-  targetMatrix.scale(flatScale);
-  targetMatrix.setPosition(curvedPosition);
-  return frame.normal.angleTo(WORLD_UP);
-}
-
-const WORLD_UP = new THREE.Vector3(0, 1, 0);
-
-export function getVoxelSphereFrame(x, z, radius, target = null) {
-  const longitude = x / radius;
-  const latitude = z / radius;
-  const cosLongitude = Math.cos(longitude);
-  const sinLongitude = Math.sin(longitude);
-  const cosLatitude = Math.cos(latitude);
-  const sinLatitude = Math.sin(latitude);
-  const frame = target ?? {
-    normal: new THREE.Vector3(),
-    tangentX: new THREE.Vector3(),
-    tangentZ: new THREE.Vector3(),
-    surface: new THREE.Vector3()
-  };
-  frame.normal.set(
-    sinLongitude * cosLatitude,
-    cosLongitude * cosLatitude,
-    sinLatitude
-  );
-  frame.tangentX.set(cosLongitude, -sinLongitude, 0);
-  frame.tangentZ.set(
-    -sinLongitude * sinLatitude,
-    -cosLongitude * sinLatitude,
-    cosLatitude
-  );
-  frame.surface.copy(frame.normal).multiplyScalar(radius);
-  frame.surface.y -= radius;
-  return frame;
-}
-
-function mapFlatDirectionToSphere(direction, frame) {
-  const x = direction.x;
-  const y = direction.y;
-  const z = direction.z;
-  return direction.copy(frame.tangentX).multiplyScalar(x)
-    .addScaledVector(frame.normal, y)
-    .addScaledVector(frame.tangentZ, z);
-}
-
-function positiveModulo(value, modulus) {
-  return ((value % modulus) + modulus) % modulus;
-}
-
-function withMagicBias(intent, bias) {
-  return { ...intent, magicLevel: clamp(intent.magicLevel + bias, 0, 1) };
-}
-
-function lerp(start, end, amount) {
-  return start + (end - start) * amount;
-}
-
-function clamp(value, minimum, maximum) {
-  const number = Number(value);
-  return Math.min(maximum, Math.max(minimum, Number.isFinite(number) ? number : minimum));
-}
-
-function clampInteger(value, minimum, maximum) {
-  return Math.round(clamp(value, minimum, maximum));
-}
