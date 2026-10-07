@@ -27,8 +27,12 @@ obstructions and routes shorter than 4 or longer than 160 units are rejected.
 There is no unchecked fallback to a straight line or a sharp corner.
 
 Birds climb and descend while moving forward; cruise altitude is 3.2 units above
-graded ground. Takeoff is staggered by 0.22 seconds, and the flock flies single
-file through corridors, spreading onto its five landing positions. Ground
+graded ground. Takeoff uses unequal individual delays. Flight tracks have
+lateral, vertical and longitudinal offsets, forming a loose cluster rather than
+a single-file queue. Each offset track is validated; constrained streets retry
+at 65% and 35% spread, otherwise the destination is rejected. Plaza-specific
+seeded irregular perches replace the symmetric cross. Birds touch down along
+their flight tangent, then turn to individual headings before walking. Ground
 movement uses short steps with alternating feet, head motion, pauses and pecks.
 After 30–60 seconds the flock tries up to four randomly selected destinations;
 if none is safe it waits another 30–60 seconds. The route search may reject a

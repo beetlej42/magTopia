@@ -1,10 +1,12 @@
 import * as THREE from "three";
+import { createRng } from "../utils/random.js";
 
 export const PIGEON_COUNT = 5;
 export const PIGEON_CLEARANCE = 0.38;
 const STEP = 0.5;
 const key = (x, z) => `${x}:${z}`;
-const offsets = [[0, 0], [-0.55, 0], [0.55, 0], [0, -0.55], [0, 0.55]];
+const offsets = [[0.03, -0.04], [-0.57, 0.12], [0.54, 0.22], [0.12, -0.55], [0.12, 0.64]];
+const smooth = x => { const t = Math.max(0, Math.min(1, x)); return t * t * (3 - 2 * t); };
 
 // A conservative, flat-space height field. Rasterize triangle bounds rather
 // than mesh bounds: merged plaza paving must not turn its lamps into a roof.
@@ -91,17 +93,20 @@ export function createPigeonNavigation({ state, grid, collisionRoot, sampleGroun
     return top;
   }
   const stops = plazas.flatMap(plaza => {
+    const rng = createRng(`pigeon-perches:${plaza.id}`);
+    const perches = offsets.map(([x, z]) => [x + (rng() - 0.5) * 0.1, z + (rng() - 0.5) * 0.1]);
+    const headings = perches.map(() => rng() * Math.PI * 2 - Math.PI);
     // Try central patches; do not place a flock on a lamp/planter or uneven paving.
     for (const [dx, dz] of [[0, 0], [-0.5, 0], [0.5, 0], [0, -0.5], [0, 0.5]]) {
       const x = (Math.floor((plaza.x + dx) / STEP) + 0.5) * STEP;
       const z = (Math.floor((plaza.z + dz) / STEP) + 0.5) * STEP;
-      const heights = offsets.map(([ox, oz]) => ceiling(x + ox, z + oz, 0.45));
+      const heights = perches.map(([ox, oz]) => ceiling(x + ox, z + oz, 0.45));
       const top = Math.max(...heights);
       const base = sampleGroundHeight(x, z);
       if (!Number.isFinite(top) || top > base + 0.65) continue;
       const floor = field.get(key(Math.floor(x / STEP), Math.floor(z / STEP)))?.top;
       if (top - floor > 0.08 || top - Math.min(...heights) > 0.08) continue;
-      return [{ ...plaza, x, z, y: top + 0.025 }];
+      return [{ ...plaza, x, z, y: top + 0.025, perches, headings }];
     }
     return [];
   });
@@ -109,7 +114,8 @@ export function createPigeonNavigation({ state, grid, collisionRoot, sampleGroun
 }
 
 export function pigeonPerch(stop, index) {
-  return new THREE.Vector3(stop.x + offsets[index][0], stop.y, stop.z + offsets[index][1]);
+  const offset = (stop.perches ?? offsets)[index];
+  return new THREE.Vector3(stop.x + offset[0], stop.y, stop.z + offset[1]);
 }
 
 // Search only connected, clear road/open-space samples. The search is bounded
@@ -169,25 +175,43 @@ export function planPigeonFlight(nav, from, to) {
     points.push(p);
     if (i) distances.push(distances.at(-1) + p.distanceTo(points[i - 1]));
   }
-  const tracks = offsets.map(([dx, dz]) => points.map((p, i) => {
-    const raw = Math.max(0, 1 - i / count * length / 3, 1 - (1 - i / count) * length / 3);
-    const blend = raw * raw * (3 - 2 * raw);
-    return p.clone().add(new THREE.Vector3(dx * blend, 0, dz * blend));
+  const rng = createRng(`pigeon-flight:${from.id}:${to.id}`);
+  const departure = points[1].clone().sub(points[0]); departure.y = 0; departure.normalize();
+  const side = new THREE.Vector3(departure.z, 0, -departure.x);
+  const lateral = [-0.42, 0.48, -0.12, 0.62, 0.16];
+  const heights = [0.04, 0.32, -0.19, -0.03, 0.2];
+  const flightOffsets = lateral.map((value, i) => side.clone().multiplyScalar(value + (rng() - 0.5) * 0.08)
+    .addScaledVector(departure, (rng() - 0.5) * 0.22).setY(heights[i]));
+  const delays = [0, 0.12, 0.31, 0.49, 0.67].map((d, i) => d + (i ? rng() * 0.055 : 0));
+  // All variation is baked into validated tracks, never added as unchecked
+  // per-frame noise. Tight streets can use a smaller, still staggered formation.
+  for (const formationScale of [1, 0.65, 0.35]) {
+  const tracks = flightOffsets.map((offset, bird) => points.map((p, i) => {
+    const startBlend = 1 - smooth(i / count * length / 3);
+    const endBlend = 1 - smooth((1 - i / count) * length / 3);
+    const flightBlend = (1 - startBlend) * (1 - endBlend);
+    const startOffset = (from.perches ?? offsets)[bird], endOffset = (to.perches ?? offsets)[bird];
+    return p.clone().addScaledVector(offset, flightBlend * formationScale)
+      .add(new THREE.Vector3(startOffset[0] * startBlend + endOffset[0] * endBlend, 0,
+        startOffset[1] * startBlend + endOffset[1] * endBlend));
   }));
   // Check every bird's complete wing envelope AFTER smoothing and endpoint
   // spreading. Reject tight corners instead of falling back to sharp turns.
+  let valid = true;
   for (const track of tracks) {
     for (let i = 0; i < track.length; i++) {
       const p = track[i];
-      if (ceiling(p.x, p.z, PIGEON_CLEARANCE + 0.05) > p.y - 0.005) return null;
+      if (ceiling(p.x, p.z, PIGEON_CLEARANCE + 0.05) > p.y - 0.005) { nav.lastRejection = { type: "clearance", point: p.toArray(), top: ceiling(p.x,p.z,0.43) }; valid = false; break; }
       if (i > 0 && i < track.length - 1) {
         const u = track[i].clone().sub(track[i - 1]), v = track[i + 1].clone().sub(track[i]);
         // Radius >= 0.55 world units; an unsafe tight turn means another plaza.
-        if (u.angleTo(v) / Math.max(0.001, (u.length() + v.length()) / 2) > 1 / 0.55) return null;
+        if (u.angleTo(v) / Math.max(0.001, (u.length() + v.length()) / 2) > 1 / 0.55) { nav.lastRejection = { type: "turn", point: p.toArray() }; valid = false; break; }
       }
     }
   }
-  return { tracks, distances, length: distances.at(-1), from, to };
+  if (valid) return { tracks, distances, length: distances.at(-1), from, to, delays, formationScale };
+  }
+  return null;
 }
 
 export function samplePigeonTrack(route, index, distance, position, direction) {

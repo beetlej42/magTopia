@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
-import { createPigeonNavigation, planPigeonFlight } from "../src/generators/pigeonNavigation.js";
+import { createPigeonNavigation, planPigeonFlight, pigeonPerch } from "../src/generators/pigeonNavigation.js";
 import { createPigeonCityLayer } from "../src/generators/pigeonCityLayer.js";
 import { createBuildingDesignDraft } from "../src/city/building-design.js";
 import { createBuildingDesignObject } from "../src/generators/buildingDesignObject.js";
@@ -95,6 +95,41 @@ test("actual generated plaza paving and lamps leave usable perches and an exit",
   }
   const nav = createPigeonNavigation(input);
   assert.equal(nav.stops.length, 2);
-  assert.ok(planPigeonFlight(nav, ...nav.stops));
+  assert.ok(planPigeonFlight(nav, ...nav.stops), JSON.stringify({stops:nav.stops,reason:nav.lastRejection}));
   assert.ok(nav.stops.every(s => Math.abs(s.y - 0.315) < 1e-5));
+});
+
+test("flight tracks have lateral and height spread with irregular departure spacing", () => {
+  const nav = createPigeonNavigation(fixture());
+  const route = planPigeonFlight(nav, ...nav.stops);
+  const middle = route.tracks.map(track => track[Math.floor(track.length / 2)]);
+  assert.ok(Math.max(...middle.map(p => p.z)) - Math.min(...middle.map(p => p.z)) > 0.3);
+  assert.ok(Math.max(...middle.map(p => p.y)) - Math.min(...middle.map(p => p.y)) > 0.15);
+  const gaps = route.delays.slice(1).map((d, i) => d - route.delays[i]);
+  assert.ok(Math.max(...gaps) - Math.min(...gaps) > 0.02);
+  for (let i = 0; i < 5; i++) {
+    assert.ok(route.tracks[i][0].distanceTo(pigeonPerch(route.from, i)) < 1e-6);
+    assert.ok(route.tracks[i].at(-1).distanceTo(pigeonPerch(route.to, i)) < 1e-6);
+  }
+  assert.notDeepEqual(nav.stops[0].perches, nav.stops[1].perches);
+});
+
+test("landing settles into individual headings without a position jump", () => {
+  const nav = createPigeonNavigation(fixture());
+  const layer = createPigeonCityLayer({ navigation: nav, planetRadius: 1e7 });
+  let flew = false, touchdown = null, previous;
+  for (let t = 0; t < 85; t += 0.02) {
+    previous = layer.children.map(b => b.position.clone());
+    layer.userData.update(t);
+    const state = layer.userData.getDiagnostics().state;
+    if (state === "flying") flew = true;
+    if (flew && state === "resting") {
+      touchdown ??= t;
+      layer.children.forEach((b, i) => assert.ok(b.position.distanceTo(previous[i]) < 0.02));
+      if (t - touchdown > 2) break;
+    }
+  }
+  assert.ok(touchdown);
+  const yaws = layer.children.map(b => new THREE.Euler().setFromQuaternion(b.quaternion, "YXZ").y);
+  assert.ok(Math.max(...yaws) - Math.min(...yaws) > 0.5);
 });

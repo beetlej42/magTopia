@@ -62,7 +62,8 @@ export function createPigeonCityLayer({ navigation, planetRadius = 220, seed = "
     if (!route && elapsed >= nextFlight) chooseRoute(elapsed);
     const duration = route ? route.length / 2.6 : 0;
     birds.forEach((bird, i) => {
-      const flightTime = elapsed - launchedAt - i * 0.22;
+      const delay = route?.delays[i] ?? 0;
+      const flightTime = elapsed - launchedAt - delay;
       if (route && flightTime >= 0 && flightTime < duration) {
         const u = flightTime / duration;
         // Ease speed at either end, keeping forward motion even while climbing.
@@ -79,10 +80,11 @@ export function createPigeonCityLayer({ navigation, planetRadius = 220, seed = "
         const landed = route && flightTime >= duration;
         const stop = landed ? route.to : current;
         position.copy(pigeonPerch(stop, i));
-        const t = Math.max(0, elapsed - (landed ? launchedAt + i * 0.22 + duration : restAt));
+        const t = Math.max(0, elapsed - (landed ? launchedAt + delay + duration : restAt));
         // Short out-and-back steps, with planted-foot motion and long pauses.
-        const cycle = Math.min(9, Math.max(0, t - i * 0.3));
-        const walking = !route && (cycle < 0.8 || cycle >= 4.5 && cycle < 5.3);
+        const turnTime = bird.landingHeading !== undefined ? 0.7 + i * 0.16 : 0;
+        const cycle = Math.min(9, Math.max(0, t - turnTime - i * 0.3));
+        const walking = !route && t >= turnTime + i * 0.3 && (cycle < 0.8 || cycle >= 4.5 && cycle < 5.3);
         const travel = cycle < 0.8 ? cycle * 0.15 : cycle < 4.5 ? 0.12 : cycle < 5.3 ? 0.12 - (cycle - 4.5) * 0.15 : 0;
         const yaw = cycle < 3.8 ? 0 : cycle < 4.5 ? Math.PI * smooth((cycle - 3.8) / 0.7) : cycle < 8.3 ? Math.PI : Math.PI * (1 - smooth((cycle - 8.3) / 0.7));
         if (!route) { position.x += Math.sin(bird.restHeading) * travel; position.z += Math.cos(bird.restHeading) * travel; }
@@ -96,6 +98,12 @@ export function createPigeonCityLayer({ navigation, planetRadius = 220, seed = "
             heading = bird.restHeading + delta * smooth((flightTime + 0.6) / 0.6);
           }
         }
+        // Touch down along the flight tangent, then turn on the ground at an
+        // individual pace. Never snap to an unrelated yaw while still flying.
+        if (!route && bird.landingHeading !== undefined) {
+          const delta = Math.atan2(Math.sin(bird.restHeading - bird.landingHeading), Math.cos(bird.restHeading - bird.landingHeading));
+          heading = bird.landingHeading + delta * smooth(t / (0.7 + i * 0.16)) + yaw;
+        }
         place(bird, position, heading);
         posePigeon(bird, elapsed, i, { walk: walking ? (cycle < 0.8 ? cycle : cycle - 4.5) / 0.5 : 0,
           peck: !route && !walking && detailed ? Math.pow(Math.max(0, Math.sin(t * 2.6 + i)), 5) : 0,
@@ -104,7 +112,12 @@ export function createPigeonCityLayer({ navigation, planetRadius = 220, seed = "
     });
     if (route) {
       diagnostics.state = elapsed < launchedAt ? "preparing" : "flying";
-      if (elapsed >= launchedAt + duration + (PIGEON_COUNT - 1) * 0.22) {
+      if (elapsed >= launchedAt + duration + Math.max(...route.delays)) {
+        birds.forEach((bird, i) => {
+          samplePigeonTrack(route, i, route.length, ahead, direction);
+          bird.landingHeading = Math.atan2(direction.x, direction.z);
+          bird.restHeading = route.to.headings[i];
+        });
         current = route.to; route = null; restAt = elapsed; nextFlight = elapsed + 30 + rng() * 30;
         diagnostics.source = current.id; diagnostics.destination = null; diagnostics.state = "resting"; showRoute();
       }
