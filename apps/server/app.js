@@ -884,7 +884,8 @@ export async function createApp({ repository, config, logger = false, now = () =
       } : null,
       simulation_context: VIRTUAL_GAME_CONTEXT,
       strategy,
-      ...(strategy.incidents.length ? { narrative_guidance: incidentNarrativeGuidance("discovered") } : {}),
+      ...(strategy.incidents.length
+        ? { narrative_guidance: incidentNarrativeGuidance(strategy.pending_assignments.length ? "dispatched" : "discovered") } : {}),
       last_turn_facts: gameplay.lastTurnFacts ?? null,
       // Progressive playbook disclosure: a short context hint plus a pointer to
       // the authoritative playbook. Never the full document.
@@ -2083,7 +2084,7 @@ function agentSnapshot(row, state, events, orders, config) {
     // the full playbook. The authoritative contract lives at links.playbook.
     gameplay_guidance: playbookGuidance(state),
     ...(Object.values(state.gameplay?.incidents ?? {}).some((incident) => ["open", "assigned"].includes(incident.status))
-      ? { narrative_guidance: incidentNarrativeGuidance("discovered") } : {}),
+      ? { narrative_guidance: incidentNarrativeGuidance(state.gameplay?.pendingAssignments?.length ? "dispatched" : "discovered") } : {}),
     agent_turn_plan: agentTurnPlan(row, state, config, new Date(), citySystems)
   };
 }
