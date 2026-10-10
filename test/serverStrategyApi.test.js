@@ -82,6 +82,8 @@ test("an Agent completes the closed loop: read incidents, dispatch an officer, s
     const { city, agent, owner } = await openCity(repository, app);
     await seedState(repository, owner, city.id, 0);
 
+    const snapshot = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/snapshot` }), 200);
+    assert.equal(snapshot.narrative_guidance.context, "incident_discovered", "copy-ready snapshot path also carries a story hint");
     const before = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
     assert.equal(before.turn, 0);
     assert.equal(before.turn_status, "strategy");
@@ -188,6 +190,8 @@ test("a normal turn gives useful development the copy-ready next action before r
     const strategy = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
     assert.equal(strategy.agent_turn_plan.development_completed_this_turn, false);
     assert.equal(strategy.narrative_guidance, undefined, "quiet strategy reads should not consume narrative tokens");
+    const quietSnapshot = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/snapshot` }), 200);
+    assert.equal(quietSnapshot.narrative_guidance, undefined, "quiet snapshots should not include story prompts");
     assert.equal(strategy.agent_turn_plan.next_action.url, `${config.publicBaseUrl}/api/v1/cities/${city.id}/building-designs`);
     assert.ok(strategy.agent_turn_plan.next_action.body.site.anchor_cell_id, "strategy preselects a legal site and removes one site-search call");
     assert.equal(strategy.agent_turn_plan.next_action.body.gameplay_profile.magic_ratio, 0);
