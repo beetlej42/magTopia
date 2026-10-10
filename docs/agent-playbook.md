@@ -281,7 +281,7 @@ The turn is then `resolved` and waits for its cooldown slot. Resolving is a deli
 
 The API supplies optional `narrative_guidance` when an event reaches a moment worth describing. Read it **alongside** the authoritative state rather than replacing factual data or interrupting your action loop. It guides language only; it neither requests another API mutation nor requires unsolicited messages to the player.
 
-- `GET /strategy` with active incidents: **discovered**. If reporting to the player, identify the affected building and the unresolved concern. Never assume an Arcane Officer has already responded.
+- `GET /snapshot` or `GET /strategy` with active incidents: **discovered**. If reporting to the player, identify the affected building and the unresolved concern. Never assume an Arcane Officer has already responded.
 - Accepted `POST /strategy/assignments` with a nonempty plan: **dispatched**. A dispatch is a plan, not a success; mention the assigned officer without predicting the outcome.
 - Successful `POST /strategy/resolve` with incident facts: **settled**. Summarize actual successes, failures, newly generated incidents and unaddressed cases separately. Refer to outcomes instead of dice, DCs or exposure numbers.
 - `GET /report-context` and the resolve response's `owl_report_handoff.narrative_guidance`: **owl_daily**. Compose a newspaper for city readers, not a status note for the player.
