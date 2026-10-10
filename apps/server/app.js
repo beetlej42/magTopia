@@ -2082,6 +2082,8 @@ function agentSnapshot(row, state, events, orders, config) {
     // Progressive playbook disclosure: a short context-appropriate hint, never
     // the full playbook. The authoritative contract lives at links.playbook.
     gameplay_guidance: playbookGuidance(state),
+    ...(Object.values(state.gameplay?.incidents ?? {}).some((incident) => ["open", "assigned"].includes(incident.status))
+      ? { narrative_guidance: incidentNarrativeGuidance("discovered") } : {}),
     agent_turn_plan: agentTurnPlan(row, state, config, new Date(), citySystems)
   };
 }
