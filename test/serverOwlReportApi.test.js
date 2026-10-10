@@ -141,6 +141,8 @@ test("a resolved turn yields a complete immutable ReportContext derived from fro
     assert.equal(context.turn, 1);
     assert.equal(context.worldDay, 1);
     assert.equal(context.cityId, city.id);
+    assert.equal(context.narrative_guidance.context, "owl_daily");
+    assert.match(context.narrative_guidance.fact_rule, /factRefs/);
     assert.equal(context.factsDigest, factsDigest(settled.facts), "digest derives from the frozen facts");
     assert.equal(context.settlement.settledBy, "agent");
     assert.deepEqual(context.resourceDelta.coins, settled.facts.resourceDelta.coins);
@@ -615,6 +617,9 @@ test("OpenAPI and the playbook describe the newspaper composition", async () => 
     for (const schema of ["ReportContext", "OwlReport", "OwlReportArticle", "OwlReportBrief", "OwlReportActionBoxEntry", "OwlReportTomorrowWatchEntry", "OwlReportSubmitRequest", "OwlReportResponse", "OwlReportSummary"]) {
       assert.ok(openapi.components.schemas[schema], `missing schema ${schema}`);
     }
+    assert.ok(openapi.components.schemas.NarrativeGuidance);
+    assert.equal(openapi.components.schemas.ReportContext.properties.narrative_guidance.$ref, "#/components/schemas/NarrativeGuidance");
+    assert.equal(openapi.components.schemas.StrategyContext.properties.narrative_guidance.$ref, "#/components/schemas/NarrativeGuidance");
     const reportSchema = openapi.components.schemas.OwlReport.properties;
     for (const field of ["masthead", "edition", "headline", "subheadline", "lead", "articles", "briefs", "actionBox", "tomorrowWatch"]) {
       assert.ok(field in reportSchema, `OwlReport is missing ${field}`);

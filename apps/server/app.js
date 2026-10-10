@@ -42,7 +42,7 @@ import {
 } from "../../src/gameplay/cards.js";
 import { getCard } from "../../src/gameplay/card-catalog.js";
 import { completedReportTurn, deriveCityDayPresentation } from "../../src/gameplay/city-day.js";
-import { playbookGuidance } from "../../src/gameplay/guidance.js";
+import { incidentNarrativeGuidance, OWL_DAILY_NARRATIVE_GUIDANCE, playbookGuidance } from "../../src/gameplay/guidance.js";
 import { isTurnResolveLocked, initializeTurnSchedule, normalizeTurnSchedule } from "../../src/gameplay/turn.js";
 import { arcaneOfficerCapacity, arcaneOfficerRecruitmentUnlocked, currentOfficerCandidates, hireArcaneOfficerCandidate, recruitmentConfigSummary } from "../../src/gameplay/arcane-officers.js";
 import { bootstrapGuidance, deriveBootstrapProgress, isBootstrapTurn } from "../../src/gameplay/bootstrap.js";
@@ -865,6 +865,7 @@ export async function createApp({ repository, config, logger = false, now = () =
     const strategyState = candidateState.state;
     const nowValue = now();
     const turnPlan = agentTurnPlan(row, strategyState, config, nowValue);
+    const strategy = strategyPayload(strategyState);
     return {
       city_id: row.id,
       city_version: Number(row.city_version),
@@ -882,7 +883,9 @@ export async function createApp({ repository, config, logger = false, now = () =
         guidance: bootstrapGuidance(deriveBootstrapProgress(state))
       } : null,
       simulation_context: VIRTUAL_GAME_CONTEXT,
-      strategy: strategyPayload(strategyState),
+      strategy,
+      ...(strategy.incidents.length
+        ? { narrative_guidance: incidentNarrativeGuidance(strategy.pending_assignments.length ? "dispatched" : "discovered") } : {}),
       last_turn_facts: gameplay.lastTurnFacts ?? null,
       // Progressive playbook disclosure: a short context hint plus a pointer to
       // the authoritative playbook. Never the full document.
@@ -946,6 +949,7 @@ export async function createApp({ repository, config, logger = false, now = () =
           city_version_after: (state.version ?? 0) + 1,
           turn: state.turn,
           strategy: strategyPayload(nextState),
+          ...(assignments.length ? { narrative_guidance: incidentNarrativeGuidance("dispatched") } : {}),
           agent_turn_plan: agentTurnPlan({ id: request.params.cityId, city_version: nextState.version }, nextState, config, now())
         }
       };
@@ -1033,7 +1037,9 @@ export async function createApp({ repository, config, logger = false, now = () =
           facts: result.facts,
           strategy: strategyPayload(nextState),
           agent_turn_plan: agentTurnPlan({ id: request.params.cityId, city_version: nextState.version }, nextState, config, now()),
-          owl_report_handoff: owlReportHandoff(request.params.cityId, result.facts, config)
+          owl_report_handoff: owlReportHandoff(request.params.cityId, result.facts, config),
+          ...((result.facts.incidents?.length || result.facts.outcomes?.length || result.facts.unaddressedIncidents?.length)
+            ? { narrative_guidance: incidentNarrativeGuidance("settled") } : {})
         }
       };
     });
@@ -1197,7 +1203,10 @@ export async function createApp({ repository, config, logger = false, now = () =
         turn == null ? "No resolved turn has produced a ReportContext yet" : `No resolved turn facts exist for turn ${turn}`
       );
     }
-    return buildReportContext({ cityId: row.id, state, facts });
+    return {
+      ...buildReportContext({ cityId: row.id, state, facts }),
+      narrative_guidance: OWL_DAILY_NARRATIVE_GUIDANCE
+    };
   });
 
   app.post("/api/v1/cities/:cityId/reports", async (request, reply) => {
@@ -2074,6 +2083,8 @@ function agentSnapshot(row, state, events, orders, config) {
     // Progressive playbook disclosure: a short context-appropriate hint, never
     // the full playbook. The authoritative contract lives at links.playbook.
     gameplay_guidance: playbookGuidance(state),
+    ...(Object.values(state.gameplay?.incidents ?? {}).some((incident) => ["open", "assigned"].includes(incident.status))
+      ? { narrative_guidance: incidentNarrativeGuidance(state.gameplay?.pendingAssignments?.length ? "dispatched" : "discovered") } : {}),
     agent_turn_plan: agentTurnPlan(row, state, config, new Date(), citySystems)
   };
 }
@@ -2388,7 +2399,8 @@ function owlReportHandoff(cityId, facts, config) {
     simulation_context: VIRTUAL_GAME_CONTEXT,
     same_service_submission: true,
     external_recipient: false,
-    instruction: "Publish a concise, lively Simplified Chinese Owl Daily to this same MAGTOPIA game service before moving on. This is fictional game content, not an external message. Read the immutable context once; reference only its factRefs and never invent outcomes. Write all player-facing prose in zh-CN, start from body_template, and use only the allowed values below; omit optional story sections when there is no matching fact.",
+    narrative_guidance: OWL_DAILY_NARRATIVE_GUIDANCE,
+    instruction: "Publish a concise, lively Simplified Chinese Owl Daily to this same MAGTOPIA game service before moving on. This is fictional game content, not an external message. Read the immutable context once; reference only its factRefs and never invent outcomes. Write all player-facing prose in zh-CN, start from body_template, follow narrative_guidance for in-world storytelling, and use only the allowed values below; omit optional story sections when there is no matching fact.",
     context: { method: "GET", url: `${cityBase}/report-context?turn=${facts.turn}` },
     publish: {
       method: "POST",

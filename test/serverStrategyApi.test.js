@@ -82,6 +82,8 @@ test("an Agent completes the closed loop: read incidents, dispatch an officer, s
     const { city, agent, owner } = await openCity(repository, app);
     await seedState(repository, owner, city.id, 0);
 
+    const snapshot = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/snapshot` }), 200);
+    assert.equal(snapshot.narrative_guidance.context, "incident_discovered", "copy-ready snapshot path also carries a story hint");
     const before = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
     assert.equal(before.turn, 0);
     assert.equal(before.turn_status, "strategy");
@@ -89,6 +91,9 @@ test("an Agent completes the closed loop: read incidents, dispatch an officer, s
     assert.equal(before.strategy.incidents[0].id, "incident-1");
     assert.equal(before.strategy.incidents[0].status, "open");
     assert.equal(before.strategy.incidents[0].building_name, "Lantern Tower");
+    assert.equal(before.narrative_guidance.context, "incident_discovered");
+    assert.equal(before.narrative_guidance.audience, "player");
+    assert.match(before.narrative_guidance.boundaries, /不得声称/);
     assert.equal(before.strategy.arcane_officers.length, 2);
     assert.ok(before.strategy.arcane_officers.every((officer) => officer.status === "available"));
     assert.deepEqual(before.strategy.arcane_officers.find((officer) => officer.id === "officer-vesper").specialties, ["investigation"]);
@@ -109,6 +114,12 @@ test("an Agent completes the closed loop: read incidents, dispatch an officer, s
     assert.equal(assigned.city_version_after, assigned.city_version_before + 1, "accepting the plan advances the city version");
     assert.equal(assigned.strategy.pending_assignments.length, 1);
     assert.equal(assigned.strategy.pending_assignments[0].rationale, "matched investigation specialty");
+    assert.equal(assigned.narrative_guidance.context, "incident_dispatched");
+    assert.match(assigned.narrative_guidance.boundaries, /不代表行动成功/);
+    const pending = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
+    assert.equal(pending.narrative_guidance.context, "incident_dispatched", "rereads respect an already accepted dispatch");
+    const pendingSnapshot = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/snapshot` }), 200);
+    assert.equal(pendingSnapshot.narrative_guidance.context, "incident_dispatched");
 
     const settled = await json(app, auth(agent, {
       method: "POST",
@@ -119,6 +130,8 @@ test("an Agent completes the closed loop: read incidents, dispatch an officer, s
     assert.equal(settled.status, "resolved");
     assert.equal(settled.turn, 1);
     assert.equal(settled.city_version_after, settled.city_version_before + 1);
+    assert.equal(settled.narrative_guidance.context, "incident_settled");
+    assert.match(settled.narrative_guidance.instruction, /outcomes/);
     assert.equal(settled.facts.assignments.length, 1);
     assert.equal(settled.facts.assignments[0].incidentId, "incident-1");
     assert.equal(settled.facts.assignments[0].arcaneOfficerId, "officer-vesper");
@@ -139,6 +152,8 @@ test("an Agent completes the closed loop: read incidents, dispatch an officer, s
     assert.equal(settled.owl_report_handoff.same_service_submission, true);
     assert.equal(settled.owl_report_handoff.external_recipient, false);
     assert.equal(settled.owl_report_handoff.publish.authoring_contract.language, "zh-CN");
+    assert.equal(settled.owl_report_handoff.narrative_guidance.context, "owl_daily");
+    assert.match(settled.owl_report_handoff.instruction, /narrative_guidance/);
     assert.match(settled.owl_report_handoff.instruction, /Simplified Chinese/);
     assert.equal(settled.owl_report_handoff.publish.body_template.report.masthead.title, "猫头鹰日报");
     assert.equal(settled.owl_report_handoff.publish.authoring_contract.entry_templates.article.id, "article-1");
@@ -178,6 +193,9 @@ test("a normal turn gives useful development the copy-ready next action before r
 
     const strategy = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
     assert.equal(strategy.agent_turn_plan.development_completed_this_turn, false);
+    assert.equal(strategy.narrative_guidance, undefined, "quiet strategy reads should not consume narrative tokens");
+    const quietSnapshot = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/snapshot` }), 200);
+    assert.equal(quietSnapshot.narrative_guidance, undefined, "quiet snapshots should not include story prompts");
     assert.equal(strategy.agent_turn_plan.next_action.url, `${config.publicBaseUrl}/api/v1/cities/${city.id}/building-designs`);
     assert.ok(strategy.agent_turn_plan.next_action.body.site.anchor_cell_id, "strategy preselects a legal site and removes one site-search call");
     assert.equal(strategy.agent_turn_plan.next_action.body.gameplay_profile.magic_ratio, 0);

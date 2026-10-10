@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { PLAYBOOK_DISCOVERY_GUIDANCE, playbookGuidance } from "../src/gameplay/guidance.js";
+import { incidentNarrativeGuidance, OWL_DAILY_NARRATIVE_GUIDANCE, PLAYBOOK_DISCOVERY_GUIDANCE, playbookGuidance } from "../src/gameplay/guidance.js";
 
 const base = () => ({
   gameplay: {
@@ -94,4 +94,26 @@ test("many competing contexts never exceed three hints", () => {
   const guidance = playbookGuidance(state, { turnLocked: "2026-08-01T00:01:00.000Z" });
   assert.equal(guidance.length, 3, "discovery anchor + exactly two highest-priority context hints");
   assert.ok(guidance[1].includes("cannot be resolved yet"), "the locked gate is the most critical context");
+});
+
+test("incident narrative prompts are stage-specific and do not invent results", () => {
+  const discovered = incidentNarrativeGuidance("discovered");
+  const dispatched = incidentNarrativeGuidance("dispatched");
+  const settled = incidentNarrativeGuidance("settled");
+  assert.equal(discovered.context, "incident_discovered");
+  assert.match(discovered.boundaries, /不得声称/);
+  assert.equal(dispatched.context, "incident_dispatched");
+  assert.match(dispatched.boundaries, /不代表行动成功/);
+  assert.equal(settled.context, "incident_settled");
+  assert.match(settled.instruction, /outcomes/);
+  assert.match(settled.boundaries, /未处理状态|未处理/);
+  assert.equal(incidentNarrativeGuidance("unrelated"), null);
+});
+
+test("Owl Daily guidance separates storytelling from authoritative facts", () => {
+  assert.equal(OWL_DAILY_NARRATIVE_GUIDANCE.context, "owl_daily");
+  assert.equal(OWL_DAILY_NARRATIVE_GUIDANCE.audience, "city_readers");
+  assert.match(OWL_DAILY_NARRATIVE_GUIDANCE.instruction, /主编/);
+  assert.match(OWL_DAILY_NARRATIVE_GUIDANCE.style_rule, /游戏机制/);
+  assert.match(OWL_DAILY_NARRATIVE_GUIDANCE.fact_rule, /factRefs/);
 });

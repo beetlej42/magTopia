@@ -64,3 +64,41 @@ export function playbookGuidance(state, options = {}) {
 
   return [PLAYBOOK_DISCOVERY_GUIDANCE, ...hints];
 }
+
+
+// Optional, stage-specific writing hints for Agent-to-player updates. These are
+// presentation guidance, never gameplay instructions or authoritative event facts.
+// Keep them compact: most API responses need no narrative prompt at all.
+const INCIDENT_NARRATIVE_GUIDANCE = Object.freeze({
+  discovered: Object.freeze({
+    context: "incident_discovered",
+    audience: "player",
+    instruction: "向玩家简短讲述城市哪里出现了什么异常、为何值得留意。像一位身处魔法伦敦的城市管理者，不要念出事件等级、检定难度或暴露数值。",
+    boundaries: "这是待处理事件。不得声称秘法官已出动或事件已解决；没有事实支持时不要编造具体异象、目击者或后果。"
+  }),
+  dispatched: Object.freeze({
+    context: "incident_dispatched",
+    audience: "player",
+    instruction: "如需向玩家汇报进展，介绍哪位秘法官已获派遣、正准备处理什么事件。用自然的城市叙事代替能力值、匹配分数和派遣机制。",
+    boundaries: "当前只确认派遣计划已被接受，不代表行动成功；不得提前宣布结局或杜撰现场行动。"
+  }),
+  settled: Object.freeze({
+    context: "incident_settled",
+    audience: "player",
+    instruction: "如需向玩家汇报，依据本次结算的 incidents、assignments、outcomes 和 unaddressedIncidents，简短讲述秘法官行动的结果与城市余波，而不是骰点、成功等级和暴露值。",
+    boundaries: "逐事件核对成功、失败及未处理状态；新出现的事件不可写成已解决。未给出的异常细节和人物言行不可当作事实。"
+  })
+});
+
+export function incidentNarrativeGuidance(stage) {
+  return INCIDENT_NARRATIVE_GUIDANCE[stage] ?? null;
+}
+
+// The newspaper is a fictional in-world publication, not a settlement ledger.
+export const OWL_DAILY_NARRATIVE_GUIDANCE = Object.freeze({
+  context: "owl_daily",
+  audience: "city_readers",
+  instruction: "以维多利亚风格魔法伦敦的《猫头鹰日报》主编口吻写新闻。挑选一件最有新闻价值的事展开：地点、人物、发生了什么、如何收场及城市反响；其余写短讯。文字克制、生动，带一点英式幽默，不逐字段翻译结算数据。",
+  style_rule: "默认不在报道正文讲暴露值、骰点、检定、资源增减、事件等级或其他游戏机制；这些属于游戏数据界面。",
+  fact_rule: "所有权威事实以本回合 ReportContext 为准并关联对应 factRefs。可以用修辞烘托气氛，但不能编造具体魔法异象、目击者证词、建筑完工、人口变动或秘法官结局；不确定的事保留悬念。"
+});

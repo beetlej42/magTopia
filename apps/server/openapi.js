@@ -703,6 +703,19 @@ export function createOpenApiDocument(baseUrl) {
             cards: { $ref: "#/components/schemas/StrategyCards" }
           }
         },
+        NarrativeGuidance: {
+          type: "object",
+          description: "Optional, stage-specific Agent writing guidance. It never changes gameplay facts and does not require sending an extra player message.",
+          required: ["context", "audience", "instruction"],
+          properties: {
+            context: { type: "string" },
+            audience: { type: "string" },
+            instruction: { type: "string" },
+            boundaries: { type: "string" },
+            style_rule: { type: "string" },
+            fact_rule: { type: "string" }
+          }
+        },
         StrategyContext: {
           type: "object",
           required: ["city_id", "city_version", "turn", "turn_kind", "turn_status", "bootstrap", "strategy"],
@@ -718,6 +731,7 @@ export function createOpenApiDocument(baseUrl) {
             next_turn_unlock_at: { type: ["string", "null"], description: "Server-owned cooldown gate. While the current turn is active it is the earliest wall-clock time the Agent may resolve the turn (POST /strategy/resolve is rejected with TURN_NOT_UNLOCKED before it); once the turn is settled it is the earliest time the next turn may open. Agents cannot change it." },
             settled_by: { type: ["string", "null"], description: "Which authority settled the last turn: agent, or deadline (historical only; deadline settlement no longer exists)." },
             gameplay_guidance: { type: "array", items: { type: "string" }, description: "Short progressive-disclosure hints (1-3) for the current context, derived from card/placement/incident/turn-lock state. Advisory only; the authoritative contract is the playbook." },
+            narrative_guidance: { $ref: "#/components/schemas/NarrativeGuidance", description: "Present only when active incidents should be narrated to the player." },
             playbook_url: { type: "string", description: "Stable URL of the authoritative MAGTOPIA Agent Playbook." },
             agent_turn_plan: { type: "object", additionalProperties: true, description: "A compact current-version next action intended to minimize exploratory calls and stale retries." },
             strategy: { $ref: "#/components/schemas/StrategyPayload", properties: { incidents: { type: "array" }, arcane_officers: { type: "array" }, arcane_officer_recruitment: { $ref: "#/components/schemas/ArcaneOfficerRecruitment" }, pending_assignments: { type: "array" }, cards: { $ref: "#/components/schemas/StrategyCards" } } },
@@ -734,14 +748,16 @@ export function createOpenApiDocument(baseUrl) {
             city_version_after: { type: "integer" },
             turn: { type: "integer" },
             facts: { $ref: "#/components/schemas/TurnFacts" },
+            narrative_guidance: { $ref: "#/components/schemas/NarrativeGuidance", description: "Optional player-facing description guidance for actual incident outcomes." },
             strategy: { $ref: "#/components/schemas/StrategyPayload", properties: { cards: { $ref: "#/components/schemas/StrategyCards" } } }
           }
         },
         ReportContext: {
           type: "object",
-          description: "SYSTEM-owned immutable newspaper source for one resolved turn. A deterministic projection of the frozen TurnFacts plus read-only city metadata. Never contains prose and never recomputes gameplay. The Agent edits an OwlReport from it and references facts through factRefs.",
+          description: "SYSTEM-owned immutable newspaper source for one resolved turn, with read-only fact data and optional Agent writing guidance. The fact projection never recomputes gameplay. The Agent edits an OwlReport and references facts through factRefs.",
           required: ["schemaVersion", "cityId", "turn", "turnKind", "choiceKind", "offerChoiceKind", "specialCadence", "eligibilityAudit", "bootstrapProgress", "worldDay", "factsDigest", "settlement", "resourceDelta", "resources", "populationDelta", "population", "publicService", "buildingsStarted", "buildingsCompleted", "buildingFactRefs", "constructionRefs", "demolitions", "incidents", "incidentRolls", "historicalRiskChanges", "factRefs"],
           properties: {
+            narrative_guidance: { $ref: "#/components/schemas/NarrativeGuidance", description: "Advice for composing the Owl Daily from frozen facts; not part of the facts digest." },
             schemaVersion: { type: "integer" },
             cityId: { type: "string" },
             turn: { type: "integer" },
@@ -1078,9 +1094,9 @@ export function createOpenApiDocument(baseUrl) {
       "/cities/{city_id}/demolitions": { post: commandOperation("Submit one idempotent ordinary-building or road-cell demolition", "demolition", { $ref: "#/components/schemas/DemolitionRequest" }) },
       "/cities/{city_id}/gateways/{node_id}/upgrade": { post: commandOperation("Upgrade the fixed railway station gateway without changing its footprint; levels are capped at three", "construction", { $ref: "#/components/schemas/GatewayUpgradeRequest" }) },
       "/cities/{city_id}/time-advances": { post: commandOperation("Manual time advance is disabled: income and turn progression flow through the cooldown-gated strategy resolve instead", "simulation") },
-      "/cities/{city_id}/strategy": { get: operation("Read the strategy context: open incidents, Arcane Officers, player card state, and the last frozen settlement facts", "strategy", null, { $ref: "#/components/schemas/StrategyContext" }) },
-      "/cities/{city_id}/strategy/assignments": { post: commandOperation("Submit the Arcane Officer dispatch plan for the strategy phase", "strategy", { $ref: "#/components/schemas/StrategyAssignmentsRequest" }) },
-      "/cities/{city_id}/strategy/resolve": { post: commandOperation("Request the single authoritative system settlement of the strategy phase", "strategy", { $ref: "#/components/schemas/StrategyResolveRequest" }) },
+      "/cities/{city_id}/strategy": { get: operation("Read the strategy context: open incidents, Arcane Officers, player card state, the last frozen settlement facts, and optional player-update narrative_guidance", "strategy", null, { $ref: "#/components/schemas/StrategyContext" }) },
+      "/cities/{city_id}/strategy/assignments": { post: commandOperation("Submit the Arcane Officer dispatch plan for the strategy phase; accepted nonempty plans include narrative_guidance for optional player updates", "strategy", { $ref: "#/components/schemas/StrategyAssignmentsRequest" }) },
+      "/cities/{city_id}/strategy/resolve": { post: commandOperation("Request the single authoritative system settlement of the strategy phase; incident results include narrative_guidance and every successful settlement includes Owl Daily writing guidance", "strategy", { $ref: "#/components/schemas/StrategyResolveRequest" }) },
       "/cities/{city_id}/strategy/recruit-officer": { post: commandOperation("Recruit one current system-generated Arcane Officer candidate", "strategy", { $ref: "#/components/schemas/OfficerRecruitmentRequest" }, { $ref: "#/components/schemas/OfficerRecruitmentResponse" }) },
       "/cards": { get: operation("Read the system-owned daily card catalog", "cards", null, { type: "object", properties: { data: { type: "array", items: { $ref: "#/components/schemas/CardDefinition" } } } }) },
       "/cities/{city_id}/cards/current": { get: operation("Read the canonical three-card offer and all pending placement mandates for the current turn", "cards", null, { type: "object", properties: { city_id: { type: "string" }, city_version: { type: "integer" }, turn: { type: "integer" }, turn_status: { type: "string" }, offer: { $ref: "#/components/schemas/CardOffer" }, choice: { $ref: "#/components/schemas/CardChoice" }, pending_placements: { type: "array", items: { $ref: "#/components/schemas/PendingPlacement" } } } }) },
