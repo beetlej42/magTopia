@@ -116,6 +116,10 @@ test("an Agent completes the closed loop: read incidents, dispatch an officer, s
     assert.equal(assigned.strategy.pending_assignments[0].rationale, "matched investigation specialty");
     assert.equal(assigned.narrative_guidance.context, "incident_dispatched");
     assert.match(assigned.narrative_guidance.boundaries, /不代表行动成功/);
+    const pending = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/strategy` }), 200);
+    assert.equal(pending.narrative_guidance.context, "incident_dispatched", "rereads respect an already accepted dispatch");
+    const pendingSnapshot = await json(app, auth(agent, { method: "GET", url: `/api/v1/cities/${city.id}/snapshot` }), 200);
+    assert.equal(pendingSnapshot.narrative_guidance.context, "incident_dispatched");
 
     const settled = await json(app, auth(agent, {
       method: "POST",
