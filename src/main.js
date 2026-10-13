@@ -1668,6 +1668,8 @@ async function loadCityViewerState({ force = false } = {}) {
     } else if (activeObject) {
       activeObject.userData.cityState = structuredClone(payload.state);
       if (activeObject.userData.refreshStreetLife?.(payload.state)) {
+        activeAnimationObjects = collectAnimationObjects(activeObject);
+        activeAnimatedShadowCasters = hasAnimatedShadowCasters(activeAnimationObjects);
         activeViewCache.valid = false;
         districtDepthOfField.invalidateDepth();
       }

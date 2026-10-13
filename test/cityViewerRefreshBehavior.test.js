@@ -64,11 +64,15 @@ test("resident arrivals update street life without rebuilding buildings, terrain
   harness.context.activeObject.userData.refreshStreetLife = state => { assert.equal(state, after); updates += 1; return true; };
   harness.context.activeViewCache = { valid: true };
   harness.context.districtDepthOfField = { invalidateDepth() {} };
+  const newAnimation = { id: "new-street-spark" };
+  harness.context.collectAnimationObjects = () => [newAnimation];
+  harness.context.hasAnimatedShadowCasters = () => false;
   await harness.refresh();
   assert.equal(updates, 1);
   assert.equal(harness.counters.builds, 0);
   assert.equal(harness.counters.packs, 0);
   assert.equal(harness.context.activeViewCache.valid, false);
+  assert.equal(harness.context.activeAnimationObjects[0], newAnimation);
 });
 
 test("a real map change rebuilds once and preserves decoded meshes when the manifest is unchanged", async () => {
