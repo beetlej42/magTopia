@@ -83,7 +83,7 @@ export function createStreetLifeCityPlan({ state, grid, seed = "city-street-life
   };
 }
 
-function currentPopulation(state) {
+export function currentPopulation(state) {
   const population = state?.gameplay?.population ?? {};
   return Math.max(0,
     Math.floor(Number(population.muggles?.current ?? 0))
@@ -496,3 +496,4 @@ function emptyStreetLifePlan(seed, roadCellCount, componentCount) {
 function clamp(value, minimum, maximum) {
   return Math.min(Math.max(Number.isFinite(value) ? value : minimum, minimum), maximum);
 }
+

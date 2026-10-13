@@ -18,7 +18,11 @@ import {
 import { resolveSpecialStructurePreview } from "./specialStructurePreview.js";
 
 export function createCityDayController({ experience, api, setLight, placementLayer = null, onPlayerTurnComplete = () => {} }) {
-  let syncing = false;
+  let syncInFlight = null;
+  let syncRevision = 0;
+  let commandPending = false;
+  let commandSettled = null;
+  let resolveCommand = null;
   let cardCatalog = null;
   let activeOffer = null;
   let placement = null;
@@ -98,59 +102,90 @@ export function createCityDayController({ experience, api, setLight, placementLa
   }
 
   // Reads the authoritative presentation and drives the overlay.
-  async function sync() {
-    if (syncing) return;
-    syncing = true;
-    try {
-      const day = await fetchJson(`/cities/${api.cityId}/city-day`);
-      experience.applyPresentation(day);
-      setLight(day.phase);
+  function sync() {
+    if (commandPending) return commandSettled.then(() => sync());
+    if (syncInFlight) return syncInFlight;
+    syncInFlight = (async () => {
+      let revision;
+      do {
+        revision = syncRevision;
+        await syncOnce(revision);
+      } while (!commandPending && revision !== syncRevision);
+    })().finally(() => { syncInFlight = null; });
+    return syncInFlight;
+  }
 
-      // Strategy is a read-only companion projection. Fetch it whenever the
-      // authoritative workflow enters night, even if a secondary card or
-      // placement layer is still visible.
-      if (day.phase === "night" || day.incident?.phaseActive) {
-        try {
-          const strategy = await fetchJson(`/cities/${api.cityId}/strategy`);
-          experience.applyStrategyFacts?.(strategy.strategy ?? strategy);
-        } catch {
-          experience.applyStrategyFacts?.(null);
-        }
-      } else {
+  function isCurrentSync(revision) {
+    return revision === syncRevision && !commandPending;
+  }
+
+  function beginPlayerCommand() {
+    if (commandPending) return false;
+    commandPending = true;
+    commandSettled = new Promise((resolve) => { resolveCommand = resolve; });
+    syncRevision += 1;
+    return syncRevision;
+  }
+
+  function endPlayerCommand(revision) {
+    if (!commandPending || revision !== syncRevision) return;
+    commandPending = false;
+    syncRevision += 1;
+    resolveCommand?.();
+    resolveCommand = null;
+    commandSettled = null;
+  }
+
+  async function syncOnce(revision) {
+    const day = await fetchJson(`/cities/${api.cityId}/city-day`);
+    if (!isCurrentSync(revision)) return;
+    experience.applyPresentation(day);
+    setLight(day.phase);
+
+    // Strategy is a read-only companion projection. Fetch it whenever the
+    // authoritative workflow enters night, even if a secondary card or
+    // placement layer is still visible.
+    if (day.phase === "night" || day.incident?.phaseActive) {
+      try {
+        const strategy = await fetchJson(`/cities/${api.cityId}/strategy`);
+        if (!isCurrentSync(revision)) return;
+        experience.applyStrategyFacts?.(strategy.strategy ?? strategy);
+      } catch {
+        if (!isCurrentSync(revision)) return;
         experience.applyStrategyFacts?.(null);
       }
+    } else {
+      experience.applyStrategyFacts?.(null);
+    }
 
-      if (day.report.ready && !day.report.dismissed) {
-        if (!experience.state.reportOpen) await openReport(day);
-        return;
-      }
+    if (day.report.ready && !day.report.dismissed) {
+      if (!experience.state.reportOpen) await openReport(day, revision);
+      return;
+    }
 
-      if (day.card.choicePending) {
-        await openCards();
-        return;
-      }
+    if (day.card.choicePending) {
+      await openCards(revision);
+      return;
+    }
 
-      if (day.card.playerPlacementPending) {
-        await openPendingPlacement();
-        return;
-      }
+    if (day.card.playerPlacementPending) {
+      await openPendingPlacement(revision);
+      return;
+    }
 
-      closeChoiceLayers();
-      if (day.phase === "morning") {
-        experience.showIdleNote("今日决定已完成，城市正等待市政 Agent 开始工作。");
-      } else if (day.phase === "day") {
-        experience.showIdleNote("市政 Agent 正在建设城市。");
-      } else if (day.phase === "night") {
-        experience.showIdleNote("城市进入夜间，Arcane Officer 正在处理事件。");
-      } else {
-        experience.showIdleNote("");
-      }
-    } finally {
-      syncing = false;
+    closeChoiceLayers();
+    if (day.phase === "morning") {
+      experience.showIdleNote("今日决定已完成，城市正等待市政 Agent 开始工作。");
+    } else if (day.phase === "day") {
+      experience.showIdleNote("市政 Agent 正在建设城市。");
+    } else if (day.phase === "night") {
+      experience.showIdleNote("城市进入夜间，Arcane Officer 正在处理事件。");
+    } else {
+      experience.showIdleNote("");
     }
   }
 
-  async function openReport(day) {
+  async function openReport(day, revision) {
     let report = null;
     if (day.report.report_id) {
       try {
@@ -160,25 +195,42 @@ export function createCityDayController({ experience, api, setLight, placementLa
         report = null;
       }
     }
-    experience.presentReport(report, day.report);
+    if (isCurrentSync(revision)) experience.presentReport(report, day.report);
   }
 
-  async function openCards() {
+  async function openCards(revision) {
     // /cards/current returns { city_version, turn, turn_status, offer, choice }.
     // The authoritative city_version is top-level, not inside offer. Preserve it
     // alongside the offer so every selection submits the correct concurrency
     // guard instead of undefined.
     const payload = await fetchJson(`/cities/${api.cityId}/cards/current`);
-    activeOffer = {
+    if (!isCurrentSync(revision)) return;
+    // The earlier city-day read can predate a selection. Never reopen an offer
+    // that the newer authoritative cards read says has already been resolved.
+    if (!payload.offer?.offer_id || (payload.choice?.status && payload.choice.status !== "pending")) {
+      activeOffer = null;
+      experience.closeCards?.();
+      return;
+    }
+    if (experience.state.cardOpen && activeOffer?.offer_id === payload.offer.offer_id && activeOffer.turn === payload.turn) {
+      // Preserve the live callbacks, selection state and special-card mode
+      // picker. Only advance their optimistic concurrency guard.
+      activeOffer.city_version = payload.city_version;
+      return;
+    }
+    const nextOffer = {
       ...payload.offer,
       city_version: payload.city_version,
       turn: payload.turn
     };
     await ensureCardCatalog();
+    if (!isCurrentSync(revision)) return;
+    activeOffer = nextOffer;
     experience.presentCards(activeOffer, onCardPick);
   }
 
   async function onCardPick(card, offer) {
+    if (commandPending) return false;
     if (card.type === "special_structure") {
       experience.presentPlacementChoice(card, (mode) => submitCardSelection(card, offer, mode));
       return;
@@ -187,6 +239,8 @@ export function createCityDayController({ experience, api, setLight, placementLa
   }
 
   async function submitCardSelection(card, offer, decisionMode) {
+    const commandRevision = beginPlayerCommand();
+    if (!commandRevision) return false;
     const expectedCityVersion = offer?.city_version ?? offer?.expectedCityVersion;
     try {
       // One key per logical selection command; a network retry of this same
@@ -199,6 +253,7 @@ export function createCityDayController({ experience, api, setLight, placementLa
         decision_mode: decisionMode
       }, { idempotencyKey });
       if (payload.status !== "selected") throw new Error(payload.message ?? "卡牌选择被拒绝");
+      endPlayerCommand(commandRevision);
       if (decisionMode === "player_place") {
         onPlayerTurnComplete();
         await openPendingPlacement();
@@ -209,6 +264,7 @@ export function createCityDayController({ experience, api, setLight, placementLa
       }
       return true;
     } catch (error) {
+      endPlayerCommand(commandRevision);
       experience.showIdleNote(error.message);
       // A version conflict / stale offer: refresh authoritative state.
       activeOffer = null;
@@ -227,10 +283,12 @@ export function createCityDayController({ experience, api, setLight, placementLa
   // the authoritative server validation and a rejection returns the player to
   // the recoverable placement session.
 
-  async function openPendingPlacement() {
+  async function openPendingPlacement(revision = syncRevision) {
     const day = await fetchJson(`/cities/${api.cityId}/city-day`);
+    if (!isCurrentSync(revision)) return;
     const choice = day.card;
     const cardsCurrent = await fetchJson(`/cities/${api.cityId}/cards/current`);
+    if (!isCurrentSync(revision)) return;
     // Prefer the complete authoritative pending-placement projection. It
     // survives a turn boundary and may contain several independent mandates;
     // never infer an older placement from the current card choice.
@@ -252,6 +310,7 @@ export function createCityDayController({ experience, api, setLight, placementLa
       ?? (projectedPlacements == null ? cardsCurrent.choice?.card_effects?.placement?.placement_id : null);
     const pendingCardId = pending?.card_id ?? null;
     await ensureCardCatalog();
+    if (!isCurrentSync(revision)) return;
     const selectedCardId = pendingCardId ?? (projectedPlacements == null ? choice.selectedCardId : null);
     const card = cardForId(selectedCardId) ?? pending?.card ?? null;
     if (!placementId || !selectedCardId) {
@@ -293,6 +352,7 @@ export function createCityDayController({ experience, api, setLight, placementLa
     } catch {
       candidates = [];
     }
+    if (!isCurrentSync(revision)) return;
     const grid = api.getState?.()?.world?.grid ?? {};
     const cellWorldSize = Number(grid.cellWorldSize ?? 4);
     placement = {
@@ -365,6 +425,8 @@ export function createCityDayController({ experience, api, setLight, placementLa
     const activePlacement = placement;
     const target = activePlacement?.target;
     if (!activePlacement || !target?.hasTarget || !target.isLegal) return;
+    const commandRevision = beginPlayerCommand();
+    if (!commandRevision) return;
     try {
       // One key per logical placement command; a network retry of this same
       // submission must reuse it so the server can replay instead of double-apply.
@@ -378,6 +440,7 @@ export function createCityDayController({ experience, api, setLight, placementLa
         entrance: target.entrance
       }, { idempotencyKey });
       if (payload.status !== "placed") throw new Error(payload.message ?? "放置被拒绝");
+      endPlayerCommand(commandRevision);
       experience.closePlacement();
       placementLayer?.clear();
       placement = null;
@@ -385,6 +448,7 @@ export function createCityDayController({ experience, api, setLight, placementLa
       onPlayerTurnComplete();
       await sync();
     } catch (error) {
+      endPlayerCommand(commandRevision);
       experience.showIdleNote(error.message);
       // A stale/invalid placement must leave the player in a recoverable
       // placement session: refresh authoritative candidates/version and
@@ -427,6 +491,8 @@ export function createCityDayController({ experience, api, setLight, placementLa
   async function cancelPlacement() {
     const active = placement;
     if (!active?.placementId || cancellingPlacementIds.has(active.placementId)) return;
+    const commandRevision = beginPlayerCommand();
+    if (!commandRevision) return;
     cancellingPlacementIds.add(active.placementId);
     // Close the pass-through HUD immediately so map controls are available;
     // a failed authoritative cancellation reopens the same session below.
@@ -440,6 +506,7 @@ export function createCityDayController({ experience, api, setLight, placementLa
       // is success. Empty or malformed 200 responses must restore the HUD;
       // they cannot release a unique entitlement locally.
       if (payload.status !== "cancelled") throw new Error(payload.message ?? "取消放置被拒绝");
+      endPlayerCommand(commandRevision);
       cancelledPlacementIds.add(active.placementId);
       onPlayerTurnComplete();
       // The command has already released the entitlement. A follow-up read
@@ -451,6 +518,7 @@ export function createCityDayController({ experience, api, setLight, placementLa
         experience.showIdleNote(error.message);
       }
     } catch (error) {
+      endPlayerCommand(commandRevision);
       experience.showIdleNote(error.message);
       // Restore the recoverable placement session if the server did not
       // accept cancellation (network failure, stale version, or actor error).
@@ -478,6 +546,8 @@ export function createCityDayController({ experience, api, setLight, placementLa
   }
 
   async function dismissReport() {
+    const commandRevision = beginPlayerCommand();
+    if (!commandRevision) return;
     const day = experience.state.presentation;
     const reportTurn = day?.report?.turn;
     if (reportTurn != null) {
@@ -486,17 +556,20 @@ export function createCityDayController({ experience, api, setLight, placementLa
           method: "POST",
           body: JSON.stringify({ report_turn: reportTurn })
         });
+        endPlayerCommand(commandRevision);
         onPlayerTurnComplete();
       } catch {
         // Acknowledgement failures are non-fatal; the overlay still closes.
       }
     }
+    endPlayerCommand(commandRevision);
     await sync();
   }
 
   function closeChoiceLayers() {
     closePlacement();
     experience.closeCards?.();
+    activeOffer = null;
   }
 
   return {
@@ -513,3 +586,4 @@ export function createCityDayController({ experience, api, setLight, placementLa
     get placementActive() { return Boolean(placement); }
   };
 }
+

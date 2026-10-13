@@ -63,7 +63,7 @@ function stubFetch(routes) {
     const url = String(input);
     calls.push({ url, init });
     const responder = routes[url];
-    const { status = 200, body = {} } = typeof responder === "function" ? responder(init) : (responder ?? {});
+    const { status = 200, body = {} } = typeof responder === "function" ? await responder(init) : (responder ?? {});
     return new Response(JSON.stringify(body), {
       status,
       headers: { "content-type": "application/json" }
@@ -85,6 +85,121 @@ const OFFER = {
     { card_id: "owl-tower", type: "special_structure", title: "Owl Tower", description: "x" }
   ]
 };
+
+function choiceDay(pending = true) {
+  return { phase: pending ? "early_morning" : "morning", report: { ready: false, dismissed: true }, card: { choicePending: pending, playerPlacementPending: false }, incident: { phaseActive: false } };
+}
+
+function deferred() {
+  let resolve;
+  return { promise: new Promise(done => { resolve = done; }), resolve: value => resolve(value) };
+}
+
+test("repeated sync preserves the same offer and updates its live concurrency guard", async () => {
+  const experience = createMockExperience();
+  let shown = 0, version = 7, selected = false, submittedVersion;
+  const present = experience.presentCards;
+  experience.presentCards = (...args) => { shown += 1; present(...args); };
+  stubFetch({
+    "/api/v1/cities/city-1/city-day": () => ({ body: choiceDay(!selected) }),
+    "/api/v1/cities/city-1/cards/current": () => ({ body: { turn: 1, city_version: version, offer: OFFER, choice: { status: "pending" } } }),
+    "/api/v1/cards": { body: { data: OFFER.cards } },
+    "/api/v1/cities/city-1/cards/select": init => {
+      submittedVersion = JSON.parse(init.body).expected_city_version;
+      selected = true;
+      return { body: { status: "selected" } };
+    }
+  });
+  const controller = createCityDayController({ experience, api: { baseUrl: "/api/v1", cityId: "city-1" }, setLight() {} });
+  await controller.sync();
+  const liveOffer = experience.currentOffer;
+  version = 8;
+  await controller.sync();
+  assert.equal(shown, 1);
+  assert.equal(experience.currentOffer, liveOffer);
+  await experience.onCardPick(OFFER.cards[0], liveOffer);
+  assert.equal(submittedVersion, 8);
+});
+
+test("a same-offer sync preserves the special structure decision page", async () => {
+  const experience = createMockExperience();
+  let shown = 0, decisions = 0;
+  const present = experience.presentCards;
+  experience.presentCards = (...args) => { shown += 1; present(...args); };
+  experience.presentPlacementChoice = () => { decisions += 1; };
+  stubFetch({
+    "/api/v1/cities/city-1/city-day": { body: choiceDay() },
+    "/api/v1/cities/city-1/cards/current": { body: { turn: 1, city_version: 7, offer: OFFER, choice: { status: "pending" } } },
+    "/api/v1/cards": { body: { data: OFFER.cards } }
+  });
+  const controller = createCityDayController({ experience, api: { baseUrl: "/api/v1", cityId: "city-1" }, setLight() {} });
+  await controller.sync();
+  await experience.onCardPick(OFFER.cards[2], experience.currentOffer);
+  await controller.sync();
+  assert.equal(shown, 1);
+  assert.equal(decisions, 1);
+});
+
+test("a stale pending city-day projection cannot display an already selected offer", async () => {
+  const experience = createMockExperience();
+  let shown = 0;
+  experience.presentCards = () => { shown += 1; };
+  stubFetch({
+    "/api/v1/cities/city-1/city-day": { body: choiceDay() },
+    "/api/v1/cities/city-1/cards/current": { body: { turn: 1, city_version: 8, offer: OFFER, choice: { status: "selected" } } }
+  });
+  const controller = createCityDayController({ experience, api: { baseUrl: "/api/v1", cityId: "city-1" }, setLight() {} });
+  await controller.sync();
+  assert.equal(shown, 0);
+  assert.equal(experience.state.cardOpen, false);
+});
+
+test("concurrent presentation syncs share one request and wait for it", async () => {
+  const experience = createMockExperience(), read = deferred();
+  let reads = 0;
+  stubFetch({ "/api/v1/cities/city-1/city-day": async () => { reads += 1; return { body: await read.promise }; } });
+  const controller = createCityDayController({ experience, api: { baseUrl: "/api/v1", cityId: "city-1" }, setLight() {} });
+  const first = controller.sync(), second = controller.sync();
+  assert.equal(first, second);
+  read.resolve(choiceDay(false));
+  await Promise.all([first, second]);
+  assert.equal(reads, 1);
+});
+
+for (const lateEndpoint of ["city-day", "cards/current"]) {
+  test(`a late ${lateEndpoint} read is discarded after card selection`, async () => {
+    const experience = createMockExperience(), lateRead = deferred(), readStarted = deferred();
+    let shown = 0, selected = false, delay = false;
+    const present = experience.presentCards;
+    experience.presentCards = (...args) => { shown += 1; present(...args); };
+    const offerBody = () => ({ turn: 1, city_version: selected ? 8 : 7, offer: OFFER, choice: { status: selected ? "selected" : "pending" } });
+    stubFetch({
+      "/api/v1/cities/city-1/city-day": async () => {
+        const body = choiceDay(!selected);
+        if (delay && lateEndpoint === "city-day") { delay = false; readStarted.resolve(); await lateRead.promise; }
+        return { body };
+      },
+      "/api/v1/cities/city-1/cards/current": async () => {
+        const body = offerBody();
+        if (delay && lateEndpoint === "cards/current") { delay = false; readStarted.resolve(); await lateRead.promise; }
+        return { body };
+      },
+      "/api/v1/cards": { body: { data: OFFER.cards } },
+      "/api/v1/cities/city-1/cards/select": () => { selected = true; return { body: { status: "selected" } }; }
+    });
+    const controller = createCityDayController({ experience, api: { baseUrl: "/api/v1", cityId: "city-1" }, setLight() {} });
+    await controller.sync();
+    delay = true;
+    const background = controller.sync();
+    await readStarted.promise;
+    const pick = experience.onCardPick(OFFER.cards[0], experience.currentOffer);
+    lateRead.resolve();
+    await Promise.all([background, pick]);
+    assert.equal(shown, 1);
+    assert.equal(experience.state.cardOpen, false);
+    assert.equal(experience.state.phase, "morning");
+  });
+}
 
 test("controller requests singular /api/v1 URLs, never double-prefixed", async () => {
   const experience = createMockExperience();
@@ -1013,3 +1128,4 @@ test("completing the first of multiple placements automatically opens the next m
   await experience.onConfirm?.();
   assert.equal(controller.getPlacementState().placementId, "placement-next");
 });
+
