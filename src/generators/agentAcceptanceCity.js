@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { runNonVisualAgentBuildScenario } from "../city/agent-district-simulation.js";
 import { createAgentVoxelRoadLayer, createAgentVoxelVegetationLayer } from "./agentVoxelInfrastructure.js";
 import { createMagicLondonStarterDistrict } from "./magicLondonStarterDistrict.js";
-import { createStreetLifeCityLayer } from "./streetLifeCityLayer.js";
+import { createStreetLifeCityLayer, currentPopulation } from "./streetLifeCityLayer.js";
 import { createPigeonNavigation } from "./pigeonNavigation.js";
 import { createPigeonCityLayer } from "./pigeonCityLayer.js";
 import { createRailwayGatewayLayer } from "./railwayAssets.js";
@@ -98,7 +98,7 @@ function* createAgentAcceptanceCitySteps(config = {}) {
   const pigeonNavigation = createPigeonNavigation({ state, grid, collisionRoot: [buildings, roads, railway, vegetation], sampleGroundHeight: constructionHeight });
   const sphericalProjection = projectDistrictOntoSphere(root, params.planetRadius);
   railway.userData.enableSphericalTrain?.(params.planetRadius);
-  const streetLife = createStreetLifeCityLayer({
+  let streetLife = createStreetLifeCityLayer({
     state,
     grid,
     seed: `${seed}:street-life`,
@@ -176,6 +176,24 @@ function* createAgentAcceptanceCitySteps(config = {}) {
   root.userData.getPrefabLodSummaryDiagnostics = () => buildings.userData.getVoxelLodSummaryDiagnostics?.() ?? {};
   root.userData.getRailwayLodDiagnostics = () => railway.userData.getRailwayLodDiagnostics?.() ?? [];
   root.userData.getStreetLifeDiagnostics = () => streetLife.userData.getDiagnostics();
+  let streetPopulation = currentPopulation(state);
+  root.userData.refreshStreetLife = (nextState) => {
+    const nextPopulation = currentPopulation(nextState);
+    if (nextPopulation === streetPopulation) return false;
+    const nextLayer = createStreetLifeCityLayer({
+      state: nextState, grid, seed: `${seed}:street-life`,
+      planetRadius: params.planetRadius, sampleGroundHeight: constructionHeight,
+      density: config.streetLifeDensity ?? 1
+    });
+    root.remove(streetLife);
+    disposeObject(streetLife);
+    streetLife = nextLayer;
+    streetPopulation = nextPopulation;
+    root.add(streetLife);
+    root.userData.diagnostics.streetLife = streetLife.userData.getDiagnostics();
+    root.userData.contract.streetLife = streetLife.userData.getContract();
+    return true;
+  };
   root.userData.getPigeonDiagnostics = () => pigeons.userData.getDiagnostics();
   root.userData.setPigeonDebug = enabled => pigeons.userData.setDebug(enabled);
   root.userData.update = (elapsed) => {
@@ -241,3 +259,4 @@ function disposeObject(object) {
     else child.material?.dispose?.();
   });
 }
+

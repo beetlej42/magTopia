@@ -125,6 +125,7 @@ import { createCityDayController } from "./ui/cityDayController.js";
 import { createCityPlacementLayer } from "./ui/cityPlacementLayer.js";
 import { resolvePlacementTarget } from "./ui/placementTargetResolver.js";
 import { decodeCityArtifactPack, readCityArtifactPackResponse } from "./render/cityArtifactPack.js";
+import { getCityViewerSceneKey, reuseCityBakedArtifacts } from "./render/cityViewerSnapshot.js";
 import { BAKED_BUILDING_ARTIFACT_VERSION, decodeBakedBuildingArtifact, sha256Hex } from "./render/bakedBuildingArtifact.js";
 import {
   RAILWAY_ASSET_PRESETS,
@@ -808,8 +809,11 @@ let cityViewerBakedArtifacts = {};
 let citySeed = configsByMode.map.seed;
 let rebuildVersion = 0;
 let cityViewerLoadedVersion = null;
+let cityViewerSceneKey = null;
 let cityViewerLoading = false;
 let cityViewerRefreshInFlight = null;
+let cityViewerRefreshPending = false;
+let cityViewerRefreshPendingDay = false;
 let cityViewerLoadingProgressValue = 4;
 let cityViewerLoadingDriftFrame = null;
 let cityViewerRuntimeState = null;
@@ -855,8 +859,10 @@ async function rebuildActive(config) {
   }
   configureCameraForViewport();
 
-  cityInfoOverlay.setSceneRoot(null);
-  if (activeObject) {
+  const previousObject = activeObject;
+  const preserveCityScene = Boolean(cityViewerContext && currentMode === "agentcity");
+  if (!preserveCityScene) cityInfoOverlay.setSceneRoot(null);
+  if (activeObject && !preserveCityScene) {
     scene.remove(activeObject);
     disposeObject(activeObject);
   }
@@ -907,15 +913,18 @@ async function rebuildActive(config) {
       bakedArtifacts: cityViewerBakedArtifacts,
       useHunyuanModels: 0
     };
-    if (cityViewerContext && cityViewerLoadedVersion === null) {
-      activeObject = await createAgentAcceptanceCityIncrementally(cityConfig, {
-        onProgress: (fraction) => setCityViewerLoadingProgress(72 + fraction * 20, "正在构建城市地形…"),
+    if (cityViewerContext) {
+      const nextObject = await createAgentAcceptanceCityIncrementally(cityConfig, {
+        onProgress: cityViewerLoadedVersion === null
+          ? (fraction) => setCityViewerLoadingProgress(72 + fraction * 20, "正在构建城市地形…")
+          : null,
         yieldControl: waitForAnimationFrame
       });
       if (version !== rebuildVersion) {
-        disposeObject(activeObject);
+        disposeObject(nextObject);
         return;
       }
+      activeObject = nextObject;
     } else {
       activeObject = createAgentAcceptanceCity(cityConfig);
     }
@@ -923,6 +932,10 @@ async function rebuildActive(config) {
     activeObject = createParcelBlueprint(currentConfig);
   }
 
+  if (preserveCityScene && previousObject) {
+    scene.remove(previousObject);
+    disposeObject(previousObject);
+  }
   scene.add(activeObject);
   scheduleShadowRefresh("scene-rebuild", true);
   activeViewCache.valid = false;
@@ -1470,13 +1483,29 @@ function initializeCityViewer() {
   }
 }
 
-function refreshCityViewer({ force = false } = {}) {
+function refreshCityViewer({ force = false, syncDay = true } = {}) {
   if (!cityViewerContext?.token) return Promise.resolve();
-  if (cityViewerRefreshInFlight) return cityViewerRefreshInFlight;
-  cityViewerRefreshInFlight = Promise.allSettled([
-    loadCityViewerState({ force }),
-    loadCityDayState()
-  ]).finally(() => {
+  if (cityViewerRefreshInFlight) {
+    // A player command may complete after an earlier read took its snapshot.
+    // Queue a fresh read instead of dropping the post-command refresh.
+    if (force) {
+      cityViewerRefreshPending = true;
+      cityViewerRefreshPendingDay ||= syncDay;
+    }
+    return cityViewerRefreshInFlight;
+  }
+  cityViewerRefreshInFlight = (async () => {
+    let includeDay = syncDay;
+    do {
+      cityViewerRefreshPending = false;
+      cityViewerRefreshPendingDay = false;
+      await Promise.allSettled([
+        loadCityViewerState({ force }),
+        includeDay ? loadCityDayState() : Promise.resolve()
+      ]);
+      includeDay = cityViewerRefreshPendingDay;
+    } while (cityViewerRefreshPending);
+  })().finally(() => {
     cityViewerRefreshInFlight = null;
   });
   return cityViewerRefreshInFlight;
@@ -1517,7 +1546,8 @@ function initializeCityDayController() {
     },
     placementLayer: cityPlacementLayer,
     onPlayerTurnComplete: () => {
-      void refreshCityViewer({ force: true });
+      // The controller owns the post-command presentation sync.
+      void refreshCityViewer({ force: true, syncDay: false });
     }
   });
   return cityDayController;
@@ -1568,14 +1598,24 @@ async function loadCityViewerState({ force = false } = {}) {
     const nextAssets = Array.isArray(payload.assets) ? payload.assets : [];
     const nextArtifactManifest = Array.isArray(payload.artifact_manifest) ? payload.artifact_manifest : [];
     const nextArtifactManifestKey = getCityViewerArtifactManifestKey(nextArtifactManifest);
-    const snapshotChanged = force || payload.city_version !== cityViewerLoadedVersion;
+    const nextSceneKey = getCityViewerSceneKey(payload.state, nextAssets);
+    const sceneChanged = nextSceneKey !== cityViewerSceneKey;
     const artifactManifestChanged = nextArtifactManifestKey !== cityViewerArtifactManifestKey;
-    if (snapshotChanged || artifactManifestChanged) {
+    let artifactsRecovered = false;
+    if (!initialLoad && !artifactManifestChanged && nextArtifactManifest.some((entry) => !cityViewerBakedArtifacts[entry.buildingId])) {
+      // Retry a transient pack failure without rebuilding a working fallback
+      // scene unless an unavailable mesh actually becomes ready.
+      const recovered = await loadCityBakedArtifacts(nextArtifactManifest, payload.artifact_pack, null, cityViewerBakedArtifacts);
+      artifactsRecovered = Object.keys(recovered).some((id) => !cityViewerBakedArtifacts[id]);
+      if (artifactsRecovered) cityViewerBakedArtifacts = recovered;
+    }
+    // Always update authoritative state and the HUD, including economy-only
+    // mutations. A forced read does not imply geometry invalidation.
+    cityWorkbench = createCityWorkbench(payload.state);
+    cityViewerRuntimeState = payload.state;
+    if (sceneChanged || artifactManifestChanged || artifactsRecovered) {
+      const reusableArtifacts = reuseCityBakedArtifacts(nextArtifactManifest, cityViewerArtifactManifest, cityViewerBakedArtifacts);
       cityViewerAssets = nextAssets;
-      cityViewerArtifactManifest = nextArtifactManifest;
-      cityViewerArtifactManifestKey = nextArtifactManifestKey;
-      cityWorkbench = createCityWorkbench(payload.state);
-      cityViewerRuntimeState = payload.state;
       citySeed = payload.state.mapSeed ?? configsByMode.agentcity.seed;
       const viewerPreset = startupParams.get("time") === "evening"
         ? VOXEL_INTENT_DISTRICT_PRESETS.agentQuarterEvening
@@ -1601,8 +1641,8 @@ async function loadCityViewerState({ force = false } = {}) {
       const stopArtifactProgressDrift = initialLoad ? startCityViewerLoadingProgressDrift(68) : () => {};
       let artifactProgressStart = null;
       try {
-        cityViewerBakedArtifacts = await loadCityBakedArtifacts(
-          cityViewerArtifactManifest,
+        cityViewerBakedArtifacts = initialLoad || artifactManifestChanged ? await loadCityBakedArtifacts(
+          nextArtifactManifest,
           payload.artifact_pack,
           initialLoad
             ? (fraction) => {
@@ -1610,8 +1650,9 @@ async function loadCityViewerState({ force = false } = {}) {
                 const progress = artifactProgressStart + (70 - artifactProgressStart) * fraction;
                 if (progress > cityViewerLoadingProgressValue) setCityViewerLoadingProgress(progress);
               }
-            : null
-        );
+            : null,
+          reusableArtifacts
+        ) : cityViewerBakedArtifacts;
       } finally {
         stopArtifactProgressDrift();
       }
@@ -1620,9 +1661,20 @@ async function loadCityViewerState({ force = false } = {}) {
         await waitForAnimationFrame();
       }
       await rebuildActive(viewerConfig);
-      cityViewerLoadedVersion = payload.city_version;
+      cityViewerSceneKey = nextSceneKey;
+      cityViewerArtifactManifest = nextArtifactManifest;
+      cityViewerArtifactManifestKey = nextArtifactManifestKey;
       syncCityPlacementLayer();
+    } else if (activeObject) {
+      activeObject.userData.cityState = structuredClone(payload.state);
+      if (activeObject.userData.refreshStreetLife?.(payload.state)) {
+        activeAnimationObjects = collectAnimationObjects(activeObject);
+        activeAnimatedShadowCasters = hasAnimatedShadowCasters(activeAnimationObjects);
+        activeViewCache.valid = false;
+        districtDepthOfField.invalidateDepth();
+      }
     }
+    cityViewerLoadedVersion = payload.city_version;
     renderCityViewerSummary(payload);
     if (initialLoad) {
       setCityViewerLoadingProgress(94, "正在绘制精细建筑与阴影…");
@@ -1678,13 +1730,14 @@ function waitForCityViewerFirstPaint() {
 function getCityViewerArtifactManifestKey(manifest) {
   return manifest
     .filter((entry) => entry?.buildingId && entry?.url)
-    .map((entry) => `${entry.cityId ?? cityViewerContext?.cityId ?? ""}/${entry.buildingId}/${entry.designRevision}/${entry.sha256 ?? ""}`)
+    .map((entry) => `${entry.cityId ?? cityViewerContext?.cityId ?? ""}/${entry.buildingId}/${entry.designRevision}/${entry.artifactVersion}/${String(entry.sha256 ?? "").toLowerCase()}`)
     .sort()
     .join("|");
 }
 
-async function loadCityBakedArtifacts(manifest, pack, onProgress) {
-  if (!manifest.length || !pack?.url || !cityViewerContext?.token) return {};
+async function loadCityBakedArtifacts(manifest, pack, onProgress, reusableArtifacts = {}) {
+  if (!manifest.length || !pack?.url || !cityViewerContext?.token) return reusableArtifacts;
+  if (manifest.every((entry) => reusableArtifacts[entry.buildingId])) return reusableArtifacts;
   try {
     const requestUrl = new URL(pack.url, window.location.href);
     const response = await fetch(requestUrl, {
@@ -1715,6 +1768,7 @@ async function loadCityBakedArtifacts(manifest, pack, onProgress) {
         const expected = manifestByBuilding.get(entry.buildingId);
         if (!expected || expected.sha256.toLowerCase() !== String(entry.sha256).toLowerCase()) return null;
         if (Number(expected.artifactVersion) !== BAKED_BUILDING_ARTIFACT_VERSION) return null;
+        if (reusableArtifacts[entry.buildingId]) return [entry.buildingId, reusableArtifacts[entry.buildingId]];
         if (await sha256Hex(entry.bytes) !== String(entry.sha256).toLowerCase()) return null;
         const artifact = decodeBakedBuildingArtifact(entry.bytes);
         if (artifact.buildingId !== entry.buildingId || Number(artifact.designRevision) !== Number(entry.designRevision)) return null;
@@ -1726,11 +1780,11 @@ async function loadCityBakedArtifacts(manifest, pack, onProgress) {
       await waitForAnimationFrame();
     }
     if (!packed.entries.length) onProgress?.(1);
-    return Object.fromEntries(loadedEntries.filter(Boolean));
+    return { ...reusableArtifacts, ...Object.fromEntries(loadedEntries.filter(Boolean)) };
   } catch {
     // A missing or invalid pack leaves all buildings on the authoritative
     // voxel source path; it must never make the city viewer unusable.
-    return {};
+    return reusableArtifacts;
   }
 }
 
@@ -3240,3 +3294,4 @@ function disposeObject(object) {
     }
   });
 }
+
