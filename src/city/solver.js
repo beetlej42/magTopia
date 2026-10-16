@@ -229,7 +229,14 @@ export function previewConnectionBetween(state, from, to) {
   const request = target.kind === "building"
     ? { toBuildingId: target.id, targetEntrance: target.entrance }
     : { toCellId: target.cellId };
-  return solveConnection(state, source.footprintCells, request, source.entrance, source.entranceCellId);
+  const exactCellToCell = source.kind === "cell" && target.kind === "cell";
+  return solveConnection(
+    state,
+    exactCellToCell ? [] : source.footprintCells,
+    request,
+    exactCellToCell ? null : source.entrance,
+    exactCellToCell ? source.cellId : source.entranceCellId
+  );
 }
 
 function resolveConnectionEndpoint(state, endpoint, label) {
@@ -393,10 +400,11 @@ function findRoadRoute(state, startId, targetId, blocked) {
       if (cell?.occupancy) continue;
       if (cell?.reservation) continue;
       if (cell?.infrastructure && cell.infrastructure !== "road") continue;
-      const existingBridge = state.infrastructure[neighbor.id]?.type === "bridge";
+      const reusesExistingRoadEdge = isExistingRoadCell(state, candidate.id)
+        && isExistingRoadCell(state, neighbor.id);
       const stepCost = routeCost(
         1,
-        cell.infrastructure === "road" || existingBridge ? 0 : 1,
+        reusesExistingRoadEdge ? 1 : 0,
         candidate.direction && candidate.direction !== neighbor.direction ? 1 : 0
       );
       const tentative = addRouteCosts(currentCost, stepCost);
@@ -494,30 +502,35 @@ function popRouteCandidate(heap) {
   return first;
 }
 
-function routeCost(distance = 0, newRoadCells = 0, turns = 0) {
-  return { distance, newRoadCells, turns };
+function routeCost(distance = 0, reusedRoadEdges = 0, turns = 0) {
+  return { distance, reusedRoadEdges, turns };
 }
 
 function addRouteCosts(left, right) {
   return routeCost(
     left.distance + right.distance,
-    left.newRoadCells + right.newRoadCells,
+    left.reusedRoadEdges + right.reusedRoadEdges,
     left.turns + right.turns
   );
 }
 
 function compareRouteCosts(a, b) {
   return a.distance - b.distance
-    || a.newRoadCells - b.newRoadCells
+    || a.reusedRoadEdges - b.reusedRoadEdges
     || a.turns - b.turns;
 }
 
 function estimateRouteCost(cost, fromId, toId) {
   return routeCost(
     cost.distance + routeHeuristic(fromId, toId),
-    cost.newRoadCells,
+    cost.reusedRoadEdges,
     cost.turns
   );
+}
+
+function isExistingRoadCell(state, cellId) {
+  return state.cells[cellId]?.infrastructure === "road"
+    || state.infrastructure[cellId]?.type === "bridge";
 }
 
 function compareRouteCandidates(a, b) {
