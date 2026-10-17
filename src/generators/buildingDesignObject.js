@@ -1,3 +1,4 @@
+import { createRoyalGreenhouse, ROYAL_GREENHOUSE_ASSET_ID } from "./royalGreenhouse.js";
 import { createMoleway, MOLEWAY_ASSET_ID } from "./moleway.js";
 import { createOwlTower, OWL_TOWER_ASSET_ID } from "./owlTower.js";
 import { createVoxelBuildingFromSpec, createVoxelMassingLab } from "./voxelBuildingLab.js";
@@ -8,6 +9,7 @@ import { createDiagonAlley, DIAGON_ASSET_ID } from "./diagonAlley.js";
 export function createBuildingDesignObject(design, renderOptions = {}) {
   if (!design?.generation?.sourceSpec) throw new Error("Building design has no source spec to compile");
   if (design.generation.mode === "landmark_prefab" && design.generation.sourceSpec.assetId === MOLEWAY_ASSET_ID) return createMoleway(renderOptions);
+  if (design.generation.mode === "landmark_prefab" && design.generation.sourceSpec.assetId === ROYAL_GREENHOUSE_ASSET_ID) return createRoyalGreenhouse(renderOptions);
   const options = { ...renderOptions, decorations: design.decorations, renderStrategy: "greedy" };
   if (design.generation.mode === "landmark_prefab" && design.generation.sourceSpec.assetId === OWL_TOWER_ASSET_ID) return createOwlTower(renderOptions);
   if (design.generation.mode === "landmark_prefab" && design.generation.sourceSpec.assetId === DIAGON_ASSET_ID) return createDiagonAlley(renderOptions);
@@ -31,3 +33,4 @@ export function disposeBuildingObject(object) {
     for (const material of Array.isArray(child.material) ? child.material : [child.material]) material?.dispose?.();
   });
 }
+

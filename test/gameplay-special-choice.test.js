@@ -222,7 +222,7 @@ test("special structures are free placements; Moleway is repeatable", () => {
     assert.equal(card.family, "special_building");
     assert.equal(card.unique, card.cardId !== "floo-fireplace-station");
     assert.equal(card.effect.freePlacement, true);
-    assert.equal(card.structure?.placeholder ?? false, card.cardId === "royal-botanical-greenhouse" || card.cardId === "arcane-energy-conservatory");
+    assert.equal(card.structure?.placeholder ?? false, card.cardId === "arcane-energy-conservatory");
   }
 });
 
@@ -371,3 +371,4 @@ test("two deferred Moleway mandates can be placed in one turn without overwritin
   assert.notEqual(entrances[0].id, entrances[1].id);
   for (const b of entrances) assert.equal(state.cells[b.site.lotId].occupancy, b.id);
 });
+

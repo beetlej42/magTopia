@@ -1,3 +1,4 @@
+import { createRoyalGreenhouse, ROYAL_GREENHOUSE_CARD_ID } from "./royalGreenhouse.js";
 import { createMoleway, MOLEWAY_CARD_ID } from "./moleway.js";
 import { createConstructionSite, constructionSiteOptions } from "./constructionSite.js";
 import { createOwlTower } from "./owlTower.js";
@@ -80,6 +81,7 @@ export function createMagicLondonStarterDistrict({ grid, sampleGroundHeight, cit
     const landmarkFactory = building.specialStructure?.cardId === "ministry-of-magic" ? createMinistryOfMagic
       : building.specialStructure?.cardId === "diagon-alley-entrance" ? createDiagonAlley
       : building.specialStructure?.cardId === "owl-tower" ? createOwlTower
+      : building.specialStructure?.cardId === ROYAL_GREENHOUSE_CARD_ID ? createRoyalGreenhouse
       : building.specialStructure?.cardId === MOLEWAY_CARD_ID ? createMoleway : null;
     const landmarkCells = ["owl-tower", MOLEWAY_CARD_ID].includes(building.specialStructure?.cardId) ? 1 : 4;
     if (landmarkFactory && building.site.footprint === (landmarkCells === 1 ? "1x1" : "2x2") && renderCells.length === landmarkCells) {
@@ -1278,4 +1280,5 @@ function getNeighborCellId(cells, entrance) {
   const edge = edgeCells[Math.floor((edgeCells.length - 1) / 2)];
   return edge ? `cell-${edge.column + dx}-${edge.row + dy}` : null;
 }
+
 

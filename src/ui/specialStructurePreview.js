@@ -1,3 +1,4 @@
+import { createRoyalGreenhouse, royalGreenhouseSpec, ROYAL_GREENHOUSE_ASSET_ID, ROYAL_GREENHOUSE_CARD_ID } from "../generators/royalGreenhouse.js";
 import { createMoleway, molewaySpec, MOLEWAY_ASSET_ID, MOLEWAY_CARD_ID } from "../generators/moleway.js";
 import { createOwlTower, owlTowerSpec, OWL_TOWER_ASSET_ID } from "../generators/owlTower.js";
 // PR #52 — Deterministic special-structure building preview.
@@ -34,6 +35,7 @@ import { createDiagonAlley, diagonAlleySpec, DIAGON_ASSET_ID } from "../generato
 // `cardId -> prefab/asset factory` without touching placement state or target
 // resolution.
 export function resolveSpecialStructurePreview({ card = {}, cellWorldSize = 4 } = {}) {
+  if (card.card_id === ROYAL_GREENHOUSE_CARD_ID && card.structure?.footprint === "2x2") return { kind: "prefab", cardId: card.card_id, spec: royalGreenhouseSpec() };
   if (card.card_id === MOLEWAY_CARD_ID && card.structure?.footprint === "1x1") return { kind: "prefab", cardId: card.card_id, spec: molewaySpec() };
   if (card.card_id === "owl-tower" && card.structure?.footprint === "1x1") return {kind:"prefab",cardId:card.card_id,spec:owlTowerSpec()};
   if (card.card_id === "diagon-alley-entrance" && card.structure?.footprint === "2x2") {
@@ -117,6 +119,7 @@ export function createSpecialStructurePreviewSpec(card = {}, cellWorldSize = 4) 
 // uses for voxel buildings). The placement layer replaces the materials with a
 // translucent ghost material before display.
 export function createSpecialStructurePreview(spec) {
+  if (spec?.assetId === ROYAL_GREENHOUSE_ASSET_ID) return createRoyalGreenhouse();
   if (spec?.assetId === MOLEWAY_ASSET_ID) return createMoleway();
   if (spec?.assetId === OWL_TOWER_ASSET_ID) return createOwlTower();
   if (spec?.assetId === DIAGON_ASSET_ID) return createDiagonAlley();
@@ -149,3 +152,4 @@ export const ENTRANCE_YAW_DEGREES = Object.freeze({
   south: 180,
   west: -90
 });
+

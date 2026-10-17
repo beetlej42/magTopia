@@ -1,0 +1,11 @@
+{
+  "assetId": "royal-greenhouse-001",
+  "specVersion": "1.0",
+  "id": "royal-greenhouse-001",
+  "footprint": { "worldWidth": 8, "worldDepth": 8 },
+  "site": { "entrance": "north" },
+  "description": "Voxel royal botanical greenhouse: octagonal glazed pavilion, low barrel-roofed wings, crown lantern, moon-crown tree and formal garden. Entrance authored at +Z.",
+  "assetRevision": 1,
+  "geometryCompiler": "UrbanMassingSpec + authored voxel details",
+  "voxelSize": 0.125
+}

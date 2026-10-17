@@ -100,7 +100,7 @@ export const SPECIAL_STRUCTURES = Object.freeze({
     footprint: "2x2",
     purpose: "special_structure",
     canonicalProgram: "royal_botanical_greenhouse",
-    placeholder: true
+    placeholder: false
   })
 });
 
@@ -210,9 +210,9 @@ export const CARD_CATALOG = Object.freeze([
     "royal-botanical-greenhouse",
     CARD_TYPES.special_structure,
     "Royal Botanical Greenhouse",
-    "A rare civic greenhouse placeholder that produces arcane energy for a growing city.",
+    "A royal glasshouse with an octagonal crown pavilion, planted wings and a moon-crown tree. Produces 12 arcane energy per turn once completed.",
     { kind: "special_structure", magicLevel: 0.85, arcaneEnergyOutput: 12, canonicalProgram: "royal_botanical_greenhouse" },
-    { choiceKind: CARD_CHOICE_KINDS.special, family: "special_building", unique: true, decisionMode: CARD_DECISION_MODES.player_place, structure: SPECIAL_STRUCTURES["royal-botanical-greenhouse"], prerequisites: { minBuildings: 4 }, metadata: { placeholder: true } }
+    { choiceKind: CARD_CHOICE_KINDS.special, family: "special_building", unique: true, decisionMode: CARD_DECISION_MODES.player_place, structure: SPECIAL_STRUCTURES["royal-botanical-greenhouse"], prerequisites: { minBuildings: 4 }, metadata: { placeholder: false, canonicalProgram: "royal_botanical_greenhouse" } }
   ),
   card(
     "arcane-energy-conservatory",
@@ -220,7 +220,7 @@ export const CARD_CATALOG = Object.freeze([
     "Arcane Energy Conservatory",
     "A high-order greenhouse placeholder that becomes available only after the city proves its arcane economy.",
     { kind: "special_structure", magicLevel: 1, arcaneEnergyOutput: EFFECT_VALUES.arcaneConservatoryEnergy, canonicalProgram: "arcane_energy_conservatory" },
-    { choiceKind: CARD_CHOICE_KINDS.special, family: "special_building", unique: true, decisionMode: CARD_DECISION_MODES.player_place, structure: { ...SPECIAL_STRUCTURES["royal-botanical-greenhouse"], name: "Arcane Energy Conservatory", canonicalProgram: "arcane_energy_conservatory" }, prerequisites: { minArcaneEnergy: 40, requiredPurpose: "greenhouse", economicBasis: true }, metadata: { placeholder: true } }
+    { choiceKind: CARD_CHOICE_KINDS.special, family: "special_building", unique: true, decisionMode: CARD_DECISION_MODES.player_place, structure: { ...SPECIAL_STRUCTURES["royal-botanical-greenhouse"], name: "Arcane Energy Conservatory", canonicalProgram: "arcane_energy_conservatory", placeholder: true }, prerequisites: { minArcaneEnergy: 40, requiredPurpose: "greenhouse", economicBasis: true }, metadata: { placeholder: true } }
   ),
 
   // ---- B. Resources / personnel (3) ----
@@ -391,3 +391,4 @@ export function normalizeCardDuration(duration) {
   }
   return { type: "instant", turns: 0 };
 }
+
